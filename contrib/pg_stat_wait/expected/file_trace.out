@@ -1,0 +1,18 @@
+select pg_start_trace(0, '/tmp/pg_stat_wait.trace');
+ pg_start_trace 
+----------------
+ 
+(1 row)
+
+select pg_is_in_trace(0);
+ pg_is_in_trace 
+----------------
+ t
+(1 row)
+
+select pg_stop_trace(0);
+ pg_stop_trace 
+---------------
+ 
+(1 row)
+

@@ -69,6 +69,7 @@
 #include "storage/pg_shmem.h"
 #include "storage/proc.h"
 #include "storage/predicate.h"
+#include "storage/wait.h"
 #include "tcop/tcopprot.h"
 #include "tsearch/ts_cache.h"
 #include "utils/builtins.h"
@@ -1618,6 +1619,17 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"waits_monitoring", PGC_SIGHUP, WAITS_MONITORING,
+			gettext_noop("Monitore waits"),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&WaitsOn,
+		false,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
@@ -2670,6 +2682,17 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&gin_pending_list_limit,
 		4096, 64, MAX_KILOBYTES,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"waits_flush_period", PGC_SIGHUP, WAITS_MONITORING,
+			gettext_noop("Period (in milliseconds) after that profiles from backend flushed to shared memory"),
+			NULL,
+			GUC_UNIT_MS
+		},
+		&WaitsFlushPeriod,
+		1000, 10, 3600000,
 		NULL, NULL, NULL
 	},
 

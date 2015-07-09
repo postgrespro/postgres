@@ -87,6 +87,7 @@
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/spin.h"
+#include "storage/wait.h"
 #include "utils/memutils.h"
 
 #ifdef LWLOCK_STATS
@@ -127,6 +128,7 @@ static int	LWLockTranchesAllocated = 0;
  * where we have special measures to pass it down).
  */
 LWLockPadded *MainLWLockArray = NULL;
+int *main_lwlock_groups = NULL;
 static LWLockTranche MainLWLockTranche;
 
 /*
@@ -318,13 +320,81 @@ get_lwlock_stats_entry(LWLock *lock)
 #endif   /* LWLOCK_STATS */
 
 
+/* Initiate 2-dimensional array with lwlock groups.
+ * We use it in wait.c for calculating lwlock group
+ * First dimension contains count of lwlocks contained in this group
+ * Second dimension contains wait type (index of group)
+ */
+static int
+init_main_lwlock_groups()
+{
+	int idx = 0;
+	if (main_lwlock_groups == NULL)
+	{
+		main_lwlock_groups = MemoryContextAllocZero(TopMemoryContext,
+			sizeof(int) * NUM_ADD_LWLOCK_GROUPS * 2);
+	}
+
+	/* bufmap lwlocks */
+	main_lwlock_groups[0] = LOCK_MANAGER_LWLOCK_OFFSET;
+	main_lwlock_groups[1] = NUM_INDIVIDUAL_LWLOCKS;
+
+	/* lock manager lwlocks */
+	idx++;
+	main_lwlock_groups[idx * 2] = PREDICATELOCK_MANAGER_LWLOCK_OFFSET;
+	main_lwlock_groups[idx * 2 + 1] = NUM_INDIVIDUAL_LWLOCKS + idx;
+
+	/* predicate lwlocks */
+	idx++;
+	main_lwlock_groups[idx * 2] = NUM_FIXED_LWLOCKS;
+	main_lwlock_groups[idx * 2 + 1] = NUM_INDIVIDUAL_LWLOCKS + idx;
+	return idx;
+}
+
+
 /*
  * Compute number of LWLocks to allocate in the main array.
  */
 static int
 NumLWLocks(void)
 {
-	int			numLocks;
+	int	numLocks, i;
+	int	sizes[NUM_DYN_LWLOCK_GROUPS] = {
+		/* bufmgr.c needs two for each shared buffer */
+		2 * NBuffers,
+
+		/* proc.c needs one for each backend or auxiliary process */
+		MaxBackends + NUM_AUXILIARY_PROCS,
+
+		/* clog.c needs one per CLOG buffer */
+		CLOGShmemBuffers(),
+
+		/* commit_ts.c needs one per CommitTs buffer */
+		CommitTsShmemBuffers(),
+
+		/* subtrans.c needs one per SubTrans buffer */
+		NUM_SUBTRANS_BUFFERS,
+
+		/* multixact.c needs two SLRU areas */
+		NUM_MXACTOFFSET_BUFFERS + NUM_MXACTMEMBER_BUFFERS,
+
+		/* async.c needs one per Async buffer */
+		NUM_ASYNC_BUFFERS,
+
+		/* predicate.c needs one per old serializable xid buffer */
+		NUM_OLDSERXID_BUFFERS,
+
+		/* slot.c needs one for each slot */
+		max_replication_slots,
+
+		/*
+		 * Add any requested by loadable modules; for backwards-compatibility
+		 * reasons, allocate at least NUM_USER_DEFINED_LWLOCKS of them even if
+		 * there are no explicit requests.
+		 */
+		Max(lock_addin_request, NUM_USER_DEFINED_LWLOCKS)
+	};
+	int	idx = init_main_lwlock_groups();
 
 	/*
 	 * Possibly this logic should be spread out among the affected modules,
@@ -333,44 +403,18 @@ NumLWLocks(void)
 	 * the knowledge here.
 	 */
 
+
 	/* Predefined LWLocks */
 	numLocks = NUM_FIXED_LWLOCKS;
+	for (i=0; i < NUM_DYN_LWLOCK_GROUPS; ++i)
+	{
+		numLocks += sizes[i];
+		idx++;
+		main_lwlock_groups[idx*2] = numLocks;
+		main_lwlock_groups[idx*2+1] = NUM_INDIVIDUAL_LWLOCKS + idx;
+	}
 
-	/* bufmgr.c needs two for each shared buffer */
-	numLocks += 2 * NBuffers;
-
-	/* proc.c needs one for each backend or auxiliary process */
-	numLocks += MaxBackends + NUM_AUXILIARY_PROCS;
-
-	/* clog.c needs one per CLOG buffer */
-	numLocks += CLOGShmemBuffers();
-
-	/* commit_ts.c needs one per CommitTs buffer */
-	numLocks += CommitTsShmemBuffers();
-
-	/* subtrans.c needs one per SubTrans buffer */
-	numLocks += NUM_SUBTRANS_BUFFERS;
-
-	/* multixact.c needs two SLRU areas */
-	numLocks += NUM_MXACTOFFSET_BUFFERS + NUM_MXACTMEMBER_BUFFERS;
-
-	/* async.c needs one per Async buffer */
-	numLocks += NUM_ASYNC_BUFFERS;
-
-	/* predicate.c needs one per old serializable xid buffer */
-	numLocks += NUM_OLDSERXID_BUFFERS;
-
-	/* slot.c needs one for each slot */
-	numLocks += max_replication_slots;
-
-	/*
-	 * Add any requested by loadable modules; for backwards-compatibility
-	 * reasons, allocate at least NUM_USER_DEFINED_LWLOCKS of them even if
-	 * there are no explicit requests.
-	 */
 	lock_addin_request_allowed = false;
-	numLocks += Max(lock_addin_request, NUM_USER_DEFINED_LWLOCKS);
-
 	return numLocks;
 }
 
@@ -568,6 +612,7 @@ LWLockInitialize(LWLock *lock, int tranche_id)
 	pg_atomic_init_u32(&lock->nwaiters, 0);
 #endif
 	lock->tranche = tranche_id;
+	lock->group = -1;
 	dlist_init(&lock->waiters);
 }
 
@@ -1036,6 +1081,7 @@ LWLockAcquireCommon(LWLock *lock, LWLockMode mode, uint64 *valptr, uint64 val)
 #endif
 
 		TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), T_ID(lock), mode);
+		WAIT_LWLOCK_START(lock, mode);
 
 		for (;;)
 		{
@@ -1057,6 +1103,7 @@ LWLockAcquireCommon(LWLock *lock, LWLockMode mode, uint64 *valptr, uint64 val)
 		}
 #endif
 
+		WAIT_STOP();
 		TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), T_ID(lock), mode);
 
 		LOG_LWDEBUG("LWLockAcquire", lock, "awakened");
@@ -1198,6 +1245,7 @@ LWLockAcquireOrWait(LWLock *lock, LWLockMode mode)
 			lwstats->block_count++;
 #endif
 			TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), T_ID(lock), mode);
+			WAIT_LWLOCK_START(lock, mode);
 
 			for (;;)
 			{
@@ -1215,6 +1263,7 @@ LWLockAcquireOrWait(LWLock *lock, LWLockMode mode)
 				Assert(nwaiters < MAX_BACKENDS);
 			}
 #endif
+			WAIT_STOP();
 			TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), T_ID(lock), mode);
 
 			LOG_LWDEBUG("LWLockAcquireOrWait", lock, "awakened");
@@ -1400,6 +1449,7 @@ LWLockWaitForVar(LWLock *lock, uint64 *valptr, uint64 oldval, uint64 *newval)
 
 		TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), T_ID(lock),
 										   LW_EXCLUSIVE);
+		WAIT_LWLOCK_START(lock, LW_EXCLUSIVE);
 
 		for (;;)
 		{
@@ -1418,6 +1468,7 @@ LWLockWaitForVar(LWLock *lock, uint64 *valptr, uint64 oldval, uint64 *newval)
 		}
 #endif
 
+		WAIT_STOP();
 		TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), T_ID(lock),
 										  LW_EXCLUSIVE);
 

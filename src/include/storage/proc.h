@@ -19,6 +19,7 @@
 #include "storage/latch.h"
 #include "storage/lock.h"
 #include "storage/pg_sema.h"
+#include "portability/instr_time.h"
 
 /*
  * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
@@ -32,6 +33,34 @@
  * have to look at pg_subtrans.
  */
 #define PGPROC_MAX_CACHED_SUBXIDS 64	/* XXX guessed-at value */
+
+#define WAIT_PARAMS_COUNT 	5
+#define WAIT_TRACE_FN_LEN	(4096 + 1)
+
+typedef struct ProcWait
+{
+	int classId, eventId;
+	int params[WAIT_PARAMS_COUNT];
+	instr_time startTime;
+} ProcWait;
+
+typedef struct ProcWaits
+{
+	/* Double buffering */
+	volatile int readIdx;
+	ProcWait waitsBuf[2];
+	int writeIdx;
+
+	int        nested;	  /* for detecting nested waits */
+	void       *smWaitCells; /* link to cells in shared memory */
+	void       *waitCells;
+	instr_time flushTime;
+
+	/* Trace support */
+	volatile bool traceOn;
+	char          traceFn[WAIT_TRACE_FN_LEN];
+	FILE          *traceFd;
+} ProcWaits;
 
 struct XidCache
 {
@@ -143,6 +172,7 @@ struct PGPROC
 	bool		fpVXIDLock;		/* are we holding a fast-path VXID lock? */
 	LocalTransactionId fpLocalTransactionId;	/* lxid for fast-path VXID
 												 * lock */
+	ProcWaits 	waits;
 };
 
 /* NOTE: "typedef struct PGPROC PGPROC" appears in storage/lock.h. */

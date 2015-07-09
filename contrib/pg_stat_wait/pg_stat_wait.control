@@ -1,0 +1,5 @@
+# pg_stat_wait extension
+comment = 'track execution statistics of waits'
+default_version = '1.0'
+module_pathname = '$libdir/pg_stat_wait'
+relocatable = true

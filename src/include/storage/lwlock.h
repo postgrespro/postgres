@@ -49,6 +49,7 @@ typedef struct LWLock
 {
 	slock_t		mutex;			/* Protects LWLock and queue of PGPROCs */
 	uint16		tranche;		/* tranche ID */
+	char		group;			/* for monitoring */
 
 	pg_atomic_uint32 state;		/* state of exlusive/nonexclusive lockers */
 #ifdef LOCK_DEBUG
@@ -163,6 +164,21 @@ extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 	(LOCK_MANAGER_LWLOCK_OFFSET + NUM_LOCK_PARTITIONS)
 #define NUM_FIXED_LWLOCKS \
 	(PREDICATELOCK_MANAGER_LWLOCK_OFFSET + NUM_PREDICATELOCK_PARTITIONS)
+
+/* LWLocks grouped by type, these groups are used as LWLock id in
+ * waits monitoring. Each group has name in wait.c. In case of new
+ * lwlocks they must be added in WAIT_LWLOCK_NAMES between main tranche
+ * and other tranche lwlocks
+*/
+
+/* Number of groups with dynamic sizes in main tranche */
+#define NUM_DYN_LWLOCK_GROUPS 10
+
+/* Number of groups that are not individual. Includes lwlock groups
+ * defined above by offset and with dynamic size
+ */
+#define NUM_ADD_LWLOCK_GROUPS (3 + NUM_DYN_LWLOCK_GROUPS)
+#define NUM_LWLOCK_GROUPS (NUM_INDIVIDUAL_LWLOCKS + NUM_ADD_LWLOCK_GROUPS)
 
 typedef enum LWLockMode
 {

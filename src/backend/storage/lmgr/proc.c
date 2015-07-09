@@ -49,6 +49,7 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
+#include "storage/wait.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 
@@ -380,6 +381,8 @@ InitProcess(void)
 #endif
 	MyProc->recoveryConflictPending = false;
 
+	WaitsInitProcessFields(MyProc);
+
 	/* Initialize fields for sync rep */
 	MyProc->waitLSN = 0;
 	MyProc->syncRepState = SYNC_REP_NOT_WAITING;
@@ -526,6 +529,9 @@ InitAuxiliaryProcess(void)
 	MyProc->lwWaitMode = 0;
 	MyProc->waitLock = NULL;
 	MyProc->waitProcLock = NULL;
+
+	WaitsInitProcessFields(MyProc);
+
 #ifdef USE_ASSERT_CHECKING
 	{
 		int			i;

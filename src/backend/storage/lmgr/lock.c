@@ -43,6 +43,7 @@
 #include "storage/sinvaladt.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
+#include "storage/wait.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/resowner_private.h"
@@ -979,7 +980,15 @@ LockAcquireExtended(const LOCKTAG *locktag,
 										 locktag->locktag_type,
 										 lockmode);
 
+		WAIT_START(WAIT_LOCK, locktag->locktag_type, lockmode,
+				locktag->locktag_field1,
+				locktag->locktag_field2,
+				locktag->locktag_field3,
+				locktag->locktag_field4);
+
 		WaitOnLock(locallock, owner);
+
+		WAIT_STOP();
 
 		TRACE_POSTGRESQL_LOCK_WAIT_DONE(locktag->locktag_field1,
 										locktag->locktag_field2,

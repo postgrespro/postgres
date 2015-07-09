@@ -63,6 +63,7 @@
 #include "storage/reinit.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
+#include "storage/wait.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -4661,8 +4662,10 @@ XLOGShmemInit(void)
 	LWLockRegisterTranche(XLogCtl->Insert.WALInsertLockTrancheId, &XLogCtl->Insert.WALInsertLockTranche);
 	for (i = 0; i < NUM_XLOGINSERT_LOCKS; i++)
 	{
-		LWLockInitialize(&WALInsertLocks[i].l.lock,
+		LWLock *lock = &WALInsertLocks[i].l.lock;
+		LWLockInitialize(lock,
 						 XLogCtl->Insert.WALInsertLockTrancheId);
+		lock->group = WAIT_LWLOCK_WAL_INSERT;
 		WALInsertLocks[i].l.insertingAt = InvalidXLogRecPtr;
 	}
 

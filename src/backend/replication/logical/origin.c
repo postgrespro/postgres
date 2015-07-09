@@ -89,6 +89,7 @@
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/copydir.h"
+#include "storage/wait.h"
 
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -142,7 +143,7 @@ typedef struct ReplicationStateOnDisk
 
 typedef struct ReplicationStateCtl
 {
-	int			tranche_id;
+	int	tranche_id;
 	LWLockTranche tranche;
 	ReplicationState states[FLEXIBLE_ARRAY_MEMBER];
 } ReplicationStateCtl;
@@ -479,8 +480,11 @@ ReplicationOriginShmemInit(void)
 		MemSet(replication_states, 0, ReplicationOriginShmemSize());
 
 		for (i = 0; i < max_replication_slots; i++)
-			LWLockInitialize(&replication_states[i].lock,
-							 replication_states_ctl->tranche_id);
+		{
+			LWLock *lock = &replication_states[i].lock;
+			LWLockInitialize(lock, replication_states_ctl->tranche_id);
+			lock->group = WAIT_LWLOCK_REPLICATIONORIGIN;
+		}
 	}
 
 	LWLockRegisterTranche(replication_states_ctl->tranche_id,

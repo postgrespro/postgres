@@ -34,6 +34,7 @@
 #include "storage/bufmgr.h"
 #include "storage/relfilenode.h"
 #include "storage/smgr.h"
+#include "storage/wait.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "pg_trace.h"
@@ -680,6 +681,14 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 										reln->smgr_rnode.node.relNode,
 										reln->smgr_rnode.backend);
 
+	WAIT_START(WAIT_IO,
+			WAIT_IO_READ,
+			reln->smgr_rnode.node.spcNode,
+			reln->smgr_rnode.node.dbNode,
+			reln->smgr_rnode.node.relNode,
+			forknum,
+			blocknum);
+
 	v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
 
 	seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
@@ -694,6 +703,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	nbytes = FileRead(v->mdfd_vfd, buffer, BLCKSZ);
 
+	WAIT_STOP();
 	TRACE_POSTGRESQL_SMGR_MD_READ_DONE(forknum, blocknum,
 									   reln->smgr_rnode.node.spcNode,
 									   reln->smgr_rnode.node.dbNode,
@@ -754,6 +764,12 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 										 reln->smgr_rnode.node.dbNode,
 										 reln->smgr_rnode.node.relNode,
 										 reln->smgr_rnode.backend);
+	WAIT_START(WAIT_IO,
+			WAIT_IO_WRITE,
+			reln->smgr_rnode.node.spcNode,
+			reln->smgr_rnode.node.dbNode,
+			reln->smgr_rnode.node.relNode,
+			forknum, blocknum);
 
 	v = _mdfd_getseg(reln, forknum, blocknum, skipFsync, EXTENSION_FAIL);
 
@@ -769,6 +785,7 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	nbytes = FileWrite(v->mdfd_vfd, buffer, BLCKSZ);
 
+	WAIT_STOP();
 	TRACE_POSTGRESQL_SMGR_MD_WRITE_DONE(forknum, blocknum,
 										reln->smgr_rnode.node.spcNode,
 										reln->smgr_rnode.node.dbNode,
