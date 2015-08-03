@@ -18,8 +18,9 @@
 #include "storage/buf_internals.h"
 
 
-BufferDescPadded *BufferDescriptors;
-char	   *BufferBlocks;
+BufferDescPadded  *BufferDescriptors;
+char              *BufferBlocks;
+LWLockPadded      *BufferLWLockArray;
 
 
 /*
@@ -64,8 +65,9 @@ char	   *BufferBlocks;
 void
 InitBufferPool(void)
 {
-	bool		foundBufs,
-				foundDescs;
+	bool          foundBufs;
+	bool          foundDescs;
+	LWLockPadded *lwlocks_array;
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *) CACHELINEALIGN(
@@ -76,6 +78,10 @@ InitBufferPool(void)
 	BufferBlocks = (char *)
 		ShmemInitStruct("Buffer Blocks",
 						NBuffers * (Size) BLCKSZ, &foundBufs);
+
+	/* Init LWLocks for buffer headers */
+	LWLockCreateTranche("BufferMgrLocks", 2 * NBuffers,
+		&lwlocks_array);
 
 	if (foundDescs || foundBufs)
 	{
@@ -110,13 +116,17 @@ InitBufferPool(void)
 			 */
 			buf->freeNext = i + 1;
 
-			buf->io_in_progress_lock = LWLockAssign();
-			buf->content_lock = LWLockAssign();
+			buf->io_in_progress_lock = &lwlocks_array[i * 2].lock;
+			buf->content_lock = &lwlocks_array[i * 2 + 1].lock;
 		}
 
 		/* Correct last entry of linked list */
 		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 	}
+
+	/* Init bufmgr LWLocks */
+	LWLockCreateTranche("BufferLWLocks", NUM_BUFFER_PARTITIONS,
+		&BufferLWLockArray);
 
 	/* Init other shared buffer-management stuff */
 	StrategyInitialize(!foundDescs);
@@ -143,6 +153,10 @@ BufferShmemSize(void)
 
 	/* size of stuff controlled by freelist.c */
 	size = add_size(size, StrategyShmemSize());
+
+	/* size of LWLock structures required for buffers */
+	size = add_size(size, LWLockTrancheShmemSize(NUM_BUFFER_PARTITIONS));
+	size = add_size(size, LWLockTrancheShmemSize(2 * NBuffers));
 
 	return size;
 }

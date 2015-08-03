@@ -54,6 +54,7 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
+#include "storage/lwlock.h"
 #include "storage/pg_shmem.h"
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
@@ -98,7 +99,6 @@
 #define PGSTAT_DB_HASH_SIZE		16
 #define PGSTAT_TAB_HASH_SIZE	512
 #define PGSTAT_FUNCTION_HASH_SIZE	512
-
 
 /* ----------
  * GUC parameters
@@ -242,6 +242,16 @@ static volatile bool got_SIGHUP = false;
  */
 static instr_time total_func_time;
 
+/* Names of WAIT_CLASSES */
+static const char *WAIT_CLASS_NAMES[] =
+{
+	"",
+	"LWLocks",
+	"Locks",
+	"Storage",
+	"Latch",
+	"Network"
+};
 
 /* ----------
  * Local function forward declarations
@@ -2929,6 +2939,89 @@ pgstat_report_waiting(bool waiting)
 	beentry->st_waiting = waiting;
 }
 
+/*
+ * pgstat_get_wait_class_name() -
+ *
+ * Return wait class name for given class
+ */
+
+const char *
+pgstat_get_wait_class_name(uint8 classId)
+{
+	return WAIT_CLASS_NAMES[classId];
+}
+
+/*
+ * pgstat_get_wait_event_name() -
+ *
+ * Return wait event name for the given class and event
+ */
+const char *
+pgstat_get_wait_event_name(uint8 classId, uint8 eventId)
+{
+	static const char *eventsIO[] = {"READ", "WRITE"};
+	static const char *empty = "";
+
+	switch (classId)
+	{
+		case WAIT_LOCK: return LOCK_NAMES[eventId];
+		case WAIT_LWLOCK: return LWLOCK_TRANCHE_NAME(eventId);
+		case WAIT_IO: /* fallthrough */;
+		case WAIT_NETWORK: return eventsIO[eventId];
+		case WAIT_LATCH: return WAIT_CLASS_NAMES[WAIT_LATCH];
+	};
+	return empty;
+}
+
+/* ----------
+ * pgstat_report_wait_start() -
+ *
+ *	Called from backends to report wait event type information.
+ *
+ * NB: this *must* be able to survive being called before MyBEEntry has been
+ * initialized.
+ * ----------
+ */
+void
+pgstat_report_wait_start(uint8 classId, uint8 eventId)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+
+	if (!pgstat_track_activities || !beentry)
+		return;
+
+	/* prevent nested waits */
+	if (beentry->st_wait_nested++ > 0)
+		return;
+
+	/*
+	 * Since this is a uint32 field in a struct that only this process
+	 * may modify, there seems no need to bother with the st_changecount
+	 * protocol.  The update must appear atomic in any case.
+	 */
+	beentry->st_wait_data = ((uint32)classId << 8) + eventId;
+}
+
+/* ----------
+ * pgstat_report_wait_end() -
+ *
+ *  Called from backends, indicates that wait was ended
+ * ---------
+ */
+void
+pgstat_report_wait_end()
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+
+	if (!pgstat_track_activities || !beentry)
+		return;
+
+	/* prevent nested waits */
+	if ((--beentry->st_wait_nested) > 0)
+		return;
+
+	beentry->st_wait_data = 0;
+}
 
 /* ----------
  * pgstat_read_current_status() -

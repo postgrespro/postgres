@@ -37,6 +37,7 @@
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "pg_trace.h"
+#include "pgstat.h"
 
 
 /* intervals for calling AbsorbFsyncRequests in mdsync and mdpostckpt */
@@ -674,6 +675,8 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	int			nbytes;
 	MdfdVec    *v;
 
+	pgstat_report_wait_start(WAIT_IO, WAIT_IO_READ);
+
 	TRACE_POSTGRESQL_SMGR_MD_READ_START(forknum, blocknum,
 										reln->smgr_rnode.node.spcNode,
 										reln->smgr_rnode.node.dbNode,
@@ -701,6 +704,8 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 									   reln->smgr_rnode.backend,
 									   nbytes,
 									   BLCKSZ);
+
+	pgstat_report_wait_end();
 
 	if (nbytes != BLCKSZ)
 	{
@@ -749,6 +754,8 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	Assert(blocknum < mdnblocks(reln, forknum));
 #endif
 
+	pgstat_report_wait_start(WAIT_IO, WAIT_IO_WRITE);
+
 	TRACE_POSTGRESQL_SMGR_MD_WRITE_START(forknum, blocknum,
 										 reln->smgr_rnode.node.spcNode,
 										 reln->smgr_rnode.node.dbNode,
@@ -776,6 +783,8 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 										reln->smgr_rnode.backend,
 										nbytes,
 										BLCKSZ);
+
+	pgstat_report_wait_end();
 
 	if (nbytes != BLCKSZ)
 	{

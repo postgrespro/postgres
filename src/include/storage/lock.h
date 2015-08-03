@@ -39,6 +39,9 @@ extern int	Trace_lock_table;
 extern bool Debug_deadlocks;
 #endif   /* LOCK_DEBUG */
 
+/* Contains names of all heavyweight locks */
+extern PGDLLIMPORT const char *LOCK_NAMES[];
+
 
 /*
  * Top-level transactions are identified by VirtualTransactionIDs comprising
@@ -490,13 +493,19 @@ typedef enum
  * hash code with LockTagHashCode(), then apply one of these macros.
  * NB: NUM_LOCK_PARTITIONS must be a power of 2!
  */
+
+/* Number of partitions the shared lock tables are divided into */
+#define LOG2_NUM_LOCK_PARTITIONS  4
+#define NUM_LOCK_PARTITIONS  (1 << LOG2_NUM_LOCK_PARTITIONS)
+
+extern PGDLLIMPORT LWLockPadded *LockMgrLWLockArray;
+
 #define LockHashPartition(hashcode) \
 	((hashcode) % NUM_LOCK_PARTITIONS)
 #define LockHashPartitionLock(hashcode) \
-	(&MainLWLockArray[LOCK_MANAGER_LWLOCK_OFFSET + \
-		LockHashPartition(hashcode)].lock)
+	(&LockMgrLWLockArray[LockHashPartition(hashcode)].lock)
 #define LockHashPartitionLockByIndex(i) \
-	(&MainLWLockArray[LOCK_MANAGER_LWLOCK_OFFSET + (i)].lock)
+	(&LockMgrLWLockArray[i].lock)
 
 /*
  * function prototypes

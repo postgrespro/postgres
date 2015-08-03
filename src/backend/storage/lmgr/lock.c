@@ -48,12 +48,29 @@
 #include "utils/resowner_private.h"
 
 
+/* LWLocks tranche and array */
+LWLockPadded		    *LockMgrLWLockArray;
+
 /* This configuration variable is used to set the lock table size */
 int			max_locks_per_xact; /* set by guc.c */
 
 #define NLOCKENTS() \
 	mul_size(max_locks_per_xact, add_size(MaxBackends, max_prepared_xacts))
 
+/* Lock names. For monitoring purposes */
+const char *LOCK_NAMES[] =
+{
+	"Relation",
+	"RelationExtend",
+	"Page",
+	"Tuple",
+	"Transaction",
+	"VirtualTransaction",
+	"SpeculativeToken",
+	"Object",
+	"Userlock",
+	"Advisory"
+};
 
 /*
  * Data structures defining the semantics of the standard lock methods.
@@ -446,6 +463,10 @@ InitLocks(void)
 									  16,
 									  &info,
 									  HASH_ELEM | HASH_BLOBS);
+
+	/* Init LWLocks tranche and array */
+	LWLockCreateTranche("LockMgrLWLocks", NUM_LOCK_PARTITIONS,
+		&LockMgrLWLockArray);
 }
 
 
@@ -1591,6 +1612,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 		new_status[len] = '\0'; /* truncate off " waiting" */
 	}
 	pgstat_report_waiting(true);
+	pgstat_report_wait_start(WAIT_LOCK, locallock->tag.lock.locktag_type);
 
 	awaitedLock = locallock;
 	awaitedOwner = owner;
@@ -1639,6 +1661,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 
 		/* Report change to non-waiting status */
 		pgstat_report_waiting(false);
+		pgstat_report_wait_end();
 		if (update_process_title)
 		{
 			set_ps_display(new_status, false);
@@ -1654,6 +1677,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 
 	/* Report change to non-waiting status */
 	pgstat_report_waiting(false);
+	pgstat_report_wait_end();
 	if (update_process_title)
 	{
 		set_ps_display(new_status, false);
@@ -3281,6 +3305,9 @@ LockShmemSize(void)
 	 * Since NLOCKENTS is only an estimate, add 10% safety margin.
 	 */
 	size = add_size(size, size / 10);
+
+	/* Lock Manager LWLock structures */
+	size = add_size(size, LWLockTrancheShmemSize(NUM_LOCK_PARTITIONS));
 
 	return size;
 }

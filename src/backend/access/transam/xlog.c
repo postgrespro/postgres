@@ -4679,11 +4679,12 @@ XLOGShmemInit(void)
 
 	XLogCtl->Insert.WALInsertLockTrancheId = LWLockNewTrancheId();
 
-	XLogCtl->Insert.WALInsertLockTranche.name = "WALInsertLocks";
+	strcpy(XLogCtl->Insert.WALInsertLockTranche.name, "WALInsertLocks");
 	XLogCtl->Insert.WALInsertLockTranche.array_base = WALInsertLocks;
 	XLogCtl->Insert.WALInsertLockTranche.array_stride = sizeof(WALInsertLockPadded);
 
-	LWLockRegisterTranche(XLogCtl->Insert.WALInsertLockTrancheId, &XLogCtl->Insert.WALInsertLockTranche);
+	LWLockRegisterTranche(XLogCtl->Insert.WALInsertLockTrancheId,
+		&XLogCtl->Insert.WALInsertLockTranche);
 	for (i = 0; i < NUM_XLOGINSERT_LOCKS; i++)
 	{
 		LWLockInitialize(&WALInsertLocks[i].l.lock,

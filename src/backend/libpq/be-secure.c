@@ -36,6 +36,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
 #include "storage/proc.h"
+#include "pgstat.h"
 
 
 char	   *ssl_cert_file;
@@ -122,6 +123,8 @@ secure_read(Port *port, void *ptr, size_t len)
 	ssize_t		n;
 	int			waitfor;
 
+	pgstat_report_wait_start(WAIT_NETWORK, WAIT_NETWORK_READ);
+
 retry:
 #ifdef USE_SSL
 	waitfor = 0;
@@ -168,6 +171,7 @@ retry:
 	 * interrupts from being processed.
 	 */
 	ProcessClientReadInterrupt(false);
+	pgstat_report_wait_end();
 
 	return n;
 }
@@ -201,6 +205,8 @@ secure_write(Port *port, void *ptr, size_t len)
 {
 	ssize_t		n;
 	int			waitfor;
+
+	pgstat_report_wait_start(WAIT_NETWORK, WAIT_NETWORK_WRITE);
 
 retry:
 	waitfor = 0;
@@ -247,6 +253,7 @@ retry:
 	 * interrupts from being processed.
 	 */
 	ProcessClientWriteInterrupt(false);
+	pgstat_report_wait_end();
 
 	return n;
 }

@@ -530,7 +530,7 @@ pg_stat_get_backend_idset(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_activity(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_ACTIVITY_COLS	22
+#define PG_STAT_GET_ACTIVITY_COLS	23
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 	int			pid = PG_ARGISNULL(0) ? -1 : PG_GETARG_INT32(0);
@@ -617,28 +617,28 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			nulls[3] = true;
 
 		if (TransactionIdIsValid(local_beentry->backend_xid))
-			values[14] = TransactionIdGetDatum(local_beentry->backend_xid);
-		else
-			nulls[14] = true;
-
-		if (TransactionIdIsValid(local_beentry->backend_xmin))
-			values[15] = TransactionIdGetDatum(local_beentry->backend_xmin);
+			values[15] = TransactionIdGetDatum(local_beentry->backend_xid);
 		else
 			nulls[15] = true;
 
+		if (TransactionIdIsValid(local_beentry->backend_xmin))
+			values[16] = TransactionIdGetDatum(local_beentry->backend_xmin);
+		else
+			nulls[16] = true;
+
 		if (beentry->st_ssl)
 		{
-			values[16] = BoolGetDatum(true);	/* ssl */
-			values[17] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
-			values[18] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
-			values[19] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
-			values[20] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
-			values[21] = CStringGetTextDatum(beentry->st_sslstatus->ssl_clientdn);
+			values[17] = BoolGetDatum(true);	/* ssl */
+			values[18] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
+			values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
+			values[20] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
+			values[21] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
+			values[22] = CStringGetTextDatum(beentry->st_sslstatus->ssl_clientdn);
 		}
 		else
 		{
-			values[16] = BoolGetDatum(false);	/* ssl */
-			nulls[17] = nulls[18] = nulls[19] = nulls[20] = nulls[21] = true;
+			values[17] = BoolGetDatum(false);	/* ssl */
+			nulls[18] = nulls[19] = nulls[20] = nulls[21] = nulls[22] = true;
 		}
 
 		/* Values only available to role member */
@@ -674,34 +674,58 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			values[5] = CStringGetTextDatum(beentry->st_activity);
 			values[6] = BoolGetDatum(beentry->st_waiting);
 
-			if (beentry->st_xact_start_timestamp != 0)
-				values[7] = TimestampTzGetDatum(beentry->st_xact_start_timestamp);
+			if (beentry->st_wait_data > 0)
+			{
+				/*
+				 * Reassigning of value is important, because st_wait_data
+				 * can change if we read class and event separately
+				 */
+
+				uint16 wait_data = beentry->st_wait_data;
+				uint8 classId = (uint8)(wait_data >> 8);
+				uint8 eventId = (uint8)wait_data;
+				const char *class_name = pgstat_get_wait_class_name(classId);
+				const char *event_name = pgstat_get_wait_event_name(classId,
+					eventId);
+
+				int size = strlen(class_name) + strlen(event_name) + 3;
+				char *wait_name = (char *)palloc(size);
+				snprintf(wait_name, size, "%s: %s", class_name, event_name);
+
+				values[7] = CStringGetTextDatum(wait_name);
+				pfree(wait_name);
+			}
 			else
 				nulls[7] = true;
 
-			if (beentry->st_activity_start_timestamp != 0)
-				values[8] = TimestampTzGetDatum(beentry->st_activity_start_timestamp);
+			if (beentry->st_xact_start_timestamp != 0)
+				values[8] = TimestampTzGetDatum(beentry->st_xact_start_timestamp);
 			else
 				nulls[8] = true;
 
-			if (beentry->st_proc_start_timestamp != 0)
-				values[9] = TimestampTzGetDatum(beentry->st_proc_start_timestamp);
+			if (beentry->st_activity_start_timestamp != 0)
+				values[9] = TimestampTzGetDatum(beentry->st_activity_start_timestamp);
 			else
 				nulls[9] = true;
 
-			if (beentry->st_state_start_timestamp != 0)
-				values[10] = TimestampTzGetDatum(beentry->st_state_start_timestamp);
+			if (beentry->st_proc_start_timestamp != 0)
+				values[10] = TimestampTzGetDatum(beentry->st_proc_start_timestamp);
 			else
 				nulls[10] = true;
+
+			if (beentry->st_state_start_timestamp != 0)
+				values[11] = TimestampTzGetDatum(beentry->st_state_start_timestamp);
+			else
+				nulls[11] = true;
 
 			/* A zeroed client addr means we don't know */
 			memset(&zero_clientaddr, 0, sizeof(zero_clientaddr));
 			if (memcmp(&(beentry->st_clientaddr), &zero_clientaddr,
 					   sizeof(zero_clientaddr)) == 0)
 			{
-				nulls[11] = true;
 				nulls[12] = true;
 				nulls[13] = true;
+				nulls[14] = true;
 			}
 			else
 			{
@@ -725,20 +749,20 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					if (ret == 0)
 					{
 						clean_ipv6_addr(beentry->st_clientaddr.addr.ss_family, remote_host);
-						values[11] = DirectFunctionCall1(inet_in,
+						values[12] = DirectFunctionCall1(inet_in,
 											   CStringGetDatum(remote_host));
 						if (beentry->st_clienthostname &&
 							beentry->st_clienthostname[0])
-							values[12] = CStringGetTextDatum(beentry->st_clienthostname);
+							values[13] = CStringGetTextDatum(beentry->st_clienthostname);
 						else
-							nulls[12] = true;
-						values[13] = Int32GetDatum(atoi(remote_port));
+							nulls[13] = true;
+						values[14] = Int32GetDatum(atoi(remote_port));
 					}
 					else
 					{
-						nulls[11] = true;
 						nulls[12] = true;
 						nulls[13] = true;
+						nulls[14] = true;
 					}
 				}
 				else if (beentry->st_clientaddr.addr.ss_family == AF_UNIX)
@@ -749,16 +773,16 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					 * connections we have no permissions to view, or with
 					 * errors.
 					 */
-					nulls[11] = true;
 					nulls[12] = true;
-					values[13] = DatumGetInt32(-1);
+					nulls[13] = true;
+					values[14] = DatumGetInt32(-1);
 				}
 				else
 				{
 					/* Unknown address type, should never happen */
-					nulls[11] = true;
 					nulls[12] = true;
 					nulls[13] = true;
+					nulls[14] = true;
 				}
 			}
 		}
@@ -775,6 +799,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			nulls[11] = true;
 			nulls[12] = true;
 			nulls[13] = true;
+			nulls[14] = true;
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);

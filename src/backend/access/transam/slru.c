@@ -156,15 +156,20 @@ SimpleLruShmemSize(int nslots, int nlsns)
 	if (nlsns > 0)
 		sz += MAXALIGN(nslots * nlsns * sizeof(XLogRecPtr));	/* group_lsn[] */
 
+	/* size of lwlocks */
+	sz = add_size(sz, LWLockTrancheShmemSize(nslots));
+
 	return BUFFERALIGN(sz) + BLCKSZ * nslots;
 }
 
 void
 SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
-			  LWLock *ctllock, const char *subdir)
+			  LWLock *ctllock, const char *subdir,
+			  const char *lwlocks_tranche)
 {
-	SlruShared	shared;
-	bool		found;
+	SlruShared    shared;
+	bool          found;
+	LWLockPadded *lwlock_array;
 
 	shared = (SlruShared) ShmemInitStruct(name,
 										  SimpleLruShmemSize(nslots, nlsns),
@@ -212,13 +217,18 @@ SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
 		}
 
 		ptr += BUFFERALIGN(offset);
+
+		/* Create tranche and lwlocks required for slots */
+		LWLockCreateTranche(lwlocks_tranche, nslots, &lwlock_array);
+
+		/* Initialize slots */
 		for (slotno = 0; slotno < nslots; slotno++)
 		{
 			shared->page_buffer[slotno] = ptr;
 			shared->page_status[slotno] = SLRU_PAGE_EMPTY;
 			shared->page_dirty[slotno] = false;
 			shared->page_lru_count[slotno] = 0;
-			shared->buffer_locks[slotno] = LWLockAssign();
+			shared->buffer_locks[slotno] = &lwlock_array[slotno].lock;
 			ptr += BLCKSZ;
 		}
 	}

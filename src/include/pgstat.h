@@ -67,6 +67,33 @@ typedef enum StatMsgType
 } StatMsgType;
 
 /* ----------
+ * Wait definitions
+ * ----------
+ */
+
+typedef enum WAIT_CLASSES
+{
+	WAIT_UNDEFINED,
+	WAIT_LWLOCK,
+	WAIT_LOCK,
+	WAIT_IO,
+	WAIT_LATCH,
+	WAIT_NETWORK
+} WAIT_CLASSES;
+
+typedef enum WAIT_EVENTS_IO
+{
+	WAIT_IO_READ,
+	WAIT_IO_WRITE
+} WAIT_EVENTS_IO;
+
+typedef enum WAIT_EVENTS_NETWORK
+{
+	WAIT_NETWORK_READ,
+	WAIT_NETWORK_WRITE
+} WAIT_EVENT_NETWORK;
+
+/* ----------
  * The data type used for counters.
  * ----------
  */
@@ -768,6 +795,14 @@ typedef struct PgBackendStatus
 	/* Is backend currently waiting on an lmgr lock? */
 	bool		st_waiting;
 
+	/* Contains class end event of wait. It's in one
+	 * variable because we need read it atomically
+	 */
+	volatile uint16 st_wait_data;
+
+	/* keep track of nested waits, and skip them */
+	int             st_wait_nested;
+
 	/* current state */
 	BackendState st_state;
 
@@ -932,6 +967,12 @@ extern void pgstat_report_tempfile(size_t filesize);
 extern void pgstat_report_appname(const char *appname);
 extern void pgstat_report_xact_timestamp(TimestampTz tstamp);
 extern void pgstat_report_waiting(bool waiting);
+
+extern void pgstat_report_wait_start(uint8 classId, uint8 eventId);
+extern void pgstat_report_wait_end(void);
+extern const char *pgstat_get_wait_class_name(uint8 classId);
+extern const char *pgstat_get_wait_event_name(uint8 classId, uint8 eventId);
+
 extern const char *pgstat_get_backend_current_activity(int pid, bool checkUser);
 extern const char *pgstat_get_crashed_backend_activity(int pid, char *buffer,
 									int buflen);

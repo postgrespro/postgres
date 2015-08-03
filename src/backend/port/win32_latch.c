@@ -177,6 +177,8 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 	/* Ensure that signals are serviced even if latch is already set */
 	pgwin32_dispatch_queued_signals();
 
+	pgstat_report_wait_start(WAIT_LATCH, 0);
+
 	do
 	{
 		/*
@@ -277,6 +279,8 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 			}
 		}
 	} while (result == 0);
+
+	pgstat_report_wait_end();
 
 	/* Clean up the event object we created for the socket */
 	if (sockevent != WSA_INVALID_EVENT)

@@ -118,6 +118,9 @@ ReplicationSlotsShmemSize(void)
 	size = add_size(size,
 					mul_size(max_replication_slots, sizeof(ReplicationSlot)));
 
+	/* size of lwlocks */
+	size = add_size(size, LWLockTrancheShmemSize(max_replication_slots));
+
 	return size;
 }
 
@@ -127,7 +130,8 @@ ReplicationSlotsShmemSize(void)
 void
 ReplicationSlotsShmemInit(void)
 {
-	bool		found;
+	bool         found;
+	LWLockPadded *lwlocks_array;
 
 	if (max_replication_slots == 0)
 		return;
@@ -143,13 +147,17 @@ ReplicationSlotsShmemInit(void)
 		/* First time through, so initialize */
 		MemSet(ReplicationSlotCtl, 0, ReplicationSlotsShmemSize());
 
+		/* Create lwlocks */
+		LWLockCreateTranche("ReplicationSlotLocks", max_replication_slots,
+			&lwlocks_array);
+
 		for (i = 0; i < max_replication_slots; i++)
 		{
 			ReplicationSlot *slot = &ReplicationSlotCtl->replication_slots[i];
 
 			/* everything else is zeroed by the memset above */
 			SpinLockInit(&slot->mutex);
-			slot->io_in_progress_lock = LWLockAssign();
+			slot->io_in_progress_lock = &lwlocks_array[i].lock;
 		}
 	}
 }

@@ -623,6 +623,7 @@ CREATE VIEW pg_stat_activity AS
             S.query_start,
             S.state_change,
             S.waiting,
+            S.wait_event,
             S.state,
             S.backend_xid,
             s.backend_xmin,

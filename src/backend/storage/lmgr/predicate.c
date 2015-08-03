@@ -239,13 +239,20 @@
  * apply one of these macros.
  * NB: NUM_PREDICATELOCK_PARTITIONS must be a power of 2!
  */
+
+/* Number of partitions the shared predicate lock tables are divided into */
+#define LOG2_NUM_PREDICATELOCK_PARTITIONS  4
+#define NUM_PREDICATELOCK_PARTITIONS  (1 << LOG2_NUM_PREDICATELOCK_PARTITIONS)
+
+/* LWLocks tranche and array */
+static LWLockPadded		*PredLWLockArray;
+
 #define PredicateLockHashPartition(hashcode) \
 	((hashcode) % NUM_PREDICATELOCK_PARTITIONS)
 #define PredicateLockHashPartitionLock(hashcode) \
-	(&MainLWLockArray[PREDICATELOCK_MANAGER_LWLOCK_OFFSET + \
-		PredicateLockHashPartition(hashcode)].lock)
+	(&PredLWLockArray[PredicateLockHashPartition(hashcode)].lock)
 #define PredicateLockHashPartitionLockByIndex(i) \
-	(&MainLWLockArray[PREDICATELOCK_MANAGER_LWLOCK_OFFSET + (i)].lock)
+	(&PredLWLockArray[i].lock)
 
 #define NPREDICATELOCKTARGETENTS() \
 	mul_size(max_predicate_locks_per_xact, add_size(MaxBackends, max_prepared_xacts))
@@ -394,6 +401,8 @@ static LWLock *ScratchPartitionLock;
  * grained locks into a single courser-grained lock.
  */
 static HTAB *LocalPredicateLockHash = NULL;
+
+
 
 /*
  * Keep a pointer to the currently-running serializable transaction (if any)
@@ -795,7 +804,8 @@ OldSerXidInit(void)
 	 */
 	OldSerXidSlruCtl->PagePrecedes = OldSerXidPagePrecedesLogically;
 	SimpleLruInit(OldSerXidSlruCtl, "OldSerXid SLRU Ctl",
-				  NUM_OLDSERXID_BUFFERS, 0, OldSerXidLock, "pg_serial");
+				  NUM_OLDSERXID_BUFFERS, 0, OldSerXidLock, "pg_serial",
+				  "OldSerXidBufferLocks");
 	/* Override default assumption that writes should be fsync'd */
 	OldSerXidSlruCtl->do_fsync = false;
 
@@ -1289,6 +1299,9 @@ InitPredicateLocks(void)
 	/* Pre-calculate the hash and partition lock of the scratch entry */
 	ScratchTargetTagHash = PredicateLockTargetTagHashCode(&ScratchTargetTag);
 	ScratchPartitionLock = PredicateLockHashPartitionLock(ScratchTargetTagHash);
+
+	LWLockCreateTranche("PredicateLWLocks", NUM_PREDICATELOCK_PARTITIONS,
+		&PredLWLockArray);
 }
 
 /*
@@ -1339,6 +1352,9 @@ PredicateLockShmemSize(void)
 	/* Shared memory structures for SLRU tracking of old committed xids. */
 	size = add_size(size, sizeof(OldSerXidControlData));
 	size = add_size(size, SimpleLruShmemSize(NUM_OLDSERXID_BUFFERS, 0));
+
+	/* LWLocks */
+	size = add_size(size, LWLockTrancheShmemSize(NUM_PREDICATELOCK_PARTITIONS));
 
 	return size;
 }

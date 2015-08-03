@@ -630,6 +630,11 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
      <entry>True if this backend is currently waiting on a lock</entry>
     </row>
     <row>
+     <entry><structfield>wait_event</></entry>
+     <entry><type>text</></entry>
+     <entry>Name of a current wait event in backend</entry>
+    </row>
+    <row>
      <entry><structfield>state</></entry>
      <entry><type>text</></entry>
      <entry>Current overall state of this backend.

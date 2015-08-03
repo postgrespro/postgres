@@ -33,12 +33,21 @@ struct PGPROC;
  * be an array of lwlocks, but rather some larger data structure that includes
  * one or more lwlocks per element.
  */
+
+#define NUM_LWLOCK_TRANCHES 64
+#define LWLOCK_MAX_TRANCHE_NAME 64
+
 typedef struct LWLockTranche
 {
-	const char *name;
+	char name[LWLOCK_MAX_TRANCHE_NAME];
 	void	   *array_base;
 	Size		array_stride;
 } LWLockTranche;
+
+extern PGDLLIMPORT LWLockTranche **LWLockTrancheArray;
+
+#define LWLOCK_TRANCHE_NAME(tranche_id) \
+	(LWLockTrancheArray[tranche_id]->name)
 
 /*
  * Code outside of lwlock.c should not manipulate the contents of this
@@ -85,6 +94,7 @@ typedef union LWLockPadded
 	LWLock		lock;
 	char		pad[LWLOCK_PADDED_SIZE];
 } LWLockPadded;
+
 extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 
 /*
@@ -92,7 +102,8 @@ extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
  * defining macros here makes it much easier to keep track of these.  If you
  * add a lock, add it to the end to avoid renumbering the existing locks;
  * if you remove a lock, consider leaving a gap in the numbering sequence for
- * the benefit of DTrace and other external debugging scripts.
+ * the benefit of DTrace and other external debugging scripts; names for
+ * individual locks keeped in corresponding array, don't forget add it
  */
 /* 0 is available; was formerly BufFreelistLock */
 #define ShmemIndexLock				(&MainLWLockArray[1].lock)
@@ -138,32 +149,6 @@ extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 
 #define NUM_INDIVIDUAL_LWLOCKS		41
 
-/*
- * It's a bit odd to declare NUM_BUFFER_PARTITIONS and NUM_LOCK_PARTITIONS
- * here, but we need them to figure out offsets within MainLWLockArray, and
- * having this file include lock.h or bufmgr.h would be backwards.
- */
-
-/* Number of partitions of the shared buffer mapping hashtable */
-#define NUM_BUFFER_PARTITIONS  128
-
-/* Number of partitions the shared lock tables are divided into */
-#define LOG2_NUM_LOCK_PARTITIONS  4
-#define NUM_LOCK_PARTITIONS  (1 << LOG2_NUM_LOCK_PARTITIONS)
-
-/* Number of partitions the shared predicate lock tables are divided into */
-#define LOG2_NUM_PREDICATELOCK_PARTITIONS  4
-#define NUM_PREDICATELOCK_PARTITIONS  (1 << LOG2_NUM_PREDICATELOCK_PARTITIONS)
-
-/* Offsets for various chunks of preallocated lwlocks. */
-#define BUFFER_MAPPING_LWLOCK_OFFSET	NUM_INDIVIDUAL_LWLOCKS
-#define LOCK_MANAGER_LWLOCK_OFFSET		\
-	(BUFFER_MAPPING_LWLOCK_OFFSET + NUM_BUFFER_PARTITIONS)
-#define PREDICATELOCK_MANAGER_LWLOCK_OFFSET \
-	(LOCK_MANAGER_LWLOCK_OFFSET + NUM_LOCK_PARTITIONS)
-#define NUM_FIXED_LWLOCKS \
-	(PREDICATELOCK_MANAGER_LWLOCK_OFFSET + NUM_PREDICATELOCK_PARTITIONS)
-
 typedef enum LWLockMode
 {
 	LW_EXCLUSIVE,
@@ -172,7 +157,6 @@ typedef enum LWLockMode
 								 * when waiting for lock to become free. Not
 								 * to be used as LWLockAcquire argument */
 } LWLockMode;
-
 
 #ifdef LOCK_DEBUG
 extern bool Trace_lwlocks;
@@ -218,6 +202,9 @@ extern LWLock *LWLockAssign(void);
 extern int	LWLockNewTrancheId(void);
 extern void LWLockRegisterTranche(int tranche_id, LWLockTranche *tranche);
 extern void LWLockInitialize(LWLock *lock, int tranche_id);
+extern void LWLockCreateTranche(const char *tranche_name, int locks_count,
+	LWLockPadded **array);
+extern Size LWLockTrancheShmemSize(int locks_count);
 
 /*
  * Prior to PostgreSQL 9.4, we used an enum type called LWLockId to refer
