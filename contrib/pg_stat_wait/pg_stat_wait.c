@@ -50,26 +50,12 @@ _PG_init(void)
 	DefineCustomBoolVariable("pg_stat_wait.history", "Collect waits history",
 			NULL, &WaitsHistoryOn, false, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
-	DefineCustomIntVariable("pg_stat_wait.history_size",
-			"Sets size of waits history.", NULL,
-			&historySize, 5000, 100, INT_MAX,
-			PGC_POSTMASTER, 0, NULL, NULL, NULL);
-
-	DefineCustomIntVariable("pg_stat_wait.history_period",
-			"Sets period of waits history sampling.", NULL,
-			&historyPeriod, 10, 1, INT_MAX,
-			PGC_POSTMASTER, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable("pg_stat_wait.history_skip_latch",
-			"Skip latch events in waits history", NULL,
-			&historySkipLatch, false, PGC_POSTMASTER, 0, NULL, NULL, NULL);
-
 	if (WaitsHistoryOn)
 	{
 		/*
 		 * Request additional shared resources.  (These are no-ops if we're not in
 		 * the postmaster process.)  We'll allocate or attach to the shared
-		 * resources in pgss_shmem_startup().
+		 * resources in pgsw_shmem_startup().
 		 */
 		RequestAddinShmemSpace(CollectorShmemSize());
 		RegisterWaitsCollector();

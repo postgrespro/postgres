@@ -12,44 +12,44 @@
 
 typedef struct
 {
-	uint32 backendPid;
-	bool   reset;
-	int    backendIdx;
-	int    classIdx;
-	int    eventIdx;
+	uint32	backendPid;
+	bool	reset;
+	int		backendIdx;
+	int		classIdx;
+	int		eventIdx;
 } WaitProfileContext;
 
 typedef struct
 {
-	int class_cnt;
-	int event_cnt;
+	int		class_cnt;
+	int		event_cnt;
 } WaitEventContext;
 
 typedef struct
 {
-	int     classId;
-	int     eventId;
-	int     params[WAIT_PARAMS_COUNT];
-	int     backendPid;
-	uint64  waitTime;
+	int		classId;
+	int		eventId;
+	int		params[WAIT_PARAMS_COUNT];
+	int		backendPid;
+	uint64	waitTime;
 
 	TimestampTz	ts;
 } HistoryItem;
 
 typedef struct
 {
-	int             idx;
-	HistoryItem     *state;
-	bool            done;
-	TimestampTz     ts;
+	int				idx;
+	HistoryItem	   *state;
+	bool			done;
+	TimestampTz		ts;
 } WaitCurrentContext;
 
 typedef struct
 {
-	bool         wraparound;
-	int          index;
-	int          count;
-	HistoryItem  *items;
+	bool			wraparound;
+	int				index;
+	int				count;
+	HistoryItem	   *items;
 } History;
 
 typedef enum
@@ -60,8 +60,11 @@ typedef enum
 
 typedef struct
 {
-	Latch       *latch;
-	SHMRequest  request;
+	Latch	   *latch;
+	SHMRequest	request;
+	int			historySize;
+	int			historyPeriod;
+	bool		historySkipLatch;
 } CollectorShmqHeader;
 
 extern PGDLLIMPORT char *WAIT_LOCK_NAMES[];
@@ -69,10 +72,6 @@ extern PGDLLIMPORT char *WAIT_LWLOCK_NAMES[];
 extern PGDLLIMPORT char *WAIT_IO_NAMES[];
 extern PGDLLIMPORT char *WAIT_NETWORK_NAMES[];
 extern PGDLLIMPORT const int WAIT_OFFSETS[];
-extern PGDLLIMPORT int         historySize;
-extern PGDLLIMPORT int         historyPeriod;
-extern PGDLLIMPORT bool        historySkipLatch;
-
 
 Size CollectorShmemSize(void);
 CollectorShmqHeader *GetCollectorMem(bool init);

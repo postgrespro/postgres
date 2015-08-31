@@ -6,6 +6,7 @@
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
+#include "storage/pg_shmem.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/s_lock.h"
@@ -27,10 +28,6 @@ shm_toc *toc;
 shm_mq *mq;
 static volatile sig_atomic_t shutdown_requested = false;
 
-int         historySize;
-int         historyPeriod;
-bool        historySkipLatch;
-
 static void handle_sigterm(SIGNAL_ARGS);
 static void collector_main(Datum main_arg);
 
@@ -50,6 +47,22 @@ CollectorShmemSize(void)
 	size = shm_toc_estimate(&e);
 
 	return size;
+}
+
+static bool
+shmem_int_guc_check_hook(int *newval, void **extra, GucSource source)
+{
+	if (UsedShmemSegAddr == NULL)
+		return false;
+	return true;
+}
+
+static bool
+shmem_bool_guc_check_hook(bool *newval, void **extra, GucSource source)
+{
+	if (UsedShmemSegAddr == NULL)
+		return false;
+	return true;
 }
 
 CollectorShmqHeader *
@@ -75,6 +88,21 @@ GetCollectorMem(bool init)
 
 		mq_mem = shm_toc_allocate(toc, COLLECTOR_QUEUE_SIZE);
 		shm_toc_insert(toc, 1, mq_mem);
+
+		DefineCustomIntVariable("pg_stat_wait.history_size",
+				"Sets size of waits history.", NULL,
+				&hdr->historySize, 5000, 100, INT_MAX,
+				PGC_SUSET, 0, shmem_int_guc_check_hook, NULL, NULL);
+
+		DefineCustomIntVariable("pg_stat_wait.history_period",
+				"Sets period of waits history sampling.", NULL,
+				&hdr->historyPeriod, 10, 1, INT_MAX,
+				PGC_SUSET, 0, shmem_int_guc_check_hook, NULL, NULL);
+
+		DefineCustomBoolVariable("pg_stat_wait.history_skip_latch",
+				"Skip latch events in waits history", NULL,
+				&hdr->historySkipLatch, false,
+				PGC_SUSET, 0, shmem_bool_guc_check_hook, NULL, NULL);
 	}
 	else
 	{
@@ -106,6 +134,39 @@ AllocHistory(History *observations, int count)
 {
 	observations->items = (HistoryItem *) palloc0(sizeof(HistoryItem) * count);
 	observations->index = 0;
+	observations->count = count;
+	observations->wraparound = false;
+}
+
+static void
+ReallocHistory(History *observations, int count)
+{
+	HistoryItem	   *newitems;
+	int				copyCount;
+	int				i, j;
+
+	newitems = (HistoryItem *) palloc0(sizeof(HistoryItem) * count);
+
+	if (observations->wraparound)
+		copyCount = Min(observations->count, count);
+	else
+		copyCount = observations->index;
+
+	i = 0;
+	j = observations->index;
+	while (i < copyCount)
+	{
+		j--;
+		if (j < 0)
+			j = observations->count - 1;
+		memcpy(&newitems[i], &observations->items[j], sizeof(HistoryItem));
+		i++;
+	}
+
+	pfree(observations->items);
+	observations->items = newitems;
+
+	observations->index = copyCount;
 	observations->count = count;
 	observations->wraparound = false;
 }
@@ -167,7 +228,11 @@ get_next_observation(History *observations)
 static void
 write_waits_history(History *observations, TimestampTz current_ts)
 {
-	int i;
+	int i, newSize;
+
+	newSize = hdr->historySize;
+	if (observations->count != newSize)
+		ReallocHistory(observations, newSize);
 
 	LWLockAcquire(ProcArrayLock, LW_SHARED);
 	for (i = 0; i < ProcGlobal->allProcCount; ++i)
@@ -181,7 +246,7 @@ write_waits_history(History *observations, TimestampTz current_ts)
 
 		if (stateOk)
 		{
-			if (historySkipLatch && item.classId == WAIT_LATCH)
+			if (hdr->historySkipLatch && item.classId == WAIT_LATCH)
 				continue;
 
 			item.ts = current_ts;
@@ -237,7 +302,7 @@ collector_main(Datum main_arg)
 			ALLOCSET_DEFAULT_INITSIZE,
 			ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(collector_context);
-	AllocHistory(&observations, historySize);
+	AllocHistory(&observations, hdr->historySize);
 	MemoryContextSwitchTo(old_context);
 
 	while (1)
@@ -254,7 +319,7 @@ collector_main(Datum main_arg)
 
 		rc = WaitLatch(&MyProc->procLatch,
 			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-			historyPeriod);
+			hdr->historyPeriod);
 
 		if (rc & WL_POSTMASTER_DEATH)
 			exit(1);
