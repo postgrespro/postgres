@@ -148,9 +148,11 @@ ReallocHistory(History *observations, int count)
 	newitems = (HistoryItem *) palloc0(sizeof(HistoryItem) * count);
 
 	if (observations->wraparound)
-		copyCount = Min(observations->count, count);
+		copyCount = observations->count;
 	else
 		copyCount = observations->index;
+
+	copyCount = Min(copyCount, count);
 
 	i = 0;
 	j = observations->index;
