@@ -382,6 +382,21 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 	}
 }
 
+static JsonbValue *
+pushSingleScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval)
+{
+	/* single root scalar */
+	JsonbValue	va;
+
+	va.type = jbvArray;
+	va.val.array.rawScalar = true;
+	va.val.array.nElems = 1;
+
+	pushJsonbValue(pstate, WJB_BEGIN_ARRAY, &va);
+	pushJsonbValue(pstate, WJB_ELEM, jbval);
+	return pushJsonbValue(pstate, WJB_END_ARRAY, NULL);
+}
+
 /*
  * For jsonb we always want the de-escaped value - that's what's in token
  */
@@ -437,16 +452,7 @@ jsonb_in_scalar(void *pstate, char *token, JsonTokenType tokentype)
 
 	if (_state->parseState == NULL)
 	{
-		/* single scalar */
-		JsonbValue	va;
-
-		va.type = jbvArray;
-		va.val.array.rawScalar = true;
-		va.val.array.nElems = 1;
-
-		_state->res = pushJsonbValue(&_state->parseState, WJB_BEGIN_ARRAY, &va);
-		_state->res = pushJsonbValue(&_state->parseState, WJB_ELEM, &v);
-		_state->res = pushJsonbValue(&_state->parseState, WJB_END_ARRAY, NULL);
+		_state->res = pushSingleScalarJsonbValue(&_state->parseState, &v);
 	}
 	else
 	{
@@ -940,16 +946,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 	}
 	else if (result->parseState == NULL)
 	{
-		/* single root scalar */
-		JsonbValue	va;
-
-		va.type = jbvArray;
-		va.val.array.rawScalar = true;
-		va.val.array.nElems = 1;
-
-		result->res = pushJsonbValue(&result->parseState, WJB_BEGIN_ARRAY, &va);
-		result->res = pushJsonbValue(&result->parseState, WJB_ELEM, &jb);
-		result->res = pushJsonbValue(&result->parseState, WJB_END_ARRAY, NULL);
+		result->res = pushSingleScalarJsonbValue(&result->parseState, &jb);
 	}
 	else
 	{
