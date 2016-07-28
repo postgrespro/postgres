@@ -376,8 +376,6 @@ typedef struct JsonbIterator
 
 
 /* Support functions */
-extern uint32 getJsonbOffset(const JsonbContainer *jc, int index);
-extern uint32 getJsonbLength(const JsonbContainer *jc, int index);
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
 extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *sheader,
 											   uint32 flags,
