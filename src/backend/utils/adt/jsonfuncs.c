@@ -5070,24 +5070,9 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 			}
 
 			(void) pushJsonbValue(st, r, &k);
-			r = JsonbIteratorNext(it, &v, false);
-			(void) pushJsonbValue(st, r, r < WJB_BEGIN_ARRAY ? &v : NULL);
-			if (r == WJB_BEGIN_ARRAY || r == WJB_BEGIN_OBJECT)
-			{
-				int			walking_level = 1;
-
-				while (walking_level != 0)
-				{
-					r = JsonbIteratorNext(it, &v, false);
-
-					if (r == WJB_BEGIN_ARRAY || r == WJB_BEGIN_OBJECT)
-						++walking_level;
-					if (r == WJB_END_ARRAY || r == WJB_END_OBJECT)
-						--walking_level;
-
-					(void) pushJsonbValue(st, r, r < WJB_BEGIN_ARRAY ? &v : NULL);
-				}
-			}
+			r = JsonbIteratorNext(it, &v, true);
+			Assert(r == WJB_VALUE);
+			(void) pushJsonbValue(st, r, &v);
 		}
 	}
 
@@ -5228,26 +5213,9 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 		}
 		else
 		{
-			r = JsonbIteratorNext(it, &v, false);
-
-			(void) pushJsonbValue(st, r, r < WJB_BEGIN_ARRAY ? &v : NULL);
-
-			if (r == WJB_BEGIN_ARRAY || r == WJB_BEGIN_OBJECT)
-			{
-				int			walking_level = 1;
-
-				while (walking_level != 0)
-				{
-					r = JsonbIteratorNext(it, &v, false);
-
-					if (r == WJB_BEGIN_ARRAY || r == WJB_BEGIN_OBJECT)
-						++walking_level;
-					if (r == WJB_END_ARRAY || r == WJB_END_OBJECT)
-						--walking_level;
-
-					(void) pushJsonbValue(st, r, r < WJB_BEGIN_ARRAY ? &v : NULL);
-				}
-			}
+			r = JsonbIteratorNext(it, &v, true);
+			Assert(r == WJB_ELEM);
+			(void) pushJsonbValue(st, r, &v);
 		}
 	}
 
