@@ -131,7 +131,7 @@ JsonbValueToJsonb(JsonbValue *val)
  * the variable-length-data part of its container.  The node is identified
  * by index within the container's JEntry array.
  */
-uint32
+static uint32
 getJsonbOffset(const JsonbContainer *jc, int index)
 {
 	uint32		offset = 0;
@@ -156,7 +156,7 @@ getJsonbOffset(const JsonbContainer *jc, int index)
  * Get the length of the variable-length portion of a Jsonb node.
  * The node is identified by index within the container's JEntry array.
  */
-uint32
+static uint32
 getJsonbLength(const JsonbContainer *jc, int index)
 {
 	uint32		off;
