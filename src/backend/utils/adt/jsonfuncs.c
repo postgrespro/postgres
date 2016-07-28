@@ -466,8 +466,7 @@ static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
 						   int op_type);
 static void setPathObject(JsonbIterator **it, Datum *path_elems,
 						  bool *path_nulls, int path_len, JsonbParseState **st,
-						  int level,
-						  Jsonb *newval, uint32 npairs, int op_type);
+						  int level, Jsonb *newval, int op_type);
 static void setPathArray(JsonbIterator **it, Datum *path_elems,
 						 bool *path_nulls, int path_len, JsonbParseState **st,
 						 int level, Jsonb *newval, uint32 nelems, int op_type);
@@ -4822,9 +4821,8 @@ setPath(JsonbIterator **it, Datum *path_elems,
 			break;
 		case WJB_BEGIN_OBJECT:
 			(void) pushJsonbValue(st, r, NULL);
-			setPathObject(it, path_elems, path_nulls, path_len, st, level,
-						  newval, v.val.object.nPairs, op_type);
-			r = JsonbIteratorNext(it, &v, true);
+			r = setPathObject(it, path_elems, path_nulls, path_len, st, level,
+							  newval, op_type);
 			Assert(r == WJB_END_OBJECT);
 			res = pushJsonbValue(st, r, NULL);
 			break;
@@ -4844,39 +4842,21 @@ setPath(JsonbIterator **it, Datum *path_elems,
 /*
  * Object walker for setPath
  */
-static void
+static JsonbIteratorToken
 setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 			  int path_len, JsonbParseState **st, int level,
-			  Jsonb *newval, uint32 npairs, int op_type)
+			  Jsonb *newval, int op_type)
 {
 	JsonbValue	v;
-	int			i;
 	JsonbValue	k;
+	JsonbIteratorToken r;
 	bool		done = false;
 
 	if (level >= path_len || path_nulls[level])
 		done = true;
 
-	/* empty object is a special case for create */
-	if ((npairs == 0) && (op_type & JB_PATH_CREATE_OR_INSERT) &&
-		(level == path_len - 1))
+	while ((r = JsonbIteratorNext(it, &k, true)) == WJB_KEY)
 	{
-		JsonbValue	newkey;
-
-		newkey.type = jbvString;
-		newkey.val.string.len = VARSIZE_ANY_EXHDR(path_elems[level]);
-		newkey.val.string.val = VARDATA_ANY(path_elems[level]);
-
-		(void) pushJsonbValue(st, WJB_KEY, &newkey);
-		addJsonbToParseState(st, newval);
-	}
-
-	for (i = 0; i < npairs; i++)
-	{
-		JsonbIteratorToken r = JsonbIteratorNext(it, &k, true);
-
-		Assert(r == WJB_KEY);
-
 		if (!done &&
 			k.val.string.len == VARSIZE_ANY_EXHDR(path_elems[level]) &&
 			memcmp(k.val.string.val, VARDATA_ANY(path_elems[level]),
@@ -4896,6 +4876,8 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 									 "to replace key value.")));
 
 				r = JsonbIteratorNext(it, &v, true);	/* skip value */
+				Assert(r == WJB_VALUE);
+
 				if (!(op_type & JB_PATH_DELETE))
 				{
 					(void) pushJsonbValue(st, WJB_KEY, &k);
@@ -4912,25 +4894,26 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 		}
 		else
 		{
-			if ((op_type & JB_PATH_CREATE_OR_INSERT) && !done &&
-				level == path_len - 1 && i == npairs - 1)
-			{
-				JsonbValue	newkey;
-
-				newkey.type = jbvString;
-				newkey.val.string.len = VARSIZE_ANY_EXHDR(path_elems[level]);
-				newkey.val.string.val = VARDATA_ANY(path_elems[level]);
-
-				(void) pushJsonbValue(st, WJB_KEY, &newkey);
-				addJsonbToParseState(st, newval);
-			}
-
 			(void) pushJsonbValue(st, r, &k);
 			r = JsonbIteratorNext(it, &v, true);
 			Assert(r == WJB_VALUE);
 			(void) pushJsonbValue(st, r, &v);
 		}
 	}
+
+	if ((op_type & JB_PATH_CREATE_OR_INSERT) && !done && level == path_len - 1)
+	{
+		JsonbValue	newkey;
+
+		newkey.type = jbvString;
+		newkey.val.string.len = VARSIZE_ANY_EXHDR(path_elems[level]);
+		newkey.val.string.val = VARDATA_ANY(path_elems[level]);
+
+		(void) pushJsonbValue(st, WJB_KEY, &newkey);
+		addJsonbToParseState(st, newval);
+	}
+
+	return r;
 }
 
 /*
