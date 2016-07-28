@@ -391,8 +391,6 @@ JsonbPGetDatum(const Jsonb *p)
 #define PG_RETURN_JSONB_P(x)	PG_RETURN_POINTER(x)
 
 /* Support functions */
-extern uint32 getJsonbOffset(const JsonbContainer *jc, int index);
-extern uint32 getJsonbLength(const JsonbContainer *jc, int index);
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
 extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *container,
 											   uint32 flags,
