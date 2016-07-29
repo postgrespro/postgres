@@ -302,6 +302,7 @@ jsonb_in_object_start(void *pstate)
 	JsonbInState *_state = (JsonbInState *) pstate;
 
 	_state->res = pushJsonbValue(&_state->parseState, WJB_BEGIN_OBJECT, NULL);
+	/* XXX SQL/JSON JsonbParseStateSetUniqueKeys(_state->parseState, _state->unique_keys); */
 
 	return JSON_SUCCESS;
 }
@@ -1153,6 +1154,11 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 
 	result.res = pushJsonbValue(&result.parseState, WJB_BEGIN_OBJECT, NULL);
 
+	/* XXX SQL/JSON
+	JsonbParseStateSetUniqueKeys(result.parseState, unique_keys);
+	JsonbParseStateSetSkipNulls(result.parseState, absent_on_null);
+	*/
+
 	for (i = 0; i < nargs; i += 2)
 	{
 		/* process key */
@@ -1620,6 +1626,12 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 		state->res = result;
 		result->res = pushJsonbValue(&result->parseState,
 									 WJB_BEGIN_OBJECT, NULL);
+
+		/* XXX SQL/JSON
+		JsonbParseStateSetUniqueKeys(result->parseState, unique_keys);
+		JsonbParseStateSetSkipNulls(result->parseState, absent_on_null);
+		*/
+
 		MemoryContextSwitchTo(oldcontext);
 
 		arg_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
