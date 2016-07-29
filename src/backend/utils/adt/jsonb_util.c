@@ -105,6 +105,8 @@ static void uniqueifyJsonbObject(JsonbValue *object);
 static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
 										JsonbIteratorToken seq,
 										JsonbValue *scalarVal);
+static JsonbValue *pushSingleScalarJsonbValue(JsonbParseState **pstate,
+											  JsonbValue *jbval);
 
 /*
  * Turn an in-memory JsonbValue into a Jsonb for on-disk storage.
@@ -128,17 +130,7 @@ JsonbValueToJsonb(JsonbValue *val)
 	{
 		/* Scalar value */
 		JsonbParseState *pstate = NULL;
-		JsonbValue *res;
-		JsonbValue	scalarArray;
-
-		scalarArray.type = jbvArray;
-		scalarArray.val.array.rawScalar = true;
-		scalarArray.val.array.nElems = 1;
-
-		pushJsonbValue(&pstate, WJB_BEGIN_ARRAY, &scalarArray);
-		pushJsonbValue(&pstate, WJB_ELEM, val);
-		res = pushJsonbValue(&pstate, WJB_END_ARRAY, NULL);
-
+		JsonbValue *res = pushSingleScalarJsonbValue(&pstate, val);
 		out = convertToJsonb(res);
 	}
 	else if (val->type == jbvObject || val->type == jbvArray)
