@@ -5445,10 +5445,8 @@ transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 	JsonbIteratorToken type;
 	JsonbParseState *st = NULL;
 	text	   *out;
-	bool		is_scalar = false;
 
 	it = JsonbIteratorInit(&jsonb->root);
-	is_scalar = it->isScalar;
 
 	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 	{
@@ -5468,7 +5466,7 @@ transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 	}
 
 	if (res->type == jbvArray)
-		res->val.array.rawScalar = is_scalar;
+		res->val.array.rawScalar = JB_ROOT_IS_SCALAR(jsonb);
 
 	return JsonbValueToJsonb(res);
 }
