@@ -749,6 +749,46 @@ pushJsonbValueScalar(JsonbParseState **pstate, JsonbIteratorToken seq,
 	return result;
 }
 
+static JsonbValue *
+pushSingleScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval)
+{
+	/* single root scalar */
+	JsonbValue	va;
+
+	va.type = jbvArray;
+	va.val.array.rawScalar = true;
+	va.val.array.nElems = 1;
+
+	pushJsonbValue(pstate, WJB_BEGIN_ARRAY, &va);
+	pushJsonbValue(pstate, WJB_ELEM, jbval);
+	return pushJsonbValue(pstate, WJB_END_ARRAY, NULL);
+}
+
+static JsonbValue *
+pushNestedScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval,
+						   bool isKey)
+{
+	switch ((*pstate)->contVal.type)
+	{
+		case jbvArray:
+			return pushJsonbValue(pstate, WJB_ELEM, jbval);
+		case jbvObject:
+			return pushJsonbValue(pstate, isKey ? WJB_KEY : WJB_VALUE, jbval);
+		default:
+			elog(ERROR, "unexpected parent of nested structure");
+			return NULL;
+	}
+}
+
+JsonbValue *
+pushScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval, bool isKey)
+{
+	return *pstate == NULL
+				? pushSingleScalarJsonbValue(pstate, jbval)
+				: pushNestedScalarJsonbValue(pstate, jbval, isKey);
+
+}
+
 /*
  * pushJsonbValue() worker:  Iteration-like forming of Jsonb
  */

@@ -381,20 +381,6 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 	}
 }
 
-static JsonbValue *
-pushSingleScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval)
-{
-	/* single root scalar */
-	JsonbValue	va;
-
-	va.type = jbvArray;
-	va.val.array.rawScalar = true;
-	va.val.array.nElems = 1;
-
-	pushJsonbValue(pstate, WJB_BEGIN_ARRAY, &va);
-	pushJsonbValue(pstate, WJB_ELEM, jbval);
-	return pushJsonbValue(pstate, WJB_END_ARRAY, NULL);
-}
 
 /*
  * For jsonb we always want the de-escaped value - that's what's in token
@@ -449,26 +435,7 @@ jsonb_in_scalar(void *pstate, char *token, JsonTokenType tokentype)
 			break;
 	}
 
-	if (_state->parseState == NULL)
-	{
-		_state->res = pushSingleScalarJsonbValue(&_state->parseState, &v);
-	}
-	else
-	{
-		JsonbValue *o = &_state->parseState->contVal;
-
-		switch (o->type)
-		{
-			case jbvArray:
-				_state->res = pushJsonbValue(&_state->parseState, WJB_ELEM, &v);
-				break;
-			case jbvObject:
-				_state->res = pushJsonbValue(&_state->parseState, WJB_VALUE, &v);
-				break;
-			default:
-				elog(ERROR, "unexpected parent of nested structure");
-		}
-	}
+	_state->res = pushScalarJsonbValue(&_state->parseState, &v, false);
 
 	return JSON_SUCCESS;
 }
@@ -943,28 +910,8 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 		/* work has been done recursively */
 		return;
 	}
-	else if (result->parseState == NULL)
-	{
-		result->res = pushSingleScalarJsonbValue(&result->parseState, &jb);
-	}
-	else
-	{
-		JsonbValue *o = &result->parseState->contVal;
 
-		switch (o->type)
-		{
-			case jbvArray:
-				result->res = pushJsonbValue(&result->parseState, WJB_ELEM, &jb);
-				break;
-			case jbvObject:
-				result->res = pushJsonbValue(&result->parseState,
-											 key_scalar ? WJB_KEY : WJB_VALUE,
-											 &jb);
-				break;
-			default:
-				elog(ERROR, "unexpected parent of nested structure");
-		}
-	}
+	result->res = pushScalarJsonbValue(&result->parseState, &jb, key_scalar);
 }
 
 /*
