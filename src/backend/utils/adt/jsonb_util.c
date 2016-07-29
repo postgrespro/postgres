@@ -50,6 +50,36 @@ struct JsonbParseState
 #endif
 };
 
+struct JsonbIterator
+{
+	/* Container being iterated */
+	JsonbContainer *container;
+	uint32		nElems;			/* Number of elements in children array (will
+								 * be nPairs for objects) */
+	bool		isScalar;		/* Pseudo-array scalar value? */
+	JEntry	   *children;		/* JEntrys for child nodes */
+	/* Data proper.  This points to the beginning of the variable-length data */
+	char	   *dataProper;
+
+	/* Current item in buffer (up to nElems) */
+	int			curIndex;
+
+	/* Data offset corresponding to current item */
+	uint32		curDataOffset;
+
+	/*
+	 * If the container is an object, we want to return keys and values
+	 * alternately; so curDataOffset points to the current key, and
+	 * curValueOffset points to the current value.
+	 */
+	uint32		curValueOffset;
+
+	/* Private state */
+	JsonbIterState state;
+
+	struct JsonbIterator *parent;
+};
+
 static void fillJsonbValue(JsonbContainer *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
