@@ -547,6 +547,32 @@ fillJsonbValue(JsonbContainer *container, int index,
 }
 
 /*
+ * shallow clone of a parse state, suitable for use in aggregate
+ * final functions that will only append to the values rather than
+ * change them.
+ */
+JsonbParseState *
+JsonbParseStateClone(JsonbParseState *state)
+{
+	JsonbParseState	   *result,
+					   *icursor,
+					   *ocursor,
+					  **pocursor = &result;
+
+	for (icursor = state; icursor; icursor = icursor->next)
+	{
+		*pocursor = ocursor = palloc(sizeof(JsonbParseState));
+		ocursor->contVal = icursor->contVal;
+		ocursor->size = icursor->size;
+		pocursor = &ocursor->next;
+	}
+
+	*pocursor = NULL;
+
+	return result;
+}
+
+/*
  * Push JsonbValue into JsonbParseState.
  *
  * Used when parsing JSON tokens to form Jsonb, or when converting an in-memory
