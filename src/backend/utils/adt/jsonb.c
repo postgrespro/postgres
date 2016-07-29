@@ -285,7 +285,7 @@ jsonb_in_object_start(void *pstate)
 	JsonbInState *_state = (JsonbInState *) pstate;
 
 	_state->res = pushJsonbValue(&_state->parseState, WJB_BEGIN_OBJECT, NULL);
-	_state->parseState->unique_keys = _state->unique_keys;
+	JsonbParseStateSetUniqueKeys(_state->parseState, _state->unique_keys);
 }
 
 static void
@@ -1143,8 +1143,9 @@ jsonb_build_object_worker(int nargs, Datum *args, bool *nulls, Oid *types,
 	memset(&result, 0, sizeof(JsonbInState));
 
 	result.res = pushJsonbValue(&result.parseState, WJB_BEGIN_OBJECT, NULL);
-	result.parseState->unique_keys = unique_keys;
-	result.parseState->skip_nulls = absent_on_null;
+
+	JsonbParseStateSetUniqueKeys(result.parseState, unique_keys);
+	JsonbParseStateSetSkipNulls(result.parseState, absent_on_null);
 
 	for (i = 0; i < nargs; i += 2)
 	{
@@ -1675,8 +1676,9 @@ jsonb_object_agg_transfn_worker(FunctionCallInfo fcinfo,
 		state->res = result;
 		result->res = pushJsonbValue(&result->parseState,
 									 WJB_BEGIN_OBJECT, NULL);
-		result->parseState->unique_keys = unique_keys;
-		result->parseState->skip_nulls = absent_on_null;
+
+		JsonbParseStateSetUniqueKeys(result->parseState, unique_keys);
+		JsonbParseStateSetSkipNulls(result->parseState, absent_on_null);
 
 		MemoryContextSwitchTo(oldcontext);
 

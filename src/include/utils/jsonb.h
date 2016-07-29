@@ -324,14 +324,7 @@ struct JsonbPair
 };
 
 /* Conversion state used when parsing Jsonb from text, or for type coercion */
-typedef struct JsonbParseState
-{
-	JsonbValue	contVal;
-	Size		size;
-	struct JsonbParseState *next;
-	bool		unique_keys;	/* Check object key uniqueness */
-	bool		skip_nulls;		/* Skip null object fields */
-} JsonbParseState;
+typedef struct JsonbParseState JsonbParseState;
 
 /*
  * JsonbIterator holds details of the type for each iteration. It also stores a
@@ -408,6 +401,8 @@ extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
 extern JsonbValue *pushScalarJsonbValue(JsonbParseState **pstate,
 										JsonbValue *jbval, bool isKey);
 extern JsonbParseState *JsonbParseStateClone(JsonbParseState *state);
+extern void JsonbParseStateSetUniqueKeys(JsonbParseState *state, bool unique_keys);
+extern void JsonbParseStateSetSkipNulls(JsonbParseState *state, bool skip_nulls);
 extern JsonbIterator *JsonbIteratorInit(JsonbContainer *container);
 extern JsonbIteratorToken JsonbIteratorNext(JsonbIterator **it, JsonbValue *val,
 											bool skipNested);
