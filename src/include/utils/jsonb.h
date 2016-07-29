@@ -324,12 +324,7 @@ struct JsonbPair
 };
 
 /* Conversion state used when parsing Jsonb from text, or for type coercion */
-typedef struct JsonbParseState
-{
-	JsonbValue	contVal;
-	Size		size;
-	struct JsonbParseState *next;
-} JsonbParseState;
+typedef struct JsonbParseState JsonbParseState;
 
 /*
  * JsonbIterator holds details of the type for each iteration. It also stores a

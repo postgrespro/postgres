@@ -37,6 +37,14 @@
 #define JSONB_MAX_ELEMS (Min(MaxAllocSize / sizeof(JsonbValue), JB_CMASK))
 #define JSONB_MAX_PAIRS (Min(MaxAllocSize / sizeof(JsonbPair), JB_CMASK))
 
+/* Conversion state used when parsing Jsonb from text, or for type coercion */
+struct JsonbParseState
+{
+	JsonbValue	contVal;
+	Size		size;
+	struct JsonbParseState *next;
+};
+
 static void fillJsonbValue(JsonbContainer *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
