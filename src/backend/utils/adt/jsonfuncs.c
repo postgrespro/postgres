@@ -4307,6 +4307,17 @@ jsonb_pretty(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(str->data, str->len));
 }
 
+Datum
+jsonb_canonical(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *jb = PG_GETARG_JSONB(0);
+	StringInfo	str = makeStringInfo();
+
+	JsonbToCStringCanonical(str, &jb->root, VARSIZE(jb));
+
+	PG_RETURN_TEXT_P(cstring_to_text_with_len(str->data, str->len));
+}
+
 /*
  * SQL function jsonb_concat (jsonb, jsonb)
  *
