@@ -274,7 +274,7 @@ jsonb_from_cstring(char *json, int len)
 	pg_parse_json_or_ereport(lex, &sem);
 
 	/* after parsing, the item member has the composed jsonb structure */
-	PG_RETURN_POINTER(JsonbValueToJsonb(state.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(state.res));
 }
 
 static size_t
@@ -1093,7 +1093,7 @@ to_jsonb(PG_FUNCTION_ARGS)
 
 	datum_to_jsonb(val, false, &result, tcategory, outfuncoid, false);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 /*
@@ -1143,7 +1143,7 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 /*
@@ -1159,7 +1159,7 @@ jsonb_build_object_noargs(PG_FUNCTION_ARGS)
 	(void) pushJsonbValue(&result.parseState, WJB_BEGIN_OBJECT, NULL);
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 /*
@@ -1190,7 +1190,7 @@ jsonb_build_array(PG_FUNCTION_ARGS)
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 /*
@@ -1206,7 +1206,7 @@ jsonb_build_array_noargs(PG_FUNCTION_ARGS)
 	(void) pushJsonbValue(&result.parseState, WJB_BEGIN_ARRAY, NULL);
 	result.res = pushJsonbValue(&result.parseState, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 
@@ -1310,7 +1310,7 @@ jsonb_object(PG_FUNCTION_ARGS)
 close_object:
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 /*
@@ -1407,7 +1407,7 @@ jsonb_object_two_arg(PG_FUNCTION_ARGS)
 close_object:
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
 
 
@@ -1561,7 +1561,7 @@ jsonb_agg_finalfn(PG_FUNCTION_ARGS)
 
 	out = JsonbValueToJsonb(result.res);
 
-	PG_RETURN_POINTER(out);
+	PG_RETURN_JSONB_P(out);
 }
 
 /*
@@ -1793,7 +1793,7 @@ jsonb_object_agg_finalfn(PG_FUNCTION_ARGS)
 
 	out = JsonbValueToJsonb(result.res);
 
-	PG_RETURN_POINTER(out);
+	PG_RETURN_JSONB_P(out);
 }
 
 
