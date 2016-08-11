@@ -359,18 +359,19 @@ JsonbPGetDatum(const Jsonb *p)
 
 /* Support functions */
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
-extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *container,
+extern JsonbValue *findJsonbValueFromContainer(const JsonbContainer *container,
 											   uint32 flags,
 											   JsonbValue *key);
-extern JsonbValue *getKeyJsonValueFromContainer(JsonbContainer *container,
+extern JsonbValue *getKeyJsonValueFromContainer(const JsonbContainer *container,
 												const char *keyVal, int keyLen,
 												JsonbValue *res);
 extern JsonbValue *getIthJsonbValueFromContainer(JsonbContainer *container,
 												 uint32 i);
 extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
-								  JsonbIteratorToken seq, JsonbValue *jbval);
+								  JsonbIteratorToken seq,
+								  const JsonbValue *jbval);
 extern JsonbValue *pushScalarJsonbValue(JsonbParseState **pstate,
-										JsonbValue *jbval, bool isKey);
+										const JsonbValue *jbval, bool isKey);
 extern JsonbParseState *JsonbParseStateClone(JsonbParseState *state);
 #if 0 /* XXX SQL/JSON */
 extern void JsonbParseStateSetUniqueKeys(JsonbParseState *state, bool unique_keys);
