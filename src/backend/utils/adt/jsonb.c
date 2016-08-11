@@ -230,15 +230,8 @@ jsonb_typeof(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
-/*
- * jsonb_from_cstring
- *
- * Turns json string into a jsonb Datum.
- *
- * Uses the json parser (with hooks) to construct a jsonb.
- */
-static inline Datum
-jsonb_from_cstring(char *json, int len, bool unique_keys)
+static JsonbValue *
+JsonValueFromCString(char *json, int len, bool unique_keys)
 {
 	JsonLexContext *lex;
 	JsonbInState state;
@@ -262,9 +255,21 @@ jsonb_from_cstring(char *json, int len, bool unique_keys)
 	pg_parse_json_or_ereport(lex, &sem);
 
 	/* after parsing, the item member has the composed jsonb structure */
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(state.res));
+	return state.res;
 }
 
+/*
+ * jsonb_from_cstring
+ *
+ * Turns json string into a jsonb Datum.
+ *
+ * Uses the json parser (with hooks) to construct a jsonb.
+ */
+static inline Datum
+jsonb_from_cstring(char *json, int len, bool unique_keys)
+{
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(JsonValueFromCString(json, len, unique_keys)));
+}
 
 static void
 jsonb_in_object_start(void *pstate)
