@@ -355,7 +355,7 @@ JsonbPGetDatum(const Jsonb *p)
 
 #define PG_GETARG_JSONB_P(x)	DatumGetJsonbP(PG_GETARG_DATUM(x))
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
-#define PG_RETURN_JSONB_P(x)	PG_RETURN_POINTER(x)
+#define PG_RETURN_JSONB_P(x)	PG_RETURN_DATUM(JsonbPGetDatum(x))
 
 /* Support functions */
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
