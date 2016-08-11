@@ -1935,7 +1935,15 @@ convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVa
 			break;
 
 		case jbvString:
-			appendToBuffer(buffer, scalarVal->val.string.val, scalarVal->val.string.len);
+			if (scalarVal->val.string.len > JENTRY_OFFLENMASK)
+					ereport(ERROR,
+							(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+							 errmsg("string too long to represent as jsonb string"),
+							 errdetail("Due to an implementation restriction, jsonb strings cannot exceed %d bytes.",
+									   JENTRY_OFFLENMASK)));
+
+			appendToBuffer(buffer, scalarVal->val.string.val,
+							scalarVal->val.string.len);
 
 			*header = scalarVal->val.string.len;
 			break;
