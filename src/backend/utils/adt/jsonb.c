@@ -133,7 +133,7 @@ jsonb_out(PG_FUNCTION_ARGS)
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	char	   *out;
 
-	out = JsonbToCString(NULL, &jb->root, VARSIZE(jb));
+	out = JsonbToCString(NULL, JsonbRoot(jb), JsonbGetSize(jb));
 
 	PG_RETURN_CSTRING(out);
 }
@@ -151,7 +151,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 	StringInfo	jtext = makeStringInfo();
 	int			version = 1;
 
-	(void) JsonbToCString(jtext, &jb->root, VARSIZE(jb));
+	(void) JsonbToCString(jtext, JsonbRoot(jb), JsonbGetSize(jb));
 
 	pq_begintypsend(&buf);
 	pq_sendint8(&buf, version);

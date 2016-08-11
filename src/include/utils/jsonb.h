@@ -221,6 +221,8 @@ typedef struct
 #define JB_ROOT_IS_OBJECT(jbp_) ((*(uint32 *) VARDATA(jbp_) & JB_FOBJECT) != 0)
 #define JB_ROOT_IS_ARRAY(jbp_)	((*(uint32 *) VARDATA(jbp_) & JB_FARRAY) != 0)
 
+#define JsonbRoot(jsonb)	(&(jsonb)->root)
+#define JsonbGetSize(jsonb)	VARSIZE(jsonb)
 
 enum jbvType
 {
