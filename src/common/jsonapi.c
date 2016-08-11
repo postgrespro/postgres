@@ -73,6 +73,22 @@ lex_peek(JsonLexContext *lex)
 	return lex->token_type;
 }
 
+static inline char *
+lex_peek_value(JsonLexContext *lex)
+{
+	if (lex->token_type == JSON_TOKEN_STRING)
+		return lex->strval ? pstrdup(lex->strval->data) : NULL;
+	else
+	{
+		int			len = (lex->token_terminator - lex->token_start);
+		char	   *tokstr = palloc(len + 1);
+
+		memcpy(tokstr, lex->token_start, len);
+		tokstr[len] = '\0';
+		return tokstr;
+	}
+}
+
 /*
  * lex_expect
  *
