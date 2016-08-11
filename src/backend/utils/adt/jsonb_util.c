@@ -48,11 +48,11 @@ struct JsonbParseState
 struct JsonbIterator
 {
 	/* Container being iterated */
-	JsonbContainer *container;
+	const JsonbContainer *container;
 	uint32		nElems;			/* Number of elements in children array (will
 								 * be nPairs for objects) */
 	bool		isScalar;		/* Pseudo-array scalar value? */
-	JEntry	   *children;		/* JEntrys for child nodes */
+	const JEntry *children;		/* JEntrys for child nodes */
 	/* Data proper.  This points to the beginning of the variable-length data */
 	char	   *dataProper;
 
@@ -75,16 +75,16 @@ struct JsonbIterator
 	struct JsonbIterator *parent;
 };
 
-static void fillJsonbValue(JsonbContainer *container, int index,
+static void fillJsonbValue(const JsonbContainer *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
-static bool equalsJsonbScalarValue(JsonbValue *a, JsonbValue *b);
-static int	compareJsonbScalarValue(JsonbValue *a, JsonbValue *b);
-static Jsonb *convertToJsonb(JsonbValue *val);
-static void convertJsonbValue(StringInfo buffer, JEntry *header, JsonbValue *val, int level);
-static void convertJsonbArray(StringInfo buffer, JEntry *header, JsonbValue *val, int level);
-static void convertJsonbObject(StringInfo buffer, JEntry *header, JsonbValue *val, int level);
-static void convertJsonbScalar(StringInfo buffer, JEntry *header, JsonbValue *scalarVal);
+static bool equalsJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
+static int	compareJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
+static Jsonb *convertToJsonb(const JsonbValue *val);
+static void convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
+static void convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
+static void convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
+static void convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal);
 
 static int	reserveFromBuffer(StringInfo buffer, int len);
 static void appendToBuffer(StringInfo buffer, const char *data, int len);
@@ -94,9 +94,9 @@ static short padBufferToInt(StringInfo buffer);
 static JsonbIterator *iteratorFromContainer(JsonbContainer *container, JsonbIterator *parent);
 static JsonbIterator *freeAndGetParent(JsonbIterator *it);
 static JsonbParseState *pushState(JsonbParseState **pstate);
-static void appendKey(JsonbParseState *pstate, JsonbValue *scalarVal);
-static void appendValue(JsonbParseState *pstate, JsonbValue *scalarVal);
-static void appendElement(JsonbParseState *pstate, JsonbValue *scalarVal);
+static void appendKey(JsonbParseState *pstate, const JsonbValue *scalarVal);
+static void appendValue(JsonbParseState *pstate, const JsonbValue *scalarVal);
+static void appendElement(JsonbParseState *pstate, const JsonbValue *scalarVal);
 static int	lengthCompareJsonbStringValue(const void *a, const void *b);
 static int	lengthCompareJsonbString(const char *val1, int len1,
 									 const char *val2, int len2);
@@ -104,9 +104,9 @@ static int	lengthCompareJsonbPair(const void *a, const void *b, void *arg);
 static void uniqueifyJsonbObject(JsonbValue *object);
 static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
 										JsonbIteratorToken seq,
-										JsonbValue *scalarVal);
+										const JsonbValue *scalarVal);
 static JsonbValue *pushSingleScalarJsonbValue(JsonbParseState **pstate,
-											  JsonbValue *jbval);
+											  const JsonbValue *jbval);
 
 /*
  * Turn an in-memory JsonbValue into a Jsonb for on-disk storage.
@@ -418,7 +418,7 @@ findJsonbValueFromContainer(JsonbContainer *container, uint32 flags,
  * 'res' can be passed in as NULL, in which case it's newly palloc'ed here.
  */
 JsonbValue *
-getKeyJsonValueFromContainer(JsonbContainer *container,
+getKeyJsonValueFromContainer(const JsonbContainer *container,
 							 const char *keyVal, int keyLen, JsonbValue *res)
 {
 	JEntry	   *children = container->children;
@@ -525,7 +525,7 @@ getIthJsonbValueFromContainer(JsonbContainer *container, uint32 i)
  * expanded.
  */
 static void
-fillJsonbValue(JsonbContainer *container, int index,
+fillJsonbValue(const JsonbContainer *container, int index,
 			   char *base_addr, uint32 offset,
 			   JsonbValue *result)
 {
@@ -613,7 +613,7 @@ JsonbParseStateClone(JsonbParseState *state)
  */
 JsonbValue *
 pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
-			   JsonbValue *jbval)
+			   const JsonbValue *jbval)
 {
 	JsonbIterator *it;
 	JsonbValue *res = NULL;
@@ -642,7 +642,7 @@ pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
  */
 static JsonbValue *
 pushJsonbValueScalar(JsonbParseState **pstate, JsonbIteratorToken seq,
-					 JsonbValue *scalarVal)
+					 const JsonbValue *scalarVal)
 {
 	JsonbValue *result = NULL;
 
@@ -727,7 +727,7 @@ pushJsonbValueScalar(JsonbParseState **pstate, JsonbIteratorToken seq,
 }
 
 static JsonbValue *
-pushSingleScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval)
+pushSingleScalarJsonbValue(JsonbParseState **pstate, const JsonbValue *jbval)
 {
 	/* single root scalar */
 	JsonbValue	va;
@@ -742,8 +742,8 @@ pushSingleScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval)
 }
 
 static JsonbValue *
-pushNestedScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval,
-							  bool isKey)
+pushNestedScalarJsonbValue(JsonbParseState **pstate, const JsonbValue *jbval,
+						   bool isKey)
 {
 	switch ((*pstate)->contVal.type)
 	{
@@ -758,7 +758,8 @@ pushNestedScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval,
 }
 
 JsonbValue *
-pushScalarJsonbValue(JsonbParseState **pstate, JsonbValue *jbval, bool isKey)
+pushScalarJsonbValue(JsonbParseState **pstate, const JsonbValue *jbval,
+					 bool isKey)
 {
 	return *pstate == NULL
 				? pushSingleScalarJsonbValue(pstate, jbval)
@@ -782,7 +783,7 @@ pushState(JsonbParseState **pstate)
  * pushJsonbValue() worker:  Append a pair key to state when generating a Jsonb
  */
 static void
-appendKey(JsonbParseState *pstate, JsonbValue *string)
+appendKey(JsonbParseState *pstate, const JsonbValue *string)
 {
 	JsonbValue *object = &pstate->contVal;
 
@@ -811,7 +812,7 @@ appendKey(JsonbParseState *pstate, JsonbValue *string)
  * Jsonb
  */
 static void
-appendValue(JsonbParseState *pstate, JsonbValue *scalarVal)
+appendValue(JsonbParseState *pstate, const JsonbValue *scalarVal)
 {
 	JsonbValue *object = &pstate->contVal;
 
@@ -824,7 +825,7 @@ appendValue(JsonbParseState *pstate, JsonbValue *scalarVal)
  * pushJsonbValue() worker:  Append an element to state when generating a Jsonb
  */
 static void
-appendElement(JsonbParseState *pstate, JsonbValue *scalarVal)
+appendElement(JsonbParseState *pstate, const JsonbValue *scalarVal)
 {
 	JsonbValue *array = &pstate->contVal;
 
@@ -1437,7 +1438,7 @@ JsonbHashScalarValueExtended(const JsonbValue *scalarVal, uint64 *hash,
  * Are two scalar JsonbValues of the same type a and b equal?
  */
 static bool
-equalsJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
+equalsJsonbScalarValue(const JsonbValue *aScalar, const JsonbValue *bScalar)
 {
 	if (aScalar->type == bScalar->type)
 	{
@@ -1469,7 +1470,7 @@ equalsJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
  * operators, where a lexical sort order is generally expected.
  */
 static int
-compareJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
+compareJsonbScalarValue(const JsonbValue *aScalar, const JsonbValue *bScalar)
 {
 	if (aScalar->type == bScalar->type)
 	{
@@ -1584,7 +1585,7 @@ padBufferToInt(StringInfo buffer)
  * Given a JsonbValue, convert to Jsonb. The result is palloc'd.
  */
 static Jsonb *
-convertToJsonb(JsonbValue *val)
+convertToJsonb(const JsonbValue *val)
 {
 	StringInfoData buffer;
 	JEntry		jentry;
@@ -1626,7 +1627,7 @@ convertToJsonb(JsonbValue *val)
  * for debugging purposes.
  */
 static void
-convertJsonbValue(StringInfo buffer, JEntry *header, JsonbValue *val, int level)
+convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level)
 {
 	check_stack_depth();
 
@@ -1651,7 +1652,7 @@ convertJsonbValue(StringInfo buffer, JEntry *header, JsonbValue *val, int level)
 }
 
 static void
-convertJsonbArray(StringInfo buffer, JEntry *pheader, JsonbValue *val, int level)
+convertJsonbArray(StringInfo buffer, JEntry *pheader, const JsonbValue *val, int level)
 {
 	int			base_offset;
 	int			jentry_offset;
@@ -1735,7 +1736,7 @@ convertJsonbArray(StringInfo buffer, JEntry *pheader, JsonbValue *val, int level
 }
 
 static void
-convertJsonbObject(StringInfo buffer, JEntry *pheader, JsonbValue *val, int level)
+convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, int level)
 {
 	int			base_offset;
 	int			jentry_offset;
@@ -1851,7 +1852,7 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, JsonbValue *val, int leve
 }
 
 static void
-convertJsonbScalar(StringInfo buffer, JEntry *jentry, JsonbValue *scalarVal)
+convertJsonbScalar(StringInfo buffer, JEntry *jentry, const JsonbValue *scalarVal)
 {
 	int			numlen;
 	short		padlen;
