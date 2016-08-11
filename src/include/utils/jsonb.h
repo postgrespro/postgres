@@ -360,18 +360,19 @@ typedef enum					/* type categories for datum_to_jsonb */
 
 /* Support functions */
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
-extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *sheader,
+extern JsonbValue *findJsonbValueFromContainer(const JsonbContainer *sheader,
 											   uint32 flags,
 											   JsonbValue *key);
-extern JsonbValue *getKeyJsonValueFromContainer(JsonbContainer *container,
+extern JsonbValue *getKeyJsonValueFromContainer(const JsonbContainer *container,
 												const char *keyVal, int keyLen,
 												JsonbValue *res);
 extern JsonbValue *getIthJsonbValueFromContainer(JsonbContainer *sheader,
 												 uint32 i);
 extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
-								  JsonbIteratorToken seq, JsonbValue *jbval);
+								  JsonbIteratorToken seq, 
+								  const JsonbValue *jbval);
 extern JsonbValue *pushScalarJsonbValue(JsonbParseState **pstate,
-										JsonbValue *jbval, bool isKey);
+										const JsonbValue *jbval, bool isKey);
 extern JsonbParseState *JsonbParseStateClone(JsonbParseState *state);
 extern void JsonbParseStateSetUniqueKeys(JsonbParseState *state, bool unique_keys);
 extern void JsonbParseStateSetSkipNulls(JsonbParseState *state, bool skip_nulls);
