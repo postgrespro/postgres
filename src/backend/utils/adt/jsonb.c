@@ -244,23 +244,12 @@ jsonb_typeof(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
-/*
- * jsonb_from_cstring
- *
- * Turns json string into a jsonb Datum.
- *
- * Uses the json parser (with hooks) to construct a jsonb.
- *
- * If escontext points to an ErrorSaveContext, errors are reported there
- * instead of being thrown.
- */
-static inline Datum
-jsonb_from_cstring(char *json, int len, Node *escontext)
+static JsonbValue *
+JsonValueFromCString(char *json, int len, Node *escontext /* XXX SQL/JSON bool unique_keys */)
 {
 	JsonLexContext *lex;
 	JsonbInState state;
 	JsonSemAction sem;
-	Jsonb	   *jb;
 
 	memset(&state, 0, sizeof(state));
 	memset(&sem, 0, sizeof(sem));
@@ -280,7 +269,24 @@ jsonb_from_cstring(char *json, int len, Node *escontext)
 		return (Datum) 0;
 
 	/* after parsing, the item member has the composed jsonb structure */
-	jb = JsonbValueToJsonbSafe(state.res, escontext);
+	return state.res;
+}
+
+/*
+ * jsonb_from_cstring
+ *
+ * Turns json string into a jsonb Datum.
+ *
+ * Uses the json parser (with hooks) to construct a jsonb.
+ *
+ * If escontext points to an ErrorSaveContext, errors are reported there
+ * instead of being thrown.
+ */
+static inline Datum
+jsonb_from_cstring(char *json, int len, Node *escontext /* XXX SQL/JSON bool unique_keys */)
+{
+	JsonbValue *jbv = JsonValueFromCString(json, len, escontext /* unique_keys */);
+	Jsonb	   *jb = jbv ? JsonbValueToJsonbSafe(jbv, escontext) : NULL;
 
 	if (jb)
 		PG_RETURN_JSONB_P(jb);
