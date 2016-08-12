@@ -379,8 +379,10 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 	text	   *opt = (PG_NARGS() > 3 && PG_GETARG_POINTER(3)) ? PG_GETARG_TEXT_P(3) : NULL;
 	Jsonb	   *out;
 	JsonTransformStringValuesAction action = (JsonTransformStringValuesAction) headline_json_value;
+	JsonValue	jv;
 	HeadlineParsedText prs;
 	HeadlineJsonState *state = palloc0(sizeof(HeadlineJsonState));
+	Datum		res;
 
 	memset(&prs, 0, sizeof(HeadlineParsedText));
 	prs.lenwords = 32;
@@ -402,6 +404,9 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 
 	out = transform_jsonb_string_values(jb, state, action);
 
+	/* flatten result to jsonb before jb freeing */
+	res = JsonFlattenToJsonbDatum(out);
+
 	PG_FREE_IF_COPY(jb, 1);
 	PG_FREE_IF_COPY(query, 2);
 	if (opt)
@@ -415,7 +420,7 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 		pfree(prs.stopsel);
 	}
 
-	PG_RETURN_JSONB_P(out);
+	PG_RETURN_DATUM(res);
 }
 
 Datum
@@ -450,7 +455,11 @@ Datum
 ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 {
 	Oid			tsconfig = PG_GETARG_OID(0);
+#ifndef JSON_GENERIC
 	text	   *json = PG_GETARG_TEXT_P(1);
+#else
+	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(1));
+#endif
 	TSQuery		query = PG_GETARG_TSQUERY(2);
 	text	   *opt = (PG_NARGS() > 3 && PG_GETARG_POINTER(3)) ? PG_GETARG_TEXT_P(3) : NULL;
 	text	   *out;
@@ -477,7 +486,18 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("text search parser does not support headline creation")));
 
+#ifndef JSON_GENERIC
 	out = transform_json_string_values(json, state, action);
+#else
+	{
+		Jsonb	   *jsonb = transform_jsonb_string_values(json, state, action);
+		char	   *str = JsonToCString(&jsonb->root);
+
+		out = cstring_to_text(str);
+
+		pfree(str);
+	}
+#endif
 
 	PG_FREE_IF_COPY(json, 1);
 	PG_FREE_IF_COPY(query, 2);
