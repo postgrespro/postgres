@@ -562,6 +562,8 @@ jsonb_object_keys(PG_FUNCTION_ARGS)
 		state = palloc(sizeof(OkeysState));
 
 		state->result_size = JB_ROOT_COUNT(jb);
+		if (state->result_size < 0)
+			state->result_size = 8;
 		state->result_count = 0;
 		state->sent_count = 0;
 		state->result = palloc(state->result_size * sizeof(char *));
@@ -579,6 +581,12 @@ jsonb_object_keys(PG_FUNCTION_ARGS)
 				cstr = palloc(v.val.string.len + 1 * sizeof(char));
 				memcpy(cstr, v.val.string.val, v.val.string.len);
 				cstr[v.val.string.len] = '\0';
+				if (state->result_count >= state->result_size)
+				{
+					state->result_size *= 2;
+					state->result = repalloc(state->result, state->result_size *
+															sizeof(char *));
+				}
 				state->result[state->result_count++] = cstr;
 			}
 		}
@@ -906,7 +914,9 @@ jsonb_array_element(PG_FUNCTION_ARGS)
 	/* Handle negative subscript */
 	if (element < 0)
 	{
-		uint32		nelements = JB_ROOT_COUNT(jb);
+		int		nelements = JB_ROOT_COUNT(jb);
+		if (nelements < 0)
+			nelements = JsonGetArraySize(JsonRoot(jb));
 
 		if (-element > nelements)
 			PG_RETURN_NULL();
@@ -950,6 +960,8 @@ jsonb_array_element_text(PG_FUNCTION_ARGS)
 	if (element < 0)
 	{
 		uint32		nelements = JB_ROOT_COUNT(jb);
+		if (nelements < 0)
+			nelements = JsonGetArraySize(JsonRoot(jb));
 
 		if (-element > nelements)
 			PG_RETURN_NULL();
@@ -1685,7 +1697,8 @@ jsonb_array_length(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("cannot get array length of a non-array")));
 
-	PG_RETURN_INT32(JB_ROOT_COUNT(jb));
+	PG_RETURN_INT32(JB_ROOT_COUNT(jb) >= 0 ? JB_ROOT_COUNT(jb)
+										   : JsonGetArraySize(JsonRoot(jb)));
 }
 
 /*
@@ -4437,16 +4450,19 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 	Assert(r == WJB_BEGIN_ARRAY);
 	n = v.val.array.nElems;
 
-	if (idx < 0)
+	if (v.val.array.nElems >= 0)
 	{
-		if (-idx > n)
-			idx = n;
-		else
-			idx = n + idx;
-	}
+		if (idx < 0)
+		{
+			if (-idx > n)
+				idx = n;
+			else
+				idx = n + idx;
+		}
 
-	if (idx >= n)
-		PG_RETURN_JSONB_P(in);
+		if (idx >= n)
+			PG_RETURN_JSONB_P(in);
+	}
 
 	pushJsonbValue(&state, r, NULL);
 
@@ -4462,6 +4478,15 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 	}
 
 	Assert(res != NULL);
+
+	if (idx < 0 && -idx <= res->val.array.nElems)
+	{
+		idx = res->val.array.nElems + idx;
+		res->val.array.nElems--;
+		memmove(&res->val.array.elems[idx],
+				&res->val.array.elems[idx + 1],
+				sizeof(JsonValue) * (res->val.array.nElems - idx));
+	}
 
 	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
 }
@@ -4814,7 +4839,8 @@ setPath(JsonbIterator **it, Datum *path_elems,
 		case WJB_BEGIN_ARRAY:
 			(void) pushJsonbValue(st, r, NULL);
 			setPathArray(it, path_elems, path_nulls, path_len, st, level,
-						 newval, v.val.array.nElems, op_type);
+						 newval, v.val.array.nElems >= 0 ? v.val.array.nElems :
+						 JsonGetArraySize((*it)->container), op_type);
 			r = JsonbIteratorNext(it, &v, false);
 			Assert(r == WJB_END_ARRAY);
 			res = pushJsonbValue(st, r, NULL);
