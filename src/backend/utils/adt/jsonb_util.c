@@ -347,6 +347,85 @@ compareJsonbContainers(JsonbContainer *a, JsonbContainer *b)
 	return res;
 }
 
+static JsonbValue *
+jsonbFindKeyInObject(const JsonbContainer *container, const JsonbValue *key)
+{
+	return getKeyJsonValueFromContainer(container, key->val.string.val,
+										key->val.string.len, NULL);
+}
+
+typedef struct JsonbArrayIterator
+{
+	const JsonbContainer *container;
+	char			   *base_addr;
+	int					index;
+	int					count;
+	uint32				offset;
+} JsonbArrayIterator;
+
+static void
+JsonbArrayIteratorInit(JsonbArrayIterator *it, const JsonbContainer *container)
+{
+	it->container = container;
+	it->index = 0;
+	it->count = (container->header & JB_CMASK);
+	it->offset = 0;
+	it->base_addr = (char *) (container->children + it->count);
+}
+
+static bool
+JsonbArrayIteratorNext(JsonbArrayIterator *it, JsonbValue *result)
+{
+	if (it->index >= it->count)
+		return false;
+
+	fillJsonbValue(it->container, it->index, it->base_addr, it->offset, result);
+
+	JBE_ADVANCE_OFFSET(it->offset, it->container->children[it->index]);
+
+	it->index++;
+
+	return true;
+}
+
+static JsonbValue *
+JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i)
+{
+	JsonbValue *result;
+
+	if (i >= it->count)
+		return NULL;
+
+	result = palloc(sizeof(JsonbValue));
+
+	fillJsonbValue(it->container, i, it->base_addr,
+				   getJsonbOffset(it->container, i),
+				   result);
+
+	return result;
+}
+
+static JsonbValue *
+jsonbFindValueInArray(const JsonbContainer *container, const JsonbValue *key)
+{
+	JsonbArrayIterator	it;
+	JsonbValue		   *result = palloc(sizeof(JsonbValue));
+
+	JsonbArrayIteratorInit(&it, container);
+
+	while (JsonbArrayIteratorNext(&it, result))
+	{
+		if (key->type == result->type)
+		{
+			if (equalsJsonbScalarValue(key, result))
+				return result;
+		}
+	}
+
+	pfree(result);
+	return NULL;
+}
+
 /*
  * Find value in object (i.e. the "value" part of some key/value pair in an
  * object), or find a matching element if we're looking through an array.  Do
@@ -377,7 +456,6 @@ JsonbValue *
 findJsonbValueFromContainer(const JsonbContainer *container, uint32 flags,
 							JsonbValue *key)
 {
-	const JEntry *children = container->children;
 	int			count = JsonContainerSize(container);
 
 	Assert((flags & ~(JB_FARRAY | JB_FOBJECT)) == 0);
@@ -387,27 +465,7 @@ findJsonbValueFromContainer(const JsonbContainer *container, uint32 flags,
 		return NULL;
 
 	if ((flags & JB_FARRAY) && JsonContainerIsArray(container))
-	{
-		JsonbValue *result = palloc(sizeof(JsonbValue));
-		char	   *base_addr = (char *) (children + count);
-		uint32		offset = 0;
-		int			i;
-
-		for (i = 0; i < count; i++)
-		{
-			fillJsonbValue(container, i, base_addr, offset, result);
-
-			if (key->type == result->type)
-			{
-				if (equalsJsonbScalarValue(key, result))
-					return result;
-			}
-
-			JBE_ADVANCE_OFFSET(offset, children[i]);
-		}
-
-		pfree(result);
-	}
+		return jsonbFindValueInArray(container, key);
 	else if ((flags & JB_FOBJECT) && JsonContainerIsObject(container))
 	{
 		/* Object key passed by caller must be a string */
@@ -498,28 +556,16 @@ getKeyJsonValueFromContainer(const JsonbContainer *container,
  * Returns palloc()'d copy of the value, or NULL if it does not exist.
  */
 JsonbValue *
-getIthJsonbValueFromContainer(JsonbContainer *container, uint32 i)
+getIthJsonbValueFromContainer(const JsonbContainer *container, uint32 i)
 {
-	JsonbValue *result;
-	char	   *base_addr;
-	uint32		nelements;
+	JsonbArrayIterator	it;
 
 	if (!JsonContainerIsArray(container))
 		elog(ERROR, "not a jsonb array");
 
-	nelements = JsonContainerSize(container);
-	base_addr = (char *) &container->children[nelements];
+	JsonbArrayIteratorInit(&it, container);
 
-	if (i >= nelements)
-		return NULL;
-
-	result = palloc(sizeof(JsonbValue));
-
-	fillJsonbValue(container, i, base_addr,
-				   getJsonbOffset(container, i),
-				   result);
-
-	return result;
+	return JsonbArrayIteratorGetIth(&it, i);
 }
 
 /*
@@ -709,7 +755,7 @@ pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
  * Do the actual pushing, with only scalar or pseudo-scalar-array values
  * accepted.
  */
-static JsonbValue *
+JsonbValue *
 pushJsonbValueScalar(JsonbParseState **pstate, JsonbIteratorToken seq,
 					 const JsonbValue *scalarVal)
 {

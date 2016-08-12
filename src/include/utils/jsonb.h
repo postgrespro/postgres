@@ -367,7 +367,7 @@ extern JsonbValue *findJsonbValueFromContainer(const JsonbContainer *container,
 extern JsonbValue *getKeyJsonValueFromContainer(const JsonbContainer *container,
 												const char *keyVal, int keyLen,
 												JsonbValue *res);
-extern JsonbValue *getIthJsonbValueFromContainer(JsonbContainer *container,
+extern JsonbValue *getIthJsonbValueFromContainer(const JsonbContainer *container,
 												 uint32 i);
 extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
 								  JsonbIteratorToken seq,
