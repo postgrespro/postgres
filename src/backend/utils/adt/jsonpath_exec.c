@@ -2158,7 +2158,11 @@ JsonbArraySize(JsonbValue *jb)
 		JsonbContainer *jbc = jb->val.binary.data;
 
 		if (JsonContainerIsArray(jbc) && !JsonContainerIsScalar(jbc))
-			return JsonContainerSize(jbc);
+		{
+			int			size = JsonContainerSize(jbc);
+
+			return size >= 0 ? size : JsonGetArraySize(jbc);
+		}
 	}
 
 	return -1;
