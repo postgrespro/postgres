@@ -233,7 +233,7 @@ typedef struct
 #define JB_ROOT_IS_ARRAY(jbp_)	((*(uint32 *) VARDATA(jbp_) & JB_FARRAY) != 0)
 
 
-enum jbvType
+typedef enum jbvType
 {
 	/* Scalar types */
 	jbvNull = 0x0,
@@ -253,7 +253,7 @@ enum jbvType
 	 * into JSON strings when outputted to json/jsonb.
 	 */
 	jbvDatetime = 0x20,
-};
+} JsonbValueType;
 
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
