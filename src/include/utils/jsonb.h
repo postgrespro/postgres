@@ -224,7 +224,7 @@ typedef struct
 #define JsonbRoot(jsonb)	(&(jsonb)->root)
 #define JsonbGetSize(jsonb)	VARSIZE(jsonb)
 
-enum jbvType
+typedef enum jbvType
 {
 	/* Scalar types */
 	jbvNull = 0x0,
@@ -244,7 +244,7 @@ enum jbvType
 	 * into JSON strings when outputted to json/jsonb.
 	 */
 	jbvDatetime = 0x20,
-};
+} JsonbValueType;
 
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
