@@ -121,6 +121,18 @@ typedef struct Json
 # endif
 #endif
 
+#ifdef JSON_FLATTEN_INTO_TARGET
+# define JsontPGetDatum(json)	\
+		PointerGetDatum(cstring_to_text(JsonToCString(JsonRoot(json))))
+#else
+static inline Datum
+JsontPGetDatum(Json *json)
+{
+	json->is_json = true;
+	return JsonGetEOHDatum(json);
+}
+#endif
+
 #define JsonGetDatum(json)			JsonxPGetDatum(json)
 
 #undef DatumGetJsonbP
@@ -136,13 +148,15 @@ typedef struct Json
 #undef PG_RETURN_JSONB_P
 #define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonGetDatum(x))
 
+#define PG_RETURN_JSONT_P(x)		PG_RETURN_DATUM(JsontPGetDatum(x))
+
 #undef	PG_GETARG_JSONB_P
 #define PG_GETARG_JSONB_P(n)		DatumGetJsonxP(PG_GETARG_DATUM(n))
-
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #undef	PG_GETARG_JSONB_P_COPY
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
+#define PG_GETARG_JSONT_P_COPY(x)	DatumGetJsontPCopy(PG_GETARG_DATUM(x))
 
 #define JsonRoot(json)				(&(json)->root)
 #define JsonGetSize(json)			(JsonRoot(json)->len)

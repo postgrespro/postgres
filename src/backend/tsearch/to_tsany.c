@@ -32,7 +32,7 @@ typedef struct TSVectorBuildState
 	Oid			cfgId;
 } TSVectorBuildState;
 
-static void add_to_tsvector(void *_state, char *elem_value, int elem_len);
+static void add_to_tsvector(void *_state, const char *elem_value, int elem_len);
 
 
 Datum
@@ -350,7 +350,13 @@ jsonb_to_tsvector(PG_FUNCTION_ARGS)
  * Worker function for json(_string)_to_tsvector(_byid)
  */
 static TSVector
-json_to_tsvector_worker(Oid cfgId, text *json, uint32 flags)
+json_to_tsvector_worker(Oid cfgId,
+#ifndef JSON_GENERIC
+						text *json,
+#else
+						Jsonb *json,
+#endif
+						uint32 flags)
 {
 	TSVectorBuildState state;
 	ParsedText	prs;
@@ -360,7 +366,11 @@ json_to_tsvector_worker(Oid cfgId, text *json, uint32 flags)
 	state.prs = &prs;
 	state.cfgId = cfgId;
 
+#ifndef JSON_GENERIC
 	iterate_json_values(json, flags, &state, add_to_tsvector);
+#else
+	iterate_jsonb_values(json, flags, &state, add_to_tsvector);
+#endif
 
 	return make_tsvector(&prs);
 }
@@ -369,7 +379,11 @@ Datum
 json_string_to_tsvector_byid(PG_FUNCTION_ARGS)
 {
 	Oid			cfgId = PG_GETARG_OID(0);
+#ifndef JSON_GENERIC
 	text	   *json = PG_GETARG_TEXT_P(1);
+#else
+	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(1));
+#endif
 	TSVector	result;
 
 	result = json_to_tsvector_worker(cfgId, json, jtiString);
@@ -381,7 +395,11 @@ json_string_to_tsvector_byid(PG_FUNCTION_ARGS)
 Datum
 json_string_to_tsvector(PG_FUNCTION_ARGS)
 {
+#ifndef JSON_GENERIC
 	text	   *json = PG_GETARG_TEXT_P(0);
+#else
+	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(0));
+#endif
 	Oid			cfgId;
 	TSVector	result;
 
@@ -396,7 +414,11 @@ Datum
 json_to_tsvector_byid(PG_FUNCTION_ARGS)
 {
 	Oid			cfgId = PG_GETARG_OID(0);
+#ifndef JSON_GENERIC
 	text	   *json = PG_GETARG_TEXT_P(1);
+#else
+	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(1));
+#endif
 	Jsonb	   *jbFlags = PG_GETARG_JSONB_P(2);
 	TSVector	result;
 	uint32		flags = parse_jsonb_index_flags(jbFlags);
@@ -411,7 +433,11 @@ json_to_tsvector_byid(PG_FUNCTION_ARGS)
 Datum
 json_to_tsvector(PG_FUNCTION_ARGS)
 {
+#ifndef JSON_GENERIC
 	text	   *json = PG_GETARG_TEXT_P(0);
+#else
+	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(0));
+#endif
 	Jsonb	   *jbFlags = PG_GETARG_JSONB_P(1);
 	Oid			cfgId;
 	TSVector	result;
@@ -429,7 +455,7 @@ json_to_tsvector(PG_FUNCTION_ARGS)
  * Parse lexemes in an element of a json(b) value, add to TSVectorBuildState.
  */
 static void
-add_to_tsvector(void *_state, char *elem_value, int elem_len)
+add_to_tsvector(void *_state, const char *elem_value, int elem_len)
 {
 	TSVectorBuildState *state = (TSVectorBuildState *) _state;
 	ParsedText *prs = state->prs;
@@ -449,7 +475,7 @@ add_to_tsvector(void *_state, char *elem_value, int elem_len)
 
 	prevwords = prs->curwords;
 
-	parsetext(state->cfgId, prs, elem_value, elem_len);
+	parsetext(state->cfgId, prs, (char *) elem_value, elem_len);
 
 	/*
 	 * If we extracted any words from this JSON element, advance pos to create

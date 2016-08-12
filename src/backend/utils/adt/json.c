@@ -11,6 +11,63 @@
  *
  *-------------------------------------------------------------------------
  */
+
+#define JSON_C
+
+#define JSONXOID					JSONOID
+
+#define jsonb_in					_json_in
+#define jsonb_recv					_json_recv
+
+#define jsonb_out					json_out
+#define jsonb_send					json_send
+#define array_to_jsonb				array_to_json
+#define row_to_jsonb				row_to_json
+#define row_to_jsonb_pretty			row_to_json_pretty
+#define to_jsonb					to_json
+#define jsonb_agg_transfn			json_agg_transfn
+#define jsonb_agg_finalfn			json_agg_finalfn
+#define jsonb_object_agg_transfn	json_object_agg_transfn
+#define jsonb_object_agg_finalfn	json_object_agg_finalfn
+#define jsonb_build_object			json_build_object
+#define jsonb_build_object_noargs	json_build_object_noargs
+#define jsonb_build_array			json_build_array
+#define jsonb_build_array_noargs	json_build_array_noargs
+#define jsonb_object				json_object
+#define jsonb_object_two_arg		json_object_two_arg
+#define jsonb_typeof				json_typeof
+
+#define jsonb_array_element			json_array_element
+#define jsonb_array_element_text	json_array_element_text
+#define jsonb_array_elements		json_array_elements
+#define jsonb_array_elements_text	json_array_elements_text
+#define jsonb_array_length			json_array_length
+#define jsonb_canonical				json_canonical
+#define jsonb_concat				json_concat
+#define jsonb_delete				json_delete
+#define jsonb_delete_idx			json_delete_idx
+#define jsonb_delete_path			json_delete_path
+#define jsonb_delete_array			json_delete_array
+#define jsonb_each					json_each
+#define jsonb_each_text				json_each_text
+#define jsonb_insert				json_insert
+#define jsonb_extract_path			json_extract_path
+#define jsonb_extract_path_text		json_extract_path_text
+#define jsonb_object_field			json_object_field
+#define jsonb_object_field_text		json_object_field_text
+#define jsonb_object_keys			json_object_keys
+#define jsonb_populate_record		json_populate_record
+#define jsonb_populate_recordset	json_populate_recordset
+#define jsonb_pretty				json_pretty
+#define jsonb_set					json_set
+#define jsonb_set_lax				json_set_lax
+#define jsonb_strip_nulls			json_strip_nulls
+#define jsonb_to_record				json_to_record
+#define jsonb_to_recordset			json_to_recordset
+
+#define JsonxContainerOps			(&jsontContainerOps)
+#define JsonxPGetDatum(json)		JsontPGetDatum(json)
+
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
@@ -66,9 +123,11 @@ static void json_categorize_type(Oid typoid,
 static void datum_to_json(Datum val, bool is_null, StringInfo result,
 						  JsonTypeCategory tcategory, Oid outfuncoid,
 						  bool key_scalar);
+#ifndef JSON_GENERIC
 static void add_json(Datum val, bool is_null, StringInfo result,
 					 Oid val_type, bool key_scalar);
 static text *catenate_stringinfo_string(StringInfo buffer, const char *addon);
+#endif
 
 /*
  * Input.
@@ -88,6 +147,7 @@ json_in(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(result);
 }
 
+#ifndef JSON_GENERIC
 /*
  * Output.
  */
@@ -113,6 +173,7 @@ json_send(PG_FUNCTION_ARGS)
 	pq_sendtext(&buf, VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
+#endif
 
 /*
  * Binary receive.
@@ -626,6 +687,8 @@ composite_to_json(Datum composite, StringInfo result, bool use_line_feeds)
 	ReleaseTupleDesc(tupdesc);
 }
 
+#ifndef JSON_GENERIC
+
 /*
  * Append JSON text for "val" to "result".
  *
@@ -656,6 +719,8 @@ add_json(Datum val, bool is_null, StringInfo result,
 
 	datum_to_json(val, is_null, result, tcategory, outfuncoid, key_scalar);
 }
+
+#endif
 
 /*
  * SQL function array_to_json(row)
@@ -722,6 +787,8 @@ row_to_json_pretty(PG_FUNCTION_ARGS)
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(result->data, result->len));
 }
+
+#ifndef JSON_GENERIC
 
 /*
  * SQL function to_json(anyvalue)
@@ -1271,7 +1338,7 @@ json_object_two_arg(PG_FUNCTION_ARGS)
 
 	PG_RETURN_TEXT_P(rval);
 }
-
+#endif
 
 /*
  * Produce a JSON string literal, properly escaping characters in the text.
@@ -1318,6 +1385,7 @@ escape_json(StringInfo buf, const char *str)
 	appendStringInfoCharMacro(buf, '"');
 }
 
+#ifndef JSON_GENERIC
 /*
  * SQL function json_typeof(json) -> text
  *
@@ -1375,3 +1443,8 @@ json_typeof(PG_FUNCTION_ARGS)
 
 	PG_RETURN_TEXT_P(cstring_to_text(type));
 }
+
+#endif
+
+#include "jsonb.c"
+#include "jsonfuncs.c"
