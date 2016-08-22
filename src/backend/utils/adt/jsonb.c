@@ -415,11 +415,11 @@ jsonb_in_scalar(void *pstate, char *token, JsonTokenType tokentype)
 			break;
 	}
 
-	_state->res = pushScalarJsonbValue(&_state->parseState, &v, false);
+	_state->res = pushScalarJsonbValue(&_state->parseState, &v, false, true);
 }
 
 /*
- * JsonbToCString
+ * JsonbToCStringRaw
  *	   Converts jsonb value to a C-string.
  *
  * If 'out' argument is non-null, the resulting C-string is stored inside the
@@ -430,7 +430,7 @@ jsonb_in_scalar(void *pstate, char *token, JsonTokenType tokentype)
  * if they are converting it to a text* object.
  */
 char *
-JsonbToCString(StringInfo out, JsonbContainer *in, int estimated_len)
+JsonbToCStringRaw(StringInfo out, JsonbContainer *in, int estimated_len)
 {
 	return JsonbToCStringWorker(out, in, estimated_len, false);
 }
@@ -459,6 +459,7 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool
 
 	/* If we are indenting, don't add a space after a comma */
 	int			ispaces = indent ? 1 : 2;
+	bool		skipNested = !indent;
 
 	/*
 	 * Don't indent the very first item. This gets set to the indent flag at
@@ -476,7 +477,7 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool
 	it = JsonbIteratorInit(in);
 
 	while (redo_switch ||
-		   ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE))
+		   ((type = JsonbIteratorNext(&it, &v, skipNested)) != WJB_DONE))
 	{
 		redo_switch = false;
 		switch (type)
@@ -517,11 +518,14 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool
 				jsonb_put_escaped_value(out, &v);
 				appendBinaryStringInfo(out, ": ", 2);
 
-				type = JsonbIteratorNext(&it, &v, false);
+				type = JsonbIteratorNext(&it, &v, skipNested);
 				if (type == WJB_VALUE)
 				{
 					first = false;
-					jsonb_put_escaped_value(out, &v);
+					if (v.type == jbvBinary)
+						JsonbToCString(out, v.val.binary.data, v.val.binary.len);
+					else
+						jsonb_put_escaped_value(out, &v);
 				}
 				else
 				{
@@ -542,7 +546,11 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool
 
 				if (!raw_scalar)
 					add_indent(out, use_indent, level);
-				jsonb_put_escaped_value(out, &v);
+
+				if (v.type == jbvBinary)
+					JsonbToCString(out, v.val.binary.data, v.val.binary.len);
+				else
+					jsonb_put_escaped_value(out, &v);
 				break;
 			case WJB_END_ARRAY:
 				level--;
@@ -854,6 +862,15 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 					{
 						JsonbIteratorToken type;
 
+						JsonToJsonValue(jsonb, &jb);
+
+						if (result->parseState)
+						{
+							pushScalarJsonbValue(&result->parseState, &jb,
+												 false, false);
+							return;
+						}
+
 						while ((type = JsonbIteratorNext(&it, &jb, false))
 							   != WJB_DONE)
 						{
@@ -885,7 +902,8 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 		return;
 	}
 
-	result->res = pushScalarJsonbValue(&result->parseState, &jb, key_scalar);
+	result->res = pushScalarJsonbValue(&result->parseState, &jb, key_scalar,
+									   true);
 }
 
 /*
