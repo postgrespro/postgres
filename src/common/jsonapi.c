@@ -1334,8 +1334,7 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 
 			res->type = jbvBinary;
 			res->val.binary.len = 0;
-			res->val.binary.data = (JsonContainer *)
-							palloc(sizeof(JsonContainer));
+			res->val.binary.data = JsonContainerAlloc();
 
 			if (skipNested)
 			{
