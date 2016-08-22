@@ -248,7 +248,7 @@ JsonValueToContainer(const JsonValue *val)
 		return val->val.binary.data;
 	else
 	{
-		JsonContainerData *jc = palloc(sizeof(JsonContainerData));
+		JsonContainerData *jc = JsonContainerAlloc();
 		jsonvInitContainer(jc, val);
 		return jc;
 	}

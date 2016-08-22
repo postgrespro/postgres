@@ -226,6 +226,9 @@ extern Json *DatumGetJson(Datum val, JsonContainerOps *ops, Json *tmp);
 extern void JsonFree(Json *json);
 extern Json *JsonCopyTemporary(Json *tmp);
 
+#define JsonContainerAlloc() \
+	((JsonContainerData *) palloc(sizeof(JsonContainerData)))
+
 extern JsonValue *JsonFindValueInContainer(JsonContainer *json, uint32 flags,
 										   JsonValue *key);
 
