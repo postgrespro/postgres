@@ -249,6 +249,9 @@ JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
 
 extern Json *DatumGetJson(Datum value, JsonContainerOps *ops);
 
+#define JsonContainerAlloc() \
+	((JsonContainerData *) palloc(sizeof(JsonContainerData)))
+
 extern JsonValue *JsonFindValueInContainer(JsonContainer *json, uint32 flags,
 										   JsonValue *key);
 
