@@ -354,14 +354,17 @@ extern JsonbValue *findJsonbValueFromContainer(const JsonbContainer *sheader,
 extern JsonbValue *getKeyJsonValueFromContainer(const struct JsonContainerData *container,
 												const char *keyVal, int keyLen,
 												JsonbValue *res);
-extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
-								  JsonbIteratorToken seq, 
-								  const JsonbValue *jbval);
+extern JsonbValue *pushJsonbValueExt(JsonbParseState **pstate,
+									 JsonbIteratorToken seq,
+									 const JsonbValue *jbVal,
+									 bool unpackBinary);
+#define pushJsonbValue(pstate, seq, jv) pushJsonbValueExt(pstate, seq, jv, true)
 extern JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
 										JsonbIteratorToken seq,
 										const JsonbValue *scalarVal);
 extern JsonbValue *pushScalarJsonbValue(JsonbParseState **pstate,
-										const JsonbValue *jbval, bool isKey);
+										const JsonbValue *jbval, bool isKey,
+										bool unpackBinary);
 extern JsonbParseState *JsonbParseStateClone(JsonbParseState *state);
 typedef struct JsonIteratorData JsonIterator;
 extern JsonbIteratorToken JsonbIteratorNext(JsonIterator **it, JsonbValue *val,

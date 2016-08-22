@@ -4278,7 +4278,7 @@ addJsonbToParseState(JsonbParseState **jbps, Jsonb *jb)
 		Assert(v.type == jbvArray);
 		(void) JsonbIteratorNext(&it, &v, false);	/* fetch scalar value */
 
-		(void) pushScalarJsonbValue(jbps, &v, false);
+		(void) pushScalarJsonbValue(jbps, &v, false, true);
 	}
 	else
 	{
