@@ -264,7 +264,7 @@ extern JsonValue *JsonContainerExtractKeys(JsonContainer *jsc);
 extern JsonValue *JsonValueFromCString(char *json, int len, Node *escontext /* XXX SQL/JSON bool unique_keys */);
 
 
-extern char *JsonbToCString(StringInfo out, JsonContainer *in,
+extern char *JsonbToCStringRaw(StringInfo out, JsonContainer *in,
 			   int estimated_len);
 extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 					 int estimated_len);
@@ -273,6 +273,9 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 
 #define JsonToCStringExt(out, in, estimated_len) \
 	((*(in)->ops->toString)(out, in, estimated_len))
+
+#define JsonbToCString(out, in, estimated_len) \
+		JsonToCStringExt(out, in, estimated_len)
 
 extern JsonValue   *jsonFindKeyInObject(JsonContainer *obj, const char *key, int len);
 extern JsonValue   *jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len);

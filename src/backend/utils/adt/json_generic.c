@@ -556,7 +556,7 @@ jsonvContainerOps =
 	jsonvFindValueInArray,
 	jsonvGetArrayElement,
 	jsonvGetArraySize,
-	JsonbToCString,
+	JsonbToCStringRaw,
 };
 
 JsonValue *
