@@ -1244,12 +1244,11 @@ jsonbIteratorInit(JsonContainer *cont)
  */
 
 bool
-JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
+JsonbDeepContains(JsonContainer *cval, JsonContainer *ccont)
 {
-	JsonbValue	vval,
-				vcontained;
-	JsonbIteratorToken rval,
-				rcont;
+	JsonbIterator	   *icont;
+	JsonbValue			vcont;
+	JsonbIteratorToken	rcont;
 
 	/*
 	 * Guard against stack overflow due to overly complex Jsonb.
@@ -1259,10 +1258,7 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 	 */
 	check_stack_depth();
 
-	rval = JsonbIteratorNext(val, &vval, false);
-	rcont = JsonbIteratorNext(mContained, &vcontained, false);
-
-	if (rval != rcont)
+	if (JsonContainerIsObject(cval) != JsonContainerIsObject(ccont))
 	{
 		/*
 		 * The differing return values can immediately be taken as indicating
@@ -1270,15 +1266,10 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 		 * sufficient reason to give up entirely (but it should be the case
 		 * that they're both some container type).
 		 */
-		Assert(rval == WJB_BEGIN_OBJECT || rval == WJB_BEGIN_ARRAY);
-		Assert(rcont == WJB_BEGIN_OBJECT || rcont == WJB_BEGIN_ARRAY);
 		return false;
 	}
-	else if (rcont == WJB_BEGIN_OBJECT)
+	else if (JsonContainerIsObject(cval))
 	{
-		Assert(vval.type == jbvObject);
-		Assert(vcontained.type == jbvObject);
-
 		/*
 		 * If the lhs has fewer pairs than the rhs, it can't possibly contain
 		 * the rhs.  (This conclusion is safe only because we de-duplicate
@@ -1286,33 +1277,31 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 		 * optimization in the array case.)  The case probably won't arise
 		 * often, but since it's such a cheap check we may as well make it.
 		 */
-		if (vval.val.object.nPairs < vcontained.val.object.nPairs)
+		if (JsonContainerSize(cval) >= 0 &&
+			JsonContainerSize(ccont) >= 0 &&
+			JsonContainerSize(cval) < JsonContainerSize(ccont))
 			return false;
 
-		/* Work through rhs "is it contained within?" object */
-		for (;;)
+		icont = JsonbIteratorInit(ccont);
+		rcont = JsonbIteratorNext(&icont, &vcont, false);
+		Assert(rcont == WJB_BEGIN_OBJECT);
+
+		/*
+		 * Work through rhs "is it contained within?" object.
+		 *
+		 * When we get through caller's rhs "is it contained within?"
+		 * object without failing to find one of its values, it's
+		 * contained.
+		 */
+		while ((rcont = JsonbIteratorNext(&icont, &vcont, false)) == WJB_KEY)
 		{
-			JsonbValue *lhsVal; /* lhsVal is from pair in lhs object */
+			/* First, find value by key in lhs object ... */
 			JsonbValue	lhsValBuf;
+			JsonbValue *lhsVal = JsonFindKeyInObject(cval,
+													 vcont.val.string.val,
+													 vcont.val.string.len,
+													 &lhsValBuf);
 
-			rcont = JsonbIteratorNext(mContained, &vcontained, false);
-
-			/*
-			 * When we get through caller's rhs "is it contained within?"
-			 * object without failing to find one of its values, it's
-			 * contained.
-			 */
-			if (rcont == WJB_END_OBJECT)
-				return true;
-
-			Assert(rcont == WJB_KEY);
-			Assert(vcontained.type == jbvString);
-
-			/* First, find value by key... */
-			lhsVal = getKeyJsonValueFromContainer((*val)->container,
-												  vcontained.val.string.val,
-												  vcontained.val.string.len,
-												  &lhsValBuf);
 			if (!lhsVal)
 				return false;
 
@@ -1320,34 +1309,27 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 			 * ...at this stage it is apparent that there is at least a key
 			 * match for this rhs pair.
 			 */
-			rcont = JsonbIteratorNext(mContained, &vcontained, true);
-
+			rcont = JsonbIteratorNext(&icont, &vcont, true);
 			Assert(rcont == WJB_VALUE);
 
 			/*
 			 * Compare rhs pair's value with lhs pair's value just found using
 			 * key
 			 */
-			if (lhsVal->type != vcontained.type)
+			if (lhsVal->type != vcont.type)
 			{
 				return false;
 			}
 			else if (IsAJsonbScalar(lhsVal))
 			{
-				if (!equalsJsonbScalarValue(lhsVal, &vcontained))
+				if (!equalsJsonbScalarValue(lhsVal, &vcont))
 					return false;
 			}
 			else
 			{
 				/* Nested container value (object or array) */
-				JsonIterator *nestval,
-						   *nestContained;
-
 				Assert(lhsVal->type == jbvBinary);
-				Assert(vcontained.type == jbvBinary);
-
-				nestval = JsonbIteratorInit(lhsVal->val.binary.data);
-				nestContained = JsonbIteratorInit(vcontained.val.binary.data);
+				Assert(vcont.type == jbvBinary);
 
 				/*
 				 * Match "value" side of rhs datum object's pair recursively.
@@ -1369,18 +1351,19 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 				 * of containment (plus of course the mapped nodes must be
 				 * equal).
 				 */
-				if (!JsonbDeepContains(&nestval, &nestContained))
+				if (!JsonbDeepContains(lhsVal->val.binary.data,
+									   vcont.val.binary.data))
 					return false;
 			}
 		}
-	}
-	else if (rcont == WJB_BEGIN_ARRAY)
-	{
-		JsonbValue *lhsConts = NULL;
-		uint32		nLhsElems = vval.val.array.nElems;
 
-		Assert(vval.type == jbvArray);
-		Assert(vcontained.type == jbvArray);
+		Assert(rcont == WJB_END_OBJECT);
+		Assert(icont == NULL);
+	}
+	else
+	{
+		JsonbValue		   *lhsConts = NULL;
+		uint32				nLhsElems = JsonContainerSize(cval);
 
 		/*
 		 * Handle distinction between "raw scalar" pseudo arrays, and real
@@ -1392,29 +1375,25 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 		 * only contain pairs, never raw scalars (a pair is represented by an
 		 * rhs object argument with a single contained pair).
 		 */
-		if (vval.val.array.rawScalar && !vcontained.val.array.rawScalar)
+		if (JsonContainerIsScalar(cval) && !JsonContainerIsScalar(ccont))
 			return false;
 
-		/* Work through rhs "is it contained within?" array */
-		for (;;)
+		icont = JsonbIteratorInit(ccont);
+		rcont = JsonbIteratorNext(&icont, &vcont, false);
+		Assert(rcont == WJB_BEGIN_ARRAY);
+
+		/*
+		 * Work through rhs "is it contained within?" array.
+		 *
+		 * When we get through caller's rhs "is it contained within?"
+		 * array without failing to find one of its values, it's
+		 * contained.
+		 */
+		while ((rcont = JsonbIteratorNext(&icont, &vcont, true)) == WJB_ELEM)
 		{
-			rcont = JsonbIteratorNext(mContained, &vcontained, true);
-
-			/*
-			 * When we get through caller's rhs "is it contained within?"
-			 * array without failing to find one of its values, it's
-			 * contained.
-			 */
-			if (rcont == WJB_END_ARRAY)
-				return true;
-
-			Assert(rcont == WJB_ELEM);
-
-			if (IsAJsonbScalar(&vcontained))
+			if (IsAJsonbScalar(&vcont))
 			{
-				if (!findJsonbValueFromContainer((*val)->container,
-												 JB_FARRAY,
-												 &vcontained))
+				if (!findJsonbValueFromContainer(cval, JB_FARRAY, &vcont))
 					return false;
 			}
 			else
@@ -1427,20 +1406,36 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 				 */
 				if (lhsConts == NULL)
 				{
-					uint32		j = 0;
+					uint32			j = 0;
+					JsonbIterator  *ival;
+					JsonbValue		vval;
+
+					if ((int32) nLhsElems < 0)
+						nLhsElems = JsonGetArraySize(cval);
+
+					if (nLhsElems == 0)
+						return false;
 
 					/* Make room for all possible values */
 					lhsConts = palloc(sizeof(JsonbValue) * nLhsElems);
 
+					ival = JsonbIteratorInit(cval);
+					rcont = JsonbIteratorNext(&ival, &vval, true);
+					Assert(rcont == WJB_BEGIN_ARRAY);
+
 					for (i = 0; i < nLhsElems; i++)
 					{
 						/* Store all lhs elements in temp array */
-						rcont = JsonbIteratorNext(val, &vval, true);
+						rcont = JsonbIteratorNext(&ival, &vval, true);
 						Assert(rcont == WJB_ELEM);
 
 						if (vval.type == jbvBinary)
 							lhsConts[j++] = vval;
 					}
+
+					rcont = JsonbIteratorNext(&ival, &vval, true);
+					Assert(rcont == WJB_END_ARRAY);
+					Assert(ival == NULL);
 
 					/* No container elements in temp array, so give up now */
 					if (j == 0)
@@ -1454,20 +1449,8 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 				for (i = 0; i < nLhsElems; i++)
 				{
 					/* Nested container value (object or array) */
-					JsonIterator *nestval,
-							   *nestContained;
-					bool		contains;
-
-					nestval = JsonbIteratorInit(lhsConts[i].val.binary.data);
-					nestContained = JsonbIteratorInit(vcontained.val.binary.data);
-
-					contains = JsonbDeepContains(&nestval, &nestContained);
-
-					if (nestval)
-						pfree(nestval);
-					if (nestContained)
-						pfree(nestContained);
-					if (contains)
+					if (JsonbDeepContains(lhsConts[i].val.binary.data,
+										  vcont.val.binary.data))
 						break;
 				}
 
@@ -1479,14 +1462,15 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 					return false;
 			}
 		}
-	}
-	else
-	{
-		elog(ERROR, "invalid jsonb container type");
+
+		Assert(rcont == WJB_END_ARRAY);
+		Assert(icont == NULL);
+
+		if (lhsConts != NULL)
+			pfree(lhsConts);
 	}
 
-	elog(ERROR, "unexpectedly fell off end of jsonb container");
-	return false;
+	return true;
 }
 
 /*
