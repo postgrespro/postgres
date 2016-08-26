@@ -200,6 +200,7 @@ test_range_excl|t
 test_range_gist|t
 test_range_spgist|t
 test_tsvector|f
+testjson|f
 testjsonb|f
 text_tbl|f
 textrange_test|t
