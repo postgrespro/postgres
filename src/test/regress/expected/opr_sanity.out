@@ -2221,6 +2221,7 @@ ORDER BY 1, 2, 3;
                     | array_ops        | array_ops        | anyarray
                     | float_ops        | float4_ops       | real
                     | float_ops        | float8_ops       | double precision
+                    | json_ops         | json_ops         | json
                     | jsonb_ops        | jsonb_ops        | jsonb
                     | multirange_ops   | multirange_ops   | anymultirange
                     | numeric_ops      | numeric_ops      | numeric

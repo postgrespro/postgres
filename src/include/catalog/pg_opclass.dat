@@ -258,6 +258,15 @@
 { opcmethod => 'gin', opcname => 'jsonb_path_ops',
   opcfamily => 'gin/jsonb_path_ops', opcintype => 'jsonb', opcdefault => 'f',
   opckeytype => 'int4' },
+{ opcmethod => 'btree', opcname => 'json_ops', opcfamily => 'btree/json_ops',
+  opcintype => 'json' },
+{ opcmethod => 'hash', opcname => 'json_ops', opcfamily => 'hash/json_ops',
+  opcintype => 'json' },
+{ opcmethod => 'gin', opcname => 'json_ops', opcfamily => 'gin/json_ops',
+  opcintype => 'json', opckeytype => 'text' },
+{ opcmethod => 'gin', opcname => 'json_path_ops',
+  opcfamily => 'gin/json_path_ops', opcintype => 'json', opcdefault => 'f',
+  opckeytype => 'int4' },
 
 # BRIN operator classes
 

@@ -269,9 +269,9 @@ static int	compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
  *		an analogy in SQL/JSON, so we define its behavior on our own.
  */
 static Datum
-jsonb_path_exists_internal(FunctionCallInfo fcinfo, bool tz)
+jsonb_path_exists_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	JsonPath   *jp = PG_GETARG_JSONPATH_P(1);
 	JsonPathExecResult res;
 	Jsonb	   *vars = NULL;
@@ -279,7 +279,7 @@ jsonb_path_exists_internal(FunctionCallInfo fcinfo, bool tz)
 
 	if (PG_NARGS() == 4)
 	{
-		vars = PG_GETARG_JSONB_P(2);
+		vars = is_jsonb ? PG_GETARG_JSONB_P(2) : PG_GETARG_JSONT_P(2);
 		silent = PG_GETARG_BOOL(3);
 	}
 
@@ -297,13 +297,25 @@ jsonb_path_exists_internal(FunctionCallInfo fcinfo, bool tz)
 Datum
 jsonb_path_exists(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_exists_internal(fcinfo, false);
+	return jsonb_path_exists_internal(fcinfo, false, true);
+}
+
+Datum
+json_path_exists(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_exists_internal(fcinfo, false, false);
 }
 
 Datum
 jsonb_path_exists_tz(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_exists_internal(fcinfo, true);
+	return jsonb_path_exists_internal(fcinfo, true, true);
+}
+
+Datum
+json_path_exists_tz(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_exists_internal(fcinfo, true, false);
 }
 
 /*
@@ -315,7 +327,19 @@ Datum
 jsonb_path_exists_opr(PG_FUNCTION_ARGS)
 {
 	/* just call the other one -- it can handle both cases */
-	return jsonb_path_exists_internal(fcinfo, false);
+	return jsonb_path_exists_internal(fcinfo, false, true);
+}
+
+/*
+ * json_path_exists_opr
+ *		Implementation of operator "json @? jsonpath" (2-argument version of
+ *		json_path_exists()).
+ */
+Datum
+json_path_exists_opr(PG_FUNCTION_ARGS)
+{
+	/* just call the other one -- it can handle both cases */
+	return jsonb_path_exists_internal(fcinfo, false, false);
 }
 
 /*
@@ -324,9 +348,9 @@ jsonb_path_exists_opr(PG_FUNCTION_ARGS)
  *		See jsonb_path_exists() comment for details regarding error handling.
  */
 static Datum
-jsonb_path_match_internal(FunctionCallInfo fcinfo, bool tz)
+jsonb_path_match_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	JsonPath   *jp = PG_GETARG_JSONPATH_P(1);
 	JsonValueList found = {0};
 	Jsonb	   *vars = NULL;
@@ -334,7 +358,7 @@ jsonb_path_match_internal(FunctionCallInfo fcinfo, bool tz)
 
 	if (PG_NARGS() == 4)
 	{
-		vars = PG_GETARG_JSONB_P(2);
+		vars = is_jsonb ? PG_GETARG_JSONB_P(2) : PG_GETARG_JSONT_P(2);
 		silent = PG_GETARG_BOOL(3);
 	}
 
@@ -365,13 +389,25 @@ jsonb_path_match_internal(FunctionCallInfo fcinfo, bool tz)
 Datum
 jsonb_path_match(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_match_internal(fcinfo, false);
+	return jsonb_path_match_internal(fcinfo, false, true);
+}
+
+Datum
+json_path_match(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_match_internal(fcinfo, false, false);
 }
 
 Datum
 jsonb_path_match_tz(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_match_internal(fcinfo, true);
+	return jsonb_path_match_internal(fcinfo, true, true);
+}
+
+Datum
+json_path_match_tz(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_match_internal(fcinfo, true, false);
 }
 
 /*
@@ -383,7 +419,19 @@ Datum
 jsonb_path_match_opr(PG_FUNCTION_ARGS)
 {
 	/* just call the other one -- it can handle both cases */
-	return jsonb_path_match_internal(fcinfo, false);
+	return jsonb_path_match_internal(fcinfo, false, true);
+}
+
+/*
+ * json_path_match_opr
+ *		Implementation of operator "json @@ jsonpath" (2-argument version of
+ *		json_path_match()).
+ */
+Datum
+json_path_match_opr(PG_FUNCTION_ARGS)
+{
+	/* just call the other one -- it can handle both cases */
+	return jsonb_path_match_internal(fcinfo, false, false);
 }
 
 /*
@@ -392,10 +440,11 @@ jsonb_path_match_opr(PG_FUNCTION_ARGS)
  *		rowset.
  */
 static Datum
-jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
+jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 {
 	FuncCallContext *funcctx;
 	List	   *found;
+	Jsonb	   *res;
 	JsonbValue *v;
 	ListCell   *c;
 
@@ -411,9 +460,9 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		jb = PG_GETARG_JSONB_P_COPY(0);
+		jb = is_jsonb ? PG_GETARG_JSONB_P_COPY(0) : PG_GETARG_JSONT_P_COPY(0);
 		jp = PG_GETARG_JSONPATH_P_COPY(1);
-		vars = PG_GETARG_JSONB_P_COPY(2);
+		vars = is_jsonb ? PG_GETARG_JSONB_P_COPY(2) : PG_GETARG_JSONT_P_COPY(2);
 		silent = PG_GETARG_BOOL(3);
 
 		(void) executeJsonPath(jp, vars, jb, !silent, &found, tz);
@@ -434,19 +483,33 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
 	v = lfirst(c);
 	funcctx->user_fctx = list_delete_first(found);
 
-	SRF_RETURN_NEXT(funcctx, JsonbPGetDatum(JsonbValueToJsonb(v)));
+	res = JsonbValueToJsonb(v);
+
+	SRF_RETURN_NEXT(funcctx, is_jsonb ? JsonbPGetDatum(res) : JsontPGetDatum(res));
 }
 
 Datum
 jsonb_path_query(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_internal(fcinfo, false);
+	return jsonb_path_query_internal(fcinfo, false, true);
+}
+
+Datum
+json_path_query(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_internal(fcinfo, false, false);
 }
 
 Datum
 jsonb_path_query_tz(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_internal(fcinfo, true);
+	return jsonb_path_query_internal(fcinfo, true, true);
+}
+
+Datum
+json_path_query_tz(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_internal(fcinfo, true, false);
 }
 
 /*
@@ -455,29 +518,47 @@ jsonb_path_query_tz(PG_FUNCTION_ARGS)
  *		jsonb array.
  */
 static Datum
-jsonb_path_query_array_internal(FunctionCallInfo fcinfo, bool tz)
+jsonb_path_query_array_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	JsonPath   *jp = PG_GETARG_JSONPATH_P(1);
 	JsonValueList found = {0};
-	Jsonb	   *vars = PG_GETARG_JSONB_P(2);
+	Jsonb	   *vars = is_jsonb ? PG_GETARG_JSONB_P(2) : PG_GETARG_JSONT_P(2);
+	Jsonb	   *res;
 	bool		silent = PG_GETARG_BOOL(3);
 
 	(void) executeJsonPath(jp, vars, jb, !silent, &found, tz);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(wrapItemsInArray(&found)));
+	res = JsonbValueToJsonb(wrapItemsInArray(&found));
+
+	if (is_jsonb)
+		PG_RETURN_JSONB_P(res);
+	else
+		PG_RETURN_JSONT_P(res);
 }
 
 Datum
 jsonb_path_query_array(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_array_internal(fcinfo, false);
+	return jsonb_path_query_array_internal(fcinfo, false, true);
+}
+
+Datum
+json_path_query_array(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_array_internal(fcinfo, false, false);
 }
 
 Datum
 jsonb_path_query_array_tz(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_array_internal(fcinfo, true);
+	return jsonb_path_query_array_internal(fcinfo, true, true);
+}
+
+Datum
+json_path_query_array_tz(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_array_internal(fcinfo, true, false);
 }
 
 /*
@@ -486,32 +567,50 @@ jsonb_path_query_array_tz(PG_FUNCTION_ARGS)
  *		item.  If there are no items, NULL returned.
  */
 static Datum
-jsonb_path_query_first_internal(FunctionCallInfo fcinfo, bool tz)
+jsonb_path_query_first_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	JsonPath   *jp = PG_GETARG_JSONPATH_P(1);
 	JsonValueList found = {0};
-	Jsonb	   *vars = PG_GETARG_JSONB_P(2);
+	Jsonb	   *vars = is_jsonb ? PG_GETARG_JSONB_P(2) : PG_GETARG_JSONT_P(2);
+	Jsonb	   *res;
 	bool		silent = PG_GETARG_BOOL(3);
 
 	(void) executeJsonPath(jp, vars, jb, !silent, &found, tz);
 
-	if (JsonValueListLength(&found) >= 1)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(JsonValueListHead(&found)));
-	else
+	if (JsonValueListLength(&found) < 1)
 		PG_RETURN_NULL();
+
+	res = JsonbValueToJsonb(JsonValueListHead(&found));
+
+	if (is_jsonb)
+		PG_RETURN_JSONB_P(res);
+	else
+		PG_RETURN_JSONT_P(res);
 }
 
 Datum
 jsonb_path_query_first(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_first_internal(fcinfo, false);
+	return jsonb_path_query_first_internal(fcinfo, false, true);
+}
+
+Datum
+json_path_query_first(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_first_internal(fcinfo, false, false);
 }
 
 Datum
 jsonb_path_query_first_tz(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_first_internal(fcinfo, true);
+	return jsonb_path_query_first_internal(fcinfo, true, true);
+}
+
+Datum
+json_path_query_first_tz(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_query_first_internal(fcinfo, true, false);
 }
 
 /********************Execute functions for JsonPath**************************/
