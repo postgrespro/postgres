@@ -232,6 +232,10 @@ CREATE TABLE array_index_op_test (
 	t			text[]
 );
 
+CREATE TABLE testjson (
+       j json
+);
+
 CREATE TABLE testjsonb (
        j jsonb
 );

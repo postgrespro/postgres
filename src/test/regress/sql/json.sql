@@ -850,3 +850,435 @@ select ts_headline('english', '{"a": "aaa bbb", "b": {"c": "ccc ddd fff", "c1": 
 select ts_headline('null'::json, tsquery('aaa & bbb'));
 select ts_headline('{}'::json, tsquery('aaa & bbb'));
 select ts_headline('[]'::json, tsquery('aaa & bbb'));
+
+-- equality and inequality
+SELECT '{"x":"y"}'::json = '{"x":"y"}'::json;
+SELECT '{"x":"y"}'::json = '{"x":"z"}'::json;
+
+SELECT '{"x":"y"}'::json <> '{"x":"y"}'::json;
+SELECT '{"x":"y"}'::json <> '{"x":"z"}'::json;
+
+-- containment
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"b"}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"b", "c":null}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"b", "g":null}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"g":null}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"c"}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"b"}');
+SELECT json_contains('{"a":"b", "b":1, "c":null}', '{"a":"b", "c":"q"}');
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"b"}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"b", "c":null}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"b", "g":null}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"g":null}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"c"}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"b"}';
+SELECT '{"a":"b", "b":1, "c":null}'::json @> '{"a":"b", "c":"q"}';
+
+SELECT '[1,2]'::json @> '[1,2,2]'::json;
+SELECT '[1,1,2]'::json @> '[1,2,2]'::json;
+SELECT '[[1,2]]'::json @> '[[1,2,2]]'::json;
+SELECT '[1,2,2]'::json <@ '[1,2]'::json;
+SELECT '[1,2,2]'::json <@ '[1,1,2]'::json;
+SELECT '[[1,2,2]]'::json <@ '[[1,2]]'::json;
+
+SELECT json_contained('{"a":"b"}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"a":"b", "c":null}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"a":"b", "g":null}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"g":null}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"a":"c"}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"a":"b"}', '{"a":"b", "b":1, "c":null}');
+SELECT json_contained('{"a":"b", "c":"q"}', '{"a":"b", "b":1, "c":null}');
+SELECT '{"a":"b"}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"a":"b", "c":null}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"a":"b", "g":null}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"g":null}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"a":"c"}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"a":"b"}'::json <@ '{"a":"b", "b":1, "c":null}';
+SELECT '{"a":"b", "c":"q"}'::json <@ '{"a":"b", "b":1, "c":null}';
+-- Raw scalar may contain another raw scalar, array may contain a raw scalar
+SELECT '[5]'::json @> '[5]';
+SELECT '5'::json @> '5';
+SELECT '[5]'::json @> '5';
+-- But a raw scalar cannot contain an array
+SELECT '5'::json @> '[5]';
+-- In general, one thing should always contain itself. Test array containment:
+SELECT '["9", ["7", "3"], 1]'::json @> '["9", ["7", "3"], 1]'::json;
+SELECT '["9", ["7", "3"], ["1"]]'::json @> '["9", ["7", "3"], ["1"]]'::json;
+-- array containment string matching confusion bug
+SELECT '{ "name": "Bob", "tags": [ "enim", "qui"]}'::json @> '{"tags":["qu"]}';
+
+
+-- exists
+SELECT json_exists('{"a":null, "b":"qq"}', 'a');
+SELECT json_exists('{"a":null, "b":"qq"}', 'b');
+SELECT json_exists('{"a":null, "b":"qq"}', 'c');
+SELECT json_exists('{"a":"null", "b":"qq"}', 'a');
+SELECT json '{"a":null, "b":"qq"}' ? 'a';
+SELECT json '{"a":null, "b":"qq"}' ? 'b';
+SELECT json '{"a":null, "b":"qq"}' ? 'c';
+SELECT json '{"a":"null", "b":"qq"}' ? 'a';
+-- array exists - array elements should behave as keys
+SELECT count(*) from testjson  WHERE j->'array' ? 'bar';
+-- type sensitive array exists - should return no rows (since "exists" only
+-- matches strings that are either object keys or array elements)
+SELECT count(*) from testjson  WHERE j->'array' ? '5'::text;
+-- However, a raw scalar is *contained* within the array
+SELECT count(*) from testjson  WHERE j->'array' @> '5'::json;
+
+SELECT json_exists_any('{"a":null, "b":"qq"}', ARRAY['a','b']);
+SELECT json_exists_any('{"a":null, "b":"qq"}', ARRAY['b','a']);
+SELECT json_exists_any('{"a":null, "b":"qq"}', ARRAY['c','a']);
+SELECT json_exists_any('{"a":null, "b":"qq"}', ARRAY['c','d']);
+SELECT json_exists_any('{"a":null, "b":"qq"}', '{}'::text[]);
+SELECT json '{"a":null, "b":"qq"}' ?| ARRAY['a','b'];
+SELECT json '{"a":null, "b":"qq"}' ?| ARRAY['b','a'];
+SELECT json '{"a":null, "b":"qq"}' ?| ARRAY['c','a'];
+SELECT json '{"a":null, "b":"qq"}' ?| ARRAY['c','d'];
+SELECT json '{"a":null, "b":"qq"}' ?| '{}'::text[];
+
+SELECT json_exists_all('{"a":null, "b":"qq"}', ARRAY['a','b']);
+SELECT json_exists_all('{"a":null, "b":"qq"}', ARRAY['b','a']);
+SELECT json_exists_all('{"a":null, "b":"qq"}', ARRAY['c','a']);
+SELECT json_exists_all('{"a":null, "b":"qq"}', ARRAY['c','d']);
+SELECT json_exists_all('{"a":null, "b":"qq"}', '{}'::text[]);
+SELECT json '{"a":null, "b":"qq"}' ?& ARRAY['a','b'];
+SELECT json '{"a":null, "b":"qq"}' ?& ARRAY['b','a'];
+SELECT json '{"a":null, "b":"qq"}' ?& ARRAY['c','a'];
+SELECT json '{"a":null, "b":"qq"}' ?& ARRAY['c','d'];
+SELECT json '{"a":null, "b":"qq"}' ?& ARRAY['a','a', 'b', 'b', 'b'];
+SELECT json '{"a":null, "b":"qq"}' ?& '{}'::text[];
+
+
+-- indexing
+SELECT count(*) FROM testjson WHERE j @> '{"wait":null}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC"}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC", "public":true}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25.0}';
+SELECT count(*) FROM testjson WHERE j ? 'public';
+SELECT count(*) FROM testjson WHERE j ? 'bar';
+SELECT count(*) FROM testjson WHERE j ?| ARRAY['public','disabled'];
+SELECT count(*) FROM testjson WHERE j ?& ARRAY['public','disabled'];
+
+CREATE INDEX testjson_jidx ON testjson USING gin (j);
+SET enable_seqscan = off;
+
+SELECT count(*) FROM testjson WHERE j @> '{"wait":null}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC"}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC", "public":true}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25.0}';
+SELECT count(*) FROM testjson WHERE j @> '{"array":["foo"]}';
+SELECT count(*) FROM testjson WHERE j @> '{"array":["bar"]}';
+-- exercise GIN_SEARCH_MODE_ALL
+SELECT count(*) FROM testjson WHERE j @> '{}';
+SELECT count(*) FROM testjson WHERE j ? 'public';
+SELECT count(*) FROM testjson WHERE j ? 'bar';
+SELECT count(*) FROM testjson WHERE j ?| ARRAY['public','disabled'];
+SELECT count(*) FROM testjson WHERE j ?& ARRAY['public','disabled'];
+
+-- array exists - array elements should behave as keys (for GIN index scans too)
+CREATE INDEX testjson_jidx_array ON testjson USING gin((j->'array'));
+SELECT count(*) from testjson  WHERE j->'array' ? 'bar';
+-- type sensitive array exists - should return no rows (since "exists" only
+-- matches strings that are either object keys or array elements)
+SELECT count(*) from testjson  WHERE j->'array' ? '5'::text;
+-- However, a raw scalar is *contained* within the array
+SELECT count(*) from testjson  WHERE j->'array' @> '5'::json;
+
+RESET enable_seqscan;
+
+SELECT count(*) FROM (SELECT (json_each(j)).key FROM testjson) AS wow;
+SELECT key, count(*) FROM (SELECT (json_each(j)).key FROM testjson) AS wow GROUP BY key ORDER BY count DESC, key;
+
+-- sort/hash
+SELECT count(distinct j) FROM testjson;
+SET enable_hashagg = off;
+SELECT count(*) FROM (SELECT j FROM (SELECT * FROM testjson UNION ALL SELECT * FROM testjson) js GROUP BY j) js2;
+SET enable_hashagg = on;
+SET enable_sort = off;
+SELECT count(*) FROM (SELECT j FROM (SELECT * FROM testjson UNION ALL SELECT * FROM testjson) js GROUP BY j) js2;
+SELECT distinct * FROM (values (json '{}' || ''::text),('{}')) v(j);
+SET enable_sort = on;
+
+RESET enable_hashagg;
+RESET enable_sort;
+
+DROP INDEX testjson_jidx;
+DROP INDEX testjson_jidx_array;
+-- btree
+CREATE INDEX testjson_jidx ON testjson USING btree (j);
+SET enable_seqscan = off;
+
+SELECT count(*) FROM testjson WHERE j > '{"p": 1}';
+SELECT count(*) FROM testjson WHERE j = '{"indexed": true, "line": 371, "pos": 98, "node": "CBA"}';
+
+--gin path opclass
+DROP INDEX testjson_jidx;
+CREATE INDEX testjson_jidx ON testjson USING gin (j json_path_ops);
+SET enable_seqscan = off;
+
+SELECT count(*) FROM testjson WHERE j @> '{"wait":null}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC"}';
+SELECT count(*) FROM testjson WHERE j @> '{"wait":"CC", "public":true}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25}';
+SELECT count(*) FROM testjson WHERE j @> '{"age":25.0}';
+-- exercise GIN_SEARCH_MODE_ALL
+SELECT count(*) FROM testjson WHERE j @> '{}';
+
+RESET enable_seqscan;
+DROP INDEX testjson_jidx;
+
+-- nested tests
+SELECT '{"ff":{"a":12,"b":16}}'::json;
+SELECT '{"ff":{"a":12,"b":16},"qq":123}'::json;
+SELECT '{"aa":["a","aaa"],"qq":{"a":12,"b":16,"c":["c1","c2"],"d":{"d1":"d1","d2":"d2","d1":"d3"}}}'::json;
+SELECT '{"aa":["a","aaa"],"qq":{"a":"12","b":"16","c":["c1","c2"],"d":{"d1":"d1","d2":"d2"}}}'::json;
+SELECT '{"aa":["a","aaa"],"qq":{"a":"12","b":"16","c":["c1","c2",["c3"],{"c4":4}],"d":{"d1":"d1","d2":"d2"}}}'::json;
+SELECT '{"ff":["a","aaa"]}'::json;
+
+SELECT
+  '{"ff":{"a":12,"b":16},"qq":123,"x":[1,2],"Y":null}'::json -> 'ff',
+  '{"ff":{"a":12,"b":16},"qq":123,"x":[1,2],"Y":null}'::json -> 'qq',
+  ('{"ff":{"a":12,"b":16},"qq":123,"x":[1,2],"Y":null}'::json -> 'Y') IS NULL AS f,
+  ('{"ff":{"a":12,"b":16},"qq":123,"x":[1,2],"Y":null}'::json ->> 'Y') IS NULL AS t,
+   '{"ff":{"a":12,"b":16},"qq":123,"x":[1,2],"Y":null}'::json -> 'x';
+
+-- nested containment
+SELECT '{"a":[1,2],"c":"b"}'::json @> '{"a":[1,2]}';
+SELECT '{"a":[2,1],"c":"b"}'::json @> '{"a":[1,2]}';
+SELECT '{"a":{"1":2},"c":"b"}'::json @> '{"a":[1,2]}';
+SELECT '{"a":{"2":1},"c":"b"}'::json @> '{"a":[1,2]}';
+SELECT '{"a":{"1":2},"c":"b"}'::json @> '{"a":{"1":2}}';
+SELECT '{"a":{"2":1},"c":"b"}'::json @> '{"a":{"1":2}}';
+SELECT '["a","b"]'::json @> '["a","b","c","b"]';
+SELECT '["a","b","c","b"]'::json @> '["a","b"]';
+SELECT '["a","b","c",[1,2]]'::json @> '["a",[1,2]]';
+SELECT '["a","b","c",[1,2]]'::json @> '["b",[1,2]]';
+
+SELECT '{"a":[1,2],"c":"b"}'::json @> '{"a":[1]}';
+SELECT '{"a":[1,2],"c":"b"}'::json @> '{"a":[2]}';
+SELECT '{"a":[1,2],"c":"b"}'::json @> '{"a":[3]}';
+
+SELECT '{"a":[1,2,{"c":3,"x":4}],"c":"b"}'::json @> '{"a":[{"c":3}]}';
+SELECT '{"a":[1,2,{"c":3,"x":4}],"c":"b"}'::json @> '{"a":[{"x":4}]}';
+SELECT '{"a":[1,2,{"c":3,"x":4}],"c":"b"}'::json @> '{"a":[{"x":4},3]}';
+SELECT '{"a":[1,2,{"c":3,"x":4}],"c":"b"}'::json @> '{"a":[{"x":4},1]}';
+
+-- check some corner cases for indexed nested containment (bug #13756)
+create temp table nestjson (j json);
+insert into nestjson (j) values ('{"a":[["b",{"x":1}],["b",{"x":2}]],"c":3}');
+insert into nestjson (j) values ('[[14,2,3]]');
+insert into nestjson (j) values ('[1,[14,2,3]]');
+create index on nestjson using gin(j json_path_ops);
+
+set enable_seqscan = on;
+set enable_bitmapscan = off;
+select * from nestjson where j @> '{"a":[[{"x":2}]]}'::json;
+select * from nestjson where j @> '{"c":3}';
+select * from nestjson where j @> '[[14]]';
+set enable_seqscan = off;
+set enable_bitmapscan = on;
+select * from nestjson where j @> '{"a":[[{"x":2}]]}'::json;
+select * from nestjson where j @> '{"c":3}';
+select * from nestjson where j @> '[[14]]';
+reset enable_seqscan;
+reset enable_bitmapscan;
+
+-- nested object field / array index lookup
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'n';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'a';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'b';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'c';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'd';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'd' -> '1';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 'e';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json -> 0; --expecting error
+
+SELECT '["a","b","c",[1,2],null]'::json -> 0;
+SELECT '["a","b","c",[1,2],null]'::json -> 1;
+SELECT '["a","b","c",[1,2],null]'::json -> 2;
+SELECT '["a","b","c",[1,2],null]'::json -> 3;
+SELECT '["a","b","c",[1,2],null]'::json -> 3 -> 1;
+SELECT '["a","b","c",[1,2],null]'::json -> 4;
+SELECT '["a","b","c",[1,2],null]'::json -> 5;
+SELECT '["a","b","c",[1,2],null]'::json -> -1;
+SELECT '["a","b","c",[1,2],null]'::json -> -5;
+SELECT '["a","b","c",[1,2],null]'::json -> -6;
+
+--nested path extraction
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{0}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{a}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,0}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,1}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,2}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,3}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,-1}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,-3}';
+SELECT '{"a":"b","c":[1,2,3]}'::json #> '{c,-4}';
+
+SELECT '[0,1,2,[3,4],{"5":"five"}]'::json #> '{0}';
+SELECT '[0,1,2,[3,4],{"5":"five"}]'::json #> '{3}';
+SELECT '[0,1,2,[3,4],{"5":"five"}]'::json #> '{4}';
+SELECT '[0,1,2,[3,4],{"5":"five"}]'::json #> '{4,5}';
+
+--nested exists
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'n';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'a';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'b';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'c';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'd';
+SELECT '{"n":null,"a":1,"b":[1,2],"c":{"1":2},"d":{"1":[2,3]}}'::json ? 'e';
+
+
+
+select json_pretty('{"a": "test", "b": [1, 2, 3], "c": "test3", "d":{"dd": "test4", "dd2":{"ddd": "test5"}}}');
+select json_pretty('[{"f1":1,"f2":null},2,null,[[{"x":true},6,7],8],3]');
+select json_pretty('{"a":["b", "c"], "d": {"e":"f"}}');
+
+select json_concat('{"d": "test", "a": [1, 2]}', '{"g": "test2", "c": {"c1":1, "c2":2}}');
+
+select '{"aa":1 , "b":2, "cq":3}'::json || '{"cq":"l", "b":"g", "fg":false}';
+select '{"aa":1 , "b":2, "cq":3}'::json || '{"aq":"l"}';
+select '{"aa":1 , "b":2, "cq":3}'::json || '{"aa":"l"}';
+select '{"aa":1 , "b":2, "cq":3}'::json || '{}';
+
+select '["a", "b"]'::json || '["c"]';
+select '["a", "b"]'::json || '["c", "d"]';
+select '["c"]' || '["a", "b"]'::json;
+
+select '["a", "b"]'::json || '"c"';
+select '"c"' || '["a", "b"]'::json;
+
+select '[]'::json || '["a"]'::json;
+select '[]'::json || '"a"'::json;
+select '"b"'::json || '"a"'::json;
+select '{}'::json || '{"a":"b"}'::json;
+select '[]'::json || '{"a":"b"}'::json;
+select '{"a":"b"}'::json || '[]'::json;
+
+select '"a"'::json || '{"a":1}';
+select '{"a":1}' || '"a"'::json;
+
+select '["a", "b"]'::json || '{"c":1}';
+select '{"c": 1}'::json || '["a", "b"]';
+
+select '{}'::json || '{"cq":"l", "b":"g", "fg":false}';
+
+select pg_column_size('{}'::json || '{}'::json) = pg_column_size('{}'::json);
+select pg_column_size('{"aa":1}'::json || '{"b":2}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
+select pg_column_size('{"aa":1, "b":2}'::json || '{}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
+select pg_column_size('{}'::json || '{"aa":1, "b":2}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
+
+select json_delete('{"a":1 , "b":2, "c":3}'::json, 'a');
+select json_delete('{"a":null , "b":2, "c":3}'::json, 'a');
+select json_delete('{"a":1 , "b":2, "c":3}'::json, 'b');
+select json_delete('{"a":1 , "b":2, "c":3}'::json, 'c');
+select json_delete('{"a":1 , "b":2, "c":3}'::json, 'd');
+select '{"a":1 , "b":2, "c":3}'::json - 'a';
+select '{"a":null , "b":2, "c":3}'::json - 'a';
+select '{"a":1 , "b":2, "c":3}'::json - 'b';
+select '{"a":1 , "b":2, "c":3}'::json - 'c';
+select '{"a":1 , "b":2, "c":3}'::json - 'd';
+select pg_column_size('{"a":1 , "b":2, "c":3}'::json - 'b') = pg_column_size('{"a":1, "b":2}'::json);
+
+select '["a","b","c"]'::json - 3;
+select '["a","b","c"]'::json - 2;
+select '["a","b","c"]'::json - 1;
+select '["a","b","c"]'::json - 0;
+select '["a","b","c"]'::json - -1;
+select '["a","b","c"]'::json - -2;
+select '["a","b","c"]'::json - -3;
+select '["a","b","c"]'::json - -4;
+
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{n}', '[1,2,3]');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{b,-1}', '[1,2,3]');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{d,1,0}', '[1,2,3]');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{d,NULL,0}', '[1,2,3]');
+
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{n}', '{"1": 2}');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{b,-1}', '{"1": 2}');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{d,1,0}', '{"1": 2}');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{d,NULL,0}', '{"1": 2}');
+
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{b,-1}', '"test"');
+select json_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json, '{b,-1}', '{"f": "test"}');
+
+select json_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{n}');
+select json_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{b,-1}');
+select json_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{d,1,0}');
+
+select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json #- '{n}';
+select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json #- '{b,-1}';
+select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json #- '{b,-1e}'; -- invalid array subscript
+select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::json #- '{d,1,0}';
+
+
+-- empty structure and error conditions for delete and replace
+
+select '"a"'::json - 'a'; -- error
+select '{}'::json - 'a';
+select '[]'::json - 'a';
+select '"a"'::json - 1; -- error
+select '{}'::json -  1; -- error
+select '[]'::json - 1;
+select '"a"'::json #- '{a}'; -- error
+select '{}'::json #- '{a}';
+select '[]'::json #- '{a}';
+select json_set('"a"','{a}','"b"'); --error
+select json_set('{}','{a}','"b"', false);
+select json_set('[]','{1}','"b"', false);
+
+-- json_set adding instead of replacing
+
+-- prepend to array
+select json_set('{"a":1,"b":[0,1,2],"c":{"d":4}}','{b,-33}','{"foo":123}');
+-- append to array
+select json_set('{"a":1,"b":[0,1,2],"c":{"d":4}}','{b,33}','{"foo":123}');
+-- check nesting levels addition
+select json_set('{"a":1,"b":[4,5,[0,1,2],6,7],"c":{"d":4}}','{b,2,33}','{"foo":123}');
+-- add new key
+select json_set('{"a":1,"b":[0,1,2],"c":{"d":4}}','{c,e}','{"foo":123}');
+-- adding doesn't do anything if elements before last aren't present
+select json_set('{"a":1,"b":[0,1,2],"c":{"d":4}}','{x,-33}','{"foo":123}');
+select json_set('{"a":1,"b":[0,1,2],"c":{"d":4}}','{x,y}','{"foo":123}');
+-- add to empty object
+select json_set('{}','{x}','{"foo":123}');
+--add to empty array
+select json_set('[]','{0}','{"foo":123}');
+select json_set('[]','{99}','{"foo":123}');
+select json_set('[]','{-99}','{"foo":123}');
+select json_set('{"a": [1, 2, 3]}', '{a, non_integer}', '"new_value"');
+select json_set('{"a": {"b": [1, 2, 3]}}', '{a, b, non_integer}', '"new_value"');
+select json_set('{"a": {"b": [1, 2, 3]}}', '{a, b, NULL}', '"new_value"');
+
+
+-- json_insert
+select json_insert('{"a": [0,1,2]}', '{a, 1}', '"new_value"');
+select json_insert('{"a": [0,1,2]}', '{a, 1}', '"new_value"', true);
+select json_insert('{"a": {"b": {"c": [0, 1, "test1", "test2"]}}}', '{a, b, c, 2}', '"new_value"');
+select json_insert('{"a": {"b": {"c": [0, 1, "test1", "test2"]}}}', '{a, b, c, 2}', '"new_value"', true);
+select json_insert('{"a": [0,1,2]}', '{a, 1}', '{"b": "value"}');
+select json_insert('{"a": [0,1,2]}', '{a, 1}', '["value1", "value2"]');
+
+-- edge cases
+select json_insert('{"a": [0,1,2]}', '{a, 0}', '"new_value"');
+select json_insert('{"a": [0,1,2]}', '{a, 0}', '"new_value"', true);
+select json_insert('{"a": [0,1,2]}', '{a, 2}', '"new_value"');
+select json_insert('{"a": [0,1,2]}', '{a, 2}', '"new_value"', true);
+select json_insert('{"a": [0,1,2]}', '{a, -1}', '"new_value"');
+select json_insert('{"a": [0,1,2]}', '{a, -1}', '"new_value"', true);
+select json_insert('[]', '{1}', '"new_value"');
+select json_insert('[]', '{1}', '"new_value"', true);
+select json_insert('{"a": []}', '{a, 1}', '"new_value"');
+select json_insert('{"a": []}', '{a, 1}', '"new_value"', true);
+select json_insert('{"a": [0,1,2]}', '{a, 10}', '"new_value"');
+select json_insert('{"a": [0,1,2]}', '{a, -10}', '"new_value"');
+
+-- json_insert should be able to insert new value for objects, but not to replace
+select json_insert('{"a": {"b": "value"}}', '{a, c}', '"new_value"');
+select json_insert('{"a": {"b": "value"}}', '{a, c}', '"new_value"', true);
+
+select json_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"');
+select json_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"', true);
