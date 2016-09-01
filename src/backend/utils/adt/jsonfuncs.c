@@ -4026,7 +4026,7 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 					(void) pushJsonbValue(st, r, &v);
 
 				if (op_type & JB_PATH_INSERT_AFTER)
-					addJsonbToParseState(st, newval);
+					add_newval(st, newval, unpacked);
 
 				done = true;
 			}
