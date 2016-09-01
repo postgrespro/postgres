@@ -3655,7 +3655,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
 	it = JsonbIteratorInit(&in->root);
 
 	res = setPath(&it, path_elems, path_nulls, path_len, &st, 0, newval,
-				  false ,after ? JB_PATH_INSERT_AFTER : JB_PATH_INSERT_BEFORE);
+				  false, after ? JB_PATH_INSERT_AFTER : JB_PATH_INSERT_BEFORE);
 
 	Assert(res != NULL);
 
@@ -4013,9 +4013,7 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 				r = JsonbIteratorNext(it, &v, true);	/* skip */
 
 				if (op_type & (JB_PATH_INSERT_BEFORE | JB_PATH_CREATE))
-				{
 					add_newval(st, newval, unpacked);
-				}
 
 				/*
 				 * We should keep current value only in case of
@@ -4066,10 +4064,8 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 	}
 }
 
-
 Datum
-jsonb_get_element(Datum jsonbdatum,
-		text **path, int path_len, bool *is_null)
+jsonb_get_element(Datum jsonbdatum, text **path, int path_len, bool *is_null)
 {
 	Jsonb	   *jb = DatumGetJsonb(jsonbdatum);
 	JsonbValue *v;
@@ -4089,15 +4085,13 @@ jsonb_get_element(Datum jsonbdatum,
 		   v->type == jbvBinary && level < path_len)
 	{
 		v = findJsonbValueFromContainerLen(v->val.binary.data, JB_FOBJECT,
-									       VARDATA_ANY(path[level]),
-									       VARSIZE_ANY_EXHDR(path[level]));
+										   VARDATA_ANY(path[level]),
+										   VARSIZE_ANY_EXHDR(path[level]));
 		level++;
 	}
 
 	if (v != NULL && level == path_len)
-	{
 		PG_RETURN_JSONB(JsonbValueToJsonb(v));
-	}
 
 	*is_null = true;
 	return (Datum) 0;
@@ -4106,19 +4100,19 @@ jsonb_get_element(Datum jsonbdatum,
 Datum
 jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 {
-	SubscriptionRefExprState		*sbstate = (SubscriptionRefExprState *) PG_GETARG_POINTER(0);
-	SubscriptionExecData			*sbsdata = (SubscriptionExecData *) PG_GETARG_POINTER(1);
-	ExprContext						*econtext = sbsdata->xprcontext;
-	bool							*is_null = sbsdata->isNull;
-	SubscriptionRef					*jsonb_ref = (SubscriptionRef *) sbstate->xprstate.expr;
-	bool							is_assignment = (jsonb_ref->refassgnexpr != NULL);
-	bool							eisnull;
-	text							**path;
-	int								i = 0;
+	SubscriptionRefExprState   *sbstate = (SubscriptionRefExprState *) PG_GETARG_POINTER(0);
+	SubscriptionExecData	   *sbsdata = (SubscriptionExecData *) PG_GETARG_POINTER(1);
+	ExprContext				   *econtext = sbsdata->xprcontext;
+	bool					   *is_null = sbsdata->isNull;
+	SubscriptionRef			   *jsonb_ref = (SubscriptionRef *) sbstate->xprstate.expr;
+	bool						is_assignment = (jsonb_ref->refassgnexpr != NULL);
+	bool						eisnull;
+	text					  **path;
+	int							i = 0;
 
 	path = (text **) palloc(i * sizeof(text*));
-	for(i = 0; i < sbsdata->indexprNumber; i++)
-		path[i] = cstring_to_text((char *)DatumGetPointer(sbsdata->upper[i]));
+	for (i = 0; i < sbsdata->indexprNumber; i++)
+		path[i] = cstring_to_text((char *) DatumGetPointer(sbsdata->upper[i]));
 
 	if (is_assignment)
 	{
@@ -4189,17 +4183,15 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 Datum
 jsonb_subscription_prepare(PG_FUNCTION_ARGS)
 {
-	SubscriptionRef   *sbsref = (SubscriptionRef *) PG_GETARG_POINTER(0);
-	ParseState *pstate = (ParseState *) PG_GETARG_POINTER(1);
+	SubscriptionRef	   *sbsref = (SubscriptionRef *) PG_GETARG_POINTER(0);
+	ParseState		   *pstate = (ParseState *) PG_GETARG_POINTER(1);
 
 	if (sbsref->reflowerindexpr != NIL)
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb subscript does not support slices"),
 				 parser_errposition(pstate, exprLocation(
 									((Node *)lfirst(sbsref->reflowerindexpr->head))) )));
-	}
 
 	PG_RETURN_POINTER(sbsref);
 }
@@ -4207,50 +4199,42 @@ jsonb_subscription_prepare(PG_FUNCTION_ARGS)
 Datum
 jsonb_subscription(PG_FUNCTION_ARGS)
 {
-	int op_type = PG_GETARG_INT32(0);
-	FunctionCallInfoData target_fcinfo = get_slice_arguments(fcinfo, 1,
-															 fcinfo->nargs);
+	int						op_type = PG_GETARG_INT32(0);
+	FunctionCallInfoData	target_fcinfo = get_slice_arguments(fcinfo, 1,
+																fcinfo->nargs);
 
 	if (op_type & SBS_VALIDATION)
-	{
 		return jsonb_subscription_prepare(&target_fcinfo);
-	}
 
 	if (op_type & SBS_EXEC)
-	{
 		return jsonb_subscription_evaluate(&target_fcinfo);
-	}
 
 	elog(ERROR, "incorrect op_type for subscription function: %d", op_type);
 }
 
 Datum
-jsonb_set_element(Datum jsonbdatum,
-		text **path, int path_len, Datum sourceData, Oid source_type)
+jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
+				  Datum sourceData, Oid source_type)
 {
-	Jsonb				*jb = DatumGetJsonb(jsonbdatum);
-	JsonbValue			*newval, *res = NULL;
-	JsonbParseState 	*state = NULL;
-	JsonbIterator 		*it;
+	Jsonb			   *jb = DatumGetJsonb(jsonbdatum);
+	JsonbValue		   *newval,
+					   *res = NULL;
+	JsonbParseState    *state = NULL;
+	JsonbIterator 	   *it;
 	int					i = 0;
-	bool				*path_nulls = palloc(path_len * sizeof(bool));
+	bool			   *path_nulls = palloc(path_len * sizeof(bool));
 
 	newval = to_jsonb_worker(sourceData, source_type);
 	it = JsonbIteratorInit(&jb->root);
 
-
 	if (newval->type == jbvArray && newval->val.array.rawScalar == true)
-	{
 		*newval = newval->val.array.elems[0];
-	}
 
-	for(i = 0; i < path_len; i++)
-	{
-		path_nulls[i]= false;
-	}
+	for (i = 0; i < path_len; i++)
+		path_nulls[i] = false;
 
 	res = setPath(&it, (Datum *) path, path_nulls, path_len, &state, 0,
-				  (void *)newval, true, true);
+				  (void *) newval, true, true);
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(res));
 }

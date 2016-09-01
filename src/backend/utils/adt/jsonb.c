@@ -1149,12 +1149,12 @@ to_jsonb(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(JsonbValueToJsonb(res));
 }
 
-JsonbValue*
+JsonbValue *
 to_jsonb_worker(Datum source, Oid source_type)
 {
-	JsonbInState result;
-	JsonbTypeCategory tcategory;
-	Oid			outfuncoid;
+	JsonbInState		result;
+	JsonbTypeCategory	tcategory;
+	Oid					outfuncoid;
 
 	if (source_type == InvalidOid)
 		ereport(ERROR,
