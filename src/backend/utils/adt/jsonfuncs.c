@@ -4152,17 +4152,17 @@ jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
 {
 	Jsonb			   *jb = DatumGetJsonb(jsonbdatum);
 	JsonbValue		   *newval,
-					   *res = NULL;
+					   *res;
 	JsonbParseState    *state = NULL;
 	JsonbIterator 	   *it;
 	bool			   *path_nulls = palloc0(path_len * sizeof(bool));
 
 	newval = to_jsonb_worker(sourceData, source_type);
-	it = JsonbIteratorInit(&jb->root);
 
-	if (newval->type == jbvArray && newval->val.array.rawScalar == true)
+	if (newval->type == jbvArray && newval->val.array.rawScalar)
 		*newval = newval->val.array.elems[0];
 
+	it = JsonbIteratorInit(&jb->root);
 
 	res = setPath(&it, (Datum *) path, path_nulls, path_len, &state, 0,
 				  newval, JB_PATH_CREATE);
