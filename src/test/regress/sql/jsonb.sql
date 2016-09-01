@@ -867,3 +867,47 @@ select jsonb_insert('{"a": {"b": "value"}}', '{a, c}', '"new_value"', true);
 
 select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"');
 select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"', true);
+
+-- jsonb subscript
+select ('{"a": 1}'::jsonb)['a'];
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['b'];
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'];
+select ('{"a": 1}'::jsonb)['not_exist'];
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1'];
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2'];
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2']['a3'];
+
+create TEMP TABLE test_jsonb_subscript (
+       id int,
+       test_json jsonb
+);
+
+insert into test_jsonb_subscript values
+(1, '{}'), -- empty jsonb
+(2, '{"key": "value"}'); -- jsonb with data
+
+-- update empty jsonb
+update test_jsonb_subscript set test_json['a'] = 1 where id = 1;
+select * from test_jsonb_subscript;
+
+-- update jsonb with some data
+update test_jsonb_subscript set test_json['a'] = 1 where id = 2;
+select * from test_jsonb_subscript;
+
+-- replace jsonb
+update test_jsonb_subscript set test_json['a'] = 'test';
+select * from test_jsonb_subscript;
+
+-- replace by object
+update test_jsonb_subscript set test_json['a'] = '{"b": 1}'::jsonb;
+select * from test_jsonb_subscript;
+
+-- replace by array
+update test_jsonb_subscript set test_json['a'] = '[1, 2, 3]'::jsonb;
+select * from test_jsonb_subscript;
+
+-- use jsonb subscription in where clause
+select * from test_jsonb_subscript where test_json['key'] = '"value"';
+select * from test_jsonb_subscript where test_json['key_doesnt_exists'] = '"value"';
+select * from test_jsonb_subscript where test_json['key'] = '"wrong_value"';
+

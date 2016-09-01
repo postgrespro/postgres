@@ -605,14 +605,14 @@ _readWindowFunc(void)
 }
 
 /*
- * _readArrayRef
+ * _readSubscriptionRef
  */
-static ArrayRef *
-_readArrayRef(void)
+static SubscriptionRef *
+_readSubscriptionRef(void)
 {
-	READ_LOCALS(ArrayRef);
+	READ_LOCALS(SubscriptionRef);
 
-	READ_OID_FIELD(refarraytype);
+	READ_OID_FIELD(refcontainertype);
 	READ_OID_FIELD(refelemtype);
 	READ_INT_FIELD(reftypmod);
 	READ_OID_FIELD(refcollid);
@@ -2316,8 +2316,8 @@ parseNodeString(void)
 		return_value = _readGroupingFunc();
 	else if (MATCH("WINDOWFUNC", 10))
 		return_value = _readWindowFunc();
-	else if (MATCH("ARRAYREF", 8))
-		return_value = _readArrayRef();
+	else if (MATCH("SUBSCRIPTIONREF", 15))
+		return_value = _readSubscriptionRef();
 	else if (MATCH("FUNCEXPR", 8))
 		return_value = _readFuncExpr();
 	else if (MATCH("NAMEDARGEXPR", 12))

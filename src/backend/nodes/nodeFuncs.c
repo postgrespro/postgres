@@ -66,13 +66,13 @@ exprType(const Node *expr)
 		case T_WindowFunc:
 			type = ((const WindowFunc *) expr)->wintype;
 			break;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				const ArrayRef *arrayref = (const ArrayRef *) expr;
+				const SubscriptionRef *arrayref = (const SubscriptionRef *) expr;
 
 				/* slice and/or store operations yield the array type */
 				if (arrayref->reflowerindexpr || arrayref->refassgnexpr)
-					type = arrayref->refarraytype;
+					type = arrayref->refcontainertype;
 				else
 					type = arrayref->refelemtype;
 			}
@@ -284,9 +284,9 @@ exprTypmod(const Node *expr)
 			return ((const Const *) expr)->consttypmod;
 		case T_Param:
 			return ((const Param *) expr)->paramtypmod;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			/* typmod is the same for array or element */
-			return ((const ArrayRef *) expr)->reftypmod;
+			return ((const SubscriptionRef *) expr)->reftypmod;
 		case T_FuncExpr:
 			{
 				int32		coercedTypmod;
@@ -772,8 +772,8 @@ exprCollation(const Node *expr)
 		case T_WindowFunc:
 			coll = ((const WindowFunc *) expr)->wincollid;
 			break;
-		case T_ArrayRef:
-			coll = ((const ArrayRef *) expr)->refcollid;
+		case T_SubscriptionRef:
+			coll = ((const SubscriptionRef *) expr)->refcollid;
 			break;
 		case T_FuncExpr:
 			coll = ((const FuncExpr *) expr)->funccollid;
@@ -1014,8 +1014,8 @@ exprSetCollation(Node *expr, Oid collation)
 		case T_WindowFunc:
 			((WindowFunc *) expr)->wincollid = collation;
 			break;
-		case T_ArrayRef:
-			((ArrayRef *) expr)->refcollid = collation;
+		case T_SubscriptionRef:
+			((SubscriptionRef *) expr)->refcollid = collation;
 			break;
 		case T_FuncExpr:
 			((FuncExpr *) expr)->funccollid = collation;
@@ -1237,9 +1237,9 @@ exprLocation(const Node *expr)
 			/* function name should always be the first thing */
 			loc = ((const WindowFunc *) expr)->location;
 			break;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			/* just use array argument's location */
-			loc = exprLocation((Node *) ((const ArrayRef *) expr)->refexpr);
+			loc = exprLocation((Node *) ((const SubscriptionRef *) expr)->refexpr);
 			break;
 		case T_FuncExpr:
 			{
@@ -1926,21 +1926,21 @@ expression_tree_walker(Node *node,
 					return true;
 			}
 			break;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				ArrayRef   *aref = (ArrayRef *) node;
+				SubscriptionRef   *sbsref = (SubscriptionRef *) node;
 
 				/* recurse directly for upper/lower array index lists */
-				if (expression_tree_walker((Node *) aref->refupperindexpr,
+				if (expression_tree_walker((Node *) sbsref->refupperindexpr,
 										   walker, context))
 					return true;
-				if (expression_tree_walker((Node *) aref->reflowerindexpr,
+				if (expression_tree_walker((Node *) sbsref->reflowerindexpr,
 										   walker, context))
 					return true;
 				/* walker must see the refexpr and refassgnexpr, however */
-				if (walker(aref->refexpr, context))
+				if (walker(sbsref->refexpr, context))
 					return true;
-				if (walker(aref->refassgnexpr, context))
+				if (walker(sbsref->refassgnexpr, context))
 					return true;
 			}
 			break;
@@ -2515,12 +2515,12 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				ArrayRef   *arrayref = (ArrayRef *) node;
-				ArrayRef   *newnode;
+				SubscriptionRef   *arrayref = (SubscriptionRef *) node;
+				SubscriptionRef   *newnode;
 
-				FLATCOPY(newnode, arrayref, ArrayRef);
+				FLATCOPY(newnode, arrayref, SubscriptionRef);
 				MUTATE(newnode->refupperindexpr, arrayref->refupperindexpr,
 					   List *);
 				MUTATE(newnode->reflowerindexpr, arrayref->reflowerindexpr,

@@ -439,7 +439,7 @@ static void get_tablesample_def(TableSampleClause *tablesample,
 static void get_opclass_name(Oid opclass, Oid actual_datatype,
 				 StringInfo buf);
 static Node *processIndirection(Node *node, deparse_context *context);
-static void printSubscripts(ArrayRef *aref, deparse_context *context);
+static void printSubscripts(SubscriptionRef *aref, deparse_context *context);
 static char *get_relation_name(Oid relid);
 static char *generate_relation_name(Oid relid, List *namespaces);
 static char *generate_qualified_relation_name(Oid relid);
@@ -5828,7 +5828,7 @@ get_update_query_targetlist_def(Query *query, List *targetList,
 		{
 			/*
 			 * We must dig down into the expr to see if it's a PARAM_MULTIEXPR
-			 * Param.  That could be buried under FieldStores and ArrayRefs
+			 * Param.  That could be buried under FieldStores and SubscriptionRefs
 			 * (cf processIndirection()), and underneath those there could be
 			 * an implicit type coercion.
 			 */
@@ -5841,13 +5841,13 @@ get_update_query_targetlist_def(Query *query, List *targetList,
 
 					expr = (Node *) linitial(fstore->newvals);
 				}
-				else if (IsA(expr, ArrayRef))
+				else if (IsA(expr, SubscriptionRef))
 				{
-					ArrayRef   *aref = (ArrayRef *) expr;
+					SubscriptionRef   *sbsref = (SubscriptionRef *) expr;
 
-					if (aref->refassgnexpr == NULL)
+					if (sbsref->refassgnexpr == NULL)
 						break;
-					expr = (Node *) aref->refassgnexpr;
+					expr = (Node *) sbsref->refassgnexpr;
 				}
 				else
 					break;
@@ -6879,7 +6879,7 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 			/* single words: always simple */
 			return true;
 
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 		case T_ArrayExpr:
 		case T_RowExpr:
 		case T_CoalesceExpr:
@@ -6996,7 +6996,7 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 						return true;	/* own parentheses */
 					}
 				case T_BoolExpr:		/* lower precedence */
-				case T_ArrayRef:		/* other separators */
+				case T_SubscriptionRef:		/* other separators */
 				case T_ArrayExpr:		/* other separators */
 				case T_RowExpr:	/* other separators */
 				case T_CoalesceExpr:	/* own parentheses */
@@ -7046,7 +7046,7 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 							return false;
 						return true;	/* own parentheses */
 					}
-				case T_ArrayRef:		/* other separators */
+				case T_SubscriptionRef:		/* other separators */
 				case T_ArrayExpr:		/* other separators */
 				case T_RowExpr:	/* other separators */
 				case T_CoalesceExpr:	/* own parentheses */
@@ -7232,9 +7232,9 @@ get_rule_expr(Node *node, deparse_context *context,
 			get_windowfunc_expr((WindowFunc *) node, context);
 			break;
 
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				ArrayRef   *aref = (ArrayRef *) node;
+				SubscriptionRef   *sbsref = (SubscriptionRef *) node;
 				bool		need_parens;
 
 				/*
@@ -7245,24 +7245,24 @@ get_rule_expr(Node *node, deparse_context *context,
 				 * here too, and display only the assignment source
 				 * expression.
 				 */
-				if (IsA(aref->refexpr, CaseTestExpr))
+				if (IsA(sbsref->refexpr, CaseTestExpr))
 				{
-					Assert(aref->refassgnexpr);
-					get_rule_expr((Node *) aref->refassgnexpr,
+					Assert(sbsref->refassgnexpr);
+					get_rule_expr((Node *) sbsref->refassgnexpr,
 								  context, showimplicit);
 					break;
 				}
 
 				/*
 				 * Parenthesize the argument unless it's a simple Var or a
-				 * FieldSelect.  (In particular, if it's another ArrayRef, we
+				 * FieldSelect.  (In particular, if it's another SubscriptionRef, we
 				 * *must* parenthesize to avoid confusion.)
 				 */
-				need_parens = !IsA(aref->refexpr, Var) &&
-					!IsA(aref->refexpr, FieldSelect);
+				need_parens = !IsA(sbsref->refexpr, Var) &&
+					!IsA(sbsref->refexpr, FieldSelect);
 				if (need_parens)
 					appendStringInfoChar(buf, '(');
-				get_rule_expr((Node *) aref->refexpr, context, showimplicit);
+				get_rule_expr((Node *) sbsref->refexpr, context, showimplicit);
 				if (need_parens)
 					appendStringInfoChar(buf, ')');
 
@@ -7275,7 +7275,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				 * EXPLAIN tries to print the targetlist of a plan resulting
 				 * from such a statement.
 				 */
-				if (aref->refassgnexpr)
+				if (sbsref->refassgnexpr)
 				{
 					Node	   *refassgnexpr;
 
@@ -7292,7 +7292,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				else
 				{
 					/* Just an ordinary array fetch, so print subscripts */
-					printSubscripts(aref, context);
+					printSubscripts(sbsref, context);
 				}
 			}
 			break;
@@ -7491,12 +7491,12 @@ get_rule_expr(Node *node, deparse_context *context,
 				bool		need_parens;
 
 				/*
-				 * Parenthesize the argument unless it's an ArrayRef or
+				 * Parenthesize the argument unless it's an SubscriptionRef or
 				 * another FieldSelect.  Note in particular that it would be
 				 * WRONG to not parenthesize a Var argument; simplicity is not
 				 * the issue here, having the right number of names is.
 				 */
-				need_parens = !IsA(arg, ArrayRef) &&!IsA(arg, FieldSelect);
+				need_parens = !IsA(arg, SubscriptionRef) && !IsA(arg, FieldSelect);
 				if (need_parens)
 					appendStringInfoChar(buf, '(');
 				get_rule_expr(arg, context, true);
@@ -9610,7 +9610,7 @@ get_opclass_name(Oid opclass, Oid actual_datatype,
 /*
  * processIndirection - take care of array and subfield assignment
  *
- * We strip any top-level FieldStore or assignment ArrayRef nodes that
+ * We strip any top-level FieldStore or assignment SubscriptionRef nodes that
  * appear in the input, printing them as decoration for the base column
  * name (which we assume the caller just printed).  Return the subexpression
  * that's to be assigned.
@@ -9652,19 +9652,19 @@ processIndirection(Node *node, deparse_context *context)
 			 */
 			node = (Node *) linitial(fstore->newvals);
 		}
-		else if (IsA(node, ArrayRef))
+		else if (IsA(node, SubscriptionRef))
 		{
-			ArrayRef   *aref = (ArrayRef *) node;
+			SubscriptionRef   *sbsref = (SubscriptionRef *) node;
 
-			if (aref->refassgnexpr == NULL)
+			if (sbsref->refassgnexpr == NULL)
 				break;
-			printSubscripts(aref, context);
+			printSubscripts(sbsref, context);
 
 			/*
 			 * We ignore refexpr since it should be an uninteresting reference
 			 * to the target column or subcolumn.
 			 */
-			node = (Node *) aref->refassgnexpr;
+			node = (Node *) sbsref->refassgnexpr;
 		}
 		else
 			break;
@@ -9674,14 +9674,14 @@ processIndirection(Node *node, deparse_context *context)
 }
 
 static void
-printSubscripts(ArrayRef *aref, deparse_context *context)
+printSubscripts(SubscriptionRef *sbsref, deparse_context *context)
 {
 	StringInfo	buf = context->buf;
 	ListCell   *lowlist_item;
 	ListCell   *uplist_item;
 
-	lowlist_item = list_head(aref->reflowerindexpr);	/* could be NULL */
-	foreach(uplist_item, aref->refupperindexpr)
+	lowlist_item = list_head(sbsref->reflowerindexpr);	/* could be NULL */
+	foreach(uplist_item, sbsref->refupperindexpr)
 	{
 		appendStringInfoChar(buf, '[');
 		if (lowlist_item)

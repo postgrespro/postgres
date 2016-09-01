@@ -1145,23 +1145,29 @@ to_jsonb(PG_FUNCTION_ARGS)
 {
 	Datum		val = PG_GETARG_DATUM(0);
 	Oid			val_type = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	JsonbValue *res = to_jsonb_worker(val, val_type);
+	PG_RETURN_POINTER(JsonbValueToJsonb(res));
+}
+
+JsonbValue*
+to_jsonb_worker(Datum source, Oid source_type)
+{
 	JsonbInState result;
 	JsonbTypeCategory tcategory;
 	Oid			outfuncoid;
 
-	if (val_type == InvalidOid)
+	if (source_type == InvalidOid)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("could not determine input data type")));
 
-	jsonb_categorize_type(val_type,
+	jsonb_categorize_type(source_type,
 						  &tcategory, &outfuncoid);
 
 	memset(&result, 0, sizeof(JsonbInState));
 
-	datum_to_jsonb(val, false, &result, tcategory, outfuncoid, false);
-
-	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
+	datum_to_jsonb(source, false, &result, tcategory, outfuncoid, false);
+	return result.res;
 }
 
 /*

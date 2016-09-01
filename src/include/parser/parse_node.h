@@ -223,12 +223,16 @@ extern void cancel_parser_errposition_callback(ParseCallbackState *pcbstate);
 
 extern Var *make_var(ParseState *pstate, RangeTblEntry *rte, int attrno,
 		 int location);
-extern Oid	transformArrayType(Oid *arrayType, int32 *arrayTypmod);
-extern ArrayRef *transformArraySubscripts(ParseState *pstate,
-						 Node *arrayBase,
-						 Oid arrayType,
+extern Oid	transformArrayType(Oid *containerType, int32 *containerTypmod);
+
+#define SBS_VALIDATION		0x0001
+#define SBS_EXEC			0x0002
+
+extern SubscriptionRef *transformContainerSubscripts(ParseState *pstate,
+						 Node *containerBase,
+						 Oid containerType,
 						 Oid elementType,
-						 int32 arrayTypMod,
+						 int32 containerTypMod,
 						 List *indirection,
 						 Node *assignFrom);
 extern Const *make_const(ParseState *pstate, Value *value, int location);

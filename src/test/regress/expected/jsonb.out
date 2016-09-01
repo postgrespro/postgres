@@ -3441,3 +3441,115 @@ HINT:  Try using the function jsonb_set to replace key value.
 select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"', true);
 ERROR:  cannot replace existing key
 HINT:  Try using the function jsonb_set to replace key value.
+-- jsonb subscript
+select ('{"a": 1}'::jsonb)['a'];
+ jsonb 
+-------
+ 1
+(1 row)
+
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['b'];
+ jsonb 
+-------
+ "c"
+(1 row)
+
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'];
+   jsonb   
+-----------
+ [1, 2, 3]
+(1 row)
+
+select ('{"a": 1}'::jsonb)['not_exist'];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1'];
+     jsonb     
+---------------
+ {"a2": "aaa"}
+(1 row)
+
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2'];
+ jsonb 
+-------
+ "aaa"
+(1 row)
+
+select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2']['a3'];
+ jsonb 
+-------
+ 
+(1 row)
+
+create TEMP TABLE test_jsonb_subscript (
+       id int,
+       test_json jsonb
+);
+insert into test_jsonb_subscript values
+(1, '{}'), -- empty jsonb
+(2, '{"key": "value"}'); -- jsonb with data
+-- update empty jsonb
+update test_jsonb_subscript set test_json['a'] = 1 where id = 1;
+select * from test_jsonb_subscript;
+ id |    test_json     
+----+------------------
+  2 | {"key": "value"}
+  1 | {"a": 1}
+(2 rows)
+
+-- update jsonb with some data
+update test_jsonb_subscript set test_json['a'] = 1 where id = 2;
+select * from test_jsonb_subscript;
+ id |        test_json         
+----+--------------------------
+  1 | {"a": 1}
+  2 | {"a": 1, "key": "value"}
+(2 rows)
+
+-- replace jsonb
+update test_jsonb_subscript set test_json['a'] = 'test';
+select * from test_jsonb_subscript;
+ id |           test_json           
+----+-------------------------------
+  1 | {"a": "test"}
+  2 | {"a": "test", "key": "value"}
+(2 rows)
+
+-- replace by object
+update test_jsonb_subscript set test_json['a'] = '{"b": 1}'::jsonb;
+select * from test_jsonb_subscript;
+ id |            test_json            
+----+---------------------------------
+  1 | {"a": {"b": 1}}
+  2 | {"a": {"b": 1}, "key": "value"}
+(2 rows)
+
+-- replace by array
+update test_jsonb_subscript set test_json['a'] = '[1, 2, 3]'::jsonb;
+select * from test_jsonb_subscript;
+ id |            test_json             
+----+----------------------------------
+  1 | {"a": [1, 2, 3]}
+  2 | {"a": [1, 2, 3], "key": "value"}
+(2 rows)
+
+-- use jsonb subscription in where clause
+select * from test_jsonb_subscript where test_json['key'] = '"value"';
+ id |            test_json             
+----+----------------------------------
+  2 | {"a": [1, 2, 3], "key": "value"}
+(1 row)
+
+select * from test_jsonb_subscript where test_json['key_doesnt_exists'] = '"value"';
+ id | test_json 
+----+-----------
+(0 rows)
+
+select * from test_jsonb_subscript where test_json['key'] = '"wrong_value"';
+ id | test_json 
+----+-----------
+(0 rows)
+

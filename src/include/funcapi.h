@@ -183,6 +183,7 @@ extern TupleDesc build_function_result_tupdesc_d(Datum proallargtypes,
 								Datum proargmodes,
 								Datum proargnames);
 extern TupleDesc build_function_result_tupdesc_t(HeapTuple procTuple);
+extern FunctionCallInfoData get_slice_arguments(FunctionCallInfo fcinfo, int begin, int end);
 
 
 /*----------

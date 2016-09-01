@@ -1291,14 +1291,14 @@ _copyWindowFunc(const WindowFunc *from)
 }
 
 /*
- * _copyArrayRef
+ * _copySubscriptionRef
  */
-static ArrayRef *
-_copyArrayRef(const ArrayRef *from)
+static SubscriptionRef *
+_copySubscriptionRef(const SubscriptionRef *from)
 {
-	ArrayRef   *newnode = makeNode(ArrayRef);
+	SubscriptionRef   *newnode = makeNode(SubscriptionRef);
 
-	COPY_SCALAR_FIELD(refarraytype);
+	COPY_SCALAR_FIELD(refcontainertype);
 	COPY_SCALAR_FIELD(refelemtype);
 	COPY_SCALAR_FIELD(reftypmod);
 	COPY_SCALAR_FIELD(refcollid);
@@ -4463,8 +4463,8 @@ copyObject(const void *from)
 		case T_WindowFunc:
 			retval = _copyWindowFunc(from);
 			break;
-		case T_ArrayRef:
-			retval = _copyArrayRef(from);
+		case T_SubscriptionRef:
+			retval = _copySubscriptionRef(from);
 			break;
 		case T_FuncExpr:
 			retval = _copyFuncExpr(from);

@@ -461,13 +461,13 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 
 			/* process subscripts before this field selection */
 			if (subscripts)
-				result = (Node *) transformArraySubscripts(pstate,
-														   result,
-														   exprType(result),
-														   InvalidOid,
-														   exprTypmod(result),
-														   subscripts,
-														   NULL);
+				result = (Node *) transformContainerSubscripts(pstate,
+														       result,
+														       exprType(result),
+														       InvalidOid,
+														       exprTypmod(result),
+														       subscripts,
+														       NULL);
 			subscripts = NIL;
 
 			newresult = ParseFuncOrColumn(pstate,
@@ -482,13 +482,16 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	}
 	/* process trailing subscripts, if any */
 	if (subscripts)
-		result = (Node *) transformArraySubscripts(pstate,
-												   result,
-												   exprType(result),
-												   InvalidOid,
-												   exprTypmod(result),
-												   subscripts,
-												   NULL);
+	{
+		result = (Node *) transformContainerSubscripts(pstate,
+												       result,
+												       exprType(result),
+												       InvalidOid,
+												       exprTypmod(result),
+												       subscripts,
+												       NULL);
+
+	}
 
 	return result;
 }

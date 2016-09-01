@@ -895,7 +895,7 @@ process_matched_tle(TargetEntry *src_tle,
 
 	/*----------
 	 * Multiple assignments to same attribute.  Allow only if all are
-	 * FieldStore or ArrayRef assignment operations.  This is a bit
+	 * FieldStore or SubscriptionRef assignment operations.  This is a bit
 	 * tricky because what we may actually be looking at is a nest of
 	 * such nodes; consider
 	 *		UPDATE tab SET col.fld1.subfld1 = x, col.fld2.subfld2 = y
@@ -903,7 +903,7 @@ process_matched_tle(TargetEntry *src_tle,
 	 *		FieldStore(col, fld1, FieldStore(placeholder, subfld1, x))
 	 *		FieldStore(col, fld2, FieldStore(placeholder, subfld2, y))
 	 * However, we can ignore the substructure and just consider the top
-	 * FieldStore or ArrayRef from each assignment, because it works to
+	 * FieldStore or SubscriptionRef from each assignment, because it works to
 	 * combine these as
 	 *		FieldStore(FieldStore(col, fld1,
 	 *							  FieldStore(placeholder, subfld1, x)),
@@ -913,7 +913,7 @@ process_matched_tle(TargetEntry *src_tle,
 	 *
 	 * For FieldStore, instead of nesting we can generate a single
 	 * FieldStore with multiple target fields.  We must nest when
-	 * ArrayRefs are involved though.
+	 * SubscriptionRefs are involved though.
 	 *----------
 	 */
 	src_expr = (Node *) src_tle->expr;
@@ -972,13 +972,13 @@ process_matched_tle(TargetEntry *src_tle,
 		}
 		newexpr = (Node *) fstore;
 	}
-	else if (IsA(src_expr, ArrayRef))
+	else if (IsA(src_expr, SubscriptionRef))
 	{
-		ArrayRef   *aref = makeNode(ArrayRef);
+		SubscriptionRef   *sbsref = makeNode(SubscriptionRef);
 
-		memcpy(aref, src_expr, sizeof(ArrayRef));
-		aref->refexpr = (Expr *) prior_expr;
-		newexpr = (Node *) aref;
+		memcpy(sbsref, src_expr, sizeof(SubscriptionRef));
+		sbsref->refexpr = (Expr *) prior_expr;
+		newexpr = (Node *) sbsref;
 	}
 	else
 	{
@@ -1005,14 +1005,15 @@ get_assignment_input(Node *node)
 
 		return (Node *) fstore->arg;
 	}
-	else if (IsA(node, ArrayRef))
+	else if (IsA(node, SubscriptionRef))
 	{
-		ArrayRef   *aref = (ArrayRef *) node;
+		SubscriptionRef   *sbsref = (SubscriptionRef *) node;
 
-		if (aref->refassgnexpr == NULL)
+		if (sbsref->refassgnexpr == NULL)
 			return NULL;
-		return (Node *) aref->refexpr;
+		return (Node *) sbsref->refexpr;
 	}
+
 	return NULL;
 }
 

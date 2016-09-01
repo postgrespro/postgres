@@ -350,18 +350,18 @@ typedef struct WindowFunc
 } WindowFunc;
 
 /* ----------------
- *	ArrayRef: describes an array subscripting operation
+ *	SubscriptionRef: describes a subscripting operation over a container
  *
- * An ArrayRef can describe fetching a single element from an array,
- * fetching a subarray (array slice), storing a single element into
- * an array, or storing a slice.  The "store" cases work with an
- * initial array value and a source value that is inserted into the
- * appropriate part of the array; the result of the operation is an
- * entire new modified array value.
+ * An SubscriptionRef can describe fetching a single element from a container,
+ * fetching a part of container (e.g. array slice), storing a single element into
+ * a container, or storing a slice.  The "store" cases work with an
+ * initial container value and a source value that is inserted into the
+ * appropriate part of the container; the result of the operation is an
+ * entire new modified container value.
  *
- * If reflowerindexpr = NIL, then we are fetching or storing a single array
- * element at the subscripts given by refupperindexpr.  Otherwise we are
- * fetching or storing an array slice, that is a rectangular subarray
+ * If reflowerindexpr = NIL, then we are fetching or storing a single container
+ * element at the subscripts given by refupperindexpr. Otherwise we are
+ * fetching or storing a container slice, that is a rectangular subarray
  * with lower and upper bounds given by the index expressions.
  * reflowerindexpr must be the same length as refupperindexpr when it
  * is not NIL.
@@ -373,27 +373,27 @@ typedef struct WindowFunc
  * element; but it is the array type when doing subarray fetch or either
  * type of store.
  *
- * Note: for the cases where an array is returned, if refexpr yields a R/W
- * expanded array, then the implementation is allowed to modify that object
+ * Note: for the cases where a container is returned, if refexpr yields a R/W
+ * expanded container, then the implementation is allowed to modify that object
  * in-place and return the same object.)
  * ----------------
  */
-typedef struct ArrayRef
+typedef struct SubscriptionRef
 {
 	Expr		xpr;
-	Oid			refarraytype;	/* type of the array proper */
-	Oid			refelemtype;	/* type of the array elements */
-	int32		reftypmod;		/* typmod of the array (and elements too) */
+	Oid			refcontainertype;	/* type of the container proper */
+	Oid			refelemtype;	/* type of the container elements */
+	int32		reftypmod;		/* typmod of the container (and elements too) */
 	Oid			refcollid;		/* OID of collation, or InvalidOid if none */
-	List	   *refupperindexpr;/* expressions that evaluate to upper array
+	List	   *refupperindexpr;/* expressions that evaluate to upper container
 								 * indexes */
-	List	   *reflowerindexpr;/* expressions that evaluate to lower array
-								 * indexes, or NIL for single array element */
-	Expr	   *refexpr;		/* the expression that evaluates to an array
+	List	   *reflowerindexpr;/* expressions that evaluate to lower container
+								 * indexes, or NIL for single container element */
+	Expr	   *refexpr;		/* the expression that evaluates to an container
 								 * value */
 	Expr	   *refassgnexpr;	/* expression for the source value, or NULL if
 								 * fetch */
-} ArrayRef;
+} SubscriptionRef;
 
 /*
  * CoercionContext - distinguishes the allowed set of type casts
@@ -734,7 +734,7 @@ typedef struct FieldSelect
  *
  * FieldStore represents the operation of modifying one field in a tuple
  * value, yielding a new tuple value (the input is not touched!).  Like
- * the assign case of ArrayRef, this is used to implement UPDATE of a
+ * the assign case of SubscriptionRef, this is used to implement UPDATE of a
  * portion of a column.
  *
  * A single FieldStore can actually represent updates of several different

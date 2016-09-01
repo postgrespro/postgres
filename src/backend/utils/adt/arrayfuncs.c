@@ -24,6 +24,7 @@
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
+#include "nodes/nodeFuncs.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
@@ -31,6 +32,8 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
+#include "parser/parse_node.h"
+#include "parser/parse_coerce.h"
 
 
 /*
@@ -88,6 +91,7 @@ typedef struct ArrayIteratorData
 
 static bool array_isspace(char ch);
 static int	ArrayCount(const char *str, int *dim, char typdelim);
+static bool isAssignmentIndirectionExpr(ExprState *exprstate);
 static void ReadArrayStr(char *arrayStr, const char *origStr,
 			 int nitems, int ndim, int *dim,
 			 FmgrInfo *inputproc, Oid typioparam, int32 typmod,
@@ -6523,4 +6527,350 @@ width_bucket_array_variable(Datum operand,
 	}
 
 	return left;
+}
+
+/*
+ * Helper for ExecEvalSubscriptionRef: is expr a nested FieldStore or SubscriptionRef
+ * that might need the old element value passed down?
+ *
+ * (We could use this in ExecEvalFieldStore too, but in that case passing
+ * the old value is so cheap there's no need.)
+ */
+static bool
+isAssignmentIndirectionExpr(ExprState *exprstate)
+{
+	if (exprstate == NULL)
+		return false;			/* just paranoia */
+	if (IsA(exprstate, FieldStoreState))
+	{
+		FieldStore *fstore = (FieldStore *) exprstate->expr;
+
+		if (fstore->arg && IsA(fstore->arg, CaseTestExpr))
+			return true;
+	}
+	else if (IsA(exprstate, SubscriptionRefExprState))
+	{
+		SubscriptionRef   *array_ref = (SubscriptionRef *) exprstate->expr;
+
+		if (array_ref->refexpr && IsA(array_ref->refexpr, CaseTestExpr))
+			return true;
+	}
+
+	return false;
+}
+
+Datum
+array_subscription_evaluate(PG_FUNCTION_ARGS)
+{
+	SubscriptionRefExprState		*sbstate = (SubscriptionRefExprState *) PG_GETARG_POINTER(0);
+	SubscriptionExecData			*sbsdata = (SubscriptionExecData *) PG_GETARG_POINTER(1);
+	ExprContext						*econtext = sbsdata->xprcontext;
+	bool							*is_null = sbsdata->isNull;
+	SubscriptionRef					*array_ref = (SubscriptionRef *) sbstate->xprstate.expr;
+	bool							is_assignment = (array_ref->refassgnexpr != NULL);
+	bool							is_slice = (array_ref->reflowerindexpr != NIL);
+	IntArray						u_index, l_index;
+	bool							eisnull;
+	int								i = 0;
+
+	get_typlenbyvalalign(array_ref->refelemtype,
+						 &sbstate->refelemlength,
+						 &sbstate->refelembyval,
+						 &sbstate->refelemalign);
+
+	for(i = 0; i < sbsdata->indexprNumber; i++)
+		u_index.indx[i] = DatumGetInt32(sbsdata->upper[i]);
+
+	if (is_slice)
+	{
+		for(i = 0; i < sbsdata->indexprNumber; i++)
+			l_index.indx[i] = DatumGetInt32(sbsdata->lower[i]);
+	}
+
+	if (is_assignment)
+	{
+		Datum		sourceData;
+		Datum		save_datum;
+		bool		save_isNull;
+
+		/*
+		 * We might have a nested-assignment situation, in which the
+		 * refassgnexpr is itself a FieldStore or SubscriptionRef that needs to
+		 * obtain and modify the previous value of the array element or slice
+		 * being replaced.  If so, we have to extract that value from the
+		 * array and pass it down via the econtext's caseValue.  It's safe to
+		 * reuse the CASE mechanism because there cannot be a CASE between
+		 * here and where the value would be needed, and an array assignment
+		 * can't be within a CASE either.  (So saving and restoring the
+		 * caseValue is just paranoia, but let's do it anyway.)
+		 *
+		 * Since fetching the old element might be a nontrivial expense, do it
+		 * only if the argument appears to actually need it.
+		 */
+		save_datum = econtext->caseValue_datum;
+		save_isNull = econtext->caseValue_isNull;
+
+		if (isAssignmentIndirectionExpr(sbstate->refassgnexpr))
+		{
+			if (*is_null)
+			{
+				/* whole array is null, so any element or slice is too */
+				econtext->caseValue_datum = (Datum) 0;
+				econtext->caseValue_isNull = true;
+			}
+			else if (!is_slice)
+			{
+				econtext->caseValue_datum =
+					array_get_element(sbsdata->containerSource, sbsdata->indexprNumber,
+									  u_index.indx,
+									  sbstate->refattrlength,
+									  sbstate->refelemlength,
+									  sbstate->refelembyval,
+									  sbstate->refelemalign,
+									  &econtext->caseValue_isNull);
+			}
+			else
+			{
+				econtext->caseValue_datum =
+					array_get_slice(sbsdata->containerSource, sbsdata->indexprNumber,
+									u_index.indx, l_index.indx,
+									sbsdata->upperProvided,
+									sbsdata->lowerProvided,
+									sbstate->refattrlength,
+									sbstate->refelemlength,
+									sbstate->refelembyval,
+									sbstate->refelemalign);
+				econtext->caseValue_isNull = false;
+			}
+		}
+		else
+		{
+			/* argument shouldn't need caseValue, but for safety set it null */
+			econtext->caseValue_datum = (Datum) 0;
+			econtext->caseValue_isNull = true;
+		}
+
+		/*
+		 * Evaluate the value to be assigned into the array.
+		 */
+		sourceData = ExecEvalExpr(sbstate->refassgnexpr,
+								  econtext,
+								  &eisnull,
+								  NULL);
+
+		econtext->caseValue_datum = save_datum;
+		econtext->caseValue_isNull = save_isNull;
+
+		/*
+		 * For an assignment to a fixed-length array type, both the original
+		 * array and the value to be assigned into it must be non-NULL, else
+		 * we punt and return the original array.
+		 */
+		if (sbstate->refattrlength > 0)	/* fixed-length array? */
+			if (eisnull || *is_null)
+				return sbsdata->containerSource;
+
+		/*
+		 * For assignment to varlena arrays, we handle a NULL original array
+		 * by substituting an empty (zero-dimensional) array; insertion of the
+		 * new element will result in a singleton array value.  It does not
+		 * matter whether the new element is NULL.
+		 */
+		if (*is_null)
+		{
+			sbsdata->containerSource = PointerGetDatum(construct_empty_array(array_ref->refelemtype));
+			*is_null = false;
+		}
+
+		if (!is_slice)
+			return array_set_element(sbsdata->containerSource, sbsdata->indexprNumber,
+									 u_index.indx, sourceData, eisnull,
+									 sbstate->refattrlength,
+									 sbstate->refelemlength,
+									 sbstate->refelembyval,
+									 sbstate->refelemalign);
+		else
+			return array_set_slice(sbsdata->containerSource, sbsdata->indexprNumber,
+								   u_index.indx, l_index.indx,
+								   sbsdata->upperProvided,
+								   sbsdata->lowerProvided,
+								   sourceData, eisnull,
+								   sbstate->refattrlength,
+								   sbstate->refelemlength,
+								   sbstate->refelembyval,
+								   sbstate->refelemalign);
+	}
+
+	if (!is_slice)
+		return array_get_element(sbsdata->containerSource, sbsdata->indexprNumber,
+								 u_index.indx,
+								 sbstate->refattrlength,
+								 sbstate->refelemlength,
+								 sbstate->refelembyval,
+								 sbstate->refelemalign,
+								 is_null);
+	else
+		return array_get_slice(sbsdata->containerSource, sbsdata->indexprNumber,
+							   u_index.indx, l_index.indx,
+							   sbsdata->upperProvided,
+							   sbsdata->lowerProvided,
+							   sbstate->refattrlength,
+							   sbstate->refelemlength,
+							   sbstate->refelembyval,
+							   sbstate->refelemalign);
+}
+
+Datum
+array_subscription_prepare(PG_FUNCTION_ARGS)
+{
+	SubscriptionRef		*sbsref = (SubscriptionRef *) PG_GETARG_POINTER(0);
+	ParseState			*pstate = (ParseState *) PG_GETARG_POINTER(1);
+	Node				*node = (Node *)sbsref;
+	Oid					array_type = sbsref->refcontainertype;
+	Oid					array_typ_mode = sbsref->reftypmod;
+	bool				is_slice = sbsref->reflowerindexpr != NIL;
+	Oid					typeneeded, typesource;
+	Node				*new_from;
+	Oid					element_type_id;
+	Node				*subexpr;
+	List				*upperIndexpr = NIL;
+	List				*lowerIndexpr = NIL;
+	ListCell			*l;
+
+	element_type_id = transformArrayType(&array_type, &array_typ_mode);
+	sbsref->refelemtype = element_type_id;
+
+	foreach(l, sbsref->refupperindexpr)
+	{
+		subexpr = (Node *) lfirst(l);
+
+		if (subexpr == NULL)
+		{
+			upperIndexpr = lappend(upperIndexpr, subexpr);
+			continue;
+		}
+
+		subexpr = coerce_to_target_type(pstate,
+										subexpr, exprType(subexpr),
+										INT4OID, -1,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST,
+										-1);
+		if (subexpr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("array subscript must have type integer"),
+					 parser_errposition(pstate, exprLocation(subexpr))));
+
+		upperIndexpr = lappend(upperIndexpr, subexpr);
+	}
+
+	sbsref->refupperindexpr = upperIndexpr;
+
+	foreach(l, sbsref->reflowerindexpr)
+	{
+		List *expr_ai = (List *) lfirst(l);
+		A_Indices *ai = (A_Indices *) lfirst(list_tail(expr_ai));
+
+		subexpr = (Node *) lfirst(list_head(expr_ai));
+		if (subexpr == NULL && !ai->is_slice)
+		{
+			/* Make a constant 1 */
+			subexpr = (Node *) makeConst(INT4OID,
+										 -1,
+										 InvalidOid,
+										 sizeof(int32),
+										 Int32GetDatum(1),
+										 false,
+										 true);		/* pass by value */
+		}
+
+		if (subexpr == NULL)
+		{
+			lowerIndexpr = lappend(lowerIndexpr, subexpr);
+			continue;
+		}
+
+
+		subexpr = coerce_to_target_type(pstate,
+										subexpr, exprType(subexpr),
+										INT4OID, -1,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST,
+										-1);
+		if (subexpr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("array subscript must have type integer"),
+					 parser_errposition(pstate, exprLocation(subexpr))));
+
+		lowerIndexpr = lappend(lowerIndexpr, subexpr);
+	}
+
+	sbsref->reflowerindexpr = lowerIndexpr;
+
+	if (sbsref->refassgnexpr != NULL)
+	{
+		new_from = coerce_to_target_type(pstate,
+										(Node *)sbsref->refassgnexpr, typesource,
+										typeneeded, sbsref->reftypmod,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST,
+										-1);
+		if (new_from == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("array assignment requires type %s"
+							" but expression is of type %s",
+							format_type_be(typeneeded),
+							format_type_be(typesource)),
+				 errhint("You will need to rewrite or cast the expression."),
+					 parser_errposition(pstate, exprLocation((Node *)sbsref->refassgnexpr))));
+		sbsref->refassgnexpr = (Expr *)new_from;
+
+		if (array_type != sbsref->refcontainertype)
+		{
+			typesource = exprType((Node *)sbsref->refassgnexpr);
+			typesource = is_slice ? sbsref->refcontainertype : sbsref->refelemtype;
+
+			node = coerce_to_target_type(pstate,
+										 node, array_type,
+										 sbsref->refcontainertype, sbsref->reftypmod,
+										 COERCION_ASSIGNMENT,
+										 COERCE_IMPLICIT_CAST,
+										 -1);
+
+			/* can fail if we had int2vector/oidvector, but not for true domains */
+			if (node == NULL && node->type != 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast type %s to %s",
+								format_type_be(array_type),
+								format_type_be(sbsref->refcontainertype)),
+						 parser_errposition(pstate, 0)));
+
+			return node;
+		}
+
+	}
+
+	return sbsref;
+}
+
+Datum
+array_subscription(PG_FUNCTION_ARGS)
+{
+	int op_type = PG_GETARG_INT32(0);
+	FunctionCallInfoData target_fcinfo = get_slice_arguments(fcinfo, 1,
+															 fcinfo->nargs);
+
+	if (op_type & SBS_VALIDATION)
+	{
+		return array_subscription_prepare(&target_fcinfo);
+	}
+
+	if (op_type & SBS_EXEC)
+	{
+		return array_subscription_evaluate(&target_fcinfo);
+	}
 }

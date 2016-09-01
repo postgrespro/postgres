@@ -123,6 +123,7 @@ DefineType(List *names, List *parameters)
 	List	   *typmodinName = NIL;
 	List	   *typmodoutName = NIL;
 	List	   *analyzeName = NIL;
+	List	   *subscriptionName = NIL;
 	char		category = TYPCATEGORY_USER;
 	bool		preferred = false;
 	char		delimiter = DEFAULT_TYPDELIM;
@@ -141,6 +142,7 @@ DefineType(List *names, List *parameters)
 	DefElem    *typmodinNameEl = NULL;
 	DefElem    *typmodoutNameEl = NULL;
 	DefElem    *analyzeNameEl = NULL;
+	DefElem    *subscriptionNameEl = NULL;
 	DefElem    *categoryEl = NULL;
 	DefElem    *preferredEl = NULL;
 	DefElem    *delimiterEl = NULL;
@@ -163,6 +165,7 @@ DefineType(List *names, List *parameters)
 	Oid			resulttype;
 	ListCell   *pl;
 	ObjectAddress address;
+	Oid			subscriptionOid;
 
 	/*
 	 * As of Postgres 8.4, we require superuser privilege to create a base
@@ -262,6 +265,9 @@ DefineType(List *names, List *parameters)
 		else if (pg_strcasecmp(defel->defname, "analyze") == 0 ||
 				 pg_strcasecmp(defel->defname, "analyse") == 0)
 			defelp = &analyzeNameEl;
+		else if (pg_strcasecmp(defel->defname, "subscription") == 0 ||
+				 pg_strcasecmp(defel->defname, "subscription") == 0)
+			defelp = &subscriptionNameEl;
 		else if (pg_strcasecmp(defel->defname, "category") == 0)
 			defelp = &categoryEl;
 		else if (pg_strcasecmp(defel->defname, "preferred") == 0)
@@ -330,6 +336,8 @@ DefineType(List *names, List *parameters)
 		typmodoutName = defGetQualifiedName(typmodoutNameEl);
 	if (analyzeNameEl)
 		analyzeName = defGetQualifiedName(analyzeNameEl);
+	if (subscriptionNameEl)
+		subscriptionName = defGetQualifiedName(subscriptionNameEl);
 	if (categoryEl)
 	{
 		char	   *p = defGetString(categoryEl);
@@ -511,6 +519,9 @@ DefineType(List *names, List *parameters)
 	if (analyzeName)
 		analyzeOid = findTypeAnalyzeFunction(analyzeName, typoid);
 
+	if (subscriptionName)
+		subscriptionOid = findTypeAnalyzeFunction(subscriptionName, typoid);
+
 	/*
 	 * Check permissions on functions.  We choose to require the creator/owner
 	 * of a type to also own the underlying functions.  Since creating a type
@@ -630,7 +641,8 @@ DefineType(List *names, List *parameters)
 				   -1,			/* typMod (Domains only) */
 				   0,			/* Array Dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
-				   collation);	/* type's collation */
+				   collation,	/* type's collation */
+				   subscriptionOid);
 	Assert(typoid == address.objectId);
 
 	/*
@@ -671,7 +683,8 @@ DefineType(List *names, List *parameters)
 			   -1,				/* typMod (Domains only) */
 			   0,				/* Array dimensions of typbasetype */
 			   false,			/* Type NOT NULL */
-			   collation);		/* type's collation */
+			   collation,		/* type's collation */
+			   F_ARRAY_SUBSCRIPTION);
 
 	pfree(array_type);
 
@@ -733,6 +746,7 @@ DefineDomain(CreateDomainStmt *stmt)
 	Oid			receiveProcedure;
 	Oid			sendProcedure;
 	Oid			analyzeProcedure;
+	Oid			subscriptionProcedure;
 	bool		byValue;
 	char		category;
 	char		delimiter;
@@ -855,6 +869,9 @@ DefineDomain(CreateDomainStmt *stmt)
 
 	/* Analysis function */
 	analyzeProcedure = baseType->typanalyze;
+
+	/* Subscription function */
+	subscriptionProcedure = baseType->typsubscription;
 
 	/* Inherited default value */
 	datum = SysCacheGetAttr(TYPEOID, typeTup,
@@ -1057,7 +1074,8 @@ DefineDomain(CreateDomainStmt *stmt)
 				   basetypeMod, /* typeMod value */
 				   typNDims,	/* Array dimensions for base type */
 				   typNotNull,	/* Type NOT NULL */
-				   domaincoll); /* type's collation */
+				   domaincoll,  /* type's collation */
+				   subscriptionProcedure);
 
 	/*
 	 * Process constraints which refer to the domain ID returned by TypeCreate
@@ -1169,7 +1187,8 @@ DefineEnum(CreateEnumStmt *stmt)
 				   -1,			/* typMod (Domains only) */
 				   0,			/* Array dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
-				   InvalidOid); /* type's collation */
+				   InvalidOid,  /* type's collation */
+				   InvalidOid);
 
 	/* Enter the enum's values into pg_enum */
 	EnumValuesCreate(enumTypeAddr.objectId, stmt->vals);
@@ -1209,7 +1228,8 @@ DefineEnum(CreateEnumStmt *stmt)
 			   -1,				/* typMod (Domains only) */
 			   0,				/* Array dimensions of typbasetype */
 			   false,			/* Type NOT NULL */
-			   InvalidOid);		/* type's collation */
+			   InvalidOid,		/* type's collation */
+			   F_ARRAY_SUBSCRIPTION);
 
 	pfree(enumArrayName);
 
@@ -1508,7 +1528,8 @@ DefineRange(CreateRangeStmt *stmt)
 				   -1,			/* typMod (Domains only) */
 				   0,			/* Array dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
-				   InvalidOid); /* type's collation (ranges never have one) */
+				   InvalidOid,  /* type's collation (ranges never have one) */
+				   InvalidOid);
 	Assert(typoid == address.objectId);
 
 	/* Create the entry in pg_range */
@@ -1550,7 +1571,8 @@ DefineRange(CreateRangeStmt *stmt)
 			   -1,				/* typMod (Domains only) */
 			   0,				/* Array dimensions of typbasetype */
 			   false,			/* Type NOT NULL */
-			   InvalidOid);		/* typcollation */
+			   InvalidOid,		/* typcollation */
+			   F_ARRAY_SUBSCRIPTION);
 
 	pfree(rangeArrayName);
 
@@ -2248,6 +2270,7 @@ AlterDomainDefault(List *names, Node *defaultRaw)
 							 false,		/* a domain isn't an implicit array */
 							 typTup->typbasetype,
 							 typTup->typcollation,
+							 typTup->typsubscription,
 							 defaultExpr,
 							 true);		/* Rebuild is true */
 

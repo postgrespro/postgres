@@ -502,4 +502,9 @@ extern Datum array_positions(PG_FUNCTION_ARGS);
  */
 extern Datum array_typanalyze(PG_FUNCTION_ARGS);
 
+/*
+ * prototypes for functions with array subscription logic
+ */
+extern Datum array_subscription(PG_FUNCTION_ARGS);
+
 #endif   /* ARRAY_H */

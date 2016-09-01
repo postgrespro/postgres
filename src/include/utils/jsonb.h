@@ -352,6 +352,7 @@ extern Datum jsonb_typeof(PG_FUNCTION_ARGS);
 
 /* generator routines */
 extern Datum to_jsonb(PG_FUNCTION_ARGS);
+extern JsonbValue *to_jsonb_worker(Datum source, Oid source_type);
 
 extern Datum jsonb_build_object(PG_FUNCTION_ARGS);
 extern Datum jsonb_build_object_noargs(PG_FUNCTION_ARGS);
@@ -436,5 +437,8 @@ extern char *JsonbToCString(StringInfo out, JsonbContainer *in,
 extern char *JsonbToCStringIndent(StringInfo out, JsonbContainer *in,
 					 int estimated_len);
 
+
+/* Jsonb subscription logic */
+extern Datum jsonb_subscription(PG_FUNCTION_ARGS);
 
 #endif   /* __JSONB_H__ */

@@ -4746,7 +4746,7 @@ exec_assign_value(PLpgSQL_execstate *estate,
 
 				/*
 				 * Evaluate the subscripts, switch into left-to-right order.
-				 * Like ExecEvalArrayRef(), complain if any subscript is null.
+				 * Like ExecEvalSubscriptionRef(), complain if any subscript is null.
 				 */
 				for (i = 0; i < nsubscripts; i++)
 				{
@@ -4794,7 +4794,7 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				 * fixed-length array types we skip the assignment.  We can't
 				 * support assignment of a null entry into a fixed-length
 				 * array, either, so that's a no-op too.  This is all ugly but
-				 * corresponds to the current behavior of ExecEvalArrayRef().
+				 * corresponds to the current behavior of ExecEvalSubscriptionRef().
 				 */
 				if (arrayelem->arraytyplen > 0 &&		/* fixed-length array? */
 					(oldarrayisnull || isNull))
@@ -6502,9 +6502,9 @@ exec_simple_check_node(Node *node)
 		case T_Param:
 			return TRUE;
 
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				ArrayRef   *expr = (ArrayRef *) node;
+				SubscriptionRef   *expr = (SubscriptionRef *) node;
 
 				if (!exec_simple_check_node((Node *) expr->refupperindexpr))
 					return FALSE;

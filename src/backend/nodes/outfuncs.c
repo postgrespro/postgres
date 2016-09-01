@@ -1075,11 +1075,11 @@ _outWindowFunc(StringInfo str, const WindowFunc *node)
 }
 
 static void
-_outArrayRef(StringInfo str, const ArrayRef *node)
+_outSubscriptionRef(StringInfo str, const SubscriptionRef *node)
 {
-	WRITE_NODE_TYPE("ARRAYREF");
+	WRITE_NODE_TYPE("SUBSCRIPTIONREF");
 
-	WRITE_OID_FIELD(refarraytype);
+	WRITE_OID_FIELD(refcontainertype);
 	WRITE_OID_FIELD(refelemtype);
 	WRITE_INT_FIELD(reftypmod);
 	WRITE_OID_FIELD(refcollid);
@@ -3456,8 +3456,8 @@ outNode(StringInfo str, const void *obj)
 			case T_WindowFunc:
 				_outWindowFunc(str, obj);
 				break;
-			case T_ArrayRef:
-				_outArrayRef(str, obj);
+			case T_SubscriptionRef:
+				_outSubscriptionRef(str, obj);
 				break;
 			case T_FuncExpr:
 				_outFuncExpr(str, obj);

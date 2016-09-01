@@ -3061,3 +3061,24 @@ get_range_subtype(Oid rangeOid)
 	else
 		return InvalidOid;
 }
+
+/*
+ * get_subscription
+ *
+ *		Given the type OID, get the corresponding "true" array type.
+ *		Returns InvalidOid if no array type can be found.
+ */
+Oid
+get_subscription(Oid typid)
+{
+	HeapTuple	tp;
+	Oid			result = InvalidOid;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (HeapTupleIsValid(tp))
+	{
+		result = ((Form_pg_type) GETSTRUCT(tp))->typsubscription;
+		ReleaseSysCache(tp);
+	}
+	return result;
+}

@@ -1398,3 +1398,22 @@ TypeGetTupleDesc(Oid typeoid, List *colaliases)
 
 	return tupdesc;
 }
+
+FunctionCallInfoData
+get_slice_arguments(FunctionCallInfo fcinfo, int begin, int end)
+{
+	FunctionCallInfoData sliced_fcinfo;
+	int i;
+
+	InitFunctionCallInfoData(sliced_fcinfo, fcinfo->flinfo,
+							 fcinfo->nargs - 1, fcinfo->fncollation,
+							 NULL, NULL);
+
+	for(i = begin; i < end; i++)
+	{
+		sliced_fcinfo.arg[i - begin] = fcinfo->arg[i];
+		sliced_fcinfo.argnull[i - begin] = false;
+	}
+
+	return sliced_fcinfo;
+}

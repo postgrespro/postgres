@@ -915,13 +915,13 @@ transformInsertRow(ParseState *pstate, List *exprlist,
 
 					expr = (Expr *) linitial(fstore->newvals);
 				}
-				else if (IsA(expr, ArrayRef))
+				else if (IsA(expr, SubscriptionRef))
 				{
-					ArrayRef   *aref = (ArrayRef *) expr;
+					SubscriptionRef   *sbsref = (SubscriptionRef *) expr;
 
-					if (aref->refassgnexpr == NULL)
+					if (sbsref->refassgnexpr == NULL)
 						break;
-					expr = aref->refassgnexpr;
+					expr = sbsref->refassgnexpr;
 				}
 				else
 					break;

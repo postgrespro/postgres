@@ -199,7 +199,7 @@ make_var(ParseState *pstate, RangeTblEntry *rte, int attrno, int location)
 	return result;
 }
 
-/*
+/* NOTE: extra code for array type with isn't affect on other types
  * transformArrayType()
  *		Identify the types involved in a subscripting operation
  *
@@ -210,9 +210,8 @@ make_var(ParseState *pstate, RangeTblEntry *rte, int attrno, int location)
  * an array type.
  */
 Oid
-transformArrayType(Oid *arrayType, int32 *arrayTypmod)
+transformArrayType(Oid *containerType, int32 *containerTypmod)
 {
-	Oid			origArrayType = *arrayType;
 	Oid			elementType;
 	HeapTuple	type_tuple_array;
 	Form_pg_type type_struct_array;
@@ -224,7 +223,7 @@ transformArrayType(Oid *arrayType, int32 *arrayTypmod)
 	 * itself.  (Note that we provide no method whereby the creator of a
 	 * domain over an array type could hide its ability to be subscripted.)
 	 */
-	*arrayType = getBaseTypeAndTypmod(*arrayType, arrayTypmod);
+	*containerType = getBaseTypeAndTypmod(*containerType, containerTypmod);
 
 	/*
 	 * We treat int2vector and oidvector as though they were domains over
@@ -233,25 +232,20 @@ transformArrayType(Oid *arrayType, int32 *arrayTypmod)
 	 * xxxvector type; so we want the result of a slice operation to be
 	 * considered to be of the more general type.
 	 */
-	if (*arrayType == INT2VECTOROID)
-		*arrayType = INT2ARRAYOID;
-	else if (*arrayType == OIDVECTOROID)
-		*arrayType = OIDARRAYOID;
+	if (*containerType == INT2VECTOROID)
+		*containerType = INT2ARRAYOID;
+	else if (*containerType == OIDVECTOROID)
+		*containerType = OIDARRAYOID;
 
 	/* Get the type tuple for the array */
-	type_tuple_array = SearchSysCache1(TYPEOID, ObjectIdGetDatum(*arrayType));
+	type_tuple_array = SearchSysCache1(TYPEOID, ObjectIdGetDatum(*containerType));
 	if (!HeapTupleIsValid(type_tuple_array))
-		elog(ERROR, "cache lookup failed for type %u", *arrayType);
+		elog(ERROR, "cache lookup failed for type %u", *containerType);
 	type_struct_array = (Form_pg_type) GETSTRUCT(type_tuple_array);
 
 	/* needn't check typisdefined since this will fail anyway */
 
 	elementType = type_struct_array->typelem;
-	if (elementType == InvalidOid)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("cannot subscript type %s because it is not an array",
-						format_type_be(origArrayType))));
 
 	ReleaseSysCache(type_tuple_array);
 
@@ -259,40 +253,41 @@ transformArrayType(Oid *arrayType, int32 *arrayTypmod)
 }
 
 /*
- * transformArraySubscripts()
- *		Transform array subscripting.  This is used for both
- *		array fetch and array assignment.
+ * transformContainerSubscripts()
+ *		Transform container subscripting.  This is used for both
+ *		container fetch and container assignment.
  *
- * In an array fetch, we are given a source array value and we produce an
- * expression that represents the result of extracting a single array element
- * or an array slice.
+ * In a container fetch, we are given a source container value and we produce an
+ * expression that represents the result of extracting a single container element
+ * or a container slice.
  *
- * In an array assignment, we are given a destination array value plus a
+ * In a container assignment, we are given a destination container value plus a
  * source value that is to be assigned to a single element or a slice of
- * that array.  We produce an expression that represents the new array value
- * with the source data inserted into the right part of the array.
+ * that container.  We produce an expression that represents the new container value
+ * with the source data inserted into the right part of the container.
  *
- * For both cases, if the source array is of a domain-over-array type,
- * the result is of the base array type or its element type; essentially,
+ * For both cases, if the source container is of a domain-over-container type,
+ * the result is of the base container type or its element type; essentially,
  * we must fold a domain to its base type before applying subscripting.
  * (Note that int2vector and oidvector are treated as domains here.)
  *
  * pstate		Parse state
- * arrayBase	Already-transformed expression for the array as a whole
- * arrayType	OID of array's datatype (should match type of arrayBase,
- *				or be the base type of arrayBase's domain type)
- * elementType	OID of array's element type (fetch with transformArrayType,
+ * containerBase	Already-transformed expression for the container as a whole
+ * containerType	OID of container's datatype (should match type of containerBase,
+ *				or be the base type of containerBase's domain type)
+ * elementType	OID of container's element type (fetch with transformcontainerType,
  *				or pass InvalidOid to do it here)
- * arrayTypMod	typmod for the array (which is also typmod for the elements)
+ * containerTypMod	typmod for the container (which is also typmod for the elements)
  * indirection	Untransformed list of subscripts (must not be NIL)
- * assignFrom	NULL for array fetch, else transformed expression for source.
+ * assignFrom	NULL for container fetch, else transformed expression for source.
  */
-ArrayRef *
-transformArraySubscripts(ParseState *pstate,
-						 Node *arrayBase,
-						 Oid arrayType,
+
+SubscriptionRef *
+transformContainerSubscripts(ParseState *pstate,
+						 Node *containerBase,
+						 Oid containerType,
 						 Oid elementType,
-						 int32 arrayTypMod,
+						 int32 containerTypMod,
 						 List *indirection,
 						 Node *assignFrom)
 {
@@ -300,20 +295,32 @@ transformArraySubscripts(ParseState *pstate,
 	List	   *upperIndexpr = NIL;
 	List	   *lowerIndexpr = NIL;
 	ListCell   *idx;
-	ArrayRef   *aref;
+	SubscriptionRef   *sbsref, *prepared_sbsref;
+
+	Oid			typsubscription = get_subscription(containerType);
+	if (!OidIsValid(typsubscription))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("cannot subscript type %s because it does not support subscription",
+						format_type_be(containerType))));
+	}
 
 	/*
 	 * Caller may or may not have bothered to determine elementType.  Note
-	 * that if the caller did do so, arrayType/arrayTypMod must be as modified
+	 * that if the caller did do so, containerType/containerTypMod must be as modified
 	 * by transformArrayType, ie, smash domain to base type.
 	 */
 	if (!OidIsValid(elementType))
-		elementType = transformArrayType(&arrayType, &arrayTypMod);
+		elementType = transformArrayType(&containerType, &containerTypMod);
+
+	if (!OidIsValid(elementType))
+		elementType = containerType;
 
 	/*
-	 * A list containing only simple subscripts refers to a single array
+	 * A list containing only simple subscripts refers to a single container
 	 * element.  If any of the items are slice specifiers (lower:upper), then
-	 * the subscript expression means an array slice operation.  In this case,
+	 * the subscript expression means an container slice operation.  In this case,
 	 * we convert any non-slice items to slices by treating the single
 	 * subscript as the upper bound and supplying an assumed lower bound of 1.
 	 * We have to prescan the list to see if there are any slice items.
@@ -343,107 +350,38 @@ transformArraySubscripts(ParseState *pstate,
 			if (ai->lidx)
 			{
 				subexpr = transformExpr(pstate, ai->lidx, pstate->p_expr_kind);
-				/* If it's not int4 already, try to coerce */
-				subexpr = coerce_to_target_type(pstate,
-												subexpr, exprType(subexpr),
-												INT4OID, -1,
-												COERCION_ASSIGNMENT,
-												COERCE_IMPLICIT_CAST,
-												-1);
-				if (subexpr == NULL)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("array subscript must have type integer"),
-						parser_errposition(pstate, exprLocation(ai->lidx))));
-			}
-			else if (!ai->is_slice)
-			{
-				/* Make a constant 1 */
-				subexpr = (Node *) makeConst(INT4OID,
-											 -1,
-											 InvalidOid,
-											 sizeof(int32),
-											 Int32GetDatum(1),
-											 false,
-											 true);		/* pass by value */
 			}
 			else
 			{
 				/* Slice with omitted lower bound, put NULL into the list */
 				subexpr = NULL;
 			}
-			lowerIndexpr = lappend(lowerIndexpr, subexpr);
+			lowerIndexpr = lappend(lowerIndexpr, list_make2(subexpr, ai));
 		}
-		else
-			Assert(ai->lidx == NULL && !ai->is_slice);
-
-		if (ai->uidx)
-		{
-			subexpr = transformExpr(pstate, ai->uidx, pstate->p_expr_kind);
-			/* If it's not int4 already, try to coerce */
-			subexpr = coerce_to_target_type(pstate,
-											subexpr, exprType(subexpr),
-											INT4OID, -1,
-											COERCION_ASSIGNMENT,
-											COERCE_IMPLICIT_CAST,
-											-1);
-			if (subexpr == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("array subscript must have type integer"),
-						 parser_errposition(pstate, exprLocation(ai->uidx))));
-		}
-		else
-		{
-			/* Slice with omitted upper bound, put NULL into the list */
-			Assert(isSlice && ai->is_slice);
-			subexpr = NULL;
-		}
+		subexpr = transformExpr(pstate, ai->uidx, pstate->p_expr_kind);
 		upperIndexpr = lappend(upperIndexpr, subexpr);
 	}
 
 	/*
-	 * If doing an array store, coerce the source value to the right type.
-	 * (This should agree with the coercion done by transformAssignedExpr.)
+	 * Ready to build the SubscriptionRef node.
 	 */
-	if (assignFrom != NULL)
-	{
-		Oid			typesource = exprType(assignFrom);
-		Oid			typeneeded = isSlice ? arrayType : elementType;
-		Node	   *newFrom;
-
-		newFrom = coerce_to_target_type(pstate,
-										assignFrom, typesource,
-										typeneeded, arrayTypMod,
-										COERCION_ASSIGNMENT,
-										COERCE_IMPLICIT_CAST,
-										-1);
-		if (newFrom == NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("array assignment requires type %s"
-							" but expression is of type %s",
-							format_type_be(typeneeded),
-							format_type_be(typesource)),
-				 errhint("You will need to rewrite or cast the expression."),
-					 parser_errposition(pstate, exprLocation(assignFrom))));
-		assignFrom = newFrom;
-	}
-
-	/*
-	 * Ready to build the ArrayRef node.
-	 */
-	aref = makeNode(ArrayRef);
-	aref->refarraytype = arrayType;
-	aref->refelemtype = elementType;
-	aref->reftypmod = arrayTypMod;
+	sbsref = makeNode(SubscriptionRef);
+	sbsref->refcontainertype = containerType;
+	sbsref->refelemtype = elementType;
+	sbsref->reftypmod = containerTypMod;
 	/* refcollid will be set by parse_collate.c */
-	aref->refupperindexpr = upperIndexpr;
-	aref->reflowerindexpr = lowerIndexpr;
-	aref->refexpr = (Expr *) arrayBase;
-	aref->refassgnexpr = (Expr *) assignFrom;
+	sbsref->refupperindexpr = upperIndexpr;
+	sbsref->reflowerindexpr = lowerIndexpr;
+	sbsref->refexpr = (Expr *) containerBase;
+	sbsref->refassgnexpr = (Expr *) assignFrom;
 
-	return aref;
+
+	prepared_sbsref = (SubscriptionRef *) OidFunctionCall3(typsubscription,
+														   PointerGetDatum(SBS_VALIDATION),
+														   PointerGetDatum(sbsref),
+														   PointerGetDatum(pstate));
+
+	return prepared_sbsref;
 }
 
 /*

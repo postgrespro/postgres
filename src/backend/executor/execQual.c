@@ -55,6 +55,7 @@
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
@@ -62,10 +63,9 @@
 
 
 /* static function decls */
-static Datum ExecEvalArrayRef(ArrayRefExprState *astate,
+static Datum ExecEvalSubscriptionRef(SubscriptionRefExprState *astate,
 				 ExprContext *econtext,
 				 bool *isNull, ExprDoneCond *isDone);
-static bool isAssignmentIndirectionExpr(ExprState *exprstate);
 static Datum ExecEvalAggref(AggrefExprState *aggref,
 			   ExprContext *econtext,
 			   bool *isNull, ExprDoneCond *isDone);
@@ -251,36 +251,44 @@ static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 
 
 /*----------
- *	  ExecEvalArrayRef
+ *	  ExecEvalSubscriptionRef
  *
- *	   This function takes an ArrayRef and returns the extracted Datum
- *	   if it's a simple reference, or the modified array value if it's
- *	   an array assignment (i.e., array element or slice insertion).
+ *	   This function takes an SubscriptionRef and returns the extracted Datum
+ *	   if it's a simple reference, or the modified containers value if it's
+ *	   an containers assignment (i.e., containers element or slice insertion).
  *
  * NOTE: if we get a NULL result from a subscript expression, we return NULL
- * when it's an array reference, or raise an error when it's an assignment.
+ * when it's an containers reference, or raise an error when it's an assignment.
  *----------
  */
+
 static Datum
-ExecEvalArrayRef(ArrayRefExprState *astate,
+ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 				 ExprContext *econtext,
 				 bool *isNull,
 				 ExprDoneCond *isDone)
 {
-	ArrayRef   *arrayRef = (ArrayRef *) astate->xprstate.expr;
-	Datum		array_source;
-	bool		isAssignment = (arrayRef->refassgnexpr != NULL);
-	bool		eisnull;
-	ListCell   *l;
-	int			i = 0,
-				j = 0;
-	IntArray	upper,
-				lower;
-	bool		upperProvided[MAXDIM],
-				lowerProvided[MAXDIM];
-	int		   *lIndex;
+	SubscriptionRef			*sbsRef = (SubscriptionRef *) sbstate->xprstate.expr;
+	Oid						containerType, typsubscription;
+	bool					isAssignment = (sbsRef->refassgnexpr != NULL);
+	bool					eisnull;
+	Datum					*upper, *lower;
+	ListCell				*l;
+	int						i = 0,
+							j = 0;
+	SubscriptionExecData	sbsdata;
+	bool					upperProvided[MAXDIM],
+							lowerProvided[MAXDIM];
 
-	array_source = ExecEvalExpr(astate->refexpr,
+	if (sbstate->refupperindexpr != NULL)
+		upper = (Datum *) palloc(sbstate->refupperindexpr->length * sizeof(Datum *));
+
+	if (sbstate->reflowerindexpr != NULL)
+		lower = (Datum *) palloc(sbstate->reflowerindexpr->length * sizeof(Datum *));
+
+	sbsdata.xprcontext = econtext;
+	sbsdata.isNull = isNull;
+	sbsdata.containerSource = ExecEvalExpr(sbstate->refexpr,
 								econtext,
 								isNull,
 								isDone);
@@ -297,51 +305,51 @@ ExecEvalArrayRef(ArrayRefExprState *astate,
 			return (Datum) NULL;
 	}
 
-	foreach(l, astate->refupperindexpr)
+	foreach(l, sbstate->refupperindexpr)
 	{
 		ExprState  *eltstate = (ExprState *) lfirst(l);
 
 		if (i >= MAXDIM)
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
+					 errmsg("number of container dimensions (%d) exceeds the maximum allowed (%d)",
 							i + 1, MAXDIM)));
 
 		if (eltstate == NULL)
 		{
-			/* Slice bound is omitted, so use array's upper bound */
-			Assert(astate->reflowerindexpr != NIL);
+			/* Slice bound is omitted, so use containers's upper bound */
+			Assert(sbstate->reflowerindexpr != NIL);
 			upperProvided[i++] = false;
 			continue;
 		}
 		upperProvided[i] = true;
 
-		upper.indx[i++] = DatumGetInt32(ExecEvalExpr(eltstate,
+		upper[i++] = ExecEvalExpr(eltstate,
 													 econtext,
 													 &eisnull,
-													 NULL));
+													 NULL);
 		/* If any index expr yields NULL, result is NULL or error */
 		if (eisnull)
 		{
 			if (isAssignment)
 				ereport(ERROR,
 						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				  errmsg("array subscript in assignment must not be null")));
+				  errmsg("container subscript in assignment must not be null")));
 			*isNull = true;
 			return (Datum) NULL;
 		}
 	}
 
-	if (astate->reflowerindexpr != NIL)
+	if (sbstate->reflowerindexpr != NIL)
 	{
-		foreach(l, astate->reflowerindexpr)
+		foreach(l, sbstate->reflowerindexpr)
 		{
 			ExprState  *eltstate = (ExprState *) lfirst(l);
 
 			if (j >= MAXDIM)
 				ereport(ERROR,
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-						 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
+						 errmsg("number of container dimensions (%d) exceeds the maximum allowed (%d)",
 								j + 1, MAXDIM)));
 
 			if (eltstate == NULL)
@@ -352,17 +360,17 @@ ExecEvalArrayRef(ArrayRefExprState *astate,
 			}
 			lowerProvided[j] = true;
 
-			lower.indx[j++] = DatumGetInt32(ExecEvalExpr(eltstate,
+			lower[j++] = ExecEvalExpr(eltstate,
 														 econtext,
 														 &eisnull,
-														 NULL));
+														 NULL);
 			/* If any index expr yields NULL, result is NULL or error */
 			if (eisnull)
 			{
 				if (isAssignment)
 					ereport(ERROR,
 							(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-							 errmsg("array subscript in assignment must not be null")));
+							 errmsg("container subscript in assignment must not be null")));
 				*isNull = true;
 				return (Datum) NULL;
 			}
@@ -370,171 +378,30 @@ ExecEvalArrayRef(ArrayRefExprState *astate,
 		/* this can't happen unless parser messed up */
 		if (i != j)
 			elog(ERROR, "upper and lower index lists are not same length");
-		lIndex = lower.indx;
+	}
+
+	sbsdata.upper = upper;
+	sbsdata.upperProvided = upperProvided;
+	sbsdata.lower = lower;
+	sbsdata.lowerProvided = lowerProvided;
+	sbsdata.indexprNumber = i;
+
+	containerType = getBaseTypeAndTypmod(sbsRef->refcontainertype, &sbsRef->reftypmod);
+	typsubscription = get_subscription(containerType);
+
+	if(OidIsValid(typsubscription))
+	{
+		return OidFunctionCall3(typsubscription,
+							    PointerGetDatum(SBS_EXEC),
+							    PointerGetDatum(sbstate),
+							    PointerGetDatum(&sbsdata));
 	}
 	else
-		lIndex = NULL;
-
-	if (isAssignment)
 	{
-		Datum		sourceData;
-		Datum		save_datum;
-		bool		save_isNull;
-
-		/*
-		 * We might have a nested-assignment situation, in which the
-		 * refassgnexpr is itself a FieldStore or ArrayRef that needs to
-		 * obtain and modify the previous value of the array element or slice
-		 * being replaced.  If so, we have to extract that value from the
-		 * array and pass it down via the econtext's caseValue.  It's safe to
-		 * reuse the CASE mechanism because there cannot be a CASE between
-		 * here and where the value would be needed, and an array assignment
-		 * can't be within a CASE either.  (So saving and restoring the
-		 * caseValue is just paranoia, but let's do it anyway.)
-		 *
-		 * Since fetching the old element might be a nontrivial expense, do it
-		 * only if the argument appears to actually need it.
-		 */
-		save_datum = econtext->caseValue_datum;
-		save_isNull = econtext->caseValue_isNull;
-
-		if (isAssignmentIndirectionExpr(astate->refassgnexpr))
-		{
-			if (*isNull)
-			{
-				/* whole array is null, so any element or slice is too */
-				econtext->caseValue_datum = (Datum) 0;
-				econtext->caseValue_isNull = true;
-			}
-			else if (lIndex == NULL)
-			{
-				econtext->caseValue_datum =
-					array_get_element(array_source, i,
-									  upper.indx,
-									  astate->refattrlength,
-									  astate->refelemlength,
-									  astate->refelembyval,
-									  astate->refelemalign,
-									  &econtext->caseValue_isNull);
-			}
-			else
-			{
-				econtext->caseValue_datum =
-					array_get_slice(array_source, i,
-									upper.indx, lower.indx,
-									upperProvided, lowerProvided,
-									astate->refattrlength,
-									astate->refelemlength,
-									astate->refelembyval,
-									astate->refelemalign);
-				econtext->caseValue_isNull = false;
-			}
-		}
-		else
-		{
-			/* argument shouldn't need caseValue, but for safety set it null */
-			econtext->caseValue_datum = (Datum) 0;
-			econtext->caseValue_isNull = true;
-		}
-
-		/*
-		 * Evaluate the value to be assigned into the array.
-		 */
-		sourceData = ExecEvalExpr(astate->refassgnexpr,
-								  econtext,
-								  &eisnull,
-								  NULL);
-
-		econtext->caseValue_datum = save_datum;
-		econtext->caseValue_isNull = save_isNull;
-
-		/*
-		 * For an assignment to a fixed-length array type, both the original
-		 * array and the value to be assigned into it must be non-NULL, else
-		 * we punt and return the original array.
-		 */
-		if (astate->refattrlength > 0)	/* fixed-length array? */
-			if (eisnull || *isNull)
-				return array_source;
-
-		/*
-		 * For assignment to varlena arrays, we handle a NULL original array
-		 * by substituting an empty (zero-dimensional) array; insertion of the
-		 * new element will result in a singleton array value.  It does not
-		 * matter whether the new element is NULL.
-		 */
-		if (*isNull)
-		{
-			array_source = PointerGetDatum(construct_empty_array(arrayRef->refelemtype));
-			*isNull = false;
-		}
-
-		if (lIndex == NULL)
-			return array_set_element(array_source, i,
-									 upper.indx,
-									 sourceData,
-									 eisnull,
-									 astate->refattrlength,
-									 astate->refelemlength,
-									 astate->refelembyval,
-									 astate->refelemalign);
-		else
-			return array_set_slice(array_source, i,
-								   upper.indx, lower.indx,
-								   upperProvided, lowerProvided,
-								   sourceData,
-								   eisnull,
-								   astate->refattrlength,
-								   astate->refelemlength,
-								   astate->refelembyval,
-								   astate->refelemalign);
+		/* this can't happen */
+		elog(ERROR, "can not find subscription procedure for type %s",
+					format_type_be(containerType));
 	}
-
-	if (lIndex == NULL)
-		return array_get_element(array_source, i,
-								 upper.indx,
-								 astate->refattrlength,
-								 astate->refelemlength,
-								 astate->refelembyval,
-								 astate->refelemalign,
-								 isNull);
-	else
-		return array_get_slice(array_source, i,
-							   upper.indx, lower.indx,
-							   upperProvided, lowerProvided,
-							   astate->refattrlength,
-							   astate->refelemlength,
-							   astate->refelembyval,
-							   astate->refelemalign);
-}
-
-/*
- * Helper for ExecEvalArrayRef: is expr a nested FieldStore or ArrayRef
- * that might need the old element value passed down?
- *
- * (We could use this in ExecEvalFieldStore too, but in that case passing
- * the old value is so cheap there's no need.)
- */
-static bool
-isAssignmentIndirectionExpr(ExprState *exprstate)
-{
-	if (exprstate == NULL)
-		return false;			/* just paranoia */
-	if (IsA(exprstate, FieldStoreState))
-	{
-		FieldStore *fstore = (FieldStore *) exprstate->expr;
-
-		if (fstore->arg && IsA(fstore->arg, CaseTestExpr))
-			return true;
-	}
-	else if (IsA(exprstate, ArrayRefExprState))
-	{
-		ArrayRef   *arrayRef = (ArrayRef *) exprstate->expr;
-
-		if (arrayRef->refexpr && IsA(arrayRef->refexpr, CaseTestExpr))
-			return true;
-	}
-	return false;
 }
 
 /* ----------------------------------------------------------------
@@ -4332,7 +4199,7 @@ ExecEvalFieldStore(FieldStoreState *fstate,
 		/*
 		 * Use the CaseTestExpr mechanism to pass down the old value of the
 		 * field being replaced; this is needed in case the newval is itself a
-		 * FieldStore or ArrayRef that has to obtain and modify the old value.
+		 * FieldStore or SubscriptionRef that has to obtain and modify the old value.
 		 * It's safe to reuse the CASE mechanism because there cannot be a
 		 * CASE between here and where the value would be needed, and a field
 		 * assignment can't be within a CASE either.  (So saving and restoring
@@ -4695,25 +4562,21 @@ ExecInitExpr(Expr *node, PlanState *parent)
 				state = (ExprState *) wfstate;
 			}
 			break;
-		case T_ArrayRef:
+		case T_SubscriptionRef:
 			{
-				ArrayRef   *aref = (ArrayRef *) node;
-				ArrayRefExprState *astate = makeNode(ArrayRefExprState);
+				SubscriptionRef   *sbsref = (SubscriptionRef *) node;
+				SubscriptionRefExprState *astate = makeNode(SubscriptionRefExprState);
 
-				astate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalArrayRef;
+				astate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalSubscriptionRef;
 				astate->refupperindexpr = (List *)
-					ExecInitExpr((Expr *) aref->refupperindexpr, parent);
+					ExecInitExpr((Expr *) sbsref->refupperindexpr, parent);
 				astate->reflowerindexpr = (List *)
-					ExecInitExpr((Expr *) aref->reflowerindexpr, parent);
-				astate->refexpr = ExecInitExpr(aref->refexpr, parent);
-				astate->refassgnexpr = ExecInitExpr(aref->refassgnexpr,
+					ExecInitExpr((Expr *) sbsref->reflowerindexpr, parent);
+				astate->refexpr = ExecInitExpr(sbsref->refexpr, parent);
+				astate->refassgnexpr = ExecInitExpr(sbsref->refassgnexpr,
 													parent);
 				/* do one-time catalog lookups for type info */
-				astate->refattrlength = get_typlen(aref->refarraytype);
-				get_typlenbyvalalign(aref->refelemtype,
-									 &astate->refelemlength,
-									 &astate->refelembyval,
-									 &astate->refelemalign);
+				astate->refattrlength = get_typlen(sbsref->refcontainertype);
 				state = (ExprState *) astate;
 			}
 			break;
