@@ -264,16 +264,18 @@ static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 
 static Datum
 ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
-				 ExprContext *econtext,
-				 bool *isNull,
-				 ExprDoneCond *isDone)
+						ExprContext *econtext,
+						bool *isNull,
+						ExprDoneCond *isDone)
 {
-	SubscriptionRef			*sbsRef = (SubscriptionRef *) sbstate->xprstate.expr;
-	Oid						containerType, typsubscription;
+	SubscriptionRef		   *sbsRef = (SubscriptionRef *) sbstate->xprstate.expr;
+	Oid						containerType,
+							typsubscription;
 	bool					isAssignment = (sbsRef->refassgnexpr != NULL);
 	bool					eisnull;
-	Datum					*upper, *lower;
-	ListCell				*l;
+	Datum				   *upper,
+						   *lower;
+	ListCell			   *l;
 	int						i = 0,
 							j = 0;
 	SubscriptionExecData	sbsdata;
@@ -288,10 +290,8 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 
 	sbsdata.xprcontext = econtext;
 	sbsdata.isNull = isNull;
-	sbsdata.containerSource = ExecEvalExpr(sbstate->refexpr,
-								econtext,
-								isNull,
-								isDone);
+	sbsdata.containerSource = ExecEvalExpr(sbstate->refexpr, econtext,
+										   isNull, isDone);
 
 	/*
 	 * If refexpr yields NULL, and it's a fetch, then result is NULL. In the
@@ -322,12 +322,10 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 			upperProvided[i++] = false;
 			continue;
 		}
-		upperProvided[i] = true;
 
-		upper[i++] = ExecEvalExpr(eltstate,
-													 econtext,
-													 &eisnull,
-													 NULL);
+		upperProvided[i] = true;
+		upper[i++] = ExecEvalExpr(eltstate, econtext, &eisnull, NULL);
+
 		/* If any index expr yields NULL, result is NULL or error */
 		if (eisnull)
 		{
@@ -358,12 +356,10 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 				lowerProvided[j++] = false;
 				continue;
 			}
-			lowerProvided[j] = true;
 
-			lower[j++] = ExecEvalExpr(eltstate,
-														 econtext,
-														 &eisnull,
-														 NULL);
+			lowerProvided[j] = true;
+			lower[j++] = ExecEvalExpr(eltstate, econtext, &eisnull, NULL);
+
 			/* If any index expr yields NULL, result is NULL or error */
 			if (eisnull)
 			{
@@ -375,6 +371,7 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 				return (Datum) NULL;
 			}
 		}
+
 		/* this can't happen unless parser messed up */
 		if (i != j)
 			elog(ERROR, "upper and lower index lists are not same length");
@@ -389,19 +386,15 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 	containerType = getBaseTypeAndTypmod(sbsRef->refcontainertype, &sbsRef->reftypmod);
 	typsubscription = get_subscription(containerType);
 
-	if(OidIsValid(typsubscription))
-	{
-		return OidFunctionCall3(typsubscription,
-								Int32GetDatum(SBS_EXEC),
-								PointerGetDatum(sbstate),
-								PointerGetDatum(&sbsdata));
-	}
-	else
-	{
+	if (!OidIsValid(typsubscription))
 		/* this can't happen */
 		elog(ERROR, "can not find subscription procedure for type %s",
 					format_type_be(containerType));
-	}
+
+	return OidFunctionCall3(typsubscription,
+							Int32GetDatum(SBS_EXEC),
+							PointerGetDatum(sbstate),
+							PointerGetDatum(&sbsdata));
 }
 
 /* ----------------------------------------------------------------

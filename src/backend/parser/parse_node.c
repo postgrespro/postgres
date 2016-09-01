@@ -284,27 +284,26 @@ transformArrayType(Oid *containerType, int32 *containerTypmod)
 
 SubscriptionRef *
 transformContainerSubscripts(ParseState *pstate,
-						 Node *containerBase,
-						 Oid containerType,
-						 Oid elementType,
-						 int32 containerTypMod,
-						 List *indirection,
-						 Node *assignFrom)
+							 Node *containerBase,
+							 Oid containerType,
+							 Oid elementType,
+							 int32 containerTypMod,
+							 List *indirection,
+							 Node *assignFrom)
 {
-	bool		isSlice = false;
-	List	   *upperIndexpr = NIL;
-	List	   *lowerIndexpr = NIL;
-	ListCell   *idx;
-	SubscriptionRef   *sbsref, *prepared_sbsref;
+	bool				isSlice = false;
+	List			   *upperIndexpr = NIL;
+	List			   *lowerIndexpr = NIL;
+	ListCell		   *idx;
+	SubscriptionRef	   *sbsref,
+					   *prepared_sbsref;
+	Oid					typsubscription = get_subscription(containerType);
 
-	Oid			typsubscription = get_subscription(containerType);
 	if (!OidIsValid(typsubscription))
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("cannot subscript type %s because it does not support subscription",
 						format_type_be(containerType))));
-	}
 
 	/*
 	 * Caller may or may not have bothered to determine elementType.  Note
@@ -374,7 +373,6 @@ transformContainerSubscripts(ParseState *pstate,
 	sbsref->reflowerindexpr = lowerIndexpr;
 	sbsref->refexpr = (Expr *) containerBase;
 	sbsref->refassgnexpr = (Expr *) assignFrom;
-
 
 	prepared_sbsref = (SubscriptionRef *) OidFunctionCall3(typsubscription,
 														   Int32GetDatum(SBS_VALIDATION),

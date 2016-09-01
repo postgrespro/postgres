@@ -482,7 +482,6 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	}
 	/* process trailing subscripts, if any */
 	if (subscripts)
-	{
 		result = (Node *) transformContainerSubscripts(pstate,
 												       result,
 												       exprType(result),
@@ -490,8 +489,6 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 												       exprTypmod(result),
 												       subscripts,
 												       NULL);
-
-	}
 
 	return result;
 }
