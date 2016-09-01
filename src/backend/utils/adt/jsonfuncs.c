@@ -4012,33 +4012,23 @@ Datum
 jsonb_get_element(Datum jsonbdatum, text **path, int path_len, bool *is_null)
 {
 	Jsonb	   *jb = DatumGetJsonb(jsonbdatum);
-	JsonbValue *v;
-	int			level = 1;
+	JsonbValue	vbuf;
+	JsonbValue *v = JsonbToJsonbValue(jb, &vbuf);
+	int			level;
 
-	if (!JB_ROOT_IS_OBJECT(jb))
+	for (level = 0; level < path_len; level++)
 	{
-		*is_null = true;
-		return (Datum) 0;
+		if (v->type != jbvBinary ||
+			!(v = findJsonbValueFromContainerLen(v->val.binary.data, JB_FOBJECT,
+												 VARDATA_ANY(path[level]),
+												 VARSIZE_ANY_EXHDR(path[level]))))
+		{
+			*is_null = true;
+			return (Datum) 0;
+		}
 	}
 
-	v = findJsonbValueFromContainerLen(&jb->root, JB_FOBJECT,
-									   VARDATA_ANY(path[0]),
-									   VARSIZE_ANY_EXHDR(path[0]));
-
-	while (v != NULL &&
-		   v->type == jbvBinary && level < path_len)
-	{
-		v = findJsonbValueFromContainerLen(v->val.binary.data, JB_FOBJECT,
-										   VARDATA_ANY(path[level]),
-										   VARSIZE_ANY_EXHDR(path[level]));
-		level++;
-	}
-
-	if (v != NULL && level == path_len)
-		PG_RETURN_JSONB(JsonbValueToJsonb(v));
-
-	*is_null = true;
-	return (Datum) 0;
+	PG_RETURN_JSONB(JsonbValueToJsonb(v));
 }
 
 Datum
