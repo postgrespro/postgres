@@ -392,9 +392,9 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 	if(OidIsValid(typsubscription))
 	{
 		return OidFunctionCall3(typsubscription,
-							    PointerGetDatum(SBS_EXEC),
-							    PointerGetDatum(sbstate),
-							    PointerGetDatum(&sbsdata));
+								Int32GetDatum(SBS_EXEC),
+								PointerGetDatum(sbstate),
+								PointerGetDatum(&sbsdata));
 	}
 	else
 	{

@@ -377,7 +377,7 @@ transformContainerSubscripts(ParseState *pstate,
 
 
 	prepared_sbsref = (SubscriptionRef *) OidFunctionCall3(typsubscription,
-														   PointerGetDatum(SBS_VALIDATION),
+														   Int32GetDatum(SBS_VALIDATION),
 														   PointerGetDatum(sbsref),
 														   PointerGetDatum(pstate));
 
