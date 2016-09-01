@@ -4165,8 +4165,7 @@ jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
 					   *res = NULL;
 	JsonbParseState    *state = NULL;
 	JsonbIterator 	   *it;
-	int					i = 0;
-	bool			   *path_nulls = palloc(path_len * sizeof(bool));
+	bool			   *path_nulls = palloc0(path_len * sizeof(bool));
 
 	newval = to_jsonb_worker(sourceData, source_type);
 	it = JsonbIteratorInit(&jb->root);
@@ -4174,11 +4173,11 @@ jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
 	if (newval->type == jbvArray && newval->val.array.rawScalar == true)
 		*newval = newval->val.array.elems[0];
 
-	for (i = 0; i < path_len; i++)
-		path_nulls[i] = false;
 
 	res = setPath(&it, (Datum *) path, path_nulls, path_len, &state, 0,
 				  newval, JB_PATH_CREATE);
+
+	pfree(path_nulls);
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(res));
 }
