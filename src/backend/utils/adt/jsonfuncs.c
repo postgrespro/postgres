@@ -24,6 +24,7 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_coerce.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/hsearch.h"
@@ -4044,7 +4045,7 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 
 	path = (text **) palloc(sbsdata->indexprNumber * sizeof(text*));
 	for (i = 0; i < sbsdata->indexprNumber; i++)
-		path[i] = cstring_to_text((char *) DatumGetPointer(sbsdata->upper[i]));
+		path[i] = DatumGetTextP(sbsdata->upper[i]);
 
 	if (is_assignment)
 	{
@@ -4119,13 +4120,45 @@ jsonb_subscription_prepare(PG_FUNCTION_ARGS)
 {
 	SubscriptionRef	   *sbsref = (SubscriptionRef *) PG_GETARG_POINTER(0);
 	ParseState		   *pstate = (ParseState *) PG_GETARG_POINTER(1);
+	List			   *upperIndexpr = NIL;
+	ListCell		   *l;
 
 	if (sbsref->reflowerindexpr != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb subscript does not support slices"),
 				 parser_errposition(pstate, exprLocation(
-									((Node *)lfirst(sbsref->reflowerindexpr->head))) )));
+						 ((Node *)lfirst(sbsref->reflowerindexpr->head))))));
+
+	foreach(l, sbsref->refupperindexpr)
+	{
+		Node *subexpr = (Node *) lfirst(l);
+
+		Assert(subexpr != NULL);
+
+		if (subexpr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("jsonb subscript does not support slices"),
+					 parser_errposition(pstate, exprLocation(
+						((Node *) lfirst(sbsref->refupperindexpr->head))))));
+
+		subexpr = coerce_to_target_type(pstate,
+										subexpr, exprType(subexpr),
+										TEXTOID, -1,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST,
+										-1);
+		if (subexpr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("jsonb subscript must have text type"),
+					 parser_errposition(pstate, exprLocation(subexpr))));
+
+		upperIndexpr = lappend(upperIndexpr, subexpr);
+	}
+
+	sbsref->refupperindexpr = upperIndexpr;
 
 	PG_RETURN_POINTER(sbsref);
 }
