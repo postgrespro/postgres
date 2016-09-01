@@ -61,6 +61,19 @@ static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
 					 JsonbIteratorToken seq,
 					 JsonbValue *scalarVal);
 
+JsonbValue *
+JsonbToJsonbValue(Jsonb *jsonb, JsonbValue *val)
+{
+	if (!val)
+		val = (JsonbValue *) palloc(sizeof(JsonbValue));
+
+	val->type = jbvBinary;
+	val->val.binary.data = &jsonb->root;
+	val->val.binary.len = VARSIZE(jsonb) - VARHDRSZ;
+
+	return val;
+}
+
 /*
  * Turn an in-memory JsonbValue into a Jsonb for on-disk storage.
  *
@@ -530,9 +543,30 @@ pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
 
 	/* unpack the binary and add each piece to the pstate */
 	it = JsonbIteratorInit(jbval->val.binary.data);
+
+	if ((jbval->val.binary.data->header & JB_FSCALAR) && *pstate)
+	{
+		tok = JsonbIteratorNext(&it, &v, true);
+		Assert(tok == WJB_BEGIN_ARRAY);
+		Assert(v.type == jbvArray && v.val.array.rawScalar);
+
+		tok = JsonbIteratorNext(&it, &v, true);
+		Assert(tok == WJB_ELEM);
+
+		res = pushJsonbValueScalar(pstate, seq, &v);
+
+		tok = JsonbIteratorNext(&it, &v, true);
+		Assert(tok == WJB_END_ARRAY);
+		Assert(it == NULL);
+
+		return res;
+	}
+
 	while ((tok = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		res = pushJsonbValueScalar(pstate, tok,
-								   tok < WJB_BEGIN_ARRAY ? &v : NULL);
+								   tok < WJB_BEGIN_ARRAY ||
+								   (tok == WJB_BEGIN_ARRAY &&
+									v.val.array.rawScalar) ? &v : NULL);
 
 	return res;
 }
