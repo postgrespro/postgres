@@ -4042,7 +4042,7 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 	text					  **path;
 	int							i = 0;
 
-	path = (text **) palloc(i * sizeof(text*));
+	path = (text **) palloc(sbsdata->indexprNumber * sizeof(text*));
 	for (i = 0; i < sbsdata->indexprNumber; i++)
 		path[i] = cstring_to_text((char *) DatumGetPointer(sbsdata->upper[i]));
 
