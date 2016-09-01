@@ -297,7 +297,7 @@ transformContainerSubscripts(ParseState *pstate,
 	ListCell		   *idx;
 	SubscriptionRef	   *sbsref,
 					   *prepared_sbsref;
-	Oid					typsubscription = get_subscription(containerType);
+	RegProcedure		typsubscription = get_typsubscription(containerType);
 
 	if (!OidIsValid(typsubscription))
 		ereport(ERROR,

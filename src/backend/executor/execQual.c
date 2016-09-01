@@ -269,8 +269,8 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 						ExprDoneCond *isDone)
 {
 	SubscriptionRef		   *sbsRef = (SubscriptionRef *) sbstate->xprstate.expr;
-	Oid						containerType,
-							typsubscription;
+	Oid						containerType;
+	RegProcedure			typsubscription;
 	bool					isAssignment = (sbsRef->refassgnexpr != NULL);
 	bool					eisnull;
 	Datum				   *upper,
@@ -384,7 +384,7 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 	sbsdata.indexprNumber = i;
 
 	containerType = getBaseTypeAndTypmod(sbsRef->refcontainertype, &sbsRef->reftypmod);
-	typsubscription = get_subscription(containerType);
+	typsubscription = get_typsubscription(containerType);
 
 	if (!OidIsValid(typsubscription))
 		/* this can't happen */

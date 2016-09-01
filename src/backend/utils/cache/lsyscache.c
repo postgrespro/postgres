@@ -3063,16 +3063,15 @@ get_range_subtype(Oid rangeOid)
 }
 
 /*
- * get_subscription
+ * get_typsubscription
  *
- *		Given the type OID, get the corresponding "true" array type.
- *		Returns InvalidOid if no array type can be found.
+ *		Given the type OID, return the type's typsubscription procedure, if any.
  */
-Oid
-get_subscription(Oid typid)
+RegProcedure
+get_typsubscription(Oid typid)
 {
-	HeapTuple	tp;
-	Oid			result = InvalidOid;
+	HeapTuple		tp;
+	RegProcedure	result = InvalidOid;
 
 	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
 	if (HeapTupleIsValid(tp))
