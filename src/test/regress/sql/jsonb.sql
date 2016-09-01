@@ -869,13 +869,29 @@ select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"');
 select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"', true);
 
 -- jsonb subscript
+select ('123'::jsonb)['a'];
+select ('123'::jsonb)[0];
 select ('{"a": 1}'::jsonb)['a'];
+select ('{"a": 1}'::jsonb)[0];
+select ('{"a": 1}'::jsonb)['not_exist'];
+select ('[1, "2", null]'::jsonb)['a'];
+select ('[1, "2", null]'::jsonb)[0];
+select ('[1, "2", null]'::jsonb)['1'];
+select ('[1, "2", null]'::jsonb)[1.0];
+select ('[1, "2", null]'::jsonb)[2];
+select ('[1, "2", null]'::jsonb)[3];
+select ('[1, "2", null]'::jsonb)[-2];
+select ('[1, "2", null]'::jsonb)[1]['a'];
+select ('[1, "2", null]'::jsonb)[1][0];
 select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['b'];
 select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'];
-select ('{"a": 1}'::jsonb)['not_exist'];
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'][1];
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d']['a'];
 select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1'];
 select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2'];
 select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1']['a2']['a3'];
+select ('{"a": ["a1", {"b1": ["aaa", "bbb", "ccc"]}], "b": "bb"}'::jsonb)['a'][1]['b1'];
+select ('{"a": ["a1", {"b1": ["aaa", "bbb", "ccc"]}], "b": "bb"}'::jsonb)['a'][1]['b1'][2];
 
 create TEMP TABLE test_jsonb_subscript (
        id int,

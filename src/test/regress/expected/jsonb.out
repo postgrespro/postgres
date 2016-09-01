@@ -3442,10 +3442,88 @@ select jsonb_insert('{"a": {"b": "value"}}', '{a, b}', '"new_value"', true);
 ERROR:  cannot replace existing key
 HINT:  Try using the function jsonb_set to replace key value.
 -- jsonb subscript
+select ('123'::jsonb)['a'];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('123'::jsonb)[0];
+ jsonb 
+-------
+ 
+(1 row)
+
 select ('{"a": 1}'::jsonb)['a'];
  jsonb 
 -------
  1
+(1 row)
+
+select ('{"a": 1}'::jsonb)[0];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('{"a": 1}'::jsonb)['not_exist'];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('[1, "2", null]'::jsonb)['a'];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[0];
+ jsonb 
+-------
+ 1
+(1 row)
+
+select ('[1, "2", null]'::jsonb)['1'];
+ jsonb 
+-------
+ "2"
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[1.0];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[2];
+ jsonb 
+-------
+ null
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[3];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[-2];
+ jsonb 
+-------
+ "2"
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[1]['a'];
+ jsonb 
+-------
+ 
+(1 row)
+
+select ('[1, "2", null]'::jsonb)[1][0];
+ jsonb 
+-------
+ 
 (1 row)
 
 select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['b'];
@@ -3460,7 +3538,13 @@ select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'];
  [1, 2, 3]
 (1 row)
 
-select ('{"a": 1}'::jsonb)['not_exist'];
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d'][1];
+ jsonb 
+-------
+ 2
+(1 row)
+
+select ('{"a": 1, "b": "c", "d": [1, 2, 3]}'::jsonb)['d']['a'];
  jsonb 
 -------
  
@@ -3482,6 +3566,18 @@ select ('{"a": {"a1": {"a2": "aaa"}}, "b": "bbb", "c": "ccc"}'::jsonb)['a']['a1'
  jsonb 
 -------
  
+(1 row)
+
+select ('{"a": ["a1", {"b1": ["aaa", "bbb", "ccc"]}], "b": "bb"}'::jsonb)['a'][1]['b1'];
+         jsonb         
+-----------------------
+ ["aaa", "bbb", "ccc"]
+(1 row)
+
+select ('{"a": ["a1", {"b1": ["aaa", "bbb", "ccc"]}], "b": "bb"}'::jsonb)['a'][1]['b1'][2];
+ jsonb 
+-------
+ "ccc"
 (1 row)
 
 create TEMP TABLE test_jsonb_subscript (

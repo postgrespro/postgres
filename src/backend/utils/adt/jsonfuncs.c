@@ -139,8 +139,10 @@ static JsonbValue *findJsonbValueFromContainerLen(JsonbContainer *container,
 /* functions supporting jsonb_delete, jsonb_set and jsonb_concat */
 static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 			   JsonbParseState **state);
-static Datum jsonb_set_element(Datum datum, text **path, int path_len, Datum sourceData, Oid source_type);
-static Datum jsonb_get_element(Datum datum, text **path, int path_len, bool *isNull);
+static Datum jsonb_set_element(Datum datum, Datum *path, int path_len,
+							   Datum sourceData, Oid source_type);
+static Datum jsonb_get_element(Jsonb *jb, Datum *path, int npath,
+							   bool *isnull, bool as_text);
 static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
 		bool *path_nulls, int path_len,
 		JsonbParseState **st, int level, JsonbValue *newval, int op_type);
@@ -1175,16 +1177,11 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 {
 	Jsonb	   *jb = PG_GETARG_JSONB(0);
 	ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1);
-	Jsonb	   *res;
 	Datum	   *pathtext;
 	bool	   *pathnulls;
+	bool		isnull;
 	int			npath;
-	int			i;
-	bool		have_object = false,
-				have_array = false;
-	JsonbValue *jbvp = NULL;
-	JsonbValue	tv;
-	JsonbContainer *container;
+	Datum		res;
 
 	/*
 	 * If the array contains any null elements, return NULL, on the grounds
@@ -1199,9 +1196,28 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 	deconstruct_array(path, TEXTOID, -1, false, 'i',
 					  &pathtext, &pathnulls, &npath);
 
-	/* Identify whether we have object, array, or scalar at top-level */
-	container = &jb->root;
+	res = jsonb_get_element(jb, pathtext, npath, &isnull, as_text);
 
+	if (isnull)
+		PG_RETURN_NULL();
+	else
+		PG_RETURN_DATUM(res);
+}
+
+static Datum
+jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
+{
+	Jsonb		   *res;
+	JsonbContainer *container = &jb->root;
+	JsonbValue	   *jbvp = NULL;
+	JsonbValue		tv;
+	int				i;
+	bool			have_object = false,
+					have_array = false;
+
+	*isnull = false;
+
+	/* Identify whether we have object, array, or scalar at top-level */
 	if (JB_ROOT_IS_OBJECT(jb))
 		have_object = true;
 	else if (JB_ROOT_IS_ARRAY(jb) && !JB_ROOT_IS_SCALAR(jb))
@@ -1226,14 +1242,14 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 	{
 		if (as_text)
 		{
-			PG_RETURN_TEXT_P(cstring_to_text(JsonbToCString(NULL,
+			return PointerGetDatum(cstring_to_text(JsonbToCString(NULL,
 															container,
 															VARSIZE(jb))));
 		}
 		else
 		{
 			/* not text mode - just hand back the jsonb */
-			PG_RETURN_JSONB(jb);
+			return JsonbGetDatum(jb);
 		}
 	}
 
@@ -1243,21 +1259,24 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 		{
 			jbvp = findJsonbValueFromContainerLen(container,
 												  JB_FOBJECT,
-												  VARDATA_ANY(pathtext[i]),
-											 VARSIZE_ANY_EXHDR(pathtext[i]));
+												  VARDATA_ANY(path[i]),
+											 VARSIZE_ANY_EXHDR(path[i]));
 		}
 		else if (have_array)
 		{
 			long		lindex;
 			uint32		index;
-			char	   *indextext = TextDatumGetCString(pathtext[i]);
+			char	   *indextext = TextDatumGetCString(path[i]);
 			char	   *endptr;
 
 			errno = 0;
 			lindex = strtol(indextext, &endptr, 10);
 			if (endptr == indextext || *endptr != '\0' || errno != 0 ||
 				lindex > INT_MAX || lindex < INT_MIN)
-				PG_RETURN_NULL();
+			{
+				*isnull = true;
+				return PointerGetDatum(NULL);
+			}
 
 			if (lindex >= 0)
 			{
@@ -1275,7 +1294,10 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 				nelements = container->header & JB_CMASK;
 
 				if (-lindex > nelements)
-					PG_RETURN_NULL();
+				{
+					*isnull = true;
+					return PointerGetDatum(NULL);
+				}
 				else
 					index = nelements + lindex;
 			}
@@ -1285,11 +1307,15 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 		else
 		{
 			/* scalar, extraction yields a null */
-			PG_RETURN_NULL();
+			*isnull = true;
+			return PointerGetDatum(NULL);
 		}
 
 		if (jbvp == NULL)
-			PG_RETURN_NULL();
+		{
+			*isnull = true;
+			return PointerGetDatum(NULL);
+		}
 		else if (i == npath - 1)
 			break;
 
@@ -1314,24 +1340,28 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 	{
 		/* special-case outputs for string and null values */
 		if (jbvp->type == jbvString)
-			PG_RETURN_TEXT_P(cstring_to_text_with_len(jbvp->val.string.val,
-													  jbvp->val.string.len));
+			return PointerGetDatum(
+							cstring_to_text_with_len(jbvp->val.string.val,
+													 jbvp->val.string.len));
 		if (jbvp->type == jbvNull)
-			PG_RETURN_NULL();
+		{
+			*isnull = true;
+			return PointerGetDatum(NULL);
+		}
 	}
 
 	res = JsonbValueToJsonb(jbvp);
 
 	if (as_text)
 	{
-		PG_RETURN_TEXT_P(cstring_to_text(JsonbToCString(NULL,
+		return PointerGetDatum(cstring_to_text(JsonbToCString(NULL,
 														&res->root,
 														VARSIZE(res))));
 	}
 	else
 	{
 		/* not text mode - just hand back the jsonb */
-		PG_RETURN_JSONB(res);
+		return JsonbGetDatum(res);
 	}
 }
 
@@ -4010,29 +4040,6 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 }
 
 Datum
-jsonb_get_element(Datum jsonbdatum, text **path, int path_len, bool *is_null)
-{
-	Jsonb	   *jb = DatumGetJsonb(jsonbdatum);
-	JsonbValue	vbuf;
-	JsonbValue *v = JsonbToJsonbValue(jb, &vbuf);
-	int			level;
-
-	for (level = 0; level < path_len; level++)
-	{
-		if (v->type != jbvBinary ||
-			!(v = findJsonbValueFromContainerLen(v->val.binary.data, JB_FOBJECT,
-												 VARDATA_ANY(path[level]),
-												 VARSIZE_ANY_EXHDR(path[level]))))
-		{
-			*is_null = true;
-			return (Datum) 0;
-		}
-	}
-
-	PG_RETURN_JSONB(JsonbValueToJsonb(v));
-}
-
-Datum
 jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 {
 	SubscriptionRefExprState   *sbstate = (SubscriptionRefExprState *) PG_GETARG_POINTER(0);
@@ -4040,12 +4047,6 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 	SubscriptionRef			   *jsonb_ref = (SubscriptionRef *) sbstate->xprstate.expr;
 	bool					   *is_null = sbsdata->isNull;
 	bool						is_assignment = (jsonb_ref->refassgnexpr != NULL);
-	text					  **path;
-	int							i = 0;
-
-	path = (text **) palloc(sbsdata->indexprNumber * sizeof(text*));
-	for (i = 0; i < sbsdata->indexprNumber; i++)
-		path[i] = DatumGetTextP(sbsdata->upper[i]);
 
 	if (is_assignment)
 	{
@@ -4105,14 +4106,18 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 			*is_null = false;
 		}
 
-		return jsonb_set_element(sbsdata->containerSource, path,
+		return jsonb_set_element(sbsdata->containerSource,
+								 sbsdata->upper,
 								 sbsdata->indexprNumber,
 								 sourceData,
 								 jsonb_ref->refelemtype);
 	}
 	else
-		return jsonb_get_element(sbsdata->containerSource, path,
-								 sbsdata->indexprNumber, is_null);
+		return jsonb_get_element(DatumGetJsonb(sbsdata->containerSource),
+								 sbsdata->upper,
+								 sbsdata->indexprNumber,
+								 is_null,
+								 false);
 }
 
 Datum
@@ -4180,7 +4185,7 @@ jsonb_subscription(PG_FUNCTION_ARGS)
 }
 
 Datum
-jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
+jsonb_set_element(Datum jsonbdatum, Datum *path, int path_len,
 				  Datum sourceData, Oid source_type)
 {
 	Jsonb			   *jb = DatumGetJsonb(jsonbdatum);
@@ -4197,7 +4202,7 @@ jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
 
 	it = JsonbIteratorInit(&jb->root);
 
-	res = setPath(&it, (Datum *) path, path_nulls, path_len, &state, 0,
+	res = setPath(&it, path, path_nulls, path_len, &state, 0,
 				  newval, JB_PATH_CREATE);
 
 	pfree(path_nulls);
