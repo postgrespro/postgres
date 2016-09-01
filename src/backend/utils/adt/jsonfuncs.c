@@ -4234,7 +4234,7 @@ jsonb_set_element(Datum jsonbdatum, text **path, int path_len,
 		path_nulls[i] = false;
 
 	res = setPath(&it, (Datum *) path, path_nulls, path_len, &state, 0,
-				  (void *) newval, true, true);
+				  (void *) newval, true, JB_PATH_CREATE);
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(res));
 }
