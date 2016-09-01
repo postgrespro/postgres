@@ -4102,11 +4102,9 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 {
 	SubscriptionRefExprState   *sbstate = (SubscriptionRefExprState *) PG_GETARG_POINTER(0);
 	SubscriptionExecData	   *sbsdata = (SubscriptionExecData *) PG_GETARG_POINTER(1);
-	ExprContext				   *econtext = sbsdata->xprcontext;
-	bool					   *is_null = sbsdata->isNull;
 	SubscriptionRef			   *jsonb_ref = (SubscriptionRef *) sbstate->xprstate.expr;
+	bool					   *is_null = sbsdata->isNull;
 	bool						is_assignment = (jsonb_ref->refassgnexpr != NULL);
-	bool						eisnull;
 	text					  **path;
 	int							i = 0;
 
@@ -4116,9 +4114,11 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 
 	if (is_assignment)
 	{
-		Datum		sourceData;
-		Datum		save_datum;
-		bool		save_isNull;
+		ExprContext	   *econtext = sbsdata->xprcontext;
+		Datum			sourceData;
+		Datum			save_datum;
+		bool			save_isNull;
+		bool			eisnull;
 
 		/*
 		 * We might have a nested-assignment situation, in which the
