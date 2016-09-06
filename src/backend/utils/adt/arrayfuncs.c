@@ -24,6 +24,7 @@
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
@@ -161,7 +162,8 @@ static int width_bucket_array_variable(Datum operand,
 							ArrayType *thresholds,
 							Oid collation,
 							TypeCacheEntry *typentry);
-
+static Datum array_subscription_prepare(PG_FUNCTION_ARGS);
+static Datum array_subscription_evaluate(PG_FUNCTION_ARGS);
 
 /*
  * array_in :
@@ -6727,9 +6729,10 @@ array_subscription_prepare(PG_FUNCTION_ARGS)
 	ParseState			*pstate = (ParseState *) PG_GETARG_POINTER(1);
 	Node				*node = (Node *)sbsref;
 	Oid					array_type = sbsref->refcontainertype;
-	Oid					array_typ_mode = sbsref->reftypmod;
+	int32				array_typ_mode = (int32) sbsref->reftypmod;
 	bool				is_slice = sbsref->reflowerindexpr != NIL;
-	Oid					typeneeded, typesource;
+	Oid					typeneeded = InvalidOid,
+						typesource = InvalidOid;
 	Node				*new_from;
 	Oid					element_type_id;
 	Node				*subexpr;
@@ -6849,12 +6852,12 @@ array_subscription_prepare(PG_FUNCTION_ARGS)
 								format_type_be(sbsref->refcontainertype)),
 						 parser_errposition(pstate, 0)));
 
-			return node;
+			PG_RETURN_POINTER(node);
 		}
 
 	}
 
-	return sbsref;
+	PG_RETURN_POINTER(sbsref);
 }
 
 Datum
@@ -6865,12 +6868,10 @@ array_subscription(PG_FUNCTION_ARGS)
 															 fcinfo->nargs);
 
 	if (op_type & SBS_VALIDATION)
-	{
 		return array_subscription_prepare(&target_fcinfo);
-	}
 
 	if (op_type & SBS_EXEC)
-	{
 		return array_subscription_evaluate(&target_fcinfo);
-	}
+
+	elog(ERROR, "incorrect op_type for subscription function: %d", op_type);
 }

@@ -273,8 +273,8 @@ ExecEvalSubscriptionRef(SubscriptionRefExprState *sbstate,
 	RegProcedure			typsubscription;
 	bool					isAssignment = (sbsRef->refassgnexpr != NULL);
 	bool					eisnull;
-	Datum				   *upper,
-						   *lower;
+	Datum				   *upper = NULL,
+						   *lower = NULL;
 	ListCell			   *l;
 	int						i = 0,
 							j = 0;

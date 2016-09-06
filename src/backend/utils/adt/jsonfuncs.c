@@ -3924,9 +3924,9 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 static void
 setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 			 int path_len, JsonbParseState **st, int level,
-			 Jsonb *newval, uint32 nelems, int op_type)
+			 JsonbValue *newval, uint32 nelems, int op_type)
 {
-	JsonbValue	v;
+	JsonbValue	v, *new = (JsonbValue *) newval;
 	int			idx,
 				i;
 	bool		done = false;
@@ -3971,8 +3971,8 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 	if ((idx == INT_MIN || nelems == 0) && (level == path_len - 1) &&
 		(op_type & JB_PATH_CREATE_OR_INSERT))
 	{
-		Assert(newval != NULL);
-		(void) pushJsonbValue(st, WJB_ELEM, newval);
+		Assert(new != NULL);
+		(void) pushJsonbValue(st, WJB_ELEM, new);
 		done = true;
 	}
 
@@ -3988,7 +3988,7 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 				r = JsonbIteratorNext(it, &v, true);	/* skip */
 
 				if (op_type & (JB_PATH_INSERT_BEFORE | JB_PATH_CREATE))
-					(void) pushJsonbValue(st, WJB_ELEM, newval);
+					(void) pushJsonbValue(st, WJB_ELEM, new);
 
 				/*
 				 * We should keep current value only in case of
@@ -3999,13 +3999,13 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 					(void) pushJsonbValue(st, r, &v);
 
 				if (op_type & JB_PATH_INSERT_AFTER)
-					(void) pushJsonbValue(st, WJB_ELEM, newval);
+					(void) pushJsonbValue(st, WJB_ELEM, new);
 
 				done = true;
 			}
 			else
 				(void) setPath(it, path_elems, path_nulls, path_len,
-							   st, level + 1, newval, op_type);
+							   st, level + 1, new, op_type);
 		}
 		else
 		{

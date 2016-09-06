@@ -165,7 +165,7 @@ DefineType(List *names, List *parameters)
 	Oid			resulttype;
 	ListCell   *pl;
 	ObjectAddress address;
-	Oid			subscriptionOid;
+	Oid			subscriptionOid = InvalidOid;
 
 	/*
 	 * As of Postgres 8.4, we require superuser privilege to create a base
