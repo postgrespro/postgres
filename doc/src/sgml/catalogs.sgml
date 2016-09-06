@@ -7056,6 +7056,13 @@
      </row>
 
      <row>
+      <entry><structfield>typsubscription</structfield></entry>
+      <entry><type>regproc</type></entry>
+      <entry><literal><link linkend="catalog-pg-proc"><structname>pg_proc</structname></link>.oid</literal></entry>
+      <entry>Custom subscription function with type-specific logic, or 0 if this type doesn't support subscription.</entry>
+     </row>
+
+     <row>
       <entry><structfield>typdefaultbin</structfield></entry>
       <entry><type>pg_node_tree</type></entry>
       <entry></entry>

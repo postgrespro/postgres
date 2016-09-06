@@ -569,4 +569,29 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
       compared using the default database collation.
   </para>
  </sect2>
+
+ <sect2 id="json-subscription">
+  <title>JSON subscription</title>
+  <para>
+   JSONB data type support array-style subscription expressions to extract or update particular element. An example of subscription syntax:
+<programlisting>
+-- Extract value by key
+SELECT ('{"a": 1}'::jsonb)['a'];
+
+-- Extract nested value by key path
+SELECT ('{"a": {"b": {"c": 1}}}'::jsonb)['a']['b']['c'];
+
+-- Extract element by index
+SELECT ('[1, "2", null]'::jsonb)['1'];
+
+-- Update value by key
+UPDATE table_name set jsonb_field['key'] = 1;
+
+-- Select records using where clause with subscription
+SELECT * from table_name where jsonb_field['key'] = '"value"';
+</programlisting>
+  </para>
+ </sect2>
+
+
 </sect1>

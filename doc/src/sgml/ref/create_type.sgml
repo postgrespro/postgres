@@ -54,6 +54,7 @@ CREATE TYPE <replaceable class="parameter">name</replaceable> (
     [ , ELEMENT = <replaceable class="parameter">element</replaceable> ]
     [ , DELIMITER = <replaceable class="parameter">delimiter</replaceable> ]
     [ , COLLATABLE = <replaceable class="parameter">collatable</replaceable> ]
+    [ , SUBSCRIPTION = <replaceable class="parameter">subscription_function</replaceable> ]
 )
 
 CREATE TYPE <replaceable class="parameter">name</replaceable>
@@ -194,7 +195,8 @@ CREATE TYPE <replaceable class="parameter">name</replaceable>
    <replaceable class="parameter">send_function</replaceable>,
    <replaceable class="parameter">type_modifier_input_function</replaceable>,
    <replaceable class="parameter">type_modifier_output_function</replaceable> and
-   <replaceable class="parameter">analyze_function</replaceable>
+   <replaceable class="parameter">analyze_function</replaceable>,
+   <replaceable class="parameter">subscription_function</replaceable>
    are optional.  Generally these functions have to be coded in C
    or another low-level language.
   </para>
@@ -450,6 +452,22 @@ CREATE TYPE <replaceable class="parameter">name</replaceable>
    implementations of the functions operating on the type to actually
    make use of the collation information; this does not happen
    automatically merely by marking the type collatable.
+  </para>
+
+  <para>
+   The optional
+   <replaceable class="parameter">subscription_function</replaceable>
+   contains type-specific logic for subscription of the data type.
+   By default, there is no such function, which means that the data
+   type doesn't support subscription. The subscription function must be
+   declared to take a single argument of type <type>internal</>, and return
+   a <type>internal</> result. There are two examples of implementation for
+   subscription function in case of array
+   (<replaceable class="parameter">array_subscription</replaceable>)
+   and jsonb
+   (<replaceable class="parameter">jsonb_subscription</replaceable>)
+   types in <filename>src/backend/utils/adt/arrayfuncs.c</> and
+   <filename>src/backend/utils/adt/jsonfuncs.c</> corresponding.
   </para>
   </refsect2>
 
@@ -763,6 +781,16 @@ CREATE TYPE <replaceable class="parameter">name</replaceable>
      <para>
       True if this type's operations can use collation information.
       The default is false.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">subscription_function</replaceable></term>
+    <listitem>
+     <para>
+      The name of a function that contains type-specific subscription logic for
+      the data type.
      </para>
     </listitem>
    </varlistentry>
