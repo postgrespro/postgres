@@ -642,7 +642,7 @@ DefineType(List *names, List *parameters)
 				   0,			/* Array Dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
 				   collation,	/* type's collation */
-				   subscriptionOid);
+				   subscriptionOid);	/* subscription procedure */
 	Assert(typoid == address.objectId);
 
 	/*
@@ -1075,7 +1075,7 @@ DefineDomain(CreateDomainStmt *stmt)
 				   typNDims,	/* Array dimensions for base type */
 				   typNotNull,	/* Type NOT NULL */
 				   domaincoll,  /* type's collation */
-				   subscriptionProcedure);
+				   subscriptionProcedure);	/* subscription procedure */
 
 	/*
 	 * Process constraints which refer to the domain ID returned by TypeCreate
@@ -1188,7 +1188,7 @@ DefineEnum(CreateEnumStmt *stmt)
 				   0,			/* Array dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
 				   InvalidOid,  /* type's collation */
-				   InvalidOid);
+				   InvalidOid);	/* typsubscription - none */
 
 	/* Enter the enum's values into pg_enum */
 	EnumValuesCreate(enumTypeAddr.objectId, stmt->vals);
@@ -1229,7 +1229,7 @@ DefineEnum(CreateEnumStmt *stmt)
 			   0,				/* Array dimensions of typbasetype */
 			   false,			/* Type NOT NULL */
 			   InvalidOid,		/* type's collation */
-			   F_ARRAY_SUBSCRIPTION);
+			   F_ARRAY_SUBSCRIPTION);	/* array subscription implementation */
 
 	pfree(enumArrayName);
 
@@ -1529,7 +1529,7 @@ DefineRange(CreateRangeStmt *stmt)
 				   0,			/* Array dimensions of typbasetype */
 				   false,		/* Type NOT NULL */
 				   InvalidOid,  /* type's collation (ranges never have one) */
-				   InvalidOid);
+				   InvalidOid);	/* typsubscription - none */
 	Assert(typoid == address.objectId);
 
 	/* Create the entry in pg_range */
@@ -1572,7 +1572,7 @@ DefineRange(CreateRangeStmt *stmt)
 			   0,				/* Array dimensions of typbasetype */
 			   false,			/* Type NOT NULL */
 			   InvalidOid,		/* typcollation */
-			   F_ARRAY_SUBSCRIPTION);
+			   F_ARRAY_SUBSCRIPTION);	/* array subscription implementation */
 
 	pfree(rangeArrayName);
 

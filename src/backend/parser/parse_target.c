@@ -776,7 +776,7 @@ transformAssignmentIndirection(ParseState *pstate,
 }
 
 /*
- * helper for transformAssignmentIndirection: process array assignment
+ * helper for transformAssignmentIndirection: process container assignment
  */
 static Node *
 transformAssignmentSubscripts(ParseState *pstate,

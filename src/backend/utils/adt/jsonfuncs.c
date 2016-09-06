@@ -1365,6 +1365,32 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 	}
 }
 
+Datum
+jsonb_set_element(Datum jsonbdatum, Datum *path, int path_len,
+				  Datum sourceData, Oid source_type)
+{
+	Jsonb			   *jb = DatumGetJsonb(jsonbdatum);
+	JsonbValue		   *newval,
+					   *res;
+	JsonbParseState    *state = NULL;
+	JsonbIterator 	   *it;
+	bool			   *path_nulls = palloc0(path_len * sizeof(bool));
+
+	newval = to_jsonb_worker(sourceData, source_type);
+
+	if (newval->type == jbvArray && newval->val.array.rawScalar)
+		*newval = newval->val.array.elems[0];
+
+	it = JsonbIteratorInit(&jb->root);
+
+	res = setPath(&it, path, path_nulls, path_len, &state, 0,
+				  newval, JB_PATH_CREATE);
+
+	pfree(path_nulls);
+
+	PG_RETURN_JSONB(JsonbValueToJsonb(res));
+}
+
 /*
  * SQL function json_array_length(json) -> int
  */
@@ -4033,12 +4059,17 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 			if (op_type & JB_PATH_CREATE_OR_INSERT && !done &&
 				level == path_len - 1 && i == nelems - 1)
 			{
-				(void) pushJsonbValue(st, WJB_ELEM, newval);
+				(void) pushJsonbValue(st, WJB_ELEM, new);
 			}
 		}
 	}
 }
 
+/*
+ * Perform an actual data extraction or modification for the jsonb
+ * subscription. As a result the extracted Datum or the modified containers
+ * value will be returned.
+ */
 Datum
 jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 {
@@ -4120,6 +4151,14 @@ jsonb_subscription_evaluate(PG_FUNCTION_ARGS)
 								 false);
 }
 
+/*
+ * Perform preparation for the jsonb subscription. Since there are not any
+ * particular restrictions for this kind of subscription, we will verify that
+ * it is not a slice operation. This function produces an expression that
+ * represents the result of extracting a single container element or the new
+ * container value with the source data inserted into the right part of the
+ * container.
+ */
 Datum
 jsonb_subscription_prepare(PG_FUNCTION_ARGS)
 {
@@ -4168,6 +4207,9 @@ jsonb_subscription_prepare(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(sbsref);
 }
 
+/*
+ * Handle jsonb-type subscription logic.
+ */
 Datum
 jsonb_subscription(PG_FUNCTION_ARGS)
 {
@@ -4182,30 +4224,4 @@ jsonb_subscription(PG_FUNCTION_ARGS)
 		return jsonb_subscription_evaluate(&target_fcinfo);
 
 	elog(ERROR, "incorrect op_type for subscription function: %d", op_type);
-}
-
-Datum
-jsonb_set_element(Datum jsonbdatum, Datum *path, int path_len,
-				  Datum sourceData, Oid source_type)
-{
-	Jsonb			   *jb = DatumGetJsonb(jsonbdatum);
-	JsonbValue		   *newval,
-					   *res;
-	JsonbParseState    *state = NULL;
-	JsonbIterator 	   *it;
-	bool			   *path_nulls = palloc0(path_len * sizeof(bool));
-
-	newval = to_jsonb_worker(sourceData, source_type);
-
-	if (newval->type == jbvArray && newval->val.array.rawScalar)
-		*newval = newval->val.array.elems[0];
-
-	it = JsonbIteratorInit(&jb->root);
-
-	res = setPath(&it, path, path_nulls, path_len, &state, 0,
-				  newval, JB_PATH_CREATE);
-
-	pfree(path_nulls);
-
-	PG_RETURN_JSONB(JsonbValueToJsonb(res));
 }

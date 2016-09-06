@@ -198,6 +198,11 @@ CATALOG(pg_type,1247) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71) BKI_SCHEMA_MACRO
 	 * collatable base types, possibly other OID for domains
 	 */
 	Oid			typcollation;
+
+	/*
+	 * Type specific subscription logic. If typsubscription is none, it means
+	 * that this type doesn't support subscription.
+	 */
 	regproc		typsubscription;
 
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
@@ -224,7 +229,6 @@ CATALOG(pg_type,1247) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71) BKI_SCHEMA_MACRO
 	 */
 	aclitem		typacl[1];
 #endif
-
 } FormData_pg_type;
 
 /* ----------------

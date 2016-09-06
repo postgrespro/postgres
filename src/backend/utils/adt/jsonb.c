@@ -1149,6 +1149,11 @@ to_jsonb(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(JsonbValueToJsonb(res));
 }
 
+/*
+ * Do the actual conversion to jsonb for to_jsonb function. This logic is
+ * separated because it can be useful not only in here (e.g. we use it in
+ * jsonb subscription)
+ */
 JsonbValue *
 to_jsonb_worker(Datum source, Oid source_type)
 {

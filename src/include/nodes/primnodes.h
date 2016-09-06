@@ -361,7 +361,7 @@ typedef struct WindowFunc
  *
  * If reflowerindexpr = NIL, then we are fetching or storing a single container
  * element at the subscripts given by refupperindexpr. Otherwise we are
- * fetching or storing a container slice, that is a rectangular subarray
+ * fetching or storing a container slice, that is a rectangular subcontainer
  * with lower and upper bounds given by the index expressions.
  * reflowerindexpr must be the same length as refupperindexpr when it
  * is not NIL.
@@ -382,17 +382,17 @@ typedef struct SubscriptionRef
 {
 	Expr		xpr;
 	Oid			refcontainertype;	/* type of the container proper */
-	Oid			refelemtype;	/* type of the container elements */
-	int32		reftypmod;		/* typmod of the container (and elements too) */
-	Oid			refcollid;		/* OID of collation, or InvalidOid if none */
-	List	   *refupperindexpr;/* expressions that evaluate to upper container
-								 * indexes */
-	List	   *reflowerindexpr;/* expressions that evaluate to lower container
-								 * indexes, or NIL for single container element */
-	Expr	   *refexpr;		/* the expression that evaluates to an container
-								 * value */
-	Expr	   *refassgnexpr;	/* expression for the source value, or NULL if
-								 * fetch */
+	Oid			refelemtype;		/* type of the container elements */
+	int32		reftypmod;			/* typmod of the container (and elements too) */
+	Oid			refcollid;			/* OID of collation, or InvalidOid if none */
+	List	   *refupperindexpr;	/* expressions that evaluate to upper container
+									 * indexes */
+	List	   *reflowerindexpr;	/* expressions that evaluate to lower container
+									 * indexes, or NIL for single container element */
+	Expr	   *refexpr;			/* the expression that evaluates to an container
+									 * value */
+	Expr	   *refassgnexpr;		/* expression for the source value, or NULL if
+									 * fetch */
 } SubscriptionRef;
 
 /*

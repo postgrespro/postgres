@@ -657,12 +657,21 @@ typedef struct SubscriptionRefExprState
 	List	   *reflowerindexpr;
 	ExprState  *refexpr;
 	ExprState  *refassgnexpr;
-	int16		refattrlength;	/* typlen of array type */
-	int16		refelemlength;	/* typlen of the array element type */
+	int16		refattrlength;	/* typlen of container type */
+	int16		refelemlength;	/* typlen of the container element type */
 	bool		refelembyval;	/* is the element type pass-by-value? */
 	char		refelemalign;	/* typalign of the element type */
 } SubscriptionRefExprState;
 
+/* ---------------------------------
+ * Subscription exec information
+ *
+ * It contains all information which is required to perform type-specific data
+ * extraction or modification. This information will be gathered in
+ * `ExecEvalSubscriptionRef` function and passed to `typsubscription`
+ * procedure.
+ * ---------------------------------
+ */
 typedef struct SubscriptionExecData
 {
 	ExprContext *xprcontext;			/* econtext for subscription */

@@ -225,6 +225,7 @@ extern Var *make_var(ParseState *pstate, RangeTblEntry *rte, int attrno,
 		 int location);
 extern Oid	transformArrayType(Oid *containerType, int32 *containerTypmod);
 
+/* Type of a stage in case of type-specific subscription procedure */
 #define SBS_VALIDATION		0x0001
 #define SBS_EXEC			0x0002
 

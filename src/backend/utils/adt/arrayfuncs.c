@@ -6561,6 +6561,11 @@ isAssignmentIndirectionExpr(ExprState *exprstate)
 	return false;
 }
 
+/*
+ * Perform an actual data extraction or modification for the array
+ * subscription. As a result the extracted Datum or the modified containers
+ * value will be returned.
+ */
 Datum
 array_subscription_evaluate(PG_FUNCTION_ARGS)
 {
@@ -6722,6 +6727,13 @@ array_subscription_evaluate(PG_FUNCTION_ARGS)
 							   sbstate->refelemalign);
 }
 
+/*
+ * Perform preparation for the array subscription, mostly type verification
+ * and coersion. This function produces an expression that represents the
+ * result of extracting a single container element/container slice or the new
+ * container value with the source data inserted into the right part of the
+ * container.
+ */
 Datum
 array_subscription_prepare(PG_FUNCTION_ARGS)
 {
@@ -6860,6 +6872,9 @@ array_subscription_prepare(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(sbsref);
 }
 
+/*
+ * Handle array-type subscription logic.
+ */
 Datum
 array_subscription(PG_FUNCTION_ARGS)
 {

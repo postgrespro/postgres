@@ -253,9 +253,12 @@ static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 /*----------
  *	  ExecEvalSubscriptionRef
  *
- *	   This function takes an SubscriptionRef and returns the extracted Datum
- *	   if it's a simple reference, or the modified containers value if it's
- *	   an containers assignment (i.e., containers element or slice insertion).
+ *	   This function takes a SubscriptionRef, extracts all information required
+ *	   for subscription and pass it to a particular subscription procedure,
+ *	   specified for this data type. As a result the extracted Datum will be
+ *	   returned if it's a simple reference, or the modified containers value if
+ *	   it's an containers assignment (i.e., containers element or slice
+ *	   insertion).
  *
  * NOTE: if we get a NULL result from a subscript expression, we return NULL
  * when it's an containers reference, or raise an error when it's an assignment.
