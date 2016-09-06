@@ -5331,9 +5331,9 @@ DATA(insert OID = 3444 ( pg_control_init PGNSP PGUID 12 1 0 0 0 f f f f t f v s 
 DESCR("pg_controldata init state information as a function");
 
 /* type subscription support */
-DATA(insert OID = 3343 (  jsonb_subscription PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "2281" _null_ _null_ _null_ _null_ _null_ jsonb_subscription _null_ _null_ _null_ ));
+DATA(insert OID = 3343 (  jsonb_subscription PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 "2281" "2281" _null_ _null_ _null_ _null_ _null_ jsonb_subscription _null_ _null_ _null_ ));
 DESCR("Jsonb subscription logic");
-DATA(insert OID = 3344 (  array_subscription PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "2281" _null_ _null_ _null_ _null_ _null_ array_subscription _null_ _null_ _null_ ));
+DATA(insert OID = 3344 (  array_subscription PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 "2281" "2281" _null_ _null_ _null_ _null_ _null_ array_subscription _null_ _null_ _null_ ));
 DESCR("Array subscription logic");
 
 /*
