@@ -755,7 +755,6 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 	char	   *outputstr;
 	bool		numeric_error;
 	JsonbValue	jb;
-	bool		scalar_jsonb = false;
 
 	check_stack_depth();
 
@@ -785,10 +784,10 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 		{
 			case JSONBTYPE_ARRAY:
 				array_to_jsonb_internal(val, result);
-				break;
+				return;
 			case JSONBTYPE_COMPOSITE:
 				composite_to_jsonb(val, result);
-				break;
+				return;
 			case JSONBTYPE_BOOL:
 				if (key_scalar)
 				{
@@ -882,7 +881,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 
 					pg_parse_json_or_ereport(lex, &sem);
 				}
-				break;
+				return;
 			case JSONBTYPE_JSONB:
 				{
 					Jsonb	   *jsonb = DatumGetJsonbP(val);
@@ -895,35 +894,33 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 						(void) JsonbIteratorNext(&it, &jb, true);
 						Assert(jb.type == jbvArray);
 						(void) JsonbIteratorNext(&it, &jb, true);
-						scalar_jsonb = true;
+						break;
 					}
+
+					if (result->parseState)
+						result->res =
+							pushScalarJsonbValue(&result->parseState,
+												 JsonToJsonValue(jsonb, &jb),
+												 false, false);
 					else
 					{
 						JsonbIteratorToken type;
 
-
-						if (result->parseState)
-						{
-							pushScalarJsonbValue(&result->parseState,
-												 JsonToJsonValue(jsonb, &jb),
-												 false, false);
-							return;
-						}
-
 						while ((type = JsonbIteratorNext(&it, &jb, false))
 							   != WJB_DONE)
 						{
-							if (type == WJB_END_ARRAY || type == WJB_END_OBJECT ||
-								type == WJB_BEGIN_ARRAY || type == WJB_BEGIN_OBJECT)
-								result->res = pushJsonbValue(&result->parseState,
-															 type, NULL);
-							else
-								result->res = pushJsonbValue(&result->parseState,
-															 type, &jb);
+							JsonbValue *jv =
+									type == WJB_END_ARRAY ||
+									type == WJB_END_OBJECT ||
+									type == WJB_BEGIN_ARRAY ||
+									type == WJB_BEGIN_OBJECT ? NULL : &jb;
+
+							result->res = pushJsonbValue(&result->parseState,
+														 type, jv);
 						}
 					}
 				}
-				break;
+				return;
 			default:
 				outputstr = OidOutputFunctionCall(outfuncoid, val);
 				jb.type = jbvString;
@@ -934,13 +931,6 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 	}
 
 	/* Now insert jb into result, unless we did it recursively */
-	if (!is_null && !scalar_jsonb &&
-		tcategory >= JSONBTYPE_JSON && tcategory <= JSONBTYPE_JSONCAST)
-	{
-		/* work has been done recursively */
-		return;
-	}
-
 	result->res = pushScalarJsonbValue(&result->parseState, &jb, key_scalar,
 									   true);
 }
