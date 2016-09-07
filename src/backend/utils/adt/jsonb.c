@@ -901,11 +901,11 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 					{
 						JsonbIteratorToken type;
 
-						JsonToJsonValue(jsonb, &jb);
 
 						if (result->parseState)
 						{
-							pushScalarJsonbValue(&result->parseState, &jb,
+							pushScalarJsonbValue(&result->parseState,
+												 JsonToJsonValue(jsonb, &jb),
 												 false, false);
 							return;
 						}

@@ -562,6 +562,9 @@ jsonvContainerOps =
 JsonValue *
 JsonToJsonValue(Json *json, JsonValue *jv)
 {
+	if (JsonRoot(json)->ops == &jsonvContainerOps)
+		return (JsonValue *) JsonRoot(json)->data;
+
 	if (!jv)
 		jv = palloc(sizeof(JsonValue));
 
