@@ -248,6 +248,9 @@ extern struct varlena *pg_detoast_datum_packed(struct varlena *datum);
 #define PG_DETOAST_DATUM_PACKED(datum) \
 	pg_detoast_datum_packed((struct varlena *) DatumGetPointer(datum))
 
+struct ExpandedObjectHeader;
+extern struct ExpandedObjectHeader *DatumGetEOHP(Datum d);
+
 /*
  * Support for cleaning up detoasted copies of inputs.  This must only
  * be used for pass-by-ref datatypes, and normally would only be used
@@ -259,7 +262,9 @@ extern struct varlena *pg_detoast_datum_packed(struct varlena *datum);
  */
 #define PG_FREE_IF_COPY(ptr,n) \
 	do { \
-		if ((Pointer) (ptr) != PG_GETARG_POINTER(n)) \
+		if ((Pointer) (ptr) != PG_GETARG_POINTER(n) && \
+			(!VARATT_IS_EXTERNAL_EXPANDED(PG_GETARG_POINTER(n)) || \
+			 (Pointer) DatumGetEOHP(PG_GETARG_DATUM(n)) != (Pointer)(ptr))) \
 			pfree(ptr); \
 	} while (0)
 
