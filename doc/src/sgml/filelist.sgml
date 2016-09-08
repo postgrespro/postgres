@@ -70,6 +70,7 @@
 <!ENTITY xplang     SYSTEM "xplang.sgml">
 <!ENTITY xoper      SYSTEM "xoper.sgml">
 <!ENTITY xtypes     SYSTEM "xtypes.sgml">
+<!ENTITY xsubscription SYSTEM "xsubscription.sgml">
 <!ENTITY plperl     SYSTEM "plperl.sgml">
 <!ENTITY plpython   SYSTEM "plpython.sgml">
 <!ENTITY plsql      SYSTEM "plpgsql.sgml">

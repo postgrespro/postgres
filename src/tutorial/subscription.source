@@ -1,0 +1,59 @@
+---------------------------------------------------------------------------
+--
+-- subscription.sql-
+--    This file shows how to create a new subscription procedure for
+--    user-defined type.
+--
+--
+-- Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+-- Portions Copyright (c) 1994, Regents of the University of California
+--
+-- src/tutorial/subscription.source
+--
+---------------------------------------------------------------------------
+
+-----------------------------
+-- Creating a new type:
+--	We are going to create a new type called 'complex' which represents
+--	complex numbers.
+--	A user-defined type must have an input and an output function, and
+--	optionally can have binary input and output functions.  All of these
+--	are usually user-defined C functions.
+-----------------------------
+
+-- Assume the user defined functions are in /home/erthalion/programms/postgresql-master/src/tutorial/complex$DLSUFFIX
+-- (we do not want to assume this is in the dynamic loader search path).
+-- Look at $PWD/complex.c for the source.  Note that we declare all of
+-- them as STRICT, so we do not need to cope with NULL inputs in the
+-- C code.  We also mark them IMMUTABLE, since they always return the
+-- same outputs given the same inputs.
+
+-- the input function 'complex_in' takes a null-terminated string (the
+-- textual representation of the type) and turns it into the internal
+-- (in memory) representation. You will get a message telling you 'complex'
+-- does not exist yet but that's okay.
+
+CREATE FUNCTION custom_in(cstring)
+   RETURNS custom
+   AS '_OBJWD_/subscription'
+   LANGUAGE C IMMUTABLE STRICT;
+
+-- the output function 'complex_out' takes the internal representation and
+-- converts it into the textual representation.
+
+CREATE FUNCTION custom_out(custom)
+   RETURNS cstring
+   AS '_OBJWD_/subscription'
+   LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION custom_subscription(internal)
+   RETURNS internal
+   AS '_OBJWD_/subscription'
+   LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE custom (
+   internallength = 4,
+   input = custom_in,
+   output = custom_out,
+   subscription = custom_subscription
+);

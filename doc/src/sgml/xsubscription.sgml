@@ -1,0 +1,98 @@
+<!-- doc/src/sgml/xsubscription.sgml -->
+
+ <sect1 id="xsubscription">
+  <title>User-defined subscription procedure</title>
+
+  <indexterm zone="xsubscription">
+    <primary>custom subscription</primary>
+  </indexterm>
+  When you define a new base type, you can also specify a custom procedure
+  to handle subscription expressions. It should contains logic for verification
+  and for extraction or update your data. For instance:
+
+<programlisting><![CDATA[
+typedef struct Custom
+{
+	int	first;
+	int	second;
+}	Custom;
+
+Datum
+custom_subscription_evaluate(PG_FUNCTION_ARGS)
+{
+	SubscriptionExecData		*sbsdata = (SubscriptionExecData *) PG_GETARG_POINTER(1);
+	Custom						*result = (Custom *) sbsdata->containerSource;
+
+    // Some extraction or update logic based on sbsdata
+}
+
+Datum
+custom_subscription_prepare(PG_FUNCTION_ARGS)
+{
+	SubscriptionRef	   *sbsref = (SubscriptionRef *) PG_GETARG_POINTER(0);
+
+    // Some verifications or type coersion
+
+	PG_RETURN_POINTER(sbsref);
+}
+
+PG_FUNCTION_INFO_V1(custom_subscription);
+
+Datum
+custom_subscription(PG_FUNCTION_ARGS)
+{
+	int						op_type = PG_GETARG_INT32(0);
+	FunctionCallInfoData	target_fcinfo = get_slice_arguments(fcinfo, 1,
+																fcinfo->nargs);
+
+	if (op_type & SBS_VALIDATION)
+		return custom_subscription_prepare(&target_fcinfo);
+
+	if (op_type & SBS_EXEC)
+		return custom_subscription_evaluate(&target_fcinfo);
+
+	elog(ERROR, "incorrect op_type for subscription function: %d", op_type);
+}]]>
+</programlisting>
+
+    Then you can define a subscription procedure and a custom data type:
+
+<programlisting>
+CREATE FUNCTION custom_subscription(internal)
+    RETURNS internal
+    AS '<replaceable>filename</replaceable>'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE custom (
+   internallength = 4,
+   input = custom_in,
+   output = custom_out,
+   subscription = custom_subscription
+);
+</programlisting>
+
+    and use it as usual:
+
+<programlisting>
+CREATE TABLE test_subscription (
+	data	custom,
+);
+
+INSERT INTO test_subscription VALUES ('(1, 2)');
+
+SELECT data[0] from test_subscription;
+
+UPDATE test_subscription SET data[1] = 3;
+</programlisting>
+
+ </para>
+
+  <para>
+   The examples of custom subscription implementation can be found in
+   <filename>subscription.sql</filename> and <filename>subscription.c</filename>
+   in the <filename>src/tutorial</> directory of the source distribution.
+   See the <filename>README</> file in that directory for instructions
+   about running the examples.
+  </para>
+
+</sect1>
