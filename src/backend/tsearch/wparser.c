@@ -376,6 +376,7 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 	JsonTransformStringValuesAction action = (JsonTransformStringValuesAction) headline_json_value;
 	HeadlineParsedText prs;
 	HeadlineJsonState *state = palloc0(sizeof(HeadlineJsonState));
+	Datum		res;
 
 	memset(&prs, 0, sizeof(HeadlineParsedText));
 	prs.lenwords = 32;
@@ -397,7 +398,10 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 
 	out = transform_jsonb_string_values(jb, state, action);
 
-	PG_FREE_IF_COPY(jb, 1);
+	/* flatten result to jsonb before jb freeing */
+	res = JsonFlattenToJsonbDatum(out);
+
+	PG_FREE_IF_COPY_JSONB(jb, 1);
 	PG_FREE_IF_COPY(query, 2);
 	if (opt)
 		PG_FREE_IF_COPY(opt, 3);
@@ -410,7 +414,7 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 		pfree(prs.stopsel);
 	}
 
-	PG_RETURN_JSONB_P(out);
+	PG_RETURN_DATUM(res);
 }
 
 Datum
@@ -473,7 +477,6 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 				 errmsg("text search parser does not support headline creation")));
 
 	out = transform_json_string_values(json, state, action);
-
 	PG_FREE_IF_COPY(json, 1);
 	PG_FREE_IF_COPY(query, 2);
 	if (opt)

@@ -78,6 +78,7 @@ typedef struct Json
 	bool		is_json;		/* json or jsonb */
 } Json;
 
+#define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
 #ifndef JSONXOID
 # define JSONXOID JSONBOID
@@ -100,9 +101,10 @@ typedef struct Json
 #define JsonGetDatum(json)			JsonxPGetDatum(json)
 
 #undef DatumGetJsonbP
-#define DatumGetJsonbP(datum)		DatumGetJson(datum, &jsonbContainerOps)
-#define DatumGetJsontP(datum)		DatumGetJson(datum, &jsontContainerOps)
-#define DatumGetJsonxP(datum)		DatumGetJson(datum, JsonxContainerOps)
+#define DatumGetJsonbP(datum)		DatumGetJson(datum, &jsonbContainerOps, NULL)
+#define DatumGetJsontP(datum)		DatumGetJson(datum, &jsontContainerOps, NULL)
+#define DatumGetJsonxP(datum)		DatumGetJson(datum, JsonxContainerOps, NULL)
+#define DatumGetJsonxTmp(datum,tmp)	DatumGetJson(datum, JsonxContainerOps, tmp)
 
 #undef DatumGetJsonbPCopy
 #define DatumGetJsonbPCopy(datum)	DatumGetJsonbP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
@@ -111,14 +113,19 @@ typedef struct Json
 
 #undef PG_RETURN_JSONB_P
 #define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonGetDatum(x))
+#define PG_RETURN_JSONT_P(x)		PG_RETURN_DATUM(JsontPGetDatum(x))
+
+#define PG_GETARG_JSONX_TMP(n, tmp)	DatumGetJsonxTmp(PG_GETARG_DATUM(n), tmp)
 
 #undef	PG_GETARG_JSONB_P
-#define PG_GETARG_JSONB_P(n)		DatumGetJsonxP(PG_GETARG_DATUM(n))
-
+#define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
+
+#define PG_FREE_IF_COPY_JSONB(json, n) JsonFree(json)
 
 #undef	PG_GETARG_JSONB_P_COPY
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
+
 
 #define JsonRoot(json)				(&(json)->root)
 #define JsonGetSize(json)			(JsonRoot(json)->len)
@@ -210,7 +217,10 @@ JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
 #define compareJsonbContainers			JsonCompareContainers
 #define equalsJsonbScalarValue			JsonValueScalarEquals
 
-extern Json *DatumGetJson(Datum value, JsonContainerOps *ops);
+extern Json *DatumGetJson(Datum val, JsonContainerOps *ops, Json *tmp);
+
+extern void JsonFree(Json *json);
+extern Json *JsonCopyTemporary(Json *tmp);
 
 extern JsonValue *JsonFindValueInContainer(JsonContainer *json, uint32 flags,
 										   JsonValue *key);
@@ -241,6 +251,12 @@ JsonIteratorFree(JsonIterator *it)
 {
 	while (it)
 		it = JsonIteratorFreeAndGetParent(it);
+}
+
+static inline Json *
+JsonGetNonTemporary(Json *json)
+{
+	return JsonIsTemporary(json) ? JsonCopyTemporary(json) : json;
 }
 
 extern Json *JsonValueToJson(JsonValue *val);
