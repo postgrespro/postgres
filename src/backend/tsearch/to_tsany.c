@@ -304,7 +304,7 @@ jsonb_string_to_tsvector_byid(PG_FUNCTION_ARGS)
 	TSVector	result;
 
 	result = jsonb_to_tsvector_worker(cfgId, jb, jtiString);
-	PG_FREE_IF_COPY(jb, 1);
+	PG_FREE_IF_COPY_JSONB(jb, 1);
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -318,7 +318,7 @@ jsonb_string_to_tsvector(PG_FUNCTION_ARGS)
 
 	cfgId = getTSCurrentConfig(true);
 	result = jsonb_to_tsvector_worker(cfgId, jb, jtiString);
-	PG_FREE_IF_COPY(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -333,8 +333,8 @@ jsonb_to_tsvector_byid(PG_FUNCTION_ARGS)
 	uint32		flags = parse_jsonb_index_flags(jbFlags);
 
 	result = jsonb_to_tsvector_worker(cfgId, jb, flags);
-	PG_FREE_IF_COPY(jb, 1);
-	PG_FREE_IF_COPY(jbFlags, 2);
+	PG_FREE_IF_COPY_JSONB(jb, 1);
+	PG_FREE_IF_COPY_JSONB(jbFlags, 2);
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -350,8 +350,8 @@ jsonb_to_tsvector(PG_FUNCTION_ARGS)
 
 	cfgId = getTSCurrentConfig(true);
 	result = jsonb_to_tsvector_worker(cfgId, jb, flags);
-	PG_FREE_IF_COPY(jb, 0);
-	PG_FREE_IF_COPY(jbFlags, 1);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jbFlags, 1);
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -397,7 +397,11 @@ json_string_to_tsvector_byid(PG_FUNCTION_ARGS)
 	TSVector	result;
 
 	result = json_to_tsvector_worker(cfgId, json, jtiString);
+#ifndef JSON_GENERIC
 	PG_FREE_IF_COPY(json, 1);
+#else
+	PG_FREE_IF_COPY_JSONB(json, 1);
+#endif
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -415,7 +419,11 @@ json_string_to_tsvector(PG_FUNCTION_ARGS)
 
 	cfgId = getTSCurrentConfig(true);
 	result = json_to_tsvector_worker(cfgId, json, jtiString);
+#ifndef JSON_GENERIC
 	PG_FREE_IF_COPY(json, 0);
+#else
+	PG_FREE_IF_COPY_JSONB(json, 0);
+#endif
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -434,8 +442,12 @@ json_to_tsvector_byid(PG_FUNCTION_ARGS)
 	uint32		flags = parse_jsonb_index_flags(jbFlags);
 
 	result = json_to_tsvector_worker(cfgId, json, flags);
+#ifndef JSON_GENERIC
 	PG_FREE_IF_COPY(json, 1);
-	PG_FREE_IF_COPY(jbFlags, 2);
+#else
+	PG_FREE_IF_COPY_JSONB(json, 1);
+#endif
+	PG_FREE_IF_COPY_JSONB(jbFlags, 2);
 
 	PG_RETURN_TSVECTOR(result);
 }
@@ -455,8 +467,12 @@ json_to_tsvector(PG_FUNCTION_ARGS)
 
 	cfgId = getTSCurrentConfig(true);
 	result = json_to_tsvector_worker(cfgId, json, flags);
+#ifndef JSON_GENERIC
 	PG_FREE_IF_COPY(json, 0);
-	PG_FREE_IF_COPY(jbFlags, 1);
+#else
+	PG_FREE_IF_COPY_JSONB(json, 0);
+#endif
+	PG_FREE_IF_COPY_JSONB(jbFlags, 1);
 
 	PG_RETURN_TSVECTOR(result);
 }
