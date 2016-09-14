@@ -14,6 +14,7 @@
  */
 #include "postgres.h"
 
+#include "utils/datum.h"
 #include "utils/expandeddatum.h"
 #include "utils/memutils.h"
 
@@ -122,6 +123,9 @@ TransferExpandedObject(Datum d, MemoryContext new_parent)
 	/* Assert caller gave a R/W pointer */
 	Assert(VARATT_IS_EXTERNAL_EXPANDED_RW(DatumGetPointer(d)));
 
+	if (!eohptr->eoh_context)
+		return datumCopy(d, false, -1);
+
 	/* Transfer ownership */
 	MemoryContextSetParent(eohptr->eoh_context, new_parent);
 
@@ -141,5 +145,8 @@ DeleteExpandedObject(Datum d)
 	Assert(VARATT_IS_EXTERNAL_EXPANDED_RW(DatumGetPointer(d)));
 
 	/* Kill it */
-	MemoryContextDelete(eohptr->eoh_context);
+	if (eohptr->eoh_context)
+		MemoryContextDelete(eohptr->eoh_context);
+	else
+		pfree(eohptr);
 }

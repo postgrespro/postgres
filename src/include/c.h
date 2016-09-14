@@ -1347,6 +1347,21 @@ extern unsigned long long strtoull(const char *str, char **endptr, int base);
 #define NON_EXEC_STATIC static
 #endif
 
+#ifndef alloca
+# ifdef __GNUC__
+#  define alloca __builtin_alloca
+# elif defined(__BUILTIN_VA_ARG_INCR)
+#  include <alloca.h>
+# elif defined(_AIX)
+#  define alloca __alloca
+# elif defined(_MSC_VER)
+#  include <malloc.h>
+#  define alloca _alloca
+# elif defined(__STDC__) || defined(__C99__FUNC__)
+#  include <stdlib.h>
+# endif
+#endif
+
 /* /port compatibility functions */
 #include "port.h"
 

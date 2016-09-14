@@ -1935,7 +1935,7 @@ jsonb_bool(PG_FUNCTION_ARGS)
 	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvBool)
 		cannotCastJsonbValue(v.type, "boolean");
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_BOOL(v.val.boolean);
 }
@@ -1956,7 +1956,7 @@ jsonb_numeric(PG_FUNCTION_ARGS)
 	 */
 	retValue = DatumGetNumericCopy(NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_NUMERIC(retValue);
 }
@@ -1974,7 +1974,7 @@ jsonb_int2(PG_FUNCTION_ARGS)
 	retValue = DirectFunctionCall1(numeric_int2,
 								   NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_DATUM(retValue);
 }
@@ -1992,7 +1992,7 @@ jsonb_int4(PG_FUNCTION_ARGS)
 	retValue = DirectFunctionCall1(numeric_int4,
 								   NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_DATUM(retValue);
 }
@@ -2010,7 +2010,7 @@ jsonb_int8(PG_FUNCTION_ARGS)
 	retValue = DirectFunctionCall1(numeric_int8,
 								   NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_DATUM(retValue);
 }
@@ -2028,7 +2028,7 @@ jsonb_float4(PG_FUNCTION_ARGS)
 	retValue = DirectFunctionCall1(numeric_float4,
 								   NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_DATUM(retValue);
 }
@@ -2046,7 +2046,7 @@ jsonb_float8(PG_FUNCTION_ARGS)
 	retValue = DirectFunctionCall1(numeric_float8,
 								   NumericGetDatum(v.val.numeric));
 
-	PG_FREE_IF_COPY(in, 0);
+	PG_FREE_IF_COPY_JSONB(in, 0);
 
 	PG_RETURN_DATUM(retValue);
 }
