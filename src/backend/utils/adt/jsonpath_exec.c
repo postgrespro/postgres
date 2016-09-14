@@ -358,7 +358,7 @@ jsonb_path_exists_internal(FunctionCallInfo fcinfo, bool tz)
 	res = executeJsonPath(jp, vars, getJsonPathVariableFromJsonb,
 						  jb, !silent, NULL, tz);
 
-	PG_FREE_IF_COPY(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
 	PG_FREE_IF_COPY(jp, 1);
 
 	if (jperIsError(res))
@@ -414,7 +414,7 @@ jsonb_path_match_internal(FunctionCallInfo fcinfo, bool tz)
 	(void) executeJsonPath(jp, vars, getJsonPathVariableFromJsonb,
 						   jb, !silent, &found, tz);
 
-	PG_FREE_IF_COPY(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
 	PG_FREE_IF_COPY(jp, 1);
 
 	if (JsonValueListLength(&found) == 1)
