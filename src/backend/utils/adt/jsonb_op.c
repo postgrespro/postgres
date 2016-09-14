@@ -156,8 +156,8 @@ jsonb_ne(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) != 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -173,8 +173,8 @@ jsonb_lt(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) < 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -187,8 +187,8 @@ jsonb_gt(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) > 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -201,8 +201,8 @@ jsonb_le(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) <= 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -215,8 +215,8 @@ jsonb_ge(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) >= 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -229,8 +229,8 @@ jsonb_eq(PG_FUNCTION_ARGS)
 
 	res = (compareJsonbContainers(&jba->root, &jbb->root) == 0);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_BOOL(res);
 }
 
@@ -243,8 +243,8 @@ jsonb_cmp(PG_FUNCTION_ARGS)
 
 	res = compareJsonbContainers(&jba->root, &jbb->root);
 
-	PG_FREE_IF_COPY(jba, 0);
-	PG_FREE_IF_COPY(jbb, 1);
+	PG_FREE_IF_COPY_JSONB(jba, 0);
+	PG_FREE_IF_COPY_JSONB(jbb, 1);
 	PG_RETURN_INT32(res);
 }
 
@@ -289,7 +289,7 @@ jsonb_hash(PG_FUNCTION_ARGS)
 		}
 	}
 
-	PG_FREE_IF_COPY(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
 	PG_RETURN_INT32(hash);
 }
 
@@ -332,6 +332,6 @@ jsonb_hash_extended(PG_FUNCTION_ARGS)
 		}
 	}
 
-	PG_FREE_IF_COPY(jb, 0);
+	PG_FREE_IF_COPY_JSONB(jb, 0);
 	PG_RETURN_UINT64(hash);
 }
