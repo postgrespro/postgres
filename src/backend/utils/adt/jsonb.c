@@ -1177,7 +1177,7 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 				 errmsg("argument list must have even number of elements"),
 		/* translator: %s is a SQL function name */
 				 errhint("The arguments of %s must consist of alternating keys and values.",
-						 "jsonb_build_object()")));
+						 JSONB"_build_object()")));
 
 	memset(&result, 0, sizeof(JsonbInState));
 
@@ -1189,7 +1189,12 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 		if (nulls[i])
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+#ifdef JSON_C
+					 errmsg("argument %d cannot be null", i + 1),
+					 errhint("Object keys should be text.")));
+#else
 					 errmsg("argument %d: key must not be null", i + 1)));
+#endif
 
 		add_jsonb(args[i], false, &result, types[i], true);
 
@@ -1488,7 +1493,7 @@ jsonb_agg_transfn(PG_FUNCTION_ARGS)
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 	{
 		/* cannot be called directly because of internal-type argument */
-		elog(ERROR, "jsonb_agg_transfn called in non-aggregate context");
+		elog(ERROR, JSONB"_agg_transfn called in non-aggregate context");
 	}
 
 	/* set up the accumulator on the first go round */
@@ -1642,7 +1647,7 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 	{
 		/* cannot be called directly because of internal-type argument */
-		elog(ERROR, "jsonb_object_agg_transfn called in non-aggregate context");
+		elog(ERROR, JSONB"_object_agg_transfn called in non-aggregate context");
 	}
 
 	/* set up the accumulator on the first go round */
