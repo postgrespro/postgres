@@ -73,16 +73,16 @@ EOH_init_header(ExpandedObjectHeader *eohptr,
  */
 
 Size
-EOH_get_flat_size(ExpandedObjectHeader *eohptr)
+EOH_get_flat_size(ExpandedObjectHeader *eohptr, void **context)
 {
-	return eohptr->eoh_methods->get_flat_size(eohptr);
+	return eohptr->eoh_methods->get_flat_size(eohptr, context);
 }
 
 void
 EOH_flatten_into(ExpandedObjectHeader *eohptr,
-				 void *result, Size allocated_size)
+				 void *result, Size allocated_size, void **context)
 {
-	eohptr->eoh_methods->flatten_into(eohptr, result, allocated_size);
+	eohptr->eoh_methods->flatten_into(eohptr, result, allocated_size, context);
 }
 
 /*
