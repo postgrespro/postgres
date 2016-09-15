@@ -152,7 +152,7 @@ heap_compute_data_size(TupleDesc tupleDesc,
 			 * tuple doesn't depend on it
 			 */
 			data_length = att_align_nominal(data_length, atti->attalign);
-			data_length += EOH_get_flat_size(DatumGetEOHP(val));
+			data_length += EOH_get_flat_size(DatumGetEOHP(val), NULL);
 		}
 		else
 		{
@@ -233,11 +233,12 @@ fill_val(Form_pg_attribute att,
 				 * constructed tuple doesn't depend on it
 				 */
 				ExpandedObjectHeader *eoh = DatumGetEOHP(datum);
+				void	   *context;
 
 				data = (char *) att_align_nominal(data,
 												  att->attalign);
-				data_length = EOH_get_flat_size(eoh);
-				EOH_flatten_into(eoh, data, data_length);
+				data_length = EOH_get_flat_size(eoh, &context);
+				EOH_flatten_into(eoh, data, data_length, &context);
 			}
 			else
 			{

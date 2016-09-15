@@ -64,9 +64,11 @@
  * get_flat_size twice, so it's worthwhile to make sure that that doesn't
  * incur too much overhead.
  */
-typedef Size (*EOM_get_flat_size_method) (ExpandedObjectHeader *eohptr);
+typedef Size (*EOM_get_flat_size_method) (ExpandedObjectHeader *eohptr,
+										  void **context);
 typedef void (*EOM_flatten_into_method) (ExpandedObjectHeader *eohptr,
-										 void *result, Size allocated_size);
+										 void *result, Size allocated_size,
+										 void **context);
 
 /* Struct of function pointers for an expanded object's methods */
 typedef struct ExpandedObjectMethods
@@ -149,9 +151,9 @@ extern ExpandedObjectHeader *DatumGetEOHP(Datum d);
 extern void EOH_init_header(ExpandedObjectHeader *eohptr,
 							const ExpandedObjectMethods *methods,
 							MemoryContext obj_context);
-extern Size EOH_get_flat_size(ExpandedObjectHeader *eohptr);
+extern Size EOH_get_flat_size(ExpandedObjectHeader *eohptr, void **context);
 extern void EOH_flatten_into(ExpandedObjectHeader *eohptr,
-							 void *result, Size allocated_size);
+							 void *result, Size allocated_size, void **context);
 extern Datum MakeExpandedObjectReadOnlyInternal(Datum d);
 extern Datum TransferExpandedObject(Datum d, MemoryContext new_parent);
 extern void DeleteExpandedObject(Datum d);
