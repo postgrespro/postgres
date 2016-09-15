@@ -13,6 +13,7 @@
  */
 
 #define JSON_C
+#define JSONB "json"
 
 #define JSONXOID					JSONOID
 

@@ -16,6 +16,10 @@
 #include "utils/array.h"
 #include "utils/numeric.h"
 
+#ifndef JSONB
+#define JSONB "jsonb"
+#endif
+
 /* Tokens used when sequentially processing a jsonb value */
 typedef enum
 {
