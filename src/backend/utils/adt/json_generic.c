@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/json_generic.h"
 #include "utils/memutils.h"
@@ -19,16 +20,88 @@ static JsonContainerOps jsonvContainerOps;
 static Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
 						JsonContainerOps *ops);
 
-
-#if 0
-static JsonValue *
-JsonValueCopy(JsonValue *val)
+JsonValue *
+JsonValueCopy(JsonValue *res, const JsonValue *val)
 {
-	JsonValue *copy = palloc(sizeof(JsonValue));
-	memcpy(copy, val, sizeof(JsonValue));
-	return copy;
+	check_stack_depth();
+
+	if (!res)
+		res = (JsonValue *) palloc(sizeof(JsonValue));
+
+	res->type = val->type;
+
+	switch (val->type)
+	{
+		case jbvNull:
+			break;
+
+		case jbvBool:
+			res->val.boolean = val->val.boolean;
+			break;
+
+		case jbvString:
+		{	/* copy string values in the current context */
+			char *buf = palloc(val->val.string.len + 1);
+			memcpy(buf, val->val.string.val, val->val.string.len);
+			buf[val->val.string.len] = 0;
+			res->val.string.val = buf;
+			res->val.string.len = val->val.string.len;
+			break;
+		}
+
+		case jbvNumeric:
+			/* same for numeric */
+			res->val.numeric =
+					DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
+											NumericGetDatum(val->val.numeric)));
+			break;
+
+		case jbvArray:
+		{
+			int i;
+
+			res->val.array = val->val.array;
+			res->val.array.elems = (JsonValue *)
+							palloc(sizeof(JsonValue) * val->val.array.nElems);
+
+			for (i = 0; i < val->val.array.nElems; i++)
+				JsonValueCopy(&res->val.array.elems[i],
+							  &val->val.array.elems[i]);
+
+			break;
+		}
+
+		case jbvObject:
+		{
+			int i;
+
+			res->val.object = val->val.object;
+			res->val.object.pairs = (JsonPair *)
+							palloc(sizeof(JsonPair) * val->val.object.nPairs);
+
+			for (i = 0; i < val->val.object.nPairs; i++)
+			{
+				res->val.object.pairs[i].order = val->val.object.pairs[i].order;
+				JsonValueCopy(&res->val.object.pairs[i].key,
+							  &val->val.object.pairs[i].key);
+				JsonValueCopy(&res->val.object.pairs[i].value,
+							  &val->val.object.pairs[i].value);
+			}
+
+			break;
+		}
+
+		case jbvBinary:
+			res->val.binary = val->val.binary;
+			res->val.binary.data = JsonCopy(val->val.binary.data);
+			break;
+
+		default:
+			elog(ERROR, "unknown json value type %d", val->type);
+	}
+
+	return res;
 }
-#endif
 
 static inline JsonValue *
 jsonFindKeyInObjectInternal(JsonContainer *obj, const char *key, int len,
@@ -549,6 +622,17 @@ jsonvGetArraySize(JsonContainer *arrc)
 	}
 }
 
+static JsonContainer *
+jsonvCopy(JsonContainer *jc)
+{
+	JsonContainerData *res = JsonContainerAlloc();
+
+	*res = *jc;
+	res->data = JsonValueCopy(NULL, (JsonValue *) jc->data);
+
+	return res;
+}
+
 static JsonContainerOps
 jsonvContainerOps =
 {
@@ -559,6 +643,7 @@ jsonvContainerOps =
 	jsonvGetArrayElement,
 	jsonvGetArraySize,
 	JsonbToCStringRaw,
+	jsonvCopy,
 };
 
 JsonValue *
@@ -677,6 +762,18 @@ JsonValueToJson(JsonValue *val)
 
 		return json;
 	}
+}
+
+JsonContainer *
+JsonCopyFlat(JsonContainer *jc)
+{
+	JsonContainerData *res = JsonContainerAlloc();
+
+	*res = *jc;
+	res->data = palloc(jc->len);
+	memcpy(res->data, jc->data, jc->len);
+
+	return res;
 }
 
 JsonValue *
