@@ -1608,6 +1608,7 @@ jsontContainerOps =
 	jsonGetArrayElement,
 	jsontGetArraySize,
 	jsontToString,
+	JsonCopyFlat,
 };
 
 #endif
