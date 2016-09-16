@@ -752,6 +752,16 @@ pushJsonbValueExt(JsonbParseState **pstate, JsonbIteratorToken seq,
 		jbval->type != jbvBinary || !unpackBinary)
 	{
 		/* drop through */
+		if (jbval && (seq == WJB_ELEM || seq == WJB_VALUE))
+			jbval = JsonValueUnwrap(jbval, &v);
+
+		return pushJsonbValueScalar(pstate, seq, jbval);
+	}
+
+	if (*pstate && JsonContainerIsScalar(jbval->val.binary.data))
+	{
+		jbval = JsonExtractScalar(jbval->val.binary.data, &v);
+		Assert(IsAJsonbScalar(jbval));
 		return pushJsonbValueScalar(pstate, seq, jbval);
 	}
 
