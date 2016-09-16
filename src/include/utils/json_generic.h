@@ -361,6 +361,7 @@ extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
 extern JsonContainer *JsonValueToContainer(const JsonValue *val);
 extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
 extern const JsonValue *JsonValueUnwrap(const JsonValue *val, JsonValue *buf);
+extern JsonValue *JsonValueWrapInBinary(const JsonValue *val, JsonValue *bin);
 extern JsonContainer *JsonCopyFlat(JsonContainer *flatContainer);
 extern JsonValue *JsonExtractScalar(JsonContainer *jc, JsonValue *scalar);
 
