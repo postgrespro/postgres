@@ -88,17 +88,20 @@ static void jsonb_in_scalar(void *pstate, char *token, JsonTokenType tokentype);
 static void jsonb_categorize_type(Oid typoid,
 								  JsonbTypeCategory *tcategory,
 								  Oid *outfuncoid);
-static void composite_to_jsonb(Datum composite, JsonbInState *result);
+static void composite_to_jsonb(Datum composite, JsonbInState *result,
+							   bool unpackJson);
 static void array_dim_to_jsonb(JsonbInState *result, int dim, int ndims, int *dims,
 							   Datum *vals, bool *nulls, int *valcount,
-							   JsonbTypeCategory tcategory, Oid outfuncoid);
-static void array_to_jsonb_internal(Datum array, JsonbInState *result);
+							   JsonbTypeCategory tcategory, Oid outfuncoid,
+							   bool unpackJson);
+static void array_to_jsonb_internal(Datum array, JsonbInState *result,
+									bool unpackJson);
 static void jsonb_categorize_type(Oid typoid,
 								  JsonbTypeCategory *tcategory,
 								  Oid *outfuncoid);
 static void datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 						   JsonbTypeCategory tcategory, Oid outfuncoid,
-						   bool key_scalar);
+						   bool key_scalar, bool unpackJson);
 static void add_jsonb(Datum val, bool is_null, JsonbInState *result,
 					  Oid val_type, bool key_scalar);
 #ifndef JSON_C
@@ -796,7 +799,7 @@ jsonb_categorize_type(Oid typoid,
 static void
 datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 			   JsonbTypeCategory tcategory, Oid outfuncoid,
-			   bool key_scalar)
+			   bool key_scalar, bool unpackJson)
 {
 	char	   *outputstr;
 	bool		numeric_error;
@@ -829,10 +832,10 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 		switch (tcategory)
 		{
 			case JSONBTYPE_ARRAY:
-				array_to_jsonb_internal(val, result);
+				array_to_jsonb_internal(val, result, unpackJson);
 				return;
 			case JSONBTYPE_COMPOSITE:
-				composite_to_jsonb(val, result);
+				composite_to_jsonb(val, result, unpackJson);
 				return;
 			case JSONBTYPE_BOOL:
 				if (key_scalar)
@@ -954,6 +957,8 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 							pushScalarJsonbValue(&result->parseState,
 												 JsonToJsonValue(jsonb, &jb),
 												 false, false);
+					else if (!unpackJson)
+						result->res = JsonToJsonValue(jsonb, NULL);
 					else
 					{
 						JsonbIteratorToken type;
@@ -996,7 +1001,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 static void
 array_dim_to_jsonb(JsonbInState *result, int dim, int ndims, int *dims, Datum *vals,
 				   bool *nulls, int *valcount, JsonbTypeCategory tcategory,
-				   Oid outfuncoid)
+				   Oid outfuncoid, bool unpackJson)
 {
 	int			i;
 
@@ -1015,13 +1020,13 @@ array_dim_to_jsonb(JsonbInState *result, int dim, int ndims, int *dims, Datum *v
 		if (dim + 1 == ndims)
 		{
 			datum_to_jsonb(vals[*valcount], nulls[*valcount], result, tcategory,
-						   outfuncoid, false);
+						   outfuncoid, false, unpackJson);
 			(*valcount)++;
 		}
 		else
 		{
 			array_dim_to_jsonb(result, dim + 1, ndims, dims, vals, nulls,
-							   valcount, tcategory, outfuncoid);
+							   valcount, tcategory, outfuncoid, unpackJson);
 		}
 	}
 
@@ -1032,7 +1037,7 @@ array_dim_to_jsonb(JsonbInState *result, int dim, int ndims, int *dims, Datum *v
  * Turn an array into JSON.
  */
 static void
-array_to_jsonb_internal(Datum array, JsonbInState *result)
+array_to_jsonb_internal(Datum array, JsonbInState *result, bool unpackJson)
 {
 	ArrayType  *v = DatumGetArrayTypeP(array);
 	Oid			element_type = ARR_ELEMTYPE(v);
@@ -1070,7 +1075,7 @@ array_to_jsonb_internal(Datum array, JsonbInState *result)
 					  &nitems);
 
 	array_dim_to_jsonb(result, 0, ndim, dim, elements, nulls, &count, tcategory,
-					   outfuncoid);
+					   outfuncoid, unpackJson);
 
 	pfree(elements);
 	pfree(nulls);
@@ -1080,7 +1085,7 @@ array_to_jsonb_internal(Datum array, JsonbInState *result)
  * Turn a composite / record into JSON.
  */
 static void
-composite_to_jsonb(Datum composite, JsonbInState *result)
+composite_to_jsonb(Datum composite, JsonbInState *result, bool unpackJson)
 {
 	HeapTupleHeader td;
 	Oid			tupType;
@@ -1143,7 +1148,8 @@ composite_to_jsonb(Datum composite, JsonbInState *result)
 		else
 			jsonb_categorize_type(att->atttypid, &tcategory, &outfuncoid);
 
-		datum_to_jsonb(val, isnull, result, tcategory, outfuncoid, false);
+		datum_to_jsonb(val, isnull, result, tcategory, outfuncoid, false,
+					   unpackJson);
 	}
 
 	result->res = pushJsonbValue(&result->parseState, WJB_END_OBJECT, NULL);
@@ -1179,7 +1185,8 @@ add_jsonb(Datum val, bool is_null, JsonbInState *result,
 		jsonb_categorize_type(val_type,
 							  &tcategory, &outfuncoid);
 
-	datum_to_jsonb(val, is_null, result, tcategory, outfuncoid, key_scalar);
+	datum_to_jsonb(val, is_null, result, tcategory, outfuncoid, key_scalar,
+				   true);
 }
 
 /*
@@ -1204,7 +1211,7 @@ to_jsonb(PG_FUNCTION_ARGS)
 
 	memset(&result, 0, sizeof(JsonbInState));
 
-	datum_to_jsonb(val, false, &result, tcategory, outfuncoid, false);
+	datum_to_jsonb(val, false, &result, tcategory, outfuncoid, false, true);
 
 	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
 }
@@ -1567,11 +1574,7 @@ jsonb_agg_transfn(PG_FUNCTION_ARGS)
 	JsonbInState elem;
 	Datum		val;
 	JsonbInState *result;
-	bool		single_scalar = false;
-	JsonbIterator *it;
-	Jsonb	   *jbelem;
 	JsonbValue	v;
-	JsonbIteratorToken type;
 
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 	{
@@ -1631,62 +1634,14 @@ jsonb_agg_transfn(PG_FUNCTION_ARGS)
 	memset(&elem, 0, sizeof(JsonbInState));
 
 	datum_to_jsonb(val, PG_ARGISNULL(1), &elem, state->val_category,
-				   state->val_output_func, false);
-
-	jbelem = JsonbValueToJsonb(elem.res);
+				   state->val_output_func, false, false);
 
 	/* switch to the aggregate context for accumulation operations */
 
 	oldcontext = MemoryContextSwitchTo(aggcontext);
 
-	it = JsonbIteratorInit(&jbelem->root);
-
-	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
-	{
-		switch (type)
-		{
-			case WJB_BEGIN_ARRAY:
-				if (v.val.array.rawScalar)
-					single_scalar = true;
-				else
-					result->res = pushJsonbValue(&result->parseState,
-												 type, NULL);
-				break;
-			case WJB_END_ARRAY:
-				if (!single_scalar)
-					result->res = pushJsonbValue(&result->parseState,
-												 type, NULL);
-				break;
-			case WJB_BEGIN_OBJECT:
-			case WJB_END_OBJECT:
-				result->res = pushJsonbValue(&result->parseState,
-											 type, NULL);
-				break;
-			case WJB_ELEM:
-			case WJB_KEY:
-			case WJB_VALUE:
-				if (v.type == jbvString)
-				{
-					/* copy string values in the aggregate context */
-					char	   *buf = palloc(v.val.string.len + 1);
-
-					snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
-					v.val.string.val = buf;
-				}
-				else if (v.type == jbvNumeric)
-				{
-					/* same for numeric */
-					v.val.numeric =
-						DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
-															NumericGetDatum(v.val.numeric)));
-				}
-				result->res = pushJsonbValue(&result->parseState,
-											 type, &v);
-				break;
-			default:
-				elog(ERROR, "unknown jsonb iterator token type");
-		}
-	}
+	result->res = pushJsonbValueExt(&result->parseState, WJB_ELEM,
+									JsonValueCopy(&v, elem.res), false);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -1737,12 +1692,10 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 	JsonbAggState *state;
 	Datum		val;
 	JsonbInState *result;
-	bool		single_scalar;
-	JsonbIterator *it;
-	Jsonb	   *jbkey,
-			   *jbval;
-	JsonbValue	v;
-	JsonbIteratorToken type;
+	const JsonbValue *jbkey,
+					 *jbval;
+	JsonbValue	jbkeybuf,
+				v;
 
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 	{
@@ -1810,24 +1763,18 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 	memset(&elem, 0, sizeof(JsonbInState));
 
 	datum_to_jsonb(val, false, &elem, state->key_category,
-				   state->key_output_func, true);
+				   state->key_output_func, true, false);
 
-	jbkey = JsonbValueToJsonb(elem.res);
+	jbkey = elem.res;
 
 	val = PG_ARGISNULL(2) ? (Datum) 0 : PG_GETARG_DATUM(2);
 
 	memset(&elem, 0, sizeof(JsonbInState));
 
 	datum_to_jsonb(val, PG_ARGISNULL(2), &elem, state->val_category,
-				   state->val_output_func, false);
+				   state->val_output_func, false, false);
 
-	jbval = JsonbValueToJsonb(elem.res);
-
-	it = JsonbIteratorInit(&jbkey->root);
-
-	/* switch to the aggregate context for accumulation operations */
-
-	oldcontext = MemoryContextSwitchTo(aggcontext);
+	jbval = elem.res;
 
 	/*
 	 * keys should be scalar, and we should have already checked for that
@@ -1835,97 +1782,27 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 	 * things.
 	 */
 
-	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
-	{
-		switch (type)
-		{
-			case WJB_BEGIN_ARRAY:
-				if (!v.val.array.rawScalar)
-					elog(ERROR, "unexpected structure for key");
-				break;
-			case WJB_ELEM:
-				if (v.type == jbvString)
-				{
-					/* copy string values in the aggregate context */
-					char	   *buf = palloc(v.val.string.len + 1);
+	jbkey = JsonValueUnwrap(jbkey, &jbkeybuf);
 
-					snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
-					v.val.string.val = buf;
-				}
-				else
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("object keys must be strings")));
-				}
-				result->res = pushJsonbValue(&result->parseState,
-											 WJB_KEY, &v);
-				break;
-			case WJB_END_ARRAY:
-				break;
-			default:
-				elog(ERROR, "unexpected structure for key");
-				break;
-		}
-	}
+	if (jbkey->type != jbvString)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("object keys must be strings")));
 
-	it = JsonbIteratorInit(&jbval->root);
+	/* switch to the aggregate context for accumulation operations */
 
-	single_scalar = false;
+	oldcontext = MemoryContextSwitchTo(aggcontext);
 
+	result->res = pushJsonbValue(&result->parseState, WJB_KEY,
+								 JsonValueCopy(&v, jbkey));
 	/*
 	 * values can be anything, including structured and null, so we treat them
 	 * as in json_agg_transfn, except that single scalars are always pushed as
 	 * WJB_VALUE items.
 	 */
 
-	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
-	{
-		switch (type)
-		{
-			case WJB_BEGIN_ARRAY:
-				if (v.val.array.rawScalar)
-					single_scalar = true;
-				else
-					result->res = pushJsonbValue(&result->parseState,
-												 type, NULL);
-				break;
-			case WJB_END_ARRAY:
-				if (!single_scalar)
-					result->res = pushJsonbValue(&result->parseState,
-												 type, NULL);
-				break;
-			case WJB_BEGIN_OBJECT:
-			case WJB_END_OBJECT:
-				result->res = pushJsonbValue(&result->parseState,
-											 type, NULL);
-				break;
-			case WJB_ELEM:
-			case WJB_KEY:
-			case WJB_VALUE:
-				if (v.type == jbvString)
-				{
-					/* copy string values in the aggregate context */
-					char	   *buf = palloc(v.val.string.len + 1);
-
-					snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
-					v.val.string.val = buf;
-				}
-				else if (v.type == jbvNumeric)
-				{
-					/* same for numeric */
-					v.val.numeric =
-						DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
-															NumericGetDatum(v.val.numeric)));
-				}
-				result->res = pushJsonbValue(&result->parseState,
-											 single_scalar ? WJB_VALUE : type,
-											 &v);
-				break;
-			default:
-				elog(ERROR, "unknown jsonb iterator token type");
-		}
-	}
+	result->res = pushJsonbValueExt(&result->parseState, WJB_VALUE,
+									JsonValueCopy(&v, jbval), false);
 
 	MemoryContextSwitchTo(oldcontext);
 
