@@ -402,7 +402,7 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("text search parser does not support headline creation")));
 
-	out = transform_jsonb_string_values(jb, state, action);
+	out = transform_jsonb_string_values(jb, state, action, false);
 
 	/* flatten result to jsonb before jb freeing */
 	res = JsonFlattenToJsonbDatum(out);
@@ -491,7 +491,7 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 	PG_FREE_IF_COPY(json, 1);
 #else
 	{
-		Jsonb	   *jsonb = transform_jsonb_string_values(json, state, action);
+		Jsonb	   *jsonb = transform_jsonb_string_values(json, state, action, true);
 		char	   *str = JsonToCString(&jsonb->root);
 
 		out = cstring_to_text(str);

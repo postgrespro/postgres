@@ -185,6 +185,11 @@ JsontPGetDatum(Json *json)
 #define JsonContainerSize(c)		((c)->size)
 #define JsonContainerIsEmpty(c)		((c)->size == 0)
 
+#define JsonContainerIsUniquified(jc) \
+		((jc)->ops != &jsontContainerOps && \
+		 ((jc)->ops != &jsonvContainerOps || \
+		  JsonValueIsUniquified((JsonValue *) jc->data)))
+
 #define JsonValueIsScalar(jsval)	IsAJsonbScalar(jsval)
 
 #define JsonContainerGetType(jc) ((jc)->ops->type)
@@ -306,6 +311,46 @@ JsonGetNonTemporary(Json *json)
 	return JsonIsTemporary(json) ? JsonCopyTemporary(json) : json;
 }
 
+static inline JsonValue *
+JsonValueInitObject(JsonValue *val, int nPairs, int nPairsAllocated,
+					bool uniquified)
+{
+	val->type = jbvObject;
+	val->val.object.nPairs = nPairs;
+	val->val.object.pairs = nPairsAllocated ?
+							palloc(sizeof(JsonPair) * nPairsAllocated) : NULL;
+	val->val.object.uniquified = uniquified;
+	val->val.object.valuesUniquified = uniquified;
+	val->val.object.fieldSeparator[0] = ' ';
+	val->val.object.fieldSeparator[1] = '\0';
+	val->val.object.braceSeparator = '\0';
+	val->val.object.colonSeparator.before = '\0';
+	val->val.object.colonSeparator.after = ' ';
+
+	return val;
+}
+
+static inline JsonValue *
+JsonValueInitArray(JsonValue *val, int nElems, int nElemsAllocated,
+				   bool rawScalar, bool uniquified)
+{
+	val->type = jbvArray;
+	val->val.array.nElems = nElems;
+	val->val.array.elems = nElemsAllocated ?
+							palloc(sizeof(JsonValue) * nElemsAllocated) : NULL;
+	val->val.array.rawScalar = rawScalar;
+	if (!rawScalar)
+	{
+		val->val.array.uniquified = uniquified;
+		val->val.array.elemsUniquified = uniquified;
+		val->val.array.elementSeparator[0] = ' ';
+		val->val.array.elementSeparator[1] = 0;
+		val->val.array.elementSeparator[2] = 0;
+	}
+
+	return val;
+}
+
 extern Json *JsonValueToJson(JsonValue *val);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
@@ -373,5 +418,6 @@ extern int lengthCompareJsonbString(const char *val1, int len1,
 
 extern JsonContainerOps jsonbContainerOps;
 extern JsonContainerOps jsontContainerOps;
+extern JsonContainerOps jsonvContainerOps;
 
 #endif /* UTILS_JSON_GENERIC_H */

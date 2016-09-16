@@ -5567,7 +5567,8 @@ iterate_values_object_field_start(void *state, char *fname, bool isnull)
  */
 Jsonb *
 transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
-							  JsonTransformStringValuesAction transform_action)
+							  JsonTransformStringValuesAction transform_action,
+							  bool is_json)
 {
 	JsonbIterator *it;
 	JsonbValue	v,
@@ -5592,6 +5593,25 @@ transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 			res = pushJsonbValue(&st, type, (type == WJB_KEY ||
 											 type == WJB_VALUE ||
 											 type == WJB_ELEM) ? &v : NULL);
+
+			if (is_json)
+			{
+				if (type == WJB_BEGIN_OBJECT)
+				{
+					res->val.object.uniquified = false;
+					res->val.object.braceSeparator = '\0';
+					res->val.object.colonSeparator.before = '\0';
+					res->val.object.colonSeparator.after = '\0';
+					res->val.object.fieldSeparator[0] = '\0';
+				}
+				else if (type == WJB_BEGIN_ARRAY)
+				{
+					res->val.array.uniquified = false;
+					res->val.array.elementSeparator[0] = '\0';
+					res->val.array.elementSeparator[1] = '\0';
+					res->val.array.elementSeparator[2] = '\0';
+				}
+			}
 		}
 	}
 

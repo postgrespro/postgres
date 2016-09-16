@@ -1337,6 +1337,7 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 			res->type = jbvBinary;
 			res->val.binary.len = 0;
 			res->val.binary.data = JsonContainerAlloc();
+			res->val.binary.uniquified = false;
 
 			if (skipNested)
 			{
@@ -1393,10 +1394,8 @@ recurse:
 	switch (it->state)
 	{
 		case JTI_ARRAY_START:
-			val->type = jbvArray;
-			val->val.array.nElems = it->ji.container->size;
-			val->val.array.rawScalar = it->isScalar;
-			val->val.array.elems = NULL;
+			JsonValueInitArray(val, it->isScalar ? 1 : -1, 0, it->isScalar,
+							   false);
 			it->state = it->isScalar ? JTI_ARRAY_ELEM_SCALAR : JTI_ARRAY_ELEM;
 			return WJB_BEGIN_ARRAY;
 
@@ -1441,9 +1440,7 @@ recurse:
 			return WJB_ELEM;
 
 		case JTI_OBJECT_START:
-			val->type = jbvObject;
-			val->val.object.nPairs = -1;
-			val->val.object.pairs = NULL;
+			JsonValueInitObject(val, -1, 0, false);
 			it->state = JTI_OBJECT_KEY;
 			return WJB_BEGIN_OBJECT;
 

@@ -52,7 +52,8 @@ extern void iterate_jsonb_values(Jsonb *jb, uint32 flags, void *state,
 extern void iterate_json_values(text *json, uint32 flags, void *action_state,
 								JsonIterateStringValuesAction action);
 extern Jsonb *transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
-											JsonTransformStringValuesAction transform_action);
+											JsonTransformStringValuesAction transform_action,
+											bool is_json);
 extern text *transform_json_string_values(text *json, void *action_state,
 										  JsonTransformStringValuesAction transform_action);
 
