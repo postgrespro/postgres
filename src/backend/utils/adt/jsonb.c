@@ -856,15 +856,10 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 			case JSONBTYPE_JSONB:
 				{
 					Jsonb	   *jsonb = DatumGetJsonbP(val);
-					JsonbIterator *it;
-
-					it = JsonbIteratorInit(&jsonb->root);
 
 					if (JB_ROOT_IS_SCALAR(jsonb))
 					{
-						(void) JsonbIteratorNext(&it, &jb, true);
-						Assert(jb.type == jbvArray);
-						(void) JsonbIteratorNext(&it, &jb, true);
+						JsonExtractScalar(&jsonb->root, &jb);
 						break;
 					}
 
@@ -876,6 +871,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 					else
 					{
 						JsonbIteratorToken type;
+						JsonbIterator *it = JsonbIteratorInit(&jsonb->root);
 
 						while ((type = JsonbIteratorNext(&it, &jb, false))
 							   != WJB_DONE)

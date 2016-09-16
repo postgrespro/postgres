@@ -103,6 +103,52 @@ JsonValueCopy(JsonValue *res, const JsonValue *val)
 	return res;
 }
 
+JsonValue *
+JsonExtractScalar(JsonContainer *jc, JsonValue *scalar)
+{
+	JsonIterator   *it;
+	JsonValue		val;
+
+	Assert(JsonContainerIsScalar(jc));
+
+	it = JsonIteratorInit(jc);
+
+	if (JsonIteratorNext(&it, &val, false) != WJB_BEGIN_ARRAY ||
+		JsonIteratorNext(&it, scalar, false) != WJB_ELEM ||
+		JsonIteratorNext(&it, &val, false) != WJB_END_ARRAY)
+		elog(ERROR, "unexpected structure of scalar json container");
+
+	return scalar;
+}
+
+const JsonValue *
+JsonValueUnwrap(const JsonValue *val, JsonValue *valbuf)
+{
+	if (val->type == jbvBinary)
+	{
+		JsonContainer *jc = val->val.binary.data;
+
+		if (jc->ops == &jsonvContainerOps)
+		{
+			val = (JsonbValue *) jc->data;
+			Assert(val->type != jbvBinary);
+		}
+		else if (JsonContainerIsScalar(jc))
+		{
+			val = JsonExtractScalar(jc, valbuf);
+			Assert(IsAJsonbScalar(val));
+		}
+	}
+
+	if (val->type == jbvArray && val->val.array.rawScalar)
+	{
+		val = &val->val.array.elems[0];
+		Assert(IsAJsonbScalar(val));
+	}
+
+	return val;
+}
+
 static inline JsonValue *
 jsonFindKeyInObjectInternal(JsonContainer *obj, const char *key, int len,
 							bool last)
