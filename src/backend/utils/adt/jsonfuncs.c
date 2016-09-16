@@ -1651,9 +1651,10 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 		}
 		else
 		{
-			Assert(IsAJsonbScalar(jbvp));
-			have_object = false;
-			have_array = false;
+			have_object = jbvp->type == jbvObject;
+			have_array = jbvp->type == jbvArray;
+			if (have_object || have_array)
+				container = JsonValueToContainer(jbvp);
 		}
 	}
 
@@ -1805,6 +1806,8 @@ push_path(JsonbParseState **st, int level, Datum *path_elems,
 static text *
 JsonbValueAsText(JsonbValue *v)
 {
+	JsonbValue	vbuf;
+
 	switch (v->type)
 	{
 		case jbvNull:
@@ -1828,6 +1831,11 @@ JsonbValueAsText(JsonbValue *v)
 
 				return cstring_to_text(DatumGetCString(cstr));
 			}
+
+		case jbvObject:
+		case jbvArray:
+			v = JsonValueWrapInBinary(v, &vbuf);
+			/* fall through */
 
 		case jbvBinary:
 			{
@@ -2984,6 +2992,10 @@ JsValueToJsObject(JsValue *jsv, JsObject *jso)
 		{
 			jso->val.jsonb_cont = jbv->val.binary.data;
 		}
+		else if (jbv->type == jbvObject)
+		{
+			jso->val.jsonb_cont = JsonValueToContainer(jbv);
+		}
 		else
 		{
 			bool		is_scalar;
@@ -3138,6 +3150,8 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 		else if (jbv->type == jbvNumeric)
 			str = DatumGetCString(DirectFunctionCall1(numeric_out,
 													  PointerGetDatum(jbv->val.numeric)));
+		else if (jbv->type == jbvObject || jbv->type == jbvArray)
+			str = JsonbToCString(NULL, JsonValueToContainer(jbv), 0);
 		else if (jbv->type == jbvBinary)
 			str = JsonbToCString(NULL, jbv->val.binary.data,
 								 jbv->val.binary.len);
