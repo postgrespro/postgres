@@ -150,6 +150,22 @@ JsonValueUnwrap(const JsonValue *val, JsonValue *valbuf)
 	return val;
 }
 
+JsonValue *
+JsonValueWrapInBinary(const JsonValue *val, JsonValue *bin)
+{
+	JsonContainer *jc = JsonValueToContainer(val);
+
+	if (!bin)
+		bin = (JsonValue *) palloc(sizeof(JsonValue));
+
+	bin->type = jbvBinary;
+	bin->val.binary.data = jc;
+	bin->val.binary.len = jc->len;
+	bin->val.binary.uniquified = JsonValueIsUniquified(val);
+
+	return bin;
+}
+
 static inline JsonValue *
 jsonFindKeyInObjectInternal(JsonContainer *obj, const char *key, int len,
 							bool last)
@@ -577,18 +593,7 @@ jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len)
 		return NULL;
 
 	jv = (JsonValue *) palloc(sizeof(JsonValue));	/* XXX palloced copy? */
-
-	if (res->type == jbvObject || res->type == jbvArray)
-	{	/* FIXME need to wrap containers into binary JsonValue */
-		JsonContainer *jc = JsonValueToContainer(res);
-
-		jv->type = jbvBinary;
-		jv->val.binary.data = jc;
-		jv->val.binary.len = jc->len;
-		jv->val.binary.uniquified = JsonValueIsUniquified(res);
-	}
-	else
-		*jv = *res;
+	*jv = *res;
 
 	return jv;
 }

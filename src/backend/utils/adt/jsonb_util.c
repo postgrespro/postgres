@@ -1250,12 +1250,16 @@ JsonbDeepContains(JsonContainer *cval, JsonContainer *ccont)
 		while ((rcont = JsonIteratorNext(&icont, &vcont, false)) == WJB_KEY)
 		{
 			/* First, find value by key in lhs object ... */
+			JsonbValue	lhsValBuf;
 			JsonbValue *lhsVal = JsonFindKeyInObject(cval,
 													 vcont.val.string.val,
 													 vcont.val.string.len);
 
 			if (!lhsVal)
 				return false;
+
+			if (lhsVal->type == jbvObject || lhsVal->type == jbvArray)
+				lhsVal = JsonValueWrapInBinary(lhsVal, &lhsValBuf);
 
 			/*
 			 * ...at this stage it is apparent that there is at least a key
