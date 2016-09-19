@@ -68,6 +68,7 @@
 #define jsonb_set_element			json_set_element
 
 #define JsonxContainerOps			(&jsontContainerOps)
+#define JsonxGetUniquified(json)	(json)
 #define JsonxPGetDatum(json)		JsontPGetDatum(json)
 
 #include "postgres.h"
