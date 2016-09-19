@@ -62,7 +62,6 @@
 #define jsonb_pretty				json_pretty
 #define jsonb_set					json_set
 #define jsonb_set_lax				json_set_lax
-#define jsonb_strip_nulls			json_strip_nulls
 #define jsonb_to_record				json_to_record
 #define jsonb_to_recordset			json_to_recordset
 #define jsonb_get_element			json_get_element
