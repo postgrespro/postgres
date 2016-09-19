@@ -19,7 +19,8 @@
 #define gin_triconsistent_jsonb_path	gin_triconsistent_json_path
 
 #define JsonxContainerOps				(&jsontContainerOps)
-#define JsonxGetDatum(json)	JsontGetDatum(json)
+#define JsonxGetUniquified(json)		(json)
+#define JsonxPGetDatum(json)			JsontGetDatum(json)
 
 #include "utils/json_generic.h"
 
