@@ -524,6 +524,8 @@ static void transform_string_values_array_element_start(void *state, bool isnull
 static void transform_string_values_scalar(void *state, char *token, JsonTokenType tokentype);
 #endif
 
+static Datum jsonb_strip_nulls_internal(Jsonb *jb);
+
 #ifndef JSON_C
 /*
  * pg_parse_json_or_ereport
@@ -4077,7 +4079,9 @@ populate_recordset_object_field_end(void *state, char *fname, bool isnull)
 		hashentry->val = _state->saved_scalar;
 	}
 }
+#endif
 
+#ifdef JSON_C
 /*
  * Semantic actions for json_strip_nulls.
  *
@@ -4180,12 +4184,24 @@ sn_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 json_strip_nulls(PG_FUNCTION_ARGS)
 {
-	text	   *json = PG_GETARG_TEXT_PP(0);
+#ifdef JSON_GENERIC
+	Json	   *json = PG_GETARG_JSONB_P(0);
+#else
+	text	   *json = PG_GETARG_TEXT_P(0);
+#endif
 	StripnullState *state;
 	JsonLexContext *lex;
 	JsonSemAction *sem;
 
+#ifdef JSON_GENERIC
+	if (json->root.ops != &jsontContainerOps)
+		return jsonb_strip_nulls_internal(json);
+
+	lex = makeJsonLexContextCstringLen(json->root.data, json->root.len, GetDatabaseEncoding(), true);
+#else
 	lex = makeJsonLexContext(json, true);
+#endif
+
 	state = palloc0(sizeof(StripnullState));
 	sem = palloc0(sizeof(JsonSemAction));
 
@@ -4208,7 +4224,7 @@ json_strip_nulls(PG_FUNCTION_ARGS)
 											  state->strval->len));
 
 }
-#endif
+#else
 
 /*
  * SQL function jsonb_strip_nulls(jsonb) -> jsonb
@@ -4216,7 +4232,13 @@ json_strip_nulls(PG_FUNCTION_ARGS)
 Datum
 jsonb_strip_nulls(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	return jsonb_strip_nulls_internal(PG_GETARG_JSONB_P(0));
+}
+#endif
+
+static Datum
+jsonb_strip_nulls_internal(Jsonb *jb)
+{
 	JsonbIterator *it;
 	JsonbParseState *parseState = NULL;
 	JsonbValue *res = NULL;
