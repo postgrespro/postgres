@@ -2133,6 +2133,9 @@ JsonValueUniquify(JsonValue *res, const JsonValue *val)
 {
 	check_stack_depth();
 
+	if (!res)
+		res = (JsonValue *) palloc(sizeof(JsonValue));
+
 	if (val->type == jbvObject &&
 		(!val->val.object.valuesUniquified || !val->val.object.uniquified))
 	{
@@ -2184,6 +2187,31 @@ JsonValueUniquify(JsonValue *res, const JsonValue *val)
 		*res = *val;
 
 	return res;
+}
+
+Json *
+JsonUniquify(Json *json)
+{
+	if (JsonRoot(json)->ops == &jsontContainerOps)
+	{
+		JsonValue	val;
+		Json	   *res = JsonValueToJson(JsonValueUnpackBinary(JsonToJsonValue(json, &val)));
+		res->is_json = json->is_json;
+		return res;
+	}
+	else if (JsonRoot(json)->ops == &jsonvContainerOps)
+	{
+		const JsonValue *val = (const JsonValue *) JsonRoot(json)->data;
+
+		if (!JsonValueIsUniquified(val))
+		{
+			Json	   *res = JsonValueToJson(JsonValueUniquify(NULL, val));
+			res->is_json = json->is_json;
+			return res;
+		}
+	}
+
+	return json;
 }
 
 static void

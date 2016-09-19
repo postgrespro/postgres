@@ -24,7 +24,8 @@
 #define jsonb_hash_extended	json_hash_extended
 
 #define JsonxContainerOps			(&jsontContainerOps)
-#define JsonxGetDatum(json)	JsontGetDatum(json)
+#define JsonxGetUniquified(json)	(json)
+#define JsonxPGetDatum(json)		JsontGetDatum(json)
 
 #include "utils/json_generic.h"
 
