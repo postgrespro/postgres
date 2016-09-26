@@ -1335,7 +1335,6 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 			int		len;
 
 			res->type = jbvBinary;
-			res->val.binary.len = 0;
 			res->val.binary.data = JsonContainerAlloc();
 			res->val.binary.uniquified = false;
 
@@ -1356,8 +1355,6 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 								tok == JSON_TOKEN_OBJECT_START ? jbvObject
 															   : jbvArray,
 							   -1);
-
-			res->val.binary.len = res->val.binary.data->len;
 
 			if (skipNested)
 				return false;
