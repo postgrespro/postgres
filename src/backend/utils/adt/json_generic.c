@@ -160,7 +160,6 @@ JsonValueWrapInBinary(const JsonValue *val, JsonValue *bin)
 
 	bin->type = jbvBinary;
 	bin->val.binary.data = jc;
-	bin->val.binary.len = jc->len;
 	bin->val.binary.uniquified = JsonValueIsUniquified(val);
 
 	return bin;
@@ -407,7 +406,6 @@ jsonvArrayIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 		{
 			Assert(res->type == jbvArray || res->type == jbvObject);
 			res->val.binary.data = JsonValueToContainer(val);
-			res->val.binary.len = 0;
 			res->val.binary.uniquified = JsonValueIsUniquified(val);
 			res->type = jbvBinary;
 		}
@@ -460,7 +458,6 @@ jsonvObjectIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 			{
 				Assert(res->type == jbvArray || res->type == jbvObject);
 				res->val.binary.data = JsonValueToContainer(&pair->value);
-				res->val.binary.len = 0;
 				res->val.binary.uniquified =
 											JsonValueIsUniquified(&pair->value);
 				res->type = jbvBinary;
@@ -721,7 +718,6 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 
 	jv->type = jbvBinary;
 	jv->val.binary.data = &json->root;
-	jv->val.binary.len = json->root.len;
 	jv->val.binary.uniquified = json->root.ops != &jsontContainerOps;
 
 	return jv;
