@@ -1825,7 +1825,7 @@ JsonbValueAsText(JsonbValue *v)
 
 				initStringInfo(&jtext);
 				(void) JsonbToCString(&jtext, v->val.binary.data,
-									  v->val.binary.len);
+									  v->val.binary.data->len);
 
 				return cstring_to_text_with_len(jtext.data, jtext.len);
 			}
@@ -3025,7 +3025,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 													  PointerGetDatum(jbv->val.numeric)));
 		else if (jbv->type == jbvBinary)
 			str = JsonbToCString(NULL, jbv->val.binary.data,
-								 jbv->val.binary.len);
+								 jbv->val.binary.data->len);
 		else
 			elog(ERROR, "unrecognized jsonb type: %d", (int) jbv->type);
 	}
@@ -3529,7 +3529,6 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 		/* fill binary jsonb value pointing to jb */
 		jbv.type = jbvBinary;
 		jbv.val.binary.data = &jb->root;
-		jbv.val.binary.len = jb->root.len;
 	}
 
 	rettuple = populate_composite(&cache->c.io.composite, cache->argtype,

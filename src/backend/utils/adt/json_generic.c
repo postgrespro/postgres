@@ -393,7 +393,6 @@ jsonvArrayIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 		{
 			Assert(res->type == jbvArray || res->type == jbvObject);
 			res->val.binary.data = JsonValueToContainer(val);
-			res->val.binary.len = 0;
 			res->type = jbvBinary;
 		}
 	}
@@ -445,7 +444,6 @@ jsonvObjectIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 			{
 				Assert(res->type == jbvArray || res->type == jbvObject);
 				res->val.binary.data = JsonValueToContainer(&pair->value);
-				res->val.binary.len = 0;
 				res->type = jbvBinary;
 			}
 		}
@@ -569,7 +567,6 @@ jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len,
 
 				jv->type = jbvBinary;
 				jv->val.binary.data = jc;
-				jv->val.binary.len = jc->len;
 			}
 			else
 				*jv = pair->value;
@@ -703,7 +700,6 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 
 	jv->type = jbvBinary;
 	jv->val.binary.data = &json->root;
-	jv->val.binary.len = json->root.len;
 
 	return jv;
 }
