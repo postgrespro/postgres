@@ -2622,7 +2622,6 @@ JsonbInitBinary(JsonbValue *jbv, Jsonb *jb)
 {
 	jbv->type = jbvBinary;
 	jbv->val.binary.data = &jb->root;
-	jbv->val.binary.len = VARSIZE_ANY_EXHDR(jb);
 
 	return jbv;
 }
