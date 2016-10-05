@@ -572,8 +572,8 @@ makeJsonLexContext(text *json, bool need_escapes)
  * limited in size to NAMEDATALEN and the number of keys is unlikely to
  * be so huge that it has major memory implications.
  */
-Datum
-jsonb_object_keys(PG_FUNCTION_ARGS)
+static Datum
+jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost)
 {
 	FuncCallContext *funcctx;
 	OkeysState *state;
@@ -587,18 +587,25 @@ jsonb_object_keys(PG_FUNCTION_ARGS)
 		JsonbValue	v;
 		JsonbIteratorToken r;
 
-		if (JB_ROOT_IS_SCALAR(jb))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("cannot call %s on a scalar",
-							JSONB"_object_keys")));
-		else if (JB_ROOT_IS_ARRAY(jb))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("cannot call %s on an array",
-							JSONB"_object_keys")));
+		if (outermost)
+		{
+			if (JB_ROOT_IS_SCALAR(jb))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("cannot call %s on a scalar",
+								JSONB"_object_keys")));
+			else if (JB_ROOT_IS_ARRAY(jb))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("cannot call %s on an array",
+								JSONB"_object_keys")));
+		}
 
 		funcctx = SRF_FIRSTCALL_INIT();
+
+		if (!outermost && JB_ROOT_IS_SCALAR(jb))
+			SRF_RETURN_DONE(funcctx);
+
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		state = palloc(sizeof(OkeysState));
@@ -614,7 +621,7 @@ jsonb_object_keys(PG_FUNCTION_ARGS)
 
 		while ((r = JsonbIteratorNext(&it, &v, skipNested)) != WJB_DONE)
 		{
-			skipNested = true;
+			skipNested = outermost;
 
 			if (r == WJB_KEY)
 			{
@@ -648,6 +655,18 @@ jsonb_object_keys(PG_FUNCTION_ARGS)
 	}
 
 	SRF_RETURN_DONE(funcctx);
+}
+
+Datum
+jsonb_object_keys(PG_FUNCTION_ARGS)
+{
+	return jsonb_extract_keys_internal(fcinfo, true);
+}
+
+Datum
+jsonb_extract_keys(PG_FUNCTION_ARGS)
+{
+	return jsonb_extract_keys_internal(fcinfo, false);
 }
 
 #ifndef JSON_C
