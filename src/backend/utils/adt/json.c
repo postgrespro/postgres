@@ -57,6 +57,7 @@
 #define jsonb_object_field			json_object_field
 #define jsonb_object_field_text		json_object_field_text
 #define jsonb_object_keys			json_object_keys
+#define jsonb_extract_keys			json_extract_keys
 #define jsonb_populate_record		json_populate_record
 #define jsonb_populate_recordset	json_populate_recordset
 #define jsonb_pretty				json_pretty
