@@ -73,6 +73,9 @@ CATALOG(pg_operator,2617,OperatorRelationId)
 
 	/* OID of join estimator, or 0 */
 	regproc		oprjoin BKI_DEFAULT(-) BKI_LOOKUP_OPT(pg_proc);
+
+	/* OID of statistics estimator, or 0 */
+	regproc		oprstat BKI_DEFAULT(-) BKI_LOOKUP_OPT(pg_proc);
 } FormData_pg_operator;
 
 /* ----------------
@@ -95,6 +98,7 @@ extern ObjectAddress OperatorCreate(const char *operatorName,
 									List *negatorName,
 									Oid restrictionId,
 									Oid joinId,
+									Oid statisticsId,
 									bool canMerge,
 									bool canHash);
 

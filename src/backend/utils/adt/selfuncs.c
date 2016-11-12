@@ -4918,6 +4918,32 @@ ReleaseDummy(HeapTuple tuple)
 }
 
 /*
+ * examine_operator_expression
+ *		Try to derive optimizer statistics for the operator expression using
+ *		operator's oprstat function.
+ *
+ * XXX Not sure why this returns bool - we ignore the return value anyway. We
+ * might as well return the calculated vardata (or NULL).
+ *
+ * XXX Not sure what to do about recursion - there can be another OpExpr in
+ * one of the arguments, and we should call this recursively from the oprstat
+ * procedure. But that's not possible, because it's marked as static.
+ */
+static bool
+examine_operator_expression(PlannerInfo *root, OpExpr *opexpr, int varRelid,
+							VariableStatData *vardata)
+{
+	RegProcedure oprstat = get_oprstat(opexpr->opno);
+
+	return OidIsValid(oprstat) &&
+		DatumGetBool(OidFunctionCall4(oprstat,
+									  PointerGetDatum(root),
+									  PointerGetDatum(opexpr),
+									  Int32GetDatum(varRelid),
+									  PointerGetDatum(vardata)));
+}
+
+/*
  * examine_variable
  *		Try to look up statistical data about an expression.
  *		Fill in a VariableStatData struct to describe the expression.
@@ -5332,6 +5358,19 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 				pos++;
 			}
 		}
+
+		/*
+		 * If there's no index or extended statistics matching the expression,
+		 * try deriving the statistics from statistics on arguments of the
+		 * operator expression (OpExpr). We do this last because it may be quite
+		 * expensive, and it's unclear how accurate the statistics will be.
+		 *
+		 * XXX Shouldn't this put more restrictions on the OpExpr? E.g. that
+		 * one of the arguments has to be a Const or something?
+		 */
+		if (!vardata->statsTuple && IsA(basenode, OpExpr))
+			examine_operator_expression(root, (OpExpr *) basenode, varRelid,
+										vardata);
 	}
 }
 
