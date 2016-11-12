@@ -573,7 +573,7 @@ neqsel(PG_FUNCTION_ARGS)
  * it will return an approximate estimate based on assuming that the constant
  * value falls in the middle of the bin identified by binary search.
  */
-static double
+double
 scalarineqsel(PlannerInfo *root, Oid operator, bool isgt, bool iseq,
 			  Oid collation,
 			  VariableStatData *vardata, Datum constval, Oid consttype)
