@@ -369,6 +369,16 @@ JsonValueInitArray(JsonValue *val, int nElems, int nElemsAllocated,
 	return val;
 }
 
+static inline JsonValue *
+JsonValueInitBinary(JsonValue *val, JsonContainer *cont)
+{
+	val->type = jbvBinary;
+	val->val.binary.data = cont;
+	val->val.binary.uniquified = JsonContainerIsUniquified(cont);
+
+	return val;
+}
+
 extern Json *JsonValueToJson(JsonValue *val);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);

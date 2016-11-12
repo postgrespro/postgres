@@ -153,16 +153,10 @@ JsonValueUnwrap(const JsonValue *val, JsonValue *valbuf)
 JsonValue *
 JsonValueWrapInBinary(const JsonValue *val, JsonValue *bin)
 {
-	JsonContainer *jc = JsonValueToContainer(val);
-
 	if (!bin)
 		bin = (JsonValue *) palloc(sizeof(JsonValue));
 
-	bin->type = jbvBinary;
-	bin->val.binary.data = jc;
-	bin->val.binary.uniquified = JsonValueIsUniquified(val);
-
-	return bin;
+	return JsonValueInitBinary(bin, JsonValueToContainer(val));
 }
 
 static inline JsonValue *
@@ -716,11 +710,7 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 	if (!jv)
 		jv = palloc(sizeof(JsonValue));
 
-	jv->type = jbvBinary;
-	jv->val.binary.data = &json->root;
-	jv->val.binary.uniquified = json->root.ops != &jsontContainerOps;
-
-	return jv;
+	return JsonValueInitBinary(jv, &json->root);
 }
 
 #ifdef JSON_FLATTEN_INTO_JSONEXT

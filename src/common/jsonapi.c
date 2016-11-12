@@ -1329,12 +1329,9 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 		case JSON_TOKEN_OBJECT_START:
 		case JSON_TOKEN_ARRAY_START:
 		{
+			JsonContainerData *cont = JsonContainerAlloc();
 			char   *token_start = lex->token_start;
 			int		len;
-
-			res->type = jbvBinary;
-			res->val.binary.data = JsonContainerAlloc();
-			res->val.binary.uniquified = false;
 
 			if (skipNested)
 			{
@@ -1348,11 +1345,13 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 			else
 				len = lex->input_length - (lex->token_start - lex->input);
 
-			jsontInitContainer((JsonContainerData *) res->val.binary.data,
+			jsontInitContainer(cont,
 								token_start, len,
 								tok == JSON_TOKEN_OBJECT_START ? jbvObject
 															   : jbvArray,
 							   -1);
+
+			JsonValueInitBinary(res, cont);
 
 			if (skipNested)
 				return false;
