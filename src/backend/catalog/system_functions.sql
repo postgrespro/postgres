@@ -594,6 +594,42 @@ LANGUAGE internal
 STRICT IMMUTABLE PARALLEL SAFE
 AS 'unicode_is_normalized';
 
+-- XXX is this function immutable / parallel safe?
+-- XXX do we actually need to cast to text and then to jsonb?
+CREATE FUNCTION pg_json_path_stats(tab regclass, path_index integer) RETURNS text
+AS $$
+	SELECT jsonb_pretty((
+		CASE
+			WHEN stakind1 = 8 THEN stavalues1
+			WHEN stakind2 = 8 THEN stavalues2
+			WHEN stakind3 = 8 THEN stavalues3
+			WHEN stakind4 = 8 THEN stavalues4
+			WHEN stakind5 = 8 THEN stavalues5
+		END::text::jsonb[])[$2])
+	FROM pg_statistic
+	WHERE starelid = $1
+$$ LANGUAGE 'sql';
+
+-- XXX is this function immutable / parallel safe?
+-- XXX do we actually need to cast to text and then to jsonb?
+CREATE FUNCTION pg_json_path_stats(tab regclass, path text) RETURNS text
+AS $$
+	SELECT jsonb_pretty(pathstats)
+	FROM (
+		SELECT unnest(
+			CASE
+				WHEN stakind1 = 8 THEN stavalues1
+				WHEN stakind2 = 8 THEN stavalues2
+				WHEN stakind3 = 8 THEN stavalues3
+				WHEN stakind4 = 8 THEN stavalues4
+				WHEN stakind5 = 8 THEN stavalues5
+			END::text::jsonb[]) pathstats
+		FROM pg_statistic
+		WHERE starelid = $1
+	) paths
+	WHERE pathstats->>'path' = $2
+$$ LANGUAGE 'sql';
+
 --
 -- The default permissions for functions mean that anyone can execute them.
 -- A number of functions shouldn't be executable by just anyone, but rather

@@ -11747,4 +11747,15 @@
   prorettype => 'bytea', proargtypes => 'pg_brin_minmax_multi_summary',
   prosrc => 'brin_minmax_multi_summary_send' },
 
+# jsonb statistics
+{ oid => '8526', descr => 'jsonb typanalyze',
+  proname => 'jsonb_typanalyze', provolatile => 's', prorettype => 'bool',
+  proargtypes => 'internal', prosrc => 'jsonb_typanalyze' },
+{ oid => '8527', descr => 'jsonb selectivity estimation',
+  proname => 'jsonb_sel', provolatile => 's', prorettype => 'float8',
+  proargtypes => 'internal oid internal int4', prosrc => 'jsonb_sel' },
+{ oid => '8528', descr => 'jsonb statsistics estimation',
+  proname => 'jsonb_stats', provolatile => 's', prorettype => 'bool',
+  proargtypes => 'internal internal int4 internal', prosrc => 'jsonb_stats' },
+
 ]
