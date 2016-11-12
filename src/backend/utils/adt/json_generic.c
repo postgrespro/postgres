@@ -282,6 +282,27 @@ jsonGetArraySize(JsonContainer *array)
 	return size;
 }
 
+uint32
+JsonGetObjectSize(JsonContainer *object)
+{
+	JsonValue		    val;
+	JsonIterator	   *it;
+	JsonIteratorToken	tok;
+	uint32				size = 0;
+
+	Assert(JsonContainerIsObject(object));
+
+	it = JsonIteratorInit(object);
+
+	while ((tok = JsonIteratorNext(&it, &val, true)) != WJB_DONE)
+	{
+		if (tok == WJB_KEY)
+			size++;
+	}
+
+	return size;
+}
+
 static void
 jsonvInitContainer(JsonContainerData *jc, const JsonValue *val)
 {
