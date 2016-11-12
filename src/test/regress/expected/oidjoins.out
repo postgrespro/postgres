@@ -113,6 +113,7 @@ NOTICE:  checking pg_operator {oprnegate} => pg_operator {oid}
 NOTICE:  checking pg_operator {oprcode} => pg_proc {oid}
 NOTICE:  checking pg_operator {oprrest} => pg_proc {oid}
 NOTICE:  checking pg_operator {oprjoin} => pg_proc {oid}
+NOTICE:  checking pg_operator {oprstat} => pg_proc {oid}
 NOTICE:  checking pg_opfamily {opfmethod} => pg_am {oid}
 NOTICE:  checking pg_opfamily {opfnamespace} => pg_namespace {oid}
 NOTICE:  checking pg_opfamily {opfowner} => pg_authid {oid}
