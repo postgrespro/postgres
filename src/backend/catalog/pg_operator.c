@@ -256,6 +256,7 @@ OperatorShellMake(const char *operatorName,
 	values[Anum_pg_operator_oprcode - 1] = ObjectIdGetDatum(InvalidOid);
 	values[Anum_pg_operator_oprrest - 1] = ObjectIdGetDatum(InvalidOid);
 	values[Anum_pg_operator_oprjoin - 1] = ObjectIdGetDatum(InvalidOid);
+	values[Anum_pg_operator_oprstat - 1] = ObjectIdGetDatum(InvalidOid);
 
 	/*
 	 * create a new operator tuple
@@ -301,6 +302,7 @@ OperatorShellMake(const char *operatorName,
  *		negatorName				X negator operator
  *		restrictionId			X restriction selectivity procedure ID
  *		joinId					X join selectivity procedure ID
+ *		statsId					X statistics derivation procedure ID
  *		canMerge				merge join can be used with this operator
  *		canHash					hash join can be used with this operator
  *
@@ -333,6 +335,7 @@ OperatorCreate(const char *operatorName,
 			   List *negatorName,
 			   Oid restrictionId,
 			   Oid joinId,
+			   Oid statsId,
 			   bool canMerge,
 			   bool canHash)
 {
@@ -505,6 +508,7 @@ OperatorCreate(const char *operatorName,
 	values[Anum_pg_operator_oprcode - 1] = ObjectIdGetDatum(procedureId);
 	values[Anum_pg_operator_oprrest - 1] = ObjectIdGetDatum(restrictionId);
 	values[Anum_pg_operator_oprjoin - 1] = ObjectIdGetDatum(joinId);
+	values[Anum_pg_operator_oprstat - 1] = ObjectIdGetDatum(statsId);
 
 	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 
@@ -852,6 +856,13 @@ makeOperatorDependencies(HeapTuple tuple,
 	if (OidIsValid(oper->oprjoin))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, oper->oprjoin);
+		add_exact_object_address(&referenced, addrs);
+	}
+
+	/* Dependency on statistics derivation function */
+	if (OidIsValid(oper->oprstat))
+	{
+		ObjectAddressSet(referenced, ProcedureRelationId, oper->oprstat);
 		add_exact_object_address(&referenced, addrs);
 	}
 
