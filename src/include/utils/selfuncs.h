@@ -249,6 +249,10 @@ extern List *add_predicate_to_index_quals(IndexOptInfo *index,
 extern void genericcostestimate(PlannerInfo *root, IndexPath *path,
 								double loop_count,
 								GenericCosts *costs);
+extern double scalarineqsel(PlannerInfo *root, Oid operator, bool isgt,
+							bool iseq, Oid collation,
+							VariableStatData *vardata, Datum constval,
+							Oid consttype);
 
 extern HeapTuple stats_form_tuple(StatsData *data);
 
