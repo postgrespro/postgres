@@ -434,6 +434,53 @@ JsonValueInitFloat(JsonbValue *jbv, float4 f)
 	return jbv;
 }
 
+#define pushJsonbKey(pstate, jbv, key) \
+		pushJsonbValue(pstate, WJB_KEY, JsonValueInitString(jbv, key))
+
+#define pushJsonbValueGeneric(Type, pstate, jbv, val) \
+		pushJsonbValue(pstate, WJB_VALUE, JsonValueInit##Type(jbv, val))
+
+#define pushJsonbElemGeneric(Type, pstate, jbv, val) \
+		pushJsonbValue(pstate, WJB_ELEM, JsonValueInit##Type(jbv, val))
+
+#define pushJsonbValueInteger(pstate, jbv, i) \
+		pushJsonbValueGeneric(Integer, pstate, jbv, i)
+
+#define pushJsonbValueFloat(pstate, jbv, f) \
+		pushJsonbValueGeneric(Float, pstate, jbv, f)
+
+#define pushJsonbElemFloat(pstate, jbv, f) \
+		pushJsonbElemGeneric(Float, pstate, jbv, f)
+
+#define pushJsonbElemString(pstate, jbv, txt) \
+		pushJsonbElemGeneric(String, pstate, jbv, txt)
+
+#define pushJsonbElemText(pstate, jbv, txt) \
+		pushJsonbElemGeneric(Text, pstate, jbv, txt)
+
+#define pushJsonbElemNumeric(pstate, jbv, num) \
+		pushJsonbElemGeneric(Numeric, pstate, jbv, num)
+
+#define pushJsonbElemInteger(pstate, jbv, num) \
+		pushJsonbElemGeneric(Integer, pstate, jbv, num)
+
+#define pushJsonbElemBinary(pstate, jbv, jbcont) \
+		pushJsonbElemGeneric(Binary, pstate, jbv, jbcont)
+
+#define pushJsonbKeyValueGeneric(Type, pstate, jbv, key, val) ( \
+		pushJsonbKey(pstate, jbv, key), \
+		pushJsonbValueGeneric(Type, pstate, jbv, val) \
+	)
+
+#define pushJsonbKeyValueString(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(String, pstate, jbv, key, val)
+
+#define pushJsonbKeyValueFloat(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(Float, pstate, jbv, key, val)
+
+#define pushJsonbKeyValueInteger(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(Integer, pstate, jbv, key, val)
+
 extern Json *JsonValueToJson(JsonValue *val);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
