@@ -65,10 +65,7 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 	if (!jv)
 		jv = palloc(sizeof(JsonValue));
 
-	jv->type = jbvBinary;
-	jv->val.binary.data = &json->root;
-
-	return jv;
+	return JsonValueInitBinary(jv, &json->root);
 }
 
 static void

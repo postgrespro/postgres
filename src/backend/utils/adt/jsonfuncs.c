@@ -3513,8 +3513,7 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 		jsv.val.jsonb = &jbv;
 
 		/* fill binary jsonb value pointing to jb */
-		jbv.type = jbvBinary;
-		jbv.val.binary.data = &jb->root;
+		JsonValueInitBinary(&jbv, JsonRoot(jb));
 	}
 
 	rettuple = populate_composite(&cache->c.io.composite, cache->argtype,

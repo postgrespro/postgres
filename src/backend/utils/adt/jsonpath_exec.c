@@ -248,7 +248,6 @@ static void JsonValueListInitIterator(const JsonValueList *jvl,
 static JsonbValue *JsonValueListNext(const JsonValueList *jvl,
 									 JsonValueListIterator *it);
 static int	JsonbType(JsonbValue *jb);
-static JsonbValue *JsonbInitBinary(JsonbValue *jbv, Jsonb *jb);
 static int	JsonbType(JsonbValue *jb);
 static JsonbValue *getScalar(JsonbValue *scalar, enum jbvType type);
 static JsonbValue *wrapItemsInArray(const JsonValueList *items);
@@ -548,7 +547,7 @@ executeJsonPath(JsonPath *path, Jsonb *vars, Jsonb *json, bool throwErrors,
 	jspInit(&jsp, path);
 
 	if (!JsonbExtractScalar(&json->root, &jbv))
-		JsonbInitBinary(&jbv, json);
+		JsonValueInitBinary(&jbv, JsonRoot(json));
 
 	if (vars && !JsonContainerIsObject(&vars->root))
 	{
@@ -2023,7 +2022,7 @@ executeKeyValueMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 		jsonb = JsonbValueToJsonb(keyval);
 
-		JsonbInitBinary(&obj, jsonb);
+		JsonValueInitBinary(&obj, JsonRoot(jsonb));
 
 		baseObject = setBaseObject(cxt, &obj, cxt->lastGeneratedObjectId++);
 
@@ -2142,7 +2141,7 @@ getJsonPathVariable(JsonPathExecContext *cxt, JsonPathItem *variable,
 						pnstrdup(varName, varNameLength))));
 	}
 
-	JsonbInitBinary(&tmp, vars);
+	JsonValueInitBinary(&tmp, JsonRoot(vars));
 	setBaseObject(cxt, &tmp, 1);
 }
 
@@ -2515,18 +2514,6 @@ JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
 	}
 
 	return result;
-}
-
-/*
- * Initialize a binary JsonbValue with the given jsonb container.
- */
-static JsonbValue *
-JsonbInitBinary(JsonbValue *jbv, Jsonb *jb)
-{
-	jbv->type = jbvBinary;
-	jbv->val.binary.data = &jb->root;
-
-	return jbv;
 }
 
 /*

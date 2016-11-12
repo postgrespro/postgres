@@ -137,12 +137,7 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 	if (binary)
 		Assert(binary->type == jbvBinary);
 	else
-	{
-		jbv.type = jbvBinary;
-		jbv.val.binary.data = jc;
-
-		binary = &jbv;
-	}
+		binary = JsonValueInitBinary(&jbv, jc);
 
 	return convertToJsonb(binary, encoder, escontext);
 }
