@@ -362,6 +362,56 @@ CREATE VIEW pg_stats_ext_exprs WITH (security_barrier) AS
 -- unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
 REVOKE ALL ON pg_statistic_ext_data FROM public;
 
+CREATE VIEW pg_stats_json AS
+	SELECT
+		nspname AS schemaname,
+		relname AS tablename,
+		attname AS attname,
+
+		path->>'path' AS json_path,
+
+		stainherit AS inherited,
+
+		(path->'json'->>'nullfrac')::float4 AS null_frac,
+		(path->'json'->>'width')::float4 AS avg_width,
+		(path->'json'->>'distinct')::float4 AS n_distinct,
+
+		ARRAY(SELECT val FROM jsonb_array_elements(
+				path->'json'->'mcv'->'values') val)::anyarray
+			AS most_common_vals,
+
+		ARRAY(SELECT num::text::float4 FROM jsonb_array_elements(
+				path->'json'->'mcv'->'numbers') num)
+			AS most_common_freqs,
+
+		ARRAY(SELECT val FROM jsonb_array_elements(
+				path->'json'->'histogram'->'values') val)
+			AS histogram_bounds,
+
+		ARRAY(SELECT val::text::int FROM jsonb_array_elements(
+				path->'array_length'->'mcv'->'values') val)
+			AS most_common_array_lengths,
+
+		ARRAY(SELECT num::text::float4 FROM jsonb_array_elements(
+				path->'array_length'->'mcv'->'numbers') num)
+			AS most_common_array_length_freqs,
+
+		(path->'json'->>'correlation')::float4 AS correlation
+
+	FROM
+		pg_statistic s JOIN pg_class c ON (c.oid = s.starelid)
+		JOIN pg_attribute a ON (c.oid = attrelid AND attnum = s.staattnum)
+		LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace),
+		LATERAL (
+			SELECT unnest((CASE
+					WHEN stakind1 = 8 THEN stavalues1
+					WHEN stakind2 = 8 THEN stavalues2
+					WHEN stakind3 = 8 THEN stavalues3
+					WHEN stakind4 = 8 THEN stavalues4
+					WHEN stakind5 = 8 THEN stavalues5
+				END ::text::jsonb[])[2:]) AS path
+		) paths;
+
 CREATE VIEW pg_publication_tables AS
     SELECT
         P.pubname AS pubname,

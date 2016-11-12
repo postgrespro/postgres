@@ -50,6 +50,8 @@ OBJS = \
 	jsonb.o \
 	jsonb_gin.o \
 	jsonb_op.o \
+	jsonb_selfuncs.o \
+	jsonb_typanalyze.o \
 	jsonb_util.o \
 	jsonfuncs.o \
 	jsonbsubs.o \
@@ -117,6 +119,7 @@ OBJS = \
 	xid.o \
 	xid8funcs.o \
 	xml.o
+
 
 jsonpath_scan.c: FLEXFLAGS = -CF -p -p
 jsonpath_scan.c: FLEX_NO_BACKUP=yes

@@ -2535,6 +2535,38 @@ pg_stats_ext_exprs| SELECT cn.nspname AS schemaname,
      LEFT JOIN pg_namespace sn ON ((sn.oid = s.stxnamespace)))
      JOIN LATERAL ( SELECT unnest(pg_get_statisticsobjdef_expressions(s.oid)) AS expr,
             unnest(sd.stxdexpr) AS a) stat ON ((stat.expr IS NOT NULL)));
+pg_stats_json| SELECT n.nspname AS schemaname,
+    c.relname AS tablename,
+    a.attname,
+    (paths.path ->> 'path'::text) AS json_path,
+    s.stainherit AS inherited,
+    (((paths.path -> 'json'::text) ->> 'nullfrac'::text))::real AS null_frac,
+    (((paths.path -> 'json'::text) ->> 'width'::text))::real AS avg_width,
+    (((paths.path -> 'json'::text) ->> 'distinct'::text))::real AS n_distinct,
+    ARRAY( SELECT val.value AS val
+           FROM jsonb_array_elements((((paths.path -> 'json'::text) -> 'mcv'::text) -> 'values'::text)) val(value)) AS most_common_vals,
+    ARRAY( SELECT ((num.value)::text)::real AS num
+           FROM jsonb_array_elements((((paths.path -> 'json'::text) -> 'mcv'::text) -> 'numbers'::text)) num(value)) AS most_common_freqs,
+    ARRAY( SELECT val.value AS val
+           FROM jsonb_array_elements((((paths.path -> 'json'::text) -> 'histogram'::text) -> 'values'::text)) val(value)) AS histogram_bounds,
+    ARRAY( SELECT ((val.value)::text)::integer AS val
+           FROM jsonb_array_elements((((paths.path -> 'array_length'::text) -> 'mcv'::text) -> 'values'::text)) val(value)) AS most_common_array_lengths,
+    ARRAY( SELECT ((num.value)::text)::real AS num
+           FROM jsonb_array_elements((((paths.path -> 'array_length'::text) -> 'mcv'::text) -> 'numbers'::text)) num(value)) AS most_common_array_length_freqs,
+    (((paths.path -> 'json'::text) ->> 'correlation'::text))::real AS correlation
+   FROM (((pg_statistic s
+     JOIN pg_class c ON ((c.oid = s.starelid)))
+     JOIN pg_attribute a ON (((c.oid = a.attrelid) AND (a.attnum = s.staattnum))))
+     LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace))),
+    LATERAL ( SELECT unnest((((
+                CASE
+                    WHEN (s.stakind1 = 8) THEN s.stavalues1
+                    WHEN (s.stakind2 = 8) THEN s.stavalues2
+                    WHEN (s.stakind3 = 8) THEN s.stavalues3
+                    WHEN (s.stakind4 = 8) THEN s.stavalues4
+                    WHEN (s.stakind5 = 8) THEN s.stavalues5
+                    ELSE NULL::anyarray
+                END)::text)::jsonb[])[2:]) AS path) paths;
 pg_tables| SELECT n.nspname AS schemaname,
     c.relname AS tablename,
     pg_get_userbyid(c.relowner) AS tableowner,

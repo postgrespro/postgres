@@ -277,6 +277,8 @@ DECLARE_FOREIGN_KEY((starelid, staattnum), pg_attribute, (attrelid, attnum));
  */
 #define STATISTIC_KIND_BOUNDS_HISTOGRAM  7
 
+#define STATISTIC_KIND_JSON 8
+
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 
 #endif							/* PG_STATISTIC_H */
