@@ -17,6 +17,7 @@
 
 #include "postgres.h"
 #include "lib/stringinfo.h"
+#include "utils/builtins.h"
 #include "utils/expandeddatum.h"
 #include "utils/jsonb.h"
 
@@ -377,6 +378,60 @@ JsonValueInitBinary(JsonValue *val, JsonContainer *cont)
 	val->val.binary.uniquified = JsonContainerIsUniquified(cont);
 
 	return val;
+}
+
+static inline JsonbValue *
+JsonValueInitString(JsonbValue *jbv, const char *str)
+{
+	jbv->type = jbvString;
+	jbv->val.string.len = strlen(str);
+	jbv->val.string.val = memcpy(palloc(jbv->val.string.len + 1), str,
+								 jbv->val.string.len + 1);
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitStringWithLen(JsonbValue *jbv, const char *str, int len)
+{
+	jbv->type = jbvString;
+	jbv->val.string.val = str;
+	jbv->val.string.len = len;
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitText(JsonbValue *jbv, text *txt)
+{
+	jbv->type = jbvString;
+	jbv->val.string.val = VARDATA_ANY(txt);
+	jbv->val.string.len = VARSIZE_ANY_EXHDR(txt);
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitNumeric(JsonbValue *jbv, Numeric num)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = num;
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitInteger(JsonbValue *jbv, int64 i)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											int8_numeric, Int64GetDatum(i)));
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitFloat(JsonbValue *jbv, float4 f)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											float4_numeric, Float4GetDatum(f)));
+	return jbv;
 }
 
 extern Json *JsonValueToJson(JsonValue *val);
