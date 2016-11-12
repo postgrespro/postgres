@@ -136,13 +136,7 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 	if (binary)
 		Assert(binary->type == jbvBinary);
 	else
-	{
-		jbv.type = jbvBinary;
-		jbv.val.binary.data = jc;
-		jbv.val.binary.uniquified = JsonContainerIsUniquified(jc);
-
-		binary = &jbv;
-	}
+		binary = JsonValueInitBinary(&jbv, jc);
 
 	if (!binary->val.binary.uniquified)
 		binary = JsonValueUniquify(&uniquified, binary);
@@ -654,15 +648,14 @@ fillJsonbValue(const JsonbContainer *container, int index,
 	}
 	else
 	{
+		JsonContainerData *cont = JsonContainerAlloc();
 		Assert(JBE_ISCONTAINER(entry));
-		result->type = jbvBinary;
-		result->val.binary.data = JsonContainerAlloc();
-		jsonbInitContainer((JsonContainerData *) result->val.binary.data,
+		jsonbInitContainer(cont,
 				/* Remove alignment padding from data pointer and length */
 						   (JsonbContainer *)(base_addr + INTALIGN(offset)),
 						   getJsonbLength(container, index) -
 								(INTALIGN(offset) - offset));
-		result->val.binary.uniquified = true;
+		JsonValueInitBinary(result, cont);
 	}
 }
 
