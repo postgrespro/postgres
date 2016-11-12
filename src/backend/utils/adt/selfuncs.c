@@ -4916,6 +4916,25 @@ ReleaseDummy(HeapTuple tuple)
 }
 
 /*
+ * examine_operator_expression
+ *		Try to compute statistical data for the operator expression using
+ *		operator's oprstat function.
+ */
+static bool
+examine_operator_expression(PlannerInfo *root, OpExpr *opexpr, int varRelid,
+							VariableStatData *vardata)
+{
+	RegProcedure oprstat = get_oprstat(opexpr->opno);
+
+	return OidIsValid(oprstat) &&
+		DatumGetBool(OidFunctionCall4(oprstat,
+									  PointerGetDatum(root),
+									  PointerGetDatum(opexpr),
+									  Int32GetDatum(varRelid),
+									  PointerGetDatum(vardata)));
+}
+
+/*
  * examine_variable
  *		Try to look up statistical data about an expression.
  *		Fill in a VariableStatData struct to describe the expression.
@@ -5212,6 +5231,11 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 			if (vardata->statsTuple)
 				break;
 		}
+
+		if (!vardata->statsTuple && IsA(basenode, OpExpr))
+			/* try to compute stats for OpExpr */
+			examine_operator_expression(root, (OpExpr *) basenode, varRelid,
+										vardata);
 
 		/*
 		 * Search extended statistics for one with a matching expression.

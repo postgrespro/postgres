@@ -52,6 +52,7 @@
 
 static Oid	ValidateRestrictionEstimator(List *restrictionName);
 static Oid	ValidateJoinEstimator(List *joinName);
+static Oid	ValidateStatisticsEstimator(List *joinName);
 
 /*
  * DefineOperator
@@ -78,10 +79,12 @@ DefineOperator(List *names, List *parameters)
 	List	   *commutatorName = NIL;	/* optional commutator operator name */
 	List	   *negatorName = NIL;	/* optional negator operator name */
 	List	   *restrictionName = NIL;	/* optional restrict. sel. function */
+	List	   *statisticsName = NIL;	/* optional stats estimat. procedure */
 	List	   *joinName = NIL; /* optional join sel. function */
 	Oid			functionOid;	/* functions converted to OID */
 	Oid			restrictionOid;
 	Oid			joinOid;
+	Oid			statisticsOid;
 	Oid			typeId[2];		/* to hold left and right arg */
 	int			nargs;
 	ListCell   *pl;
@@ -131,6 +134,8 @@ DefineOperator(List *names, List *parameters)
 			restrictionName = defGetQualifiedName(defel);
 		else if (strcmp(defel->defname, "join") == 0)
 			joinName = defGetQualifiedName(defel);
+		else if (strcmp(defel->defname, "stats") == 0)
+			statisticsName = defGetQualifiedName(defel);
 		else if (strcmp(defel->defname, "hashes") == 0)
 			canHash = defGetBoolean(defel);
 		else if (strcmp(defel->defname, "merges") == 0)
@@ -246,6 +251,10 @@ DefineOperator(List *names, List *parameters)
 		joinOid = ValidateJoinEstimator(joinName);
 	else
 		joinOid = InvalidOid;
+	if (statisticsName)
+		statisticsOid = ValidateStatisticsEstimator(statisticsName);
+	else
+		statisticsOid = InvalidOid;
 
 	/*
 	 * now have OperatorCreate do all the work..
@@ -260,6 +269,7 @@ DefineOperator(List *names, List *parameters)
 					   negatorName, /* optional negator operator name */
 					   restrictionOid,	/* optional restrict. sel. function */
 					   joinOid, /* optional join sel. function name */
+					   statisticsOid, /* optional stats estimation procedure */
 					   canMerge,	/* operator merges */
 					   canHash);	/* operator hashes */
 }
@@ -358,6 +368,41 @@ ValidateJoinEstimator(List *joinName)
 }
 
 /*
+ * Look up a statisitcs estimator function ny name, and verify that it has the
+ * correct signature and we have the permissions to attach it to an
+ * operator.
+ */
+static Oid
+ValidateStatisticsEstimator(List *statName)
+{
+	Oid			typeId[4];
+	Oid			statOid;
+	AclResult	aclresult;
+
+	typeId[0] = INTERNALOID;	/* PlannerInfo */
+	typeId[1] = INTERNALOID;	/* OpExpr */
+	typeId[2] = INT4OID;		/* varRelid */
+	typeId[3] = INTERNALOID;	/* VariableStatData */
+
+	statOid = LookupFuncName(statName, 4, typeId, false);
+
+	/* statistics estimators must return void */
+	if (get_func_rettype(statOid) != BOOLOID)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("statistics estimator function %s must return type %s",
+						NameListToString(statName), "boolean")));
+
+	/* Require EXECUTE rights for the estimator */
+	aclresult = pg_proc_aclcheck(statOid, GetUserId(), ACL_EXECUTE);
+	if (aclresult != ACLCHECK_OK)
+		aclcheck_error(aclresult, OBJECT_FUNCTION,
+					   NameListToString(statName));
+
+	return statOid;
+}
+
+/*
  * Guts of operator deletion.
  */
 void
@@ -424,6 +469,9 @@ AlterOperator(AlterOperatorStmt *stmt)
 	List	   *joinName = NIL; /* optional join sel. function */
 	bool		updateJoin = false;
 	Oid			joinOid;
+	List	   *statName = NIL; /* optional statistics estimation procedure */
+	bool		updateStat = false;
+	Oid			statOid;
 
 	/* Look up the operator */
 	oprId = LookupOperWithArgs(stmt->opername, false);
@@ -453,6 +501,11 @@ AlterOperator(AlterOperatorStmt *stmt)
 		{
 			joinName = param;
 			updateJoin = true;
+		}
+		else if (pg_strcasecmp(defel->defname, "stats") == 0)
+		{
+			statName = param;
+			updateStat = true;
 		}
 
 		/*
@@ -496,6 +549,10 @@ AlterOperator(AlterOperatorStmt *stmt)
 		joinOid = ValidateJoinEstimator(joinName);
 	else
 		joinOid = InvalidOid;
+	if (statName)
+		statOid = ValidateStatisticsEstimator(statName);
+	else
+		statOid = InvalidOid;
 
 	/* Perform additional checks, like OperatorCreate does */
 	if (!(OidIsValid(oprForm->oprleft) && OidIsValid(oprForm->oprright)))
@@ -535,6 +592,11 @@ AlterOperator(AlterOperatorStmt *stmt)
 	{
 		replaces[Anum_pg_operator_oprjoin - 1] = true;
 		values[Anum_pg_operator_oprjoin - 1] = joinOid;
+	}
+	if (updateStat)
+	{
+		replaces[Anum_pg_operator_oprstat - 1] = true;
+		values[Anum_pg_operator_oprstat - 1] = statOid;
 	}
 
 	tup = heap_modify_tuple(tup, RelationGetDescr(catalog),
