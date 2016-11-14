@@ -274,9 +274,9 @@ JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
 #define compareJsonbContainers			JsonCompareContainers
 #define equalsJsonbScalarValue			JsonValueScalarEquals
 
-extern JsonContainerOps jsonbContainerOps;
-extern JsonContainerOps jsontContainerOps;
-extern JsonContainerOps jsonvContainerOps;
+extern PGDLLIMPORT JsonContainerOps jsonbContainerOps;
+extern PGDLLIMPORT JsonContainerOps jsontContainerOps;
+extern PGDLLIMPORT JsonContainerOps jsonvContainerOps;
 
 extern Json *DatumGetJson(Datum val, JsonContainerOps *ops, Json *tmp);
 
