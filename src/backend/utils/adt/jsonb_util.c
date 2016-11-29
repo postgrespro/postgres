@@ -1735,6 +1735,8 @@ convertToJsonb(const JsonbValue *val, JsonValueEncoder encoder)
 {
 	StringInfoData	buffer;
 	void		   *res;
+	MemoryContext	tmpcxt,
+					oldcxt;
 
 	/* Allocate an output buffer. It will be enlarged as needed */
 	initStringInfo(&buffer);
@@ -1742,7 +1744,17 @@ convertToJsonb(const JsonbValue *val, JsonValueEncoder encoder)
 	/* Make room for the varlena header */
 	reserveFromBuffer(&buffer, VARHDRSZ);
 
+	tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
+								   "Json Encoding Context",
+								   ALLOCSET_DEFAULT_MINSIZE,
+								   ALLOCSET_DEFAULT_INITSIZE,
+								   ALLOCSET_DEFAULT_MAXSIZE);
+	oldcxt = MemoryContextSwitchTo(tmpcxt);
+
 	(*encoder)(&buffer, val);
+
+	MemoryContextSwitchTo(oldcxt);
+	MemoryContextDelete(tmpcxt);
 
 	/*
 	 * Note: the JEntry of the root is discarded. Therefore the root
