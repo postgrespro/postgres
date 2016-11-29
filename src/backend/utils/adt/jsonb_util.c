@@ -1742,12 +1742,29 @@ void *
 JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt)
 {
 	StringInfoData	buffer;
+#if 0
+	MemoryContext	tmpcxt,
+					oldcxt;
+#endif
 
 	/* Allocate an output buffer. It will be enlarged as needed */
 	initStringInfo(&buffer);
 
+#if 0
+	tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
+								   "Json Encoding Context",
+								   ALLOCSET_DEFAULT_MINSIZE,
+								   ALLOCSET_DEFAULT_INITSIZE,
+								   ALLOCSET_DEFAULT_MAXSIZE);
+	oldcxt = MemoryContextSwitchTo(tmpcxt);
+#endif
+
 	(*encoder)(&buffer, val, cxt);
 
+#if 0
+	MemoryContextSwitchTo(oldcxt);
+	MemoryContextDelete(tmpcxt);
+#endif
 	/*
 	 * Note: the JEntry of the root is discarded. Therefore the root
 	 * JsonbContainer struct must contain enough information to tell what kind
