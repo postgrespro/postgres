@@ -163,18 +163,20 @@ JsontPGetDatum(Json *json)
 #define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
-#define PG_FREE_IF_COPY_JSONB(json, n) \
-	do { \
-		if (!VARATT_IS_EXTERNAL_EXPANDED(PG_GETARG_POINTER(n))) \
-			JsonFree(json); \
-		else \
-			Assert(DatumGetEOHP(PG_GETARG_DATUM(n)) == &(json)->obj.eoh); \
-	} while (0)
-
 #undef	PG_GETARG_JSONB_P_COPY
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
 #define PG_GETARG_JSONT_P_COPY(x)	DatumGetJsontPCopy(PG_GETARG_DATUM(x))
 
+#define JsonFreeIfCopy(json, datum) \
+		do { \
+			if (!VARATT_IS_EXTERNAL_EXPANDED(DatumGetPointer(datum))) \
+				JsonFree(json); \
+			else \
+				Assert(DatumGetEOHP(datum) == &(json)->obj.eoh); \
+		} while (0)
+
+#define PG_FREE_IF_COPY_JSONB(json, n) \
+		JsonFreeIfCopy(json, PG_GETARG_DATUM(n))
 
 #define JsonRoot(json)				(&(json)->root)
 #define JsonGetSize(json)			(JsonRoot(json)->len)
