@@ -489,6 +489,7 @@ typedef enum NodeTag
 	T_VacuumRelation,
 	T_PublicationObjSpec,
 	T_PublicationTable,
+	T_AnalyzeColumnOptions,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)

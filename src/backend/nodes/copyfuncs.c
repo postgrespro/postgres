@@ -4903,6 +4903,17 @@ _copyDropSubscriptionStmt(const DropSubscriptionStmt *from)
 	return newnode;
 }
 
+static Node *
+_copyAnalyzeColumnOptions(const AnalyzeColumnOptions *from)
+{
+	AnalyzeColumnOptions *newnode = makeNode(AnalyzeColumnOptions);
+
+	COPY_STRING_FIELD(column);
+	COPY_NODE_FIELD(options);
+
+	return (Node *) newnode;
+}
+
 /* ****************************************************************
  *					extensible.h copy functions
  * ****************************************************************
@@ -5909,6 +5920,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_PublicationTable:
 			retval = _copyPublicationTable(from);
+			break;
+		case T_AnalyzeColumnOptions:
+			retval = _copyAnalyzeColumnOptions(from);
 			break;
 
 			/*

@@ -126,6 +126,7 @@ typedef struct VacAttrStats
 	Form_pg_type attrtype;		/* copy of pg_type row for attrtypid */
 	Oid			attrcollid;		/* collation of data being analyzed */
 	MemoryContext anl_context;	/* where to save long-lived data */
+	List	   *options;
 
 	/*
 	 * These fields must be filled in by the typanalyze routine, unless it

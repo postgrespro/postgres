@@ -96,7 +96,7 @@ static void compute_index_stats(Relation onerel, double totalrows,
 								HeapTuple *rows, int numrows,
 								MemoryContext col_context);
 static VacAttrStats *examine_attribute(Relation onerel, int attnum,
-									   Node *index_expr);
+									   Node *index_expr, List *options);
 static int	acquire_sample_rows(Relation onerel, int elevel,
 								HeapTuple *rows, int targrows,
 								double *totalrows, double *totaldeadrows);
@@ -382,7 +382,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		tcnt = 0;
 		foreach(le, va_cols)
 		{
-			char	   *col = strVal(lfirst(le));
+			AnalyzeColumnOptions   *colopts = lfirst(le);
+			char				   *col = colopts->column;
 
 			i = attnameAttNum(onerel, col, false);
 			if (i == InvalidAttrNumber)
@@ -397,7 +398,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								col, RelationGetRelationName(onerel))));
 			unique_cols = bms_add_member(unique_cols, i);
 
-			vacattrstats[tcnt] = examine_attribute(onerel, i, NULL);
+			vacattrstats[tcnt] = examine_attribute(onerel, i, NULL,
+												   colopts->options);
 			if (vacattrstats[tcnt] != NULL)
 				tcnt++;
 		}
@@ -411,7 +413,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		tcnt = 0;
 		for (i = 1; i <= attr_cnt; i++)
 		{
-			vacattrstats[tcnt] = examine_attribute(onerel, i, NULL);
+			vacattrstats[tcnt] = examine_attribute(onerel, i, NULL, NULL);
 			if (vacattrstats[tcnt] != NULL)
 				tcnt++;
 		}
@@ -480,7 +482,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 						indexpr_item = lnext(indexInfo->ii_Expressions,
 											 indexpr_item);
 						thisdata->vacattrstats[tcnt] =
-							examine_attribute(Irel[ind], i + 1, indexkey);
+							examine_attribute(Irel[ind], i + 1, indexkey, NULL);
 						if (thisdata->vacattrstats[tcnt] != NULL)
 							tcnt++;
 					}
@@ -1001,7 +1003,7 @@ compute_index_stats(Relation onerel, double totalrows,
  * and index_expr is the expression tree representing the column's data.
  */
 static VacAttrStats *
-examine_attribute(Relation onerel, int attnum, Node *index_expr)
+examine_attribute(Relation onerel, int attnum, Node *index_expr, List *options)
 {
 	Form_pg_attribute attr = TupleDescAttr(onerel->rd_att, attnum - 1);
 	HeapTuple	typtuple;
@@ -1024,6 +1026,7 @@ examine_attribute(Relation onerel, int attnum, Node *index_expr)
 	stats = (VacAttrStats *) palloc0(sizeof(VacAttrStats));
 	stats->attr = (Form_pg_attribute) palloc(ATTRIBUTE_FIXED_PART_SIZE);
 	memcpy(stats->attr, attr, ATTRIBUTE_FIXED_PART_SIZE);
+	stats->options = options;
 
 	/*
 	 * When analyzing an expression index, believe the expression tree's type

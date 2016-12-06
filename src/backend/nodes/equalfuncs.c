@@ -3059,6 +3059,15 @@ _equalPartitionCmd(const PartitionCmd *a, const PartitionCmd *b)
 	return true;
 }
 
+static bool
+_equalAnalyzeColumnOptions(const AnalyzeColumnOptions *a,
+						  const AnalyzeColumnOptions *b)
+{
+	COMPARE_STRING_FIELD(column);
+	COMPARE_NODE_FIELD(options);
+
+	return true;
+}
 /*
  * Stuff from pg_list.h
  */
@@ -3912,6 +3921,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_PublicationTable:
 			retval = _equalPublicationTable(a, b);
+			break;
+		case T_AnalyzeColumnOptions:
+			retval = _equalAnalyzeColumnOptions(a, b);
 			break;
 
 		default:
