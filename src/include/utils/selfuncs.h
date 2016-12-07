@@ -16,6 +16,7 @@
 #define SELFUNCS_H
 
 #include "access/htup.h"
+#include "catalog/pg_statistic.h"
 #include "fmgr.h"
 #include "nodes/pathnodes.h"
 
@@ -133,6 +134,24 @@ typedef struct
 	double		num_sa_scans;	/* # indexscans from ScalarArrayOpExprs */
 } GenericCosts;
 
+/* Single pg_statistic slot */
+typedef struct StatsSlot
+{
+	int16	kind;		/* stakindN: statistic kind (STATISTIC_KIND_XXX) */
+	Oid		opid;		/* staopN: associated operator, if needed */
+	Datum	numbers;	/* stanumbersN: float4 array of numbers */
+	Datum	values;		/* stavaluesN: anyarray of values */
+} StatsSlot;
+
+/* Deformed pg_statistic tuple */
+typedef struct StatsData
+{
+	float4		nullfrac;	/* stanullfrac: fraction of NULL values  */
+	float4		distinct;	/* stadistinct: number of distinct non-NULL values */
+	int32		width;		/* stawidth: average width in bytes of non-NULL values */
+	StatsSlot	slots[STATISTIC_NUM_SLOTS]; /* slots for different statistic types */
+} StatsData;
+
 /* Hooks for plugins to get control when we ask for stats */
 typedef bool (*get_relation_stats_hook_type) (PlannerInfo *root,
 											  RangeTblEntry *rte,
@@ -230,6 +249,9 @@ extern List *add_predicate_to_index_quals(IndexOptInfo *index,
 extern void genericcostestimate(PlannerInfo *root, IndexPath *path,
 								double loop_count,
 								GenericCosts *costs);
+
+extern HeapTuple stats_form_tuple(StatsData *data);
+
 
 /* Functions in array_selfuncs.c */
 
