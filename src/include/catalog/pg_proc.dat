@@ -11733,4 +11733,10 @@
   prorettype => 'bytea', proargtypes => 'pg_brin_minmax_multi_summary',
   prosrc => 'brin_minmax_multi_summary_send' },
 
+{ oid => '2137',
+  descr => 'statistics estimation for binary arithmetic operators',
+  proname => 'arithm_binop_stats', provolatile => 's', prorettype => 'bool',
+  proargtypes => 'internal internal int4 internal',
+  prosrc => 'arithm_binop_stats' },
+
 ]

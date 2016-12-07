@@ -7998,3 +7998,354 @@ stats_form_tuple(StatsData *data)
 
 	return tuple;
 }
+
+/* Data for pg_statsistic tuple transformation */
+typedef struct StatsTransformInfo
+{
+	HeapTuple	statsTuple;		/* original pg_statistic tuple */
+	FmgrInfo	flinfo;			/* operator function info */
+	Oid			oprleft;		/* left operand type id */
+	Oid			oprright;		/* right operand type id */
+	Oid			oprrestype;		/* operator result type id */
+	int16		oprreslen;		/* operator result type length */
+	bool		oprresbyval;	/* operator result type by value */
+	char		oprresalign;	/* operator result type alignment */
+	Datum		rarg;			/* right argument */
+	bool		varonleft;		/* variable is on the left side */
+} StatsTransformInfo;
+
+/*
+ * stats_transform_slot - Transform statistic slot values.
+ *		Returns TRUE if requested slot type was found, else FALSE.
+ *
+ * statsKind: desired statistics slot kind.
+ * opid: associated operator id.
+ * transformVals: if set, values are transformed using operator function.
+ * transformNums: if set, numbers are copied.
+ * reverseVals: if set, order of transformed values is reversed.
+ * slot: resulting statistic slot
+ */
+static bool
+stats_transform_slot(StatsTransformInfo *info, int statsKind, Oid opid,
+					 bool transformVals, bool transformNums,
+					 bool reverseVals, StatsSlot *slot)
+{
+	AttStatsSlot attslot;
+	Datum	   *values = NULL;
+	Datum	   *numbers = NULL;
+	float4	   *nums = NULL;
+	int			nvalues = 0;
+	int			nnumbers = 0;
+	int 		i;
+	int			flags =
+		(transformVals ? ATTSTATSSLOT_VALUES : 0) |
+		(transformNums ? ATTSTATSSLOT_NUMBERS : 0);
+	bool		varonleft = info->varonleft;
+
+	/* extract the contents of a pg_statistic tuple, if exist */
+	if (!get_attstatsslot(&attslot, info->statsTuple, statsKind, InvalidOid,
+						  flags))
+		return false;
+
+	if (transformVals)
+	{
+		values = attslot.values;
+		nvalues = attslot.nvalues;
+
+		Assert(values);
+
+		for (i = 0; i < nvalues; i++)
+			values[i] = FunctionCall2(&info->flinfo,
+									  varonleft ? values[i] : info->rarg,
+									  varonleft ? info->rarg : values[i]);
+
+		if (reverseVals)
+		{
+			for (i = 0; i * 2 < nvalues - 1; i++)
+			{
+				Datum	tmp = values[i];
+				values[i] = values[nvalues - 1 - i];
+				values[nvalues - 1 - i] = tmp;
+			}
+		}
+	}
+
+	if (transformNums)
+	{
+		nums = attslot.numbers;
+		nnumbers = attslot.nnumbers;
+
+		Assert(nums);
+
+		numbers = palloc(sizeof(Datum) * nnumbers);
+
+		for (i = 0; i < nnumbers; i++)
+			numbers[i] = Float4GetDatum(nums[i]);
+	}
+
+	/* fill the resulting slot */
+	slot->kind = statsKind;
+	slot->opid = opid;
+	slot->values = PointerGetDatum(!transformVals ? NULL :
+								   construct_array(values, nvalues,
+												   info->oprrestype,
+												   info->oprreslen,
+												   info->oprresbyval,
+												   info->oprresalign));
+	slot->numbers = PointerGetDatum(!transformNums ? NULL :
+									construct_array(numbers, nnumbers,
+													FLOAT4OID, 4, true, 'i'));
+
+	/* free temporary buffers */
+	if (numbers)
+		pfree(numbers);
+
+	free_attstatsslot(&attslot);
+
+	return true;
+}
+
+/*
+ * stats_transform - Transform pg_statistic tuple values by the given operator.
+ *		Only MCV and histogram slots are transformed.
+ *		Returns NULL if neither of these slots were found in the source tuple.
+ *
+ * statsTuple: transformed pg_statistic tuple.
+ * opr: pg_operator tuple of the transformation operator.
+ * oprhist: operator for histogram values comparison.
+ * rarg: right operand.
+ * varonleft: variable is on the left side of operator.
+ * reversed: need to reverse the order of histogram values.
+ */
+static HeapTuple
+stats_transform(HeapTuple statsTuple, Form_pg_operator opr, Oid oprhist,
+				Datum rarg, bool varonleft, bool reversed)
+{
+	Form_pg_statistic		stats = (Form_pg_statistic) GETSTRUCT(statsTuple);
+	StatsData				data;
+	StatsTransformInfo		info;
+	int						slotno = 0;
+
+	/* prepare data for transformation */
+	info.statsTuple = statsTuple;
+	info.rarg = rarg;
+	info.oprleft = opr->oprleft;
+	info.oprright = opr->oprright;
+	info.oprrestype = opr->oprresult;
+	info.varonleft = varonleft;
+	get_typlenbyvalalign(opr->oprresult,
+						 &info.oprreslen, &info.oprresbyval, &info.oprresalign);
+	fmgr_info(opr->oprcode, &info.flinfo);
+
+	/* fill resulting statistical data */
+	memset(&data, 0, sizeof(data));
+	data.distinct = stats->stadistinct;
+	data.nullfrac = stats->stanullfrac;
+	data.width = 0;
+
+	/* transform MCV slot */
+	if (stats_transform_slot(&info, STATISTIC_KIND_MCV,
+							 InvalidOid, true, true, false,
+							 &data.slots[slotno]))
+		slotno++;
+
+	/* transform histogram slot, reversing values if needed */
+	if (stats_transform_slot(&info, STATISTIC_KIND_HISTOGRAM,
+							 oprhist, true, false, reversed,
+							 &data.slots[slotno]))
+		slotno++;
+
+	return slotno ? stats_form_tuple(&data) : NULL;
+}
+
+/*
+ * stats_transform_var_op_const - Compute statistics for `variable op const`
+ *		expressions by transforming the existing statistics for a variable.
+ *		Returns TRUE if the result was successfully computed, else FALSE.
+ *
+ * resdata: resulting expression statistical data.
+ * vardata: source variable statistical data.
+ * opno: operator id.
+ * cnst: constant operand value.
+ * varonleft: variable is on the left side of expression.
+ * isOrderReversed: function for determining whether the order of transformed
+ *		histogram values must be reversed.
+ */
+static bool
+stats_transform_var_op_const(VariableStatData *resdata,
+							 VariableStatData *vardata,
+							 Oid opno, Const *cnst, bool varonleft,
+							 int (*isOrderReversed)(Form_pg_operator,
+													Datum, bool))
+{
+	HeapTuple			oprtuple;
+	Form_pg_operator	opr;
+	/*
+	 * TODO we can use reversed histogram comparison operator instead of
+	 * reversing the histogram values array.
+	 */
+	Oid					oprhist = InvalidOid;
+
+	if (!vardata->statsTuple)
+		return false;
+
+	oprtuple = SearchSysCache1(OPEROID, ObjectIdGetDatum(opno));
+
+	if (!HeapTupleIsValid(oprtuple))
+		return false;
+
+	opr = (Form_pg_operator) GETSTRUCT(oprtuple);
+
+	if (cnst->consttype == (varonleft ? opr->oprright : opr->oprleft))
+	{
+		int reversed = isOrderReversed ?
+					   isOrderReversed(opr, cnst->constvalue, varonleft) : 0;
+
+		if (reversed >= 0) /* histogram order is known */
+		{
+			resdata->statsTuple = stats_transform(vardata->statsTuple, opr,
+												  oprhist, cnst->constvalue,
+												  varonleft, reversed > 0);
+
+			if (resdata->statsTuple)
+			{
+				/* fill resdata if any useful statistics was found */
+				resdata->acl_ok = vardata->acl_ok;
+				resdata->freefunc = heap_freetuple;
+				Assert(resdata->rel == vardata->rel);
+				Assert(resdata->atttype == opr->oprresult);
+				/* Assert(resdata->var == vardata->var); */
+				/* resdata->isunique = vardata->isunique; */
+			}
+		}
+	}
+
+	ReleaseSysCache(oprtuple);
+
+	return !!resdata->statsTuple;
+}
+
+/*
+ * compare_const_to_zero - Hard-coded comparison values of some numeric and
+ *		interval types to zero.
+ *
+ * Returns int32 datum and sets *cmpok on success.
+ */
+static Datum
+compare_const_to_zero(Datum val, Oid typid, bool *cmpok)
+{
+	*cmpok = true;
+
+	switch (typid)
+	{
+		case INT2OID:
+			return DirectFunctionCall2(btint2cmp, val, Int16GetDatum(0));
+		case INT4OID:
+			return DirectFunctionCall2(btint4cmp, val, Int32GetDatum(0));
+		case INT8OID:
+			return DirectFunctionCall2(btint8cmp, val, Int64GetDatum(0));
+		case FLOAT4OID:
+			return DirectFunctionCall2(btfloat4cmp, val, Float4GetDatum(0));
+		case FLOAT8OID:
+			return DirectFunctionCall2(btfloat8cmp, val, Float8GetDatum(0));
+		case NUMERICOID:
+			return DirectFunctionCall2(numeric_cmp, val,
+						DirectFunctionCall1(int4_numeric, Int32GetDatum(0)));
+		case CASHOID:
+			return DirectFunctionCall2(cash_cmp, val,
+						DirectFunctionCall1(int4_cash, Int32GetDatum(0)));
+		case INTERVALOID:
+			{
+				Datum		i32zero = Int32GetDatum(0);
+				Datum		intzero = DirectFunctionCall7(make_interval,
+														  i32zero,
+														  i32zero,
+														  i32zero,
+														  i32zero,
+														  i32zero,
+														  i32zero,
+														  Float8GetDatum(0));
+				return DirectFunctionCall2(interval_lt, val, intzero);
+			}
+		default:
+			*cmpok = false;
+			return Int32GetDatum(0);
+	}
+}
+
+/*
+ * arithm_binop_result_is_reversed - Check whether the (histogram) order of the
+ *		given binary arithmetic expression (+,-,*,/) is reversed.
+ *
+ * Returns 1 if the order is reversed,
+ *		   0 is the order is not reversed,
+ *		  -1 if the order is unknown.
+ */
+static int
+arithm_binop_result_is_reversed(Form_pg_operator opr, Datum arg, bool varonleft)
+{
+	int32		cmp;
+	bool		cmpok;
+
+	if (!varonleft)
+	{
+		if (!strcmp(NameStr(opr->oprname), "-"))
+			return 1; /* const - var: reversed order */
+		if (!strcmp(NameStr(opr->oprname), "/"))
+			return -1; /* const / var: unknown order */
+	}
+
+	if (strcmp(NameStr(opr->oprname), "*") &&
+		strcmp(NameStr(opr->oprname), "/"))
+		return 0; /* var + const, var - const, const + var: original order */
+
+	/*
+	 * Case for var * const, var / const, const * var:
+	 * need to examine whether the constant is negative or not.
+	 */
+	cmp = DatumGetInt32(
+			compare_const_to_zero(arg,
+								  varonleft ? opr->oprright : opr->oprleft,
+								  &cmpok));
+
+	if (!cmpok)
+		return -1; /* unknown order */
+
+	if (!cmp && !strcmp(NameStr(opr->oprname), "/"))
+		return -1; /* division by zero protection */
+
+	return cmp < 0; /* order is reversed if the const is negative */
+}
+
+/*
+ * arithm_binop_stats - Compute statistics for arithmetic 'var op const'
+ *		expressions using existing statistics for a variable.
+ *
+ * Returns TRUE if the result was successfully computed, else FALSE.
+ */
+Datum
+arithm_binop_stats(PG_FUNCTION_ARGS)
+{
+	PlannerInfo		   *root = (PlannerInfo *) PG_GETARG_POINTER(0);
+	OpExpr			   *opexpr = (OpExpr *) PG_GETARG_POINTER(1);
+	int					varRelid = PG_GETARG_INT32(2);
+	VariableStatData   *resdata	= (VariableStatData *) PG_GETARG_POINTER(3);
+	VariableStatData	vardata;
+	Node			   *constexpr;
+	bool				result;
+	bool				varonleft;
+
+	if (!get_restriction_variable(root, opexpr->args, varRelid,
+								  &vardata, &constexpr, &varonleft))
+		return false;
+
+	/* transform existing variable statistics */
+	result = IsA(constexpr, Const) &&
+		stats_transform_var_op_const(resdata, &vardata, opexpr->opno,
+									 (Const *) constexpr, varonleft,
+									 arithm_binop_result_is_reversed);
+
+	ReleaseVariableStats(vardata);
+
+	PG_RETURN_BOOL(result);
+}

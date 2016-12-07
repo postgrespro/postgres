@@ -208,6 +208,8 @@ extern double var_eq_non_const(VariableStatData *vardata,
 							   Node *other,
 							   bool varonleft, bool negate);
 
+extern Datum arithm_binop_stats(PG_FUNCTION_ARGS);
+
 extern Selectivity boolvarsel(PlannerInfo *root, Node *arg, int varRelid);
 extern Selectivity booltestsel(PlannerInfo *root, BoolTestType booltesttype,
 							   Node *arg, int varRelid,
