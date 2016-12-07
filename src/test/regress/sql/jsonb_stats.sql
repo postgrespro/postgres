@@ -92,8 +92,10 @@ SELECT jsonb_build_object('array',
 		floor(random() * 10)::int))
 FROM generate_series(1, 2000);
 
+-- Create table copy for selective statistics testing
+CREATE TABLE jsonb_stats_test2 AS SELECT * FROM jsonb_stats_test;
 
-ANALYZE jsonb_stats_test;
+ANALYZE jsonb_stats_test(js('*'));
 
 CREATE OR REPLACE FUNCTION check_jsonb_stats_test_estimate(sql_condition text, accuracy real)
 RETURNS boolean AS
@@ -247,3 +249,98 @@ SELECT check_jsonb_stats_test_estimate($$js ?| '{foo,bad_key}'$$, 0.1);
 SELECT check_jsonb_stats_test_estimate($$js ?| '{foo,array}'$$, 0.1);
 SELECT check_jsonb_stats_test_estimate($$js ?& '{foo,bad_key}'$$, 0.1);
 SELECT check_jsonb_stats_test_estimate($$js ?& '{foo,bar}'$$, 0.1);
+
+-- Test selective statisitcs
+DROP TABLE jsonb_stats_test;
+CREATE TABLE jsonb_stats_test AS SELECT * FROM jsonb_stats_test2;
+
+ANALYZE jsonb_stats_test(js);
+
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';
+
+-- Check invalid path specifications
+ANALYZE jsonb_stats_test(js('.foo'));
+ANALYZE jsonb_stats_test(js('foo.'));
+ANALYZE jsonb_stats_test(js('"foo'));
+ANALYZE jsonb_stats_test(js('$.foo"'));
+ANALYZE jsonb_stats_test(js('*foo'));
+ANALYZE jsonb_stats_test(js('*.foo'));
+ANALYZE jsonb_stats_test(js('"foo".*.bar'));
+
+ANALYZE jsonb_stats_test(js('$.foo'));
+
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';
+
+-- Check object key eq estimate
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' = '"bar"'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' = '"baz"'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' = '"baz5"'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js #> '{foo}' = '"bar"'$$, 0.2);
+
+-- Check object key range estimate
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' >= '"baz2"'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' <  '"baz9"'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'foo' >= '"baz2"' AND js -> 'foo' < '"baz9"'$$, 0.1);
+
+ANALYZE jsonb_stats_test(js('array.*'));
+
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';
+
+-- Check variable-length array element eq estimate
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 0 = '1'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 1 = '6'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 2 = '8'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 3 = '1'$$, 0.2);
+
+-- Check variable-length array element range estimate
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 0 < '7'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 1 < '7'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 2 < '7'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 3 < '7'$$, 0.1);
+
+-- Check variable-length array containment estimate
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[]'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[1]'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[100]'$$, 0.2);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[1, 2]'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[1, 100]'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[1, 2, 100]'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '[1, 2, 3]'$$, 5);
+
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '1'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' @> '100'$$, 10);
+
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 0 @> '1'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 1 @> '1'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 2 @> '1'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 3 @> '1'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js -> 'array' -> 0 @> '[1]'$$, 0.3);
+
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": []}'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1]}'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [100]}'$$, 0.3);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2]}'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 100]}'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 100]}'$$, 1);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 3]}'$$, 100);
+
+-- Check object key existence
+
+-- Path $.# is necessary for correct "js ? 'foo'" estimation
+ANALYZE jsonb_stats_test(js('$.#', 'bad_key'));
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';
+
+SELECT check_jsonb_stats_test_estimate($$js ? 'bad_key'$$, 10);
+SELECT check_jsonb_stats_test_estimate($$js ? 'foo'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js ? 'array'$$, 0.1);
+
+SELECT check_jsonb_stats_test_estimate($$js ?| '{foo,bad_key}'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js ?| '{foo,array}'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js ?& '{foo,bad_key}'$$, 0.1);
+SELECT check_jsonb_stats_test_estimate($$js ?& '{foo,bar}'$$, 0.1);
+
+ANALYZE jsonb_stats_test(js);
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';
+
+ANALYZE jsonb_stats_test(js('foo', 'array.#'));
+SELECT json_path FROM pg_stats_json WHERE tablename = 'jsonb_stats_test';

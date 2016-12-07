@@ -32,6 +32,7 @@ typedef struct JsonStatData
 	const char	   *prefix;
 	int				prefixlen;
 	bool			acl_ok;
+	const char	  **collectedPaths;
 } JsonStatData, *JsonStats;
 
 typedef enum
@@ -59,6 +60,13 @@ typedef enum JsonStatType
 	JsonStatNumeric,
 	JsonStatFreq,
 } JsonStatType;
+
+typedef enum
+{
+	JSPCS_NOT_COLLECTED,
+	JSPCS_COLLECTED_SUPERPATH,
+	JSPCS_COLLECTED,
+} JsonPathCollectStatus;
 
 extern bool jsonStatsInit(JsonStats stats, const VariableStatData *vardata);
 extern void jsonStatsRelease(JsonStats data);
@@ -91,7 +99,12 @@ extern bool jsonAnalyzeBuildSubPathsData(Datum *pathsDatums,
 										 int npaths, int index,
 										 const char	*path, int pathlen,
 										 bool includeSubpaths, float4 nullfrac,
-										 Datum *pvals, Datum *pnums);
+										 Datum *pvals, Datum *pnums,
+										 const char **collectedPaths);
+
+extern JsonPathCollectStatus jsonAnalyzePathIsCollected(const char **paths,
+														const char *path,
+														int pathlen);
 
 extern Datum jsonb_typanalyze(PG_FUNCTION_ARGS);
 extern Datum jsonb_stats(PG_FUNCTION_ARGS);

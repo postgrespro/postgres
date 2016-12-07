@@ -57,7 +57,9 @@ bool
 jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 {
 	Jsonb	   *jb;
-	JsonbValue	prefix;
+	JsonbIterator *it;
+	JsonbIteratorToken tok;
+	JsonbValue	jbv;
 
 	memset(&data->attslot, 0, sizeof(data->attslot));
 	data->statsTuple = vardata->statsTuple;
@@ -86,16 +88,66 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 	data->rel = vardata->rel;
 	data->nullfrac =
 		data->attslot.nnumbers > 0 ? data->attslot.numbers[0] : 0.0;
+	data->prefix = NULL;
+	data->collectedPaths = NULL;
 	data->values = data->attslot.values;
 	data->nvalues = data->attslot.nvalues;
 
 	jb = DatumGetJsonbP(data->values[0]);
-	JsonbExtractScalar(&jb->root, &prefix);
-	Assert(prefix.type == jbvString);
-	data->prefix = prefix.val.string.val;
-	data->prefixlen = prefix.val.string.len;
 
-	return true;
+	it = JsonbIteratorInit(&jb->root);
+
+	while ((tok = JsonbIteratorNext(&it, &jbv, true)) != WJB_DONE)
+	{
+		if (tok == WJB_KEY)
+		{
+			if (jbv.val.string.len == 6 &&
+				!strncmp(jbv.val.string.val, "prefix", 6))
+			{
+				tok = JsonbIteratorNext(&it, &jbv, true);
+				Assert(tok == WJB_VALUE && jbv.type == jbvString);
+				data->prefix = jbv.val.string.val;
+				data->prefixlen = jbv.val.string.len;
+			}
+			else if (jbv.val.string.len == 5 &&
+					 !strncmp(jbv.val.string.val, "paths", 5))
+			{
+				JsonbContainer	   *jbc;
+				JsonbIterator	   *ita;
+				const char		  **paths;
+				int					npaths;
+				int					i = 0;
+
+				tok = JsonbIteratorNext(&it, &jbv, true);
+				Assert(tok == WJB_VALUE);
+				Assert(jbv.type == jbvBinary);
+				jbc = jbv.val.binary.data;
+				Assert(JsonContainerIsArray(jbc));
+
+				npaths = JsonContainerSize(jbc);
+
+				paths = palloc(sizeof(*paths) * (npaths + 1));
+
+				ita = JsonbIteratorInit(jbv.val.binary.data);
+
+				while ((tok = JsonbIteratorNext(&ita, &jbv, true)) != WJB_DONE)
+				{
+					if (tok == WJB_ELEM)
+					{
+						Assert(jbv.type == jbvString);
+						paths[i++] = pnstrdup(jbv.val.string.val,
+											  jbv.val.string.len);
+					}
+				}
+
+				paths[i] = NULL;
+
+				data->collectedPaths = paths;
+			}
+		}
+	}
+
+	return data->collectedPaths && data->prefix;
 }
 
 void
@@ -137,25 +189,41 @@ jsonPathStatsGetArrayLengthStats(JsonPathStats pstats)
 }
 
 static int
-jsonPathStatsCompare(const void *pv1, const void *pv2)
+jsonPathStatsComparePath(JsonbValue const *path1, JsonbValue const *path2)
 {
-	JsonbValue	pathkey;
-	JsonbValue *path2;
-	JsonbValue const *path1 = pv1;
-	Datum const *pdatum = pv2;
-	Jsonb	   *jsonb = DatumGetJsonbP(*pdatum);
 	int			res;
 
-	JsonValueInitStringWithLen(&pathkey, "path", 4);
-	path2 = findJsonbValueFromContainer(&jsonb->root, JB_FOBJECT, &pathkey);
-
 	if (!path2 || path2->type != jbvString)
-		return 1;
+		return 2;
 
-	res = strncmp(path1->val.string.val, path2->val.string.val,
+	res = memcmp(path1->val.string.val, path2->val.string.val,
 				  Min(path1->val.string.len, path2->val.string.len));
 
-	return res ? res : path1->val.string.len - path2->val.string.len;
+	return res > 0 ? 2 :
+		   res < 0 ? -2 :
+		   path1->val.string.len > path2->val.string.len ? 1 :
+		   path1->val.string.len < path2->val.string.len ? -1 : 0;
+}
+
+static JsonbValue *
+jsonPathStatsGetPath(Datum datum)
+{
+	Jsonb	   *jsonb = DatumGetJsonbP(datum);
+	JsonbValue	pathkey;
+
+	JsonValueInitStringWithLen(&pathkey, "path", 4);
+	return findJsonbValueFromContainer(&jsonb->root, JB_FOBJECT, &pathkey);
+}
+
+
+static int
+jsonPathStatsCompare(const void *pv1, const void *pv2)
+{
+	JsonbValue const   *path1 = pv1;
+	Datum const		   *pdatum = pv2;
+	JsonbValue		   *path2 = jsonPathStatsGetPath(*pdatum);
+
+	return jsonPathStatsComparePath(path1, path2);
 }
 
 static JsonPathStats
@@ -165,13 +233,19 @@ jsonStatsFindPathStats(JsonStats jsdata, char *path, int pathlen)
 	JsonbValue	jbvkey;
 	Datum	   *pdatum;
 
-	JsonValueInitStringWithLen(&jbvkey, path, pathlen);
+	if (jsonAnalyzePathIsCollected(jsdata->collectedPaths, path, pathlen) !=
+																JSPCS_COLLECTED)
+		pdatum = NULL;
+	else
+	{
+		JsonValueInitStringWithLen(&jbvkey, path, pathlen);
 
-	pdatum = bsearch(&jbvkey, jsdata->values + 1, jsdata->nvalues - 1,
-					 sizeof(*jsdata->values), jsonPathStatsCompare);
+		pdatum = bsearch(&jbvkey, jsdata->values + 1, jsdata->nvalues - 1,
+						 sizeof(*jsdata->values), jsonPathStatsCompare);
 
-	if (!pdatum)
-		return NULL;
+		if (!pdatum)
+			return NULL;
+	}
 
 	stats = palloc(sizeof(*stats));
 	stats->datum = pdatum;
@@ -335,22 +409,22 @@ bool
 jsonPathStatsGetNextKeyStats(JsonPathStats stats, JsonPathStats *pkeystats,
 							 bool keysOnly)
 {
+	JsonbValue	jbvkey;
 	JsonPathStats keystats = *pkeystats;
-	int			index =
-		(keystats ? keystats->datum : stats->datum) - stats->data->values + 1;
+	int			index = !keystats && !stats->datum ? 1 :
+		(keystats ? keystats : stats)->datum - stats->data->values + 1;
+
+	JsonValueInitStringWithLen(&jbvkey, stats->path, stats->pathlen);
 
 	for (; index < stats->data->nvalues; index++)
 	{
-		JsonbValue	pathkey;
-		JsonbValue *jbvpath;
-		Jsonb	   *jb = DatumGetJsonbP(stats->data->values[index]);
+		JsonbValue *jbvpath = jsonPathStatsGetPath(stats->data->values[index]);
+		int			cmp = jsonPathStatsComparePath(&jbvkey, jbvpath);
 
-		JsonValueInitStringWithLen(&pathkey, "path", 4);
-		jbvpath = findJsonbValueFromContainer(&jb->root, JB_FOBJECT, &pathkey);
+		if (cmp >= 0)
+			continue;
 
-		if (jbvpath->type != jbvString ||
-			jbvpath->val.string.len <= stats->pathlen ||
-			memcmp(jbvpath->val.string.val, stats->path, stats->pathlen))
+		if (cmp < -1)
 			break;
 
 		if (keysOnly)
@@ -519,9 +593,10 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 			break;
 	}
 
-	data = jsonGetField(*pstats->datum, key);
+	Assert(pstats->datum);
 
-	if (!DatumGetPointer(data))
+	data = jsonGetField(*pstats->datum, key);
+	if (!data)
 		return false;
 
 	nullf = jsonGetField(data, "nullfrac");
@@ -584,7 +659,8 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 									 stattype == JsonStatJsonb,
 									 nullfrac,
 									 &slot->values,
-									 &slot->numbers))
+									 &slot->numbers,
+									 pstats->data->collectedPaths))
 	{
 		slot->kind = STATISTIC_KIND_JSON;
 		slot++;
@@ -595,11 +671,12 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 
 static float4
 jsonPathStatsGetFloat(JsonPathStats pstats, const char *key,
-					float4 defaultval)
+					  float4 defaultval)
 {
 	Datum		freq;
 
-	if (!pstats || !(freq = jsonGetField(*pstats->datum, key)))
+	if (!pstats || !pstats->datum ||
+		!(freq = jsonGetField(*pstats->datum, key)))
 		return defaultval;
 
 	return DatumGetFloat4(jsonGetFloat4(freq));
@@ -671,10 +748,13 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 {
 	StatsData	statdata;
 
-	if (!pstats || !pstats->datum)
-		return NULL;
+	if (!pstats)
+		return stats_form_tuple(NULL); /* no such path, return all-NULL stats */
 
-	if (pstats->datum == &pstats->data->values[1] &&
+	if (!pstats->datum)
+		return NULL; /* stats for this path is not collected */
+
+	if (pstats->pathlen == 1 && pstats->path[0] == '$' &&
 		pstats->type == JsonPathStatsValues)
 		return heap_copytuple(pstats->data->statsTuple);
 
@@ -798,7 +878,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 	}
 
 	if (!resdata->statsTuple)
-		resdata->statsTuple = stats_form_tuple(NULL);	/* form all-NULL tuple */
+		return false;
 
 	resdata->acl_ok = vardata->acl_ok;
 	resdata->freefunc = heap_freetuple;
