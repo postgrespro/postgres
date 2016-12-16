@@ -389,6 +389,22 @@ findJsonbValueFromContainer(JsonbContainer *container, uint32 flags,
 }
 
 /*
+ * findJsonbValueFromContainer() wrapper that sets up JsonbValue key string.
+ */
+JsonbValue *
+findJsonbValueFromContainerLen(JsonbContainer *container, uint32 flags,
+							   const char *key, uint32 keylen)
+{
+	JsonbValue	k;
+
+	k.type = jbvString;
+	k.val.string.val = key;
+	k.val.string.len = keylen;
+
+	return findJsonbValueFromContainer(container, flags, &k);
+}
+
+/*
  * Find value by key in Jsonb object and fetch it into 'res', which is also
  * returned.
  *
@@ -600,6 +616,17 @@ pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
 	{
 		/* drop through */
 		return pushJsonbValueScalar(pstate, seq, jbval);
+	}
+
+	/*
+	 * XXX I'm not quite sure why we actually do this? Why do we need to change
+	 * how JsonbValue is converted to Jsonb for the statistics patch?
+	 */
+	/* push value from scalar container without its enclosing array */
+	if (*pstate && JsonbExtractScalar(jbval->val.binary.data, &v))
+	{
+		Assert(IsAJsonbScalar(&v));
+		return pushJsonbValueScalar(pstate, seq, &v);
 	}
 
 	/* unpack the binary and add each piece to the pstate */
