@@ -5371,7 +5371,8 @@ iterate_jsonb_values(Jsonb *jb, uint32 flags, void *state,
 		if (type == WJB_KEY)
 		{
 			if (flags & jtiKey)
-				action(state, v.val.string.val, v.val.string.len);
+				action(state, unconstify(char *, v.val.string.val),
+					   v.val.string.len);
 
 			continue;
 		}
@@ -5386,7 +5387,8 @@ iterate_jsonb_values(Jsonb *jb, uint32 flags, void *state,
 		{
 			case jbvString:
 				if (flags & jtiString)
-					action(state, v.val.string.val, v.val.string.len);
+					action(state, unconstify(char *, v.val.string.val),
+						   v.val.string.len);
 				break;
 			case jbvNumeric:
 				if (flags & jtiNumeric)
@@ -5508,7 +5510,9 @@ transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 	{
 		if ((type == WJB_VALUE || type == WJB_ELEM) && v.type == jbvString)
 		{
-			out = transform_action(action_state, v.val.string.val, v.val.string.len);
+			out = transform_action(action_state,
+								   unconstify(char *, v.val.string.val),
+								   v.val.string.len);
 			v.val.string.val = VARDATA_ANY(out);
 			v.val.string.len = VARSIZE_ANY_EXHDR(out);
 			res = pushJsonbValue(&st, type, type < WJB_BEGIN_ARRAY ? &v : NULL);
