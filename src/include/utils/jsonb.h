@@ -14,6 +14,7 @@
 
 #include "lib/stringinfo.h"
 #include "utils/array.h"
+#include "utils/builtins.h"
 #include "utils/numeric.h"
 
 /* Tokens used when sequentially processing a jsonb value */
@@ -229,8 +230,7 @@ typedef struct
 #define JB_ROOT_IS_OBJECT(jbp_) ((*(uint32 *) VARDATA(jbp_) & JB_FOBJECT) != 0)
 #define JB_ROOT_IS_ARRAY(jbp_)	((*(uint32 *) VARDATA(jbp_) & JB_FARRAY) != 0)
 
-
-enum jbvType
+typedef enum jbvType
 {
 	/* Scalar types */
 	jbvNull = 0x0,
@@ -250,7 +250,7 @@ enum jbvType
 	 * into JSON strings when outputted to json/jsonb.
 	 */
 	jbvDatetime = 0x20,
-};
+} JsonbValueType;
 
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
@@ -269,7 +269,7 @@ struct JsonbValue
 		struct
 		{
 			int			len;
-			char	   *val;	/* Not necessarily null-terminated */
+			const char *val;	/* Not necessarily null-terminated */
 		}			string;		/* String primitive type */
 
 		struct
@@ -382,6 +382,10 @@ extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
 extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *sheader,
 											   uint32 flags,
 											   JsonbValue *key);
+extern JsonbValue *findJsonbValueFromContainerLen(JsonbContainer *container,
+												  uint32 flags,
+												  const char *key,
+												  uint32 keylen);
 extern JsonbValue *getKeyJsonValueFromContainer(JsonbContainer *container,
 												const char *keyVal, int keyLen,
 												JsonbValue *res);
@@ -399,6 +403,7 @@ extern bool JsonbDeepContains(JsonbIterator **val,
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
 extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 										 uint64 *hash, uint64 seed);
+extern bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res);
 
 /* jsonb.c support functions */
 extern char *JsonbToCString(StringInfo out, JsonbContainer *in,
@@ -412,4 +417,151 @@ extern Datum jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
 							   JsonbValue *newval);
 extern Datum jsonb_get_element(Jsonb *jb, Datum *path, int npath,
 							   bool *isnull, bool as_text);
+
+/* helper inline functions for JsonbValue initialization */
+static inline JsonbValue *
+JsonValueInitObject(JsonbValue *val, int nPairs, int nPairsAllocated)
+{
+	val->type = jbvObject;
+	val->val.object.nPairs = nPairs;
+	val->val.object.pairs = nPairsAllocated ?
+							palloc(sizeof(JsonbPair) * nPairsAllocated) : NULL;
+
+	return val;
+}
+
+static inline JsonbValue *
+JsonValueInitArray(JsonbValue *val, int nElems, int nElemsAllocated,
+				   bool rawScalar)
+{
+	val->type = jbvArray;
+	val->val.array.nElems = nElems;
+	val->val.array.elems = nElemsAllocated ?
+							palloc(sizeof(JsonbValue) * nElemsAllocated) : NULL;
+	val->val.array.rawScalar = rawScalar;
+
+	return val;
+}
+
+static inline JsonbValue *
+JsonValueInitBinary(JsonbValue *val, Jsonb *jb)
+{
+	val->type = jbvBinary;
+	val->val.binary.data = &(jb)->root;
+	val->val.binary.len = VARSIZE_ANY_EXHDR(jb);
+	return val;
+}
+
+
+static inline JsonbValue *
+JsonValueInitString(JsonbValue *jbv, const char *str)
+{
+	jbv->type = jbvString;
+	jbv->val.string.len = strlen(str);
+	jbv->val.string.val = memcpy(palloc(jbv->val.string.len + 1), str,
+								 jbv->val.string.len + 1);
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitStringWithLen(JsonbValue *jbv, const char *str, int len)
+{
+	jbv->type = jbvString;
+	jbv->val.string.val = str;
+	jbv->val.string.len = len;
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitText(JsonbValue *jbv, text *txt)
+{
+	jbv->type = jbvString;
+	jbv->val.string.val = VARDATA_ANY(txt);
+	jbv->val.string.len = VARSIZE_ANY_EXHDR(txt);
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitNumeric(JsonbValue *jbv, Numeric num)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = num;
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitInteger(JsonbValue *jbv, int64 i)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											int8_numeric, Int64GetDatum(i)));
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitFloat(JsonbValue *jbv, float4 f)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											float4_numeric, Float4GetDatum(f)));
+	return jbv;
+}
+
+static inline JsonbValue *
+JsonValueInitDouble(JsonbValue *jbv, float8 f)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											float8_numeric, Float8GetDatum(f)));
+	return jbv;
+}
+
+/* helper macros for jsonb building */
+#define pushJsonbKey(pstate, jbv, key) \
+		pushJsonbValue(pstate, WJB_KEY, JsonValueInitString(jbv, key))
+
+#define pushJsonbValueGeneric(Type, pstate, jbv, val) \
+		pushJsonbValue(pstate, WJB_VALUE, JsonValueInit##Type(jbv, val))
+
+#define pushJsonbElemGeneric(Type, pstate, jbv, val) \
+		pushJsonbValue(pstate, WJB_ELEM, JsonValueInit##Type(jbv, val))
+
+#define pushJsonbValueInteger(pstate, jbv, i) \
+		pushJsonbValueGeneric(Integer, pstate, jbv, i)
+
+#define pushJsonbValueFloat(pstate, jbv, f) \
+		pushJsonbValueGeneric(Float, pstate, jbv, f)
+
+#define pushJsonbElemFloat(pstate, jbv, f) \
+		pushJsonbElemGeneric(Float, pstate, jbv, f)
+
+#define pushJsonbElemString(pstate, jbv, txt) \
+		pushJsonbElemGeneric(String, pstate, jbv, txt)
+
+#define pushJsonbElemText(pstate, jbv, txt) \
+		pushJsonbElemGeneric(Text, pstate, jbv, txt)
+
+#define pushJsonbElemNumeric(pstate, jbv, num) \
+		pushJsonbElemGeneric(Numeric, pstate, jbv, num)
+
+#define pushJsonbElemInteger(pstate, jbv, num) \
+		pushJsonbElemGeneric(Integer, pstate, jbv, num)
+
+#define pushJsonbElemBinary(pstate, jbv, jbcont) \
+		pushJsonbElemGeneric(Binary, pstate, jbv, jbcont)
+
+#define pushJsonbKeyValueGeneric(Type, pstate, jbv, key, val) ( \
+		pushJsonbKey(pstate, jbv, key), \
+		pushJsonbValueGeneric(Type, pstate, jbv, val) \
+	)
+
+#define pushJsonbKeyValueString(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(String, pstate, jbv, key, val)
+
+#define pushJsonbKeyValueFloat(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(Float, pstate, jbv, key, val)
+
+#define pushJsonbKeyValueInteger(pstate, jbv, key, val) \
+		pushJsonbKeyValueGeneric(Integer, pstate, jbv, key, val)
+
 #endif							/* __JSONB_H__ */
