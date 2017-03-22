@@ -105,6 +105,8 @@ extern TimestampTz timestamp2timestamptz_opt_overflow(Timestamp timestamp,
 extern int32 timestamp_cmp_timestamptz_internal(Timestamp timestampVal,
 												TimestampTz dt2);
 
+extern TimestampTz float8_timestamptz_internal(float8 seconds, bool *error);
+
 extern int	isoweek2j(int year, int week);
 extern void isoweek2date(int woy, int *year, int *mon, int *mday);
 extern void isoweekdate2date(int isoweek, int wday, int *year, int *mon, int *mday);
