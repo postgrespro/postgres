@@ -2096,7 +2096,41 @@ executeDateTimeMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	JsonPathExecResult res = jperNotFound;
 	JsonPathItem elem;
 
-	if (!(jb = getScalar(jb, jbvString)))
+	if (jb->type == jbvNumeric)
+	{
+		bool		error = false;
+		float8		unix_epoch =
+			DatumGetFloat8(DirectFunctionCall1(numeric_float8_no_overflow,
+											   NumericGetDatum(jb->val.numeric)));
+		TimestampTz	tstz = float8_timestamptz_internal(unix_epoch,
+													   &error);
+
+		if (error)
+			RETURN_ERROR(ereport(ERROR,
+								 (errcode(ERRCODE_INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION),
+								  errmsg("UNIX epoch is out ouf timestamptz range"))));
+
+		value = TimestampTzGetDatum(tstz);
+		typid = TIMESTAMPTZOID;
+		tz = 0;
+
+		hasNext = jspGetNext(jsp, &elem);
+
+		if (!hasNext && !found)
+			return jperOk;
+
+		jb = hasNext ? &jbvbuf : palloc(sizeof(*jb));
+
+		jb->type = jbvDatetime;
+		jb->val.datetime.value = value;
+		jb->val.datetime.typid = typid;
+		jb->val.datetime.typmod = typmod;
+		jb->val.datetime.tz = tz;
+
+		return executeNextItem(cxt, jsp, &elem, jb, found, hasNext);
+	}
+
+	if (jb->type != jbvString)
 		RETURN_ERROR(ereport(ERROR,
 							 (errcode(ERRCODE_INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION),
 							  errmsg("jsonpath item method .%s() can only be applied to a string",
