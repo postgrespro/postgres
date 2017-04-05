@@ -17540,6 +17540,13 @@ strict $.**.HR
        </row>
       </thead>
       <tbody>
+       <row>
+        <entry>Sequence constructor</entry>
+        <entry>Construct a JSON sequence from a list of comma-separated expressions</entry>
+        <entry><literal>[1, 2, 3]</literal></entry>
+        <entry><literal>pg $[*], 4, 5</literal></entry>
+        <entry><literal>1, 2, 3, 4, 5</literal></entry>
+       </row>
       </tbody>
      </tgroup>
     </table>

@@ -593,3 +593,12 @@ SELECT
 	jsonb_path_query_first(s1.j, '$.s > $s', vars => s2.j) gt
 FROM str s1, str s2
 ORDER BY s1.num, s2.num;
+
+-- extension: path sequences
+select jsonb_path_query('[1,2,3,4,5]', 'pg 10, 20, $[*], 30');
+select jsonb_path_query('[1,2,3,4,5]', 'pg lax    10, 20, $[*].a, 30');
+select jsonb_path_query('[1,2,3,4,5]', 'pg strict 10, 20, $[*].a, 30');
+select jsonb_path_query('[1,2,3,4,5]', 'pg -(10, 20, $[1 to 3], 30)');
+select jsonb_path_query('[1,2,3,4,5]', 'pg lax (10, 20.5, $[1 to 3], "30").double()');
+select jsonb_path_query('[1,2,3,4,5]', 'pg $[(0, $[*], 5) ? (@ == 3)]');
+select jsonb_path_query('[1,2,3,4,5]', 'pg $[(0, $[*], 3) ? (@ == 3)]');
