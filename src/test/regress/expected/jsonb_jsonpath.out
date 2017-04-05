@@ -2569,3 +2569,57 @@ ORDER BY s1.num, s2.num;
  {"s": "B"}    | {"s": "B"}    | false | true  | true  | true  | false
 (144 rows)
 
+-- extension: path sequences
+select jsonb_path_query('[1,2,3,4,5]', 'pg 10, 20, $[*], 30');
+ jsonb_path_query 
+------------------
+ 10
+ 20
+ 1
+ 2
+ 3
+ 4
+ 5
+ 30
+(8 rows)
+
+select jsonb_path_query('[1,2,3,4,5]', 'pg lax    10, 20, $[*].a, 30');
+ jsonb_path_query 
+------------------
+ 10
+ 20
+ 30
+(3 rows)
+
+select jsonb_path_query('[1,2,3,4,5]', 'pg strict 10, 20, $[*].a, 30');
+ERROR:  jsonpath member accessor can only be applied to an object
+select jsonb_path_query('[1,2,3,4,5]', 'pg -(10, 20, $[1 to 3], 30)');
+ jsonb_path_query 
+------------------
+ -10
+ -20
+ -2
+ -3
+ -4
+ -30
+(6 rows)
+
+select jsonb_path_query('[1,2,3,4,5]', 'pg lax (10, 20.5, $[1 to 3], "30").double()');
+ jsonb_path_query 
+------------------
+ 10
+ 20.5
+ 2
+ 3
+ 4
+ 30
+(6 rows)
+
+select jsonb_path_query('[1,2,3,4,5]', 'pg $[(0, $[*], 5) ? (@ == 3)]');
+ jsonb_path_query 
+------------------
+ 4
+(1 row)
+
+select jsonb_path_query('[1,2,3,4,5]', 'pg $[(0, $[*], 3) ? (@ == 3)]');
+ERROR:  jsonpath array subscript is not a single numeric value

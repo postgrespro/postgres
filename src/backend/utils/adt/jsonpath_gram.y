@@ -43,6 +43,7 @@ static bool makeItemLikeRegex(JsonPathParseItem *expr,
 							  JsonPathString *flags,
 							  JsonPathParseItem ** result,
 							  struct Node *escontext);
+static JsonPathParseItem *makeItemSequence(List *elems);
 
 /*
  * Bison doesn't allocate anything that needs to live across parser calls,
@@ -88,9 +89,9 @@ static bool makeItemLikeRegex(JsonPathParseItem *expr,
 %type	<value>		scalar_value path_primary expr array_accessor
 					any_path accessor_op key predicate delimited_predicate
 					index_elem starts_with_initial expr_or_predicate
-					datetime_template opt_datetime_template
+					datetime_template opt_datetime_template expr_seq expr_or_seq
 
-%type	<elems>		accessor_expr
+%type	<elems>		accessor_expr expr_list
 
 %type	<indexs>	index_list
 
@@ -114,7 +115,7 @@ static bool makeItemLikeRegex(JsonPathParseItem *expr,
 %%
 
 result:
-	pg_opt mode expr_or_predicate	{
+	pg_opt mode expr_or_seq	{
 										*result = palloc(sizeof(JsonPathParseResult));
 										(*result)->expr = $3;
 										(*result)->lax = $2;
@@ -132,6 +133,20 @@ expr_or_predicate:
 pg_opt:
 	PG_P							{ $$ = true; }
 	| /* EMPTY */					{ $$ = false; }
+	;
+
+expr_or_seq:
+	expr_or_predicate				{ $$ = $1; }
+	| expr_seq						{ $$ = $1; }
+	;
+
+expr_seq:
+	expr_list						{ $$ = makeItemSequence($1); }
+	;
+
+expr_list:
+	expr_or_predicate ',' expr_or_predicate	{ $$ = list_make2($1, $3); }
+	| expr_list ',' expr_or_predicate		{ $$ = lappend($1, $3); }
 	;
 
 mode:
@@ -200,6 +215,7 @@ path_primary:
 	| '$'							{ $$ = makeItemType(jpiRoot); }
 	| '@'							{ $$ = makeItemType(jpiCurrent); }
 	| LAST_P						{ $$ = makeItemType(jpiLast); }
+	| '(' expr_seq ')'				{ $$ = $2; }
 	;
 
 accessor_expr:
@@ -574,6 +590,16 @@ makeItemLikeRegex(JsonPathParseItem *expr, JsonPathString *pattern,
 	*result = v;
 
 	return true;
+}
+
+static JsonPathParseItem *
+makeItemSequence(List *elems)
+{
+	JsonPathParseItem  *v = makeItemType(jpiSequence);
+
+	v->value.sequence.elems = elems;
+
+	return v;
 }
 
 /*
