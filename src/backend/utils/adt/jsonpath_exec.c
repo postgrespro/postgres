@@ -1195,6 +1195,62 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				break;
 			}
 
+		case jpiObject:
+			{
+				JsonbParseState *ps = NULL;
+				int			i;
+
+				pushJsonbValue(&ps, WJB_BEGIN_OBJECT, NULL);
+
+				for (i = 0; i < jsp->content.object.nfields; i++)
+				{
+					JsonbValue *jbv;
+					JsonbValue	jbvtmp;
+					JsonPathItem key;
+					JsonPathItem val;
+					JsonValueList key_list = {0};
+					JsonValueList val_list = {0};
+
+					jspGetObjectField(jsp, i, &key, &val);
+
+					res = executeItem(cxt, &key, jb, &key_list);
+					if (jperIsError(res))
+						return res;
+
+					if (JsonValueListLength(&key_list) != 1 ||
+						!(jbv = getScalar(JsonValueListHead(&key_list), jbvString)))
+						RETURN_ERROR(ereport(ERROR,
+											 (errcode(ERRCODE_SQL_JSON_SCALAR_REQUIRED),
+											  errmsg("key in jsonpath object constructor is not a single string"))));
+
+					res = executeItem(cxt, &val, jb, &val_list);
+					if (jperIsError(res))
+						return res;
+
+					if (jspIgnoreStructuralErrors(cxt) &&
+						JsonValueListIsEmpty(&val_list))
+						continue;	/* skip empty fields in lax mode */
+
+					if (JsonValueListLength(&val_list) != 1)
+						RETURN_ERROR(ereport(ERROR,
+											 (errcode(ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED),
+											  errmsg("value in jsonpath object constructor is not single"),
+											  errhint("Use jsonpath array syntax to wrap multi-item sequences into arrays"))));
+
+					pushJsonbValue(&ps, WJB_KEY, jbv);
+
+					jbv = JsonValueListHead(&val_list);
+					jbv = wrapJsonObjectOrArray(jbv, &jbvtmp);
+
+					pushJsonbValue(&ps, WJB_VALUE, jbv);
+				}
+
+				jb = pushJsonbValue(&ps, WJB_END_OBJECT, NULL);
+
+				res = executeNextItem(cxt, jsp, NULL, jb, found, false);
+				break;
+			}
+
 		default:
 			elog(ERROR, "unrecognized jsonpath item type: %d", jsp->type);
 	}
