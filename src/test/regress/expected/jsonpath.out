@@ -614,6 +614,24 @@ select 'pg [[1, 2], ([(3, 4, 5), 6], []), $.a[*]]'::jsonpath;
  pg [[1, 2], ([(3, 4, 5), 6], []), $."a"[*]]
 (1 row)
 
+select 'pg {}'::jsonpath;
+ jsonpath 
+----------
+ pg {}
+(1 row)
+
+select 'pg {a: 1 + 2}'::jsonpath;
+    jsonpath     
+-----------------
+ pg {"a": 1 + 2}
+(1 row)
+
+select 'pg {a: 1 + 2, b : (1,2), c: [$[*],4,5], d: { "e e e": "f f f" }}'::jsonpath;
+                                 jsonpath                                 
+--------------------------------------------------------------------------
+ pg {"a": 1 + 2, "b": (1, 2), "c": [$[*], 4, 5], "d": {"e e e": "f f f"}}
+(1 row)
+
 select '$ ? (@.a < 1)'::jsonpath;
    jsonpath    
 ---------------

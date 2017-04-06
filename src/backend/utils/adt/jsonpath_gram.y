@@ -44,6 +44,7 @@ static bool makeItemLikeRegex(JsonPathParseItem *expr,
 							  JsonPathParseItem ** result,
 							  struct Node *escontext);
 static JsonPathParseItem *makeItemSequence(List *elems);
+static JsonPathParseItem *makeItemObject(List *fields);
 
 /*
  * Bison doesn't allocate anything that needs to live across parser calls,
@@ -90,8 +91,9 @@ static JsonPathParseItem *makeItemSequence(List *elems);
 					any_path accessor_op key predicate delimited_predicate
 					index_elem starts_with_initial expr_or_predicate
 					datetime_template opt_datetime_template expr_seq expr_or_seq
+					object_field
 
-%type	<elems>		accessor_expr expr_list
+%type	<elems>		accessor_expr expr_list object_field_list
 
 %type	<indexs>	index_list
 
@@ -218,6 +220,18 @@ path_primary:
 	| '(' expr_seq ')'				{ $$ = $2; }
 	| '[' ']'						{ $$ = makeItemUnary(jpiArray, NULL); }
 	| '[' expr_or_seq ']'			{ $$ = makeItemUnary(jpiArray, $2); }
+	| '{' object_field_list '}'		{ $$ = makeItemObject($2); }
+	;
+
+object_field_list:
+	/* EMPTY */								{ $$ = NIL; }
+	| object_field							{ $$ = list_make1($1); }
+	| object_field_list ',' object_field	{ $$ = lappend($1, $3); }
+	;
+
+object_field:
+	key_name ':' expr_or_predicate
+		{ $$ = makeItemBinary(jpiObjectField, makeItemString(&$1), $3); }
 	;
 
 accessor_expr:
@@ -600,6 +614,16 @@ makeItemSequence(List *elems)
 	JsonPathParseItem  *v = makeItemType(jpiSequence);
 
 	v->value.sequence.elems = elems;
+
+	return v;
+}
+
+static JsonPathParseItem *
+makeItemObject(List *fields)
+{
+	JsonPathParseItem *v = makeItemType(jpiObject);
+
+	v->value.object.fields = fields;
 
 	return v;
 }
