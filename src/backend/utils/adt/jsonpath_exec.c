@@ -1176,6 +1176,25 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				break;
 			}
 
+		case jpiArray:
+			{
+				JsonValueList list = {0};
+				JsonbValue *arr;
+
+				if (jsp->content.arg)
+				{
+					jspGetArg(jsp, &elem);
+					res = executeItem(cxt, &elem, jb, &list);
+
+					if (jperIsError(res))
+						break;
+				}
+
+				arr = wrapItemsInArray(&list);
+				res = executeNextItem(cxt, jsp, NULL, arr, found, false);
+				break;
+			}
+
 		default:
 			elog(ERROR, "unrecognized jsonpath item type: %d", jsp->type);
 	}

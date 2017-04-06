@@ -368,13 +368,19 @@ flattenJsonPathParseItem(JsonPathEncodingContext *cxt, JsonPathParseItem *item,
 		case jpiMinus:
 		case jpiExists:
 		case jpiDatetime:
+		case jpiArray:
 			{
 				int32		arg = reserveSpaceForItemPointer(buf);
 
-				chld = !item->value.arg ? pos :
-					flattenJsonPathParseItem(cxt, item->value.arg,
-											 nestingLevel + argNestingLevel,
-											 insideArraySubscript);
+				if (item->type == jpiArray)
+					checkJsonPathExtensionsEnabled(cxt, item->type);
+
+				if (!item->value.arg)
+					break;
+
+				chld = flattenJsonPathParseItem(cxt, item->value.arg,
+												nestingLevel + argNestingLevel,
+												insideArraySubscript);
 				*(int32 *) (buf->data + arg) = chld - pos;
 			}
 			break;
@@ -784,6 +790,15 @@ printJsonPathItem(StringInfo buf, JsonPathItem *v, bool inKey,
 			if (printBracketes || jspHasNext(v))
 				appendStringInfoChar(buf, ')');
 			break;
+		case jpiArray:
+			appendStringInfoChar(buf, '[');
+			if (v->content.arg)
+			{
+				jspGetArg(v, &elem);
+				printJsonPathItem(buf, &elem, false, false);
+			}
+			appendStringInfoChar(buf, ']');
+			break;
 		default:
 			elog(ERROR, "unrecognized jsonpath item type: %d", v->type);
 	}
@@ -983,6 +998,7 @@ jspInitByBuffer(JsonPathItem *v, char *base, int32 pos)
 		case jpiMinus:
 		case jpiFilter:
 		case jpiDatetime:
+		case jpiArray:
 			read_int32(v->content.arg, base, pos);
 			break;
 		case jpiIndexArray:
@@ -1013,7 +1029,8 @@ jspGetArg(JsonPathItem *v, JsonPathItem *a)
 		   v->type == jpiExists ||
 		   v->type == jpiPlus ||
 		   v->type == jpiMinus ||
-		   v->type == jpiDatetime);
+		   v->type == jpiDatetime ||
+		   v->type == jpiArray);
 
 	jspInitByBuffer(a, v->base, v->content.arg);
 }
@@ -1064,7 +1081,8 @@ jspGetNext(JsonPathItem *v, JsonPathItem *a)
 			   v->type == jpiDatetime ||
 			   v->type == jpiKeyValue ||
 			   v->type == jpiStartsWith ||
-			   v->type == jpiSequence);
+			   v->type == jpiSequence ||
+			   v->type == jpiArray);
 
 		if (a)
 			jspInitByBuffer(a, v->base, v->nextPos);
