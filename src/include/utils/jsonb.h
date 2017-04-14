@@ -400,7 +400,7 @@ extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 										 uint64 *hash, uint64 seed);
 
 extern int reserveFromBuffer(StringInfo buffer, int len);
-extern void appendToBuffer(StringInfo buffer, const char *data, int len);
+extern void appendToBuffer(StringInfo buffer, const void *data, int len);
 
 
 #endif							/* __JSONB_H__ */
