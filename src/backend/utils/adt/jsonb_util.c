@@ -90,7 +90,7 @@ static void convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbVal
 static void convertJsonbBinary(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
 static void convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal);
 
-static void copyToBuffer(StringInfo buffer, int offset, const char *data, int len);
+static void copyToBuffer(StringInfo buffer, int offset, const void *data, int len);
 static short padBufferToInt(StringInfo buffer);
 
 static JsonbIterator *iteratorFromContainer(JsonContainer *container, JsonbIterator *parent);
@@ -1679,7 +1679,7 @@ reserveFromBuffer(StringInfo buffer, int len)
  * Copy 'len' bytes to a previously reserved area in buffer.
  */
 static void
-copyToBuffer(StringInfo buffer, int offset, const char *data, int len)
+copyToBuffer(StringInfo buffer, int offset, const void *data, int len)
 {
 	memcpy(buffer->data + offset, data, len);
 }
@@ -1688,7 +1688,7 @@ copyToBuffer(StringInfo buffer, int offset, const char *data, int len)
  * A shorthand for reserveFromBuffer + copyToBuffer.
  */
 void
-appendToBuffer(StringInfo buffer, const char *data, int len)
+appendToBuffer(StringInfo buffer, const void *data, int len)
 {
 	int			offset;
 
