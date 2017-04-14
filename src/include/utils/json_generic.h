@@ -436,6 +436,15 @@ JsonValueInitFloat(JsonbValue *jbv, float4 f)
 	return jbv;
 }
 
+static inline JsonbValue *
+JsonValueInitDouble(JsonbValue *jbv, float8 f)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(DirectFunctionCall1(
+											float8_numeric, Float8GetDatum(f)));
+	return jbv;
+}
+
 #define pushJsonbKey(pstate, jbv, key) \
 		pushJsonbValue(pstate, WJB_KEY, JsonValueInitString(jbv, key))
 
