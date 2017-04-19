@@ -910,10 +910,6 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 				jb.val.string.len = strlen(jb.val.string.val);
 				break;
 			case JSONBTYPE_JSONCAST:
-#ifndef JSON_GENERIC
-			case JSONBTYPE_JSON:
-
-#endif
 				{
 					/* parse the json right into the existing result object */
 					JsonLexContext *lex;
@@ -936,18 +932,13 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 					pg_parse_json_or_ereport(lex, &sem);
 				}
 				return;
-#ifdef JSON_GENERIC
 			case JSONBTYPE_JSON:
-#endif
 			case JSONBTYPE_JSONB:
 				{
-#ifndef JSON_GENERIC
-					Jsonb	   *jsonb = DatumGetJsonbP(val);
-#else
 					Jsonb	   *jsonb = tcategory == JSONBTYPE_JSON
 											? DatumGetJsontP(val)
 											: DatumGetJsonbP(val);
-#endif
+
 					if (JB_ROOT_IS_SCALAR(jsonb))
 					{
 						JsonExtractScalar(&jsonb->root, &jb);
