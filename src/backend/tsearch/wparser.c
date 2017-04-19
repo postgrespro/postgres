@@ -455,11 +455,7 @@ Datum
 ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 {
 	Oid			tsconfig = PG_GETARG_OID(0);
-#ifndef JSON_GENERIC
-	text	   *json = PG_GETARG_TEXT_P(1);
-#else
 	Jsonb	   *json = DatumGetJsontP(PG_GETARG_DATUM(1));
-#endif
 	TSQuery		query = PG_GETARG_TSQUERY(2);
 	text	   *opt = (PG_NARGS() > 3 && PG_GETARG_POINTER(3)) ? PG_GETARG_TEXT_P(3) : NULL;
 	text	   *out;
@@ -486,10 +482,6 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("text search parser does not support headline creation")));
 
-#ifndef JSON_GENERIC
-	out = transform_json_string_values(json, state, action);
-	PG_FREE_IF_COPY(json, 1);
-#else
 	{
 		Jsonb	   *jsonb = transform_jsonb_string_values(json, state, action, true);
 		char	   *str = JsonToCString(&jsonb->root);
@@ -500,7 +492,6 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 
 		PG_FREE_IF_COPY_JSONB(json, 1);
 	}
-#endif
 
 	PG_FREE_IF_COPY(query, 2);
 	if (opt)
