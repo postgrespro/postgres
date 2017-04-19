@@ -13,8 +13,6 @@
 #ifndef UTILS_JSON_GENERIC_H
 #define UTILS_JSON_GENERIC_H
 
-#define JSON_GENERIC
-
 #include "postgres.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
