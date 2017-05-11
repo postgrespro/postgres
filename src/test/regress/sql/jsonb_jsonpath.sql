@@ -30,6 +30,14 @@ select jsonb '[1]' @? '$[0.5]';
 select jsonb '[1]' @? '$[0.9]';
 select jsonb '[1]' @? '$[1.2]';
 select jsonb '[1]' @? 'strict $[1.2]';
+select jsonb_path_query('[1]', 'strict $[1.2]');
+select jsonb_path_query('{}', 'strict $[0.3]');
+select jsonb '{}' @? 'lax $[0.3]';
+select jsonb_path_query('{}', 'strict $[1.2]');
+select jsonb '{}' @? 'lax $[1.2]';
+select jsonb_path_query('{}', 'strict $[-2 to 3]');
+select jsonb '{}' @? 'lax $[-2 to 3]';
+
 select jsonb '{"a": [1,2,3], "b": [3,4,5]}' @? '$ ? (@.a[*] >  @.b[*])';
 select jsonb '{"a": [1,2,3], "b": [3,4,5]}' @? '$ ? (@.a[*] >= @.b[*])';
 select jsonb '{"a": [1,2,3], "b": [3,4,"5"]}' @? '$ ? (@.a[*] >= @.b[*])';
@@ -80,6 +88,7 @@ select jsonb_path_query('[12, {"a": 13}, {"b": 14}]', 'lax $[0 to 10 / 0].a');
 select jsonb_path_query('[12, {"a": 13}, {"b": 14}, "ccc", true]', '$[2.5 - 1 to $.size() - 2]');
 select jsonb_path_query('1', 'lax $[0]');
 select jsonb_path_query('1', 'lax $[*]');
+select jsonb_path_query('{}', 'lax $[0]');
 select jsonb_path_query('[1]', 'lax $[0]');
 select jsonb_path_query('[1]', 'lax $[*]');
 select jsonb_path_query('[1,2,3]', 'lax $[*]');
@@ -90,6 +99,7 @@ select jsonb_path_query('[]', '$[last ? (exists(last))]');
 select jsonb_path_query('[]', 'strict $[last]');
 select jsonb_path_query('[]', 'strict $[last]', silent => true);
 select jsonb_path_query('[1]', '$[last]');
+select jsonb_path_query('{}', '$[last]');
 select jsonb_path_query('[1,2,3]', '$[last]');
 select jsonb_path_query('[1,2,3]', '$[last - 1]');
 select jsonb_path_query('[1,2,3]', '$[last ? (@.type() == "number")]');
@@ -623,3 +633,17 @@ select jsonb_path_query('[1, 2, 3]', 'pg {a: 2 + 3, "b": ($[*], 4, 5)}');
 select jsonb_path_query('[1, 2, 3]', 'pg {a: 2 + 3, "b": {x: $, y: $[1] > 2, z: "foo"}}');
 select jsonb_path_query('[1, 2, 3]', 'pg {a: 2 + 3, "b": $[*] ? (@ > 3), c: "foo"}');
 select jsonb_path_query('[1, 2, 3]', 'pg strict {a: 2 + 3, "b": $[*] ? (@ > 3), c: "foo"}');
+
+-- extension: object subscripting
+select jsonb '{"a": 1}' @? 'pg $["a"]';
+select jsonb '{"a": 1}' @? 'pg $["b"]';
+select jsonb '{"a": 1}' @? 'pg strict $["b"]';
+select jsonb '{"a": 1}' @? 'pg $["b", "a"]';
+
+select jsonb_path_query('{"a": 1}', 'pg $["a"]');
+select jsonb_path_query('{"a": 1}', 'pg strict $["b"]');
+select jsonb_path_query('{"a": 1}', 'pg lax $["b"]');
+select jsonb_path_query('{"a": 1, "b": 2}', 'pg lax $["b", "c", "b", "a", 0 to 3]');
+
+select jsonb_path_query('null', 'pg {"a": 1}["a"]');
+select jsonb_path_query('null', 'pg {"a": 1}["b"]');
