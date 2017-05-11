@@ -17561,6 +17561,13 @@ strict $.**.HR
         <entry><literal>pg {a: 1, "b c": $.x}</literal></entry>
         <entry><literal>{"a": 1, "b c": "y"}</literal></entry>
        </row>
+       <row>
+        <entry>Object subscription</entry>
+        <entry>Extract a field of JSON object using the specified expression as a key</entry>
+        <entry><literal>{"a": 1, "b": "a"}</literal></entry>
+        <entry><literal>pg $[$.b]</literal></entry>
+        <entry><literal>1</literal></entry>
+       </row>
       </tbody>
      </tgroup>
     </table>
