@@ -380,6 +380,7 @@ typedef enum NodeTag
 	T_CreateEnumStmt,
 	T_CreateRangeStmt,
 	T_AlterEnumStmt,
+	T_DictPipeElem,
 	T_AlterTSDictionaryStmt,
 	T_AlterTSConfigurationStmt,
 	T_CreateFdwStmt,

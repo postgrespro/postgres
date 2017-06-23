@@ -4371,6 +4371,20 @@ _copyReassignOwnedStmt(const ReassignOwnedStmt *from)
 	return newnode;
 }
 
+static DictPipeElem *
+_copyDictPipeElem(const DictPipeElem *from)
+{
+	DictPipeElem *newnode = makeNode(DictPipeElem);
+	COPY_NODE_FIELD(dictname);
+	COPY_NODE_FIELD(left);
+	COPY_NODE_FIELD(right);
+	COPY_SCALAR_FIELD(kind);
+	COPY_SCALAR_FIELD(oper);
+	COPY_SCALAR_FIELD(options);
+
+	return newnode;
+}
+
 static AlterTSDictionaryStmt *
 _copyAlterTSDictionaryStmt(const AlterTSDictionaryStmt *from)
 {
@@ -5372,6 +5386,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_ReassignOwnedStmt:
 			retval = _copyReassignOwnedStmt(from);
+			break;
+		case T_DictPipeElem:
+			retval = _copyDictPipeElem(from);
 			break;
 		case T_AlterTSDictionaryStmt:
 			retval = _copyAlterTSDictionaryStmt(from);

@@ -52,6 +52,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_trigger.h"
+#include "catalog/pg_ts_config_map.h"
 #include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "nodes/makefuncs.h"
@@ -241,6 +242,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	PartitionSpec		*partspec;
 	PartitionBoundSpec	*partboundspec;
 	RoleSpec			*rolespec;
+	DictPipeElem		*dpipe;
 }
 
 %type <node>	stmt schema_stmt
@@ -580,6 +582,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <partboundspec> PartitionBoundSpec
 %type <node>		partbound_datum PartitionRangeDatum
 %type <list>		partbound_datum_list range_datum_list
+
+%type <dpipe>		dictionary_pipe dictionary_pipe_paren
+					dictionary_pipe_elem
+%type <ival>		dictionary_pipe_operator
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -10005,24 +10011,26 @@ AlterTSDictionaryStmt:
 		;
 
 AlterTSConfigurationStmt:
-			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with any_name_list
+			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with dictionary_pipe
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ADD_MAPPING;
 					n->cfgname = $5;
 					n->tokentype = $9;
-					n->dicts = $11;
+					n->dict_pipe = $11;
+					n->dicts = NULL;
 					n->override = false;
 					n->replace = false;
 					$$ = (Node*)n;
 				}
-			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with any_name_list
+			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with dictionary_pipe
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ALTER_MAPPING_FOR_TOKEN;
 					n->cfgname = $5;
 					n->tokentype = $9;
-					n->dicts = $11;
+					n->dict_pipe = $11;
+					n->dicts = NULL;
 					n->override = true;
 					n->replace = false;
 					$$ = (Node*)n;
@@ -10072,6 +10080,55 @@ AlterTSConfigurationStmt:
 /* Use this if TIME or ORDINALITY after WITH should be taken as an identifier */
 any_with:	WITH									{}
 			| WITH_LA								{}
+		;
+
+/* TODO: Operators priorities */
+dictionary_pipe_elem:
+			any_name
+				{
+					DictPipeElem *n = makeNode(DictPipeElem);
+					n->kind = DICT_PIPE_OPERAND;
+					n->dictname = list_make1($1);
+					n->options = 0;
+					n->left = n->right = NULL;
+					$$ = n;
+				}
+		;
+
+dictionary_pipe:
+			dictionary_pipe_elem { $$ = $1; }
+			| dictionary_pipe dictionary_pipe_operator dictionary_pipe_paren
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = $2;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+			| dictionary_pipe dictionary_pipe_operator dictionary_pipe_elem
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = $2;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+			| dictionary_pipe_paren { $$ = $1; }
+		;
+
+dictionary_pipe_paren:
+			'(' dictionary_pipe ')' { $$ = $2; }
+		;
+
+dictionary_pipe_operator:
+			AND			{ $$ = DICTPIPE_OP_AND; }
+			| OR		{ $$ = DICTPIPE_OP_OR; }
+			| THEN		{ $$ = DICTPIPE_OP_THEN; }
+			| ','		{ $$ = DICTPIPE_OP_OR; }
 		;
 
 
