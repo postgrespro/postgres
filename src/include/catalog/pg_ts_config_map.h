@@ -57,7 +57,7 @@ typedef union TSConfigurationOperatorDescriptor
 				oper:2,				/* dictionary pipe operator id */
 				_notused:3;			/* not used bits, padding to 32bit structure size, should be 0 */
 	};
-	uint32	raw;					/* raw data, can be used to cast-less assign to/from mapoperator */
+	int32	raw;					/* raw data, can be used to cast-less assign to/from mapoperator */
 } TSConfigurationOperatorDescriptor;
 
 /* ----------------

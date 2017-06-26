@@ -1341,7 +1341,7 @@ DictPipeTreeNodeGetPosition(DictPipeElem *head, DictPipeElem *chk_node)
 }
 
 static void
-DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int *operators,
+DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operators,
 						int *operatorsPos, Oid *dictIds, int *dictIdsPos)
 {
 	/* Guard against stack overflow due to recursive event trigger */
@@ -1383,7 +1383,7 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int *operators
  * The size of both arrays are stored in ndict and noperators
  */
 static void
-DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int **operators,
+DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int32 **operators,
 				int *noperators, Oid **dictIds, int *ndict)
 {
 	DictPipeElem   *head = stmt->dict_pipe;
@@ -1419,7 +1419,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 	int		   *tokens,
 				ntoken;
 	Oid		   *dictIds;
-	int		   *operators;
+	int32	   *operators;
 	int			noperators = 0;
 	int			ndict = 0;
 	ListCell   *c;
