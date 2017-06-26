@@ -56,8 +56,9 @@
  * by making the workspace dynamically enlargeable, but it seems unlikely
  * to be worth the trouble.
  */
-#define MAXTOKENTYPE	256
-#define MAXDICTSPERTT	100
+#define MAXTOKENTYPE		256
+#define MAXDICTSPERTT		100
+#define MAXOPERATORSPERTT	MAXDICTSPERTT
 
 
 static HTAB *TSParserCacheHash = NULL;
@@ -407,18 +408,20 @@ lookup_ts_config_cache(Oid cfgId)
 		 * If we didn't find one, we want to make one. But first look up the
 		 * object to be sure the OID is real.
 		 */
-		HeapTuple	tp;
-		Form_pg_ts_config cfg;
-		Relation	maprel;
-		Relation	mapidx;
-		ScanKeyData mapskey;
-		SysScanDesc mapscan;
-		HeapTuple	maptup;
-		ListDictionary maplists[MAXTOKENTYPE + 1];
-		Oid			mapdicts[MAXDICTSPERTT];
-		int			maxtokentype;
-		int			ndicts;
-		int			i;
+		HeapTuple							tp;
+		Form_pg_ts_config					cfg;
+		Relation							maprel;
+		Relation							mapidx;
+		ScanKeyData							mapskey;
+		SysScanDesc							mapscan;
+		HeapTuple							maptup;
+		ListDictionary						maplists[MAXTOKENTYPE + 1];
+		ListDictionaryOperators				operatorslist[MAXTOKENTYPE + 1];
+		Oid									mapdicts[MAXDICTSPERTT];
+		TSConfigurationOperatorDescriptor	mapoperators[MAXOPERATORSPERTT];
+		int									maxtokentype;
+		int									ndicts;
+		int									i;
 
 		tp = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgId));
 		if (!HeapTupleIsValid(tp))
@@ -452,6 +455,13 @@ lookup_ts_config_cache(Oid cfgId)
 					if (entry->map[i].dictIds)
 						pfree(entry->map[i].dictIds);
 				pfree(entry->map);
+			}
+			if (entry->operators)
+			{
+				for (i = 0; i < entry->lenmap; i++)
+					if (entry->operators[i].operators)
+						pfree(entry->operators[i].operators);
+				pfree(entry->operators);
 			}
 		}
 
@@ -497,11 +507,17 @@ lookup_ts_config_cache(Oid cfgId)
 				if (ndicts > 0)
 				{
 					maplists[maxtokentype].len = ndicts;
+					operatorslist[maxtokentype].len = ndicts;
 					maplists[maxtokentype].dictIds = (Oid *)
 						MemoryContextAlloc(CacheMemoryContext,
 										   sizeof(Oid) * ndicts);
+					operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
+						MemoryContextAlloc(CacheMemoryContext,
+										   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 					memcpy(maplists[maxtokentype].dictIds, mapdicts,
 						   sizeof(Oid) * ndicts);
+					memcpy(operatorslist[maxtokentype].operators, mapoperators,
+						   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 				}
 				maxtokentype = toktype;
 				mapdicts[0] = cfgmap->mapdict;
@@ -512,7 +528,9 @@ lookup_ts_config_cache(Oid cfgId)
 				/* continuing data for current token type */
 				if (ndicts >= MAXDICTSPERTT)
 					elog(ERROR, "too many pg_ts_config_map entries for one token type");
-				mapdicts[ndicts++] = cfgmap->mapdict;
+				mapdicts[ndicts] = cfgmap->mapdict;
+				mapoperators[ndicts].raw = cfgmap->mapoperator;
+				ndicts++;
 			}
 		}
 
@@ -524,18 +542,29 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the last token type's dictionaries */
 			maplists[maxtokentype].len = ndicts;
+			operatorslist[maxtokentype].len = ndicts;
 			maplists[maxtokentype].dictIds = (Oid *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(Oid) * ndicts);
+			operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
+				MemoryContextAlloc(CacheMemoryContext,
+								   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			memcpy(maplists[maxtokentype].dictIds, mapdicts,
 				   sizeof(Oid) * ndicts);
+			memcpy(operatorslist[maxtokentype].operators, mapoperators,
+				   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			/* and save the overall map */
 			entry->lenmap = maxtokentype + 1;
 			entry->map = (ListDictionary *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(ListDictionary) * entry->lenmap);
+			entry->operators = (ListDictionaryOperators *)
+				MemoryContextAlloc(CacheMemoryContext,
+								   sizeof(ListDictionaryOperators) * entry->lenmap);
 			memcpy(entry->map, maplists,
 				   sizeof(ListDictionary) * entry->lenmap);
+			memcpy(entry->operators, operatorslist,
+				   sizeof(ListDictionaryOperators) * entry->lenmap);
 		}
 
 		entry->isvalid = true;

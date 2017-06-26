@@ -70,6 +70,12 @@ typedef struct
 
 typedef struct
 {
+	int										len;
+	TSConfigurationOperatorDescriptor	   *operators;
+} ListDictionaryOperators;
+
+typedef struct
+{
 	/* cfgId is the hash lookup key and MUST BE FIRST */
 	Oid			cfgId;
 	bool		isvalid;
@@ -78,6 +84,7 @@ typedef struct
 
 	int			lenmap;
 	ListDictionary *map;
+	ListDictionaryOperators *operators;
 } TSConfigCacheEntry;
 
 
