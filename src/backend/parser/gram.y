@@ -583,9 +583,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <node>		partbound_datum PartitionRangeDatum
 %type <list>		partbound_datum_list range_datum_list
 
-%type <dpipe>		dictionary_pipe dictionary_pipe_paren
-					dictionary_pipe_elem
-%type <ival>		dictionary_pipe_operator
+%type <dpipe>		dictionary_pipe_elem dictionary_pipe_expr
+					dictionary_pipe_expr_and dictionary_pipe_expr_or
+					dictionary_pipe_expr_paren dictionary_pipe_expr_then
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -10011,7 +10011,7 @@ AlterTSDictionaryStmt:
 		;
 
 AlterTSConfigurationStmt:
-			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with dictionary_pipe
+			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with dictionary_pipe_expr
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ADD_MAPPING;
@@ -10023,7 +10023,7 @@ AlterTSConfigurationStmt:
 					n->replace = false;
 					$$ = (Node*)n;
 				}
-			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with dictionary_pipe
+			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with dictionary_pipe_expr
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ALTER_MAPPING_FOR_TOKEN;
@@ -10082,7 +10082,6 @@ any_with:	WITH									{}
 			| WITH_LA								{}
 		;
 
-/* TODO: Operators priorities */
 dictionary_pipe_elem:
 			any_name
 				{
@@ -10095,42 +10094,56 @@ dictionary_pipe_elem:
 				}
 		;
 
-dictionary_pipe:
-			dictionary_pipe_elem { $$ = $1; }
-			| dictionary_pipe dictionary_pipe_operator dictionary_pipe_paren
+dictionary_pipe_expr:
+			dictionary_pipe_expr_then { $$ = $1; }
+		;
+
+dictionary_pipe_expr_then:
+			dictionary_pipe_expr_or THEN dictionary_pipe_expr_then
 			{
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = $2;
+				n->oper = DICTPIPE_OP_THEN;
 				n->options = 0;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe dictionary_pipe_operator dictionary_pipe_elem
+			| dictionary_pipe_expr_or { $$ = $1; }
+		;
+
+dictionary_pipe_expr_or:
+			dictionary_pipe_expr_and OR dictionary_pipe_expr_or
 			{
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = $2;
+				n->oper = DICTPIPE_OP_OR;
 				n->options = 0;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_paren { $$ = $1; }
+			| dictionary_pipe_expr_and { $$ = $1; }
 		;
 
-dictionary_pipe_paren:
-			'(' dictionary_pipe ')' { $$ = $2; }
+dictionary_pipe_expr_and:
+			dictionary_pipe_expr_paren AND dictionary_pipe_expr_and
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = DICTPIPE_OP_AND;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+			| dictionary_pipe_expr_paren { $$ = $1; }
 		;
 
-dictionary_pipe_operator:
-			AND			{ $$ = DICTPIPE_OP_AND; }
-			| OR		{ $$ = DICTPIPE_OP_OR; }
-			| THEN		{ $$ = DICTPIPE_OP_THEN; }
-			| ','		{ $$ = DICTPIPE_OP_OR; }
+dictionary_pipe_expr_paren:
+			'(' dictionary_pipe_expr ')' { $$ = $2; }
+			| dictionary_pipe_elem { $$ = $1; }
 		;
-
 
 /*****************************************************************************
  *

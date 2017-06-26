@@ -49,15 +49,15 @@ typedef union TSConfigurationOperatorDescriptor
 {
 	struct
 	{
-		uint32	presented:1,	/* if 0, the descriptor is not presented */
-		l_is_operator:1,		/* if 1, left operand is result of another operator */
-		l_pos:12,				/* seqno of left operand (or operator) */
-		r_is_operator:1,		/* if 1, right operand is result of another operator */
-		r_pos:12,				/* seqno of right operand (or operator) */
-		oper:2,					/* dictionary pipe operator id */
-		_notused:3;				/* not used bits, padding for 32bit size, should be 0 */
+		uint32	presented:1,		/* if 1, the descriptor is presented, overwise rest values should be 0 */
+				l_is_operator:1,	/* if 1, left operand is result of another operator */
+				l_pos:12,			/* seqno of left operand (or operator) */
+				r_is_operator:1,	/* if 1, right operand is result of another operator */
+				r_pos:12,			/* seqno of right operand (or operator) */
+				oper:2,				/* dictionary pipe operator id */
+				_notused:3;			/* not used bits, padding to 32bit structure size, should be 0 */
 	};
-	uint32	raw;				/* raw data, can be used to cast-less assign to/from mapoperator */
+	uint32	raw;					/* raw data, can be used to cast-less assign to/from mapoperator */
 } TSConfigurationOperatorDescriptor;
 
 /* ----------------

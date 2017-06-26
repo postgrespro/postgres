@@ -1273,7 +1273,7 @@ getTokenTypes(Oid prsId, List *tokennames)
 }
 
 static void
-calculateDictPipeTreeSize_recurse(DictPipeElem *node, int *noperators, int *ndict)
+DictPipeTreeCalculateSize_recurse(DictPipeElem *node, int *noperators, int *ndict)
 {
 	/* Guard against stack overflow due to recursive event trigger */
 	check_stack_depth();
@@ -1287,13 +1287,13 @@ calculateDictPipeTreeSize_recurse(DictPipeElem *node, int *noperators, int *ndic
 	{
 		Assert(node->kind == DICT_PIPE_OPERATOR);
 		(*noperators)++;
-		calculateDictPipeTreeSize_recurse(node->left, noperators, ndict);
-		calculateDictPipeTreeSize_recurse(node->right, noperators, ndict);
+		DictPipeTreeCalculateSize_recurse(node->left, noperators, ndict);
+		DictPipeTreeCalculateSize_recurse(node->right, noperators, ndict);
 	}
 }
 
 static int
-getPositionDictPipeTreeNode_recurse(DictPipeElem *node, DictPipeElem *chk_node,
+DictPipeTreeNodeGetPosition_recurse(DictPipeElem *node, DictPipeElem *chk_node,
 									int *operandId, int *operatorId)
 {
 	/* Guard against stack overflow due to recursive event trigger */
@@ -1315,20 +1315,25 @@ getPositionDictPipeTreeNode_recurse(DictPipeElem *node, DictPipeElem *chk_node,
 			int left_res;
 			int right_res;
 			(*operatorId)++;
-			left_res = getPositionDictPipeTreeNode_recurse(node->left, chk_node, operandId, operatorId);
-			right_res = getPositionDictPipeTreeNode_recurse(node->right, chk_node, operandId, operatorId);
+			left_res = DictPipeTreeNodeGetPosition_recurse(node->left, chk_node, operandId, operatorId);
+			right_res = DictPipeTreeNodeGetPosition_recurse(node->right, chk_node, operandId, operatorId);
 
 			return left_res != -1 ? left_res : right_res;
 		}
 	}
 }
 
+/*
+ * Search for the chk_node in Dictionary pipe tree which starts at head
+ * Return index in plain pre-order tree representation which is used in
+ * pg_ts_config_map table
+ */
 static int
-getPositionDictPipeTreeNode(DictPipeElem *head, DictPipeElem *chk_node)
+DictPipeTreeNodeGetPosition(DictPipeElem *head, DictPipeElem *chk_node)
 {
 	int operandId = 0;
 	int operatorId = 0;
-	int result = getPositionDictPipeTreeNode_recurse(head, chk_node, &operandId, &operatorId);
+	int result = DictPipeTreeNodeGetPosition_recurse(head, chk_node, &operandId, &operatorId);
 
 	Assert(result != -1);
 
@@ -1336,7 +1341,7 @@ getPositionDictPipeTreeNode(DictPipeElem *head, DictPipeElem *chk_node)
 }
 
 static void
-parseDictPipeTree_recurse(DictPipeElem *head, DictPipeElem *node, int *operators,
+DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int *operators,
 						int *operatorsPos, Oid *dictIds, int *dictIdsPos)
 {
 	/* Guard against stack overflow due to recursive event trigger */
@@ -1361,26 +1366,31 @@ parseDictPipeTree_recurse(DictPipeElem *head, DictPipeElem *node, int *operators
 		descriptor.r_is_operator = node->right->kind == DICT_PIPE_OPERAND ? 0 : 1;
 		descriptor.oper = node->oper;
 		descriptor._notused = 0;
-		descriptor.l_pos = getPositionDictPipeTreeNode(head, node->left);
-		descriptor.r_pos = getPositionDictPipeTreeNode(head, node->right);
+		descriptor.l_pos = DictPipeTreeNodeGetPosition(head, node->left);
+		descriptor.r_pos = DictPipeTreeNodeGetPosition(head, node->right);
 
 		operators[*operatorsPos] = descriptor.raw;
 		(*operatorsPos)++;
 
-		parseDictPipeTree_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos);
-		parseDictPipeTree_recurse(head, node->right, operators, operatorsPos, dictIds, dictIdsPos);
+		DictPipeTreeParse_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos);
+		DictPipeTreeParse_recurse(head, node->right, operators, operatorsPos, dictIds, dictIdsPos);
 	}
 }
 
+/*
+ * Prase Dictionary pipe tree and convert it into plain pre-order
+ * representation in two arrays (dictionary list and operators list).
+ * The size of both arrays are stored in ndict and noperators
+ */
 static void
-parseDictPipeTree(AlterTSConfigurationStmt *stmt, int **operators,
+DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int **operators,
 				int *noperators, Oid **dictIds, int *ndict)
 {
 	DictPipeElem   *head = stmt->dict_pipe;
 	int				operatorsPos = 0;
 	int				dictIdsPos = 0;
 
-	calculateDictPipeTreeSize_recurse(head, noperators, ndict);
+	DictPipeTreeCalculateSize_recurse(head, noperators, ndict);
 
 	// Since all operators are binary, the number of dictionaries should be
 	// greater than number of operators.
@@ -1389,7 +1399,7 @@ parseDictPipeTree(AlterTSConfigurationStmt *stmt, int **operators,
 	(*operators) = (int *) palloc0(sizeof(int) * (*ndict));
 	(*dictIds) = (Oid *) palloc(sizeof(Oid) * (*ndict));
 
-	parseDictPipeTree_recurse(head, head, *operators, &operatorsPos, *dictIds, &dictIdsPos);
+	DictPipeTreeParse_recurse(head, head, *operators, &operatorsPos, *dictIds, &dictIdsPos);
 }
 
 /*
@@ -1466,7 +1476,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 
 	if (stmt->dict_pipe)
 	{
-		parseDictPipeTree(stmt, &operators, &noperators, &dictIds, &ndict);
+		DictPipeTreeParse(stmt, &operators, &noperators, &dictIds, &ndict);
 	}
 
 	if (stmt->replace)
