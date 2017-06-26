@@ -14,6 +14,7 @@
 #define TS_CACHE_H
 
 #include "utils/guc.h"
+#include "catalog/pg_ts_config_map.h"
 
 
 /*
