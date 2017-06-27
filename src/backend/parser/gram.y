@@ -10123,6 +10123,16 @@ dictionary_pipe_expr_or:
 				n->right = $3;
 				$$ = n;
 			}
+			| dictionary_pipe_expr_and ',' dictionary_pipe_expr_or
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = DICTPIPE_OP_OR;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
 			| dictionary_pipe_expr_and { $$ = $1; }
 		;
 
