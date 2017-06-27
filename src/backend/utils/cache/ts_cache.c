@@ -479,6 +479,7 @@ lookup_ts_config_cache(Oid cfgId)
 		 * each token type, even though we didn't explicitly ask for that.
 		 */
 		MemSet(maplists, 0, sizeof(maplists));
+		MemSet(operatorslist, 0, sizeof(operatorslist));
 		maxtokentype = 0;
 		ndicts = 0;
 
@@ -521,6 +522,7 @@ lookup_ts_config_cache(Oid cfgId)
 				}
 				maxtokentype = toktype;
 				mapdicts[0] = cfgmap->mapdict;
+				mapoperators[0].raw = cfgmap->mapoperator;
 				ndicts = 1;
 			}
 			else
