@@ -586,6 +586,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <dpipe>		dictionary_pipe_elem dictionary_pipe_expr
 					dictionary_pipe_expr_and dictionary_pipe_expr_or
 					dictionary_pipe_expr_paren dictionary_pipe_expr_then
+					dictionary_pipe_expr_comma dictionary_pipe_expr_comma_ext
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -10096,6 +10097,7 @@ dictionary_pipe_elem:
 
 dictionary_pipe_expr:
 			dictionary_pipe_expr_then { $$ = $1; }
+			| dictionary_pipe_expr_comma { $$ = $1; }
 		;
 
 dictionary_pipe_expr_then:
@@ -10123,16 +10125,6 @@ dictionary_pipe_expr_or:
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_and ',' dictionary_pipe_expr_or
-			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_OR;
-				n->options = 0;
-				n->left = $1;
-				n->right = $3;
-				$$ = n;
-			}
 			| dictionary_pipe_expr_and { $$ = $1; }
 		;
 
@@ -10151,7 +10143,39 @@ dictionary_pipe_expr_and:
 		;
 
 dictionary_pipe_expr_paren:
-			'(' dictionary_pipe_expr ')' { $$ = $2; }
+			'(' dictionary_pipe_expr_then ')' { $$ = $2; }
+			| dictionary_pipe_elem { $$ = $1; }
+		;
+
+dictionary_pipe_expr_comma:
+			dictionary_pipe_elem ',' dictionary_pipe_expr_comma_ext
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = DICTPIPE_OP_OR;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+		;
+
+/*
+ * Additional nonterminal, which resolves reduce/reduce conflic.
+ * Since both new and old syntax accept signle dictionary with same meaning
+ * one of them should not accept it to resolve the conflic.
+ */
+dictionary_pipe_expr_comma_ext:
+			dictionary_pipe_elem ',' dictionary_pipe_expr_comma_ext
+			{
+				DictPipeElem *n = makeNode(DictPipeElem);
+				n->kind = DICT_PIPE_OPERATOR;
+				n->oper = DICTPIPE_OP_OR;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
 			| dictionary_pipe_elem { $$ = $1; }
 		;
 
