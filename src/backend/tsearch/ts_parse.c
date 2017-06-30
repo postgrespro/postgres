@@ -307,6 +307,9 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 	TSLexeme *res;
 	TSLexeme *ptr;
 
+	if (left == NULL && right == NULL)
+		return NULL;
+
 	leftSize = TSLexemeGetSize(left);
 	rightSize = TSLexemeGetSize(right);
 	res = palloc0(sizeof(TSLexeme) * (leftSize + rightSize + 1));
@@ -322,6 +325,10 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 	if (rightSize > 0)
 		memcpy(res + leftSize, right, sizeof(TSLexeme) * (rightSize + 1));
 
+	/*
+	 * Increase nvariant of right-side by the maxixmum nvariant of the
+	 * left-side to avoid collisions
+	 */
 	if (leftSize > 0)
 		for (ptr = res + leftSize; ptr->lexeme; ptr++)
 			ptr->nvariant += nvariant;
@@ -422,12 +429,26 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
 
-	if (!contextList->restartProcessing && (leftRes != NULL || (operator.l_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL)))
+	if (!contextList->restartProcessing &&
+			(leftRes != NULL ||
+			 (operator.l_is_operator == 0 &&
+			  LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL)))
 	{
 		res = leftRes;
 	}
 	else
 	{
+		/*
+		 * The dictionary mark the processing to restart.
+		 * In this case, we should re-execute left operand to process curVal
+		 * without saved context.
+		 * There are three sources of lexem:
+		 *   1) first-left side execution
+		 *   2) second-left side execution
+		 *   3) right-side execution
+		 * ride-side results used only if second left-side is NULL and there
+		 * is not new context for the left side.
+		 */
 		if (contextList->restartProcessing)
 		{
 			rightRes = leftRes;
@@ -444,6 +465,8 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 				leftRes = res;
 				rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 					: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+				if (leftRes && rightRes)
+					rightRes->flags |= TSL_ADDPOS;
 				res = TSLexemeCombine(leftRes, rightRes);
 				if (leftRes)
 					pfree(leftRes);
@@ -470,46 +493,14 @@ LexizeExecOperatorAnd(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	TSLexeme				   *leftRes;
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
-	int							nvariant;
-	int							i;
-	int							leftSize;
-	int							rightSize;
 
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
 
 	rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-	leftSize = TSLexemeGetSize(leftRes);
-	rightSize = TSLexemeGetSize(rightRes);
-	res = palloc0(sizeof(TSLexeme) * (leftSize + rightSize + 1));
 
-	/*
-	 * Find maximum nvariant in the left-side results
-	 */
-	nvariant = 0;
-	for (i = 0; i < leftSize && leftRes[i].lexeme != NULL; i++)
-		if (leftRes[i].nvariant > nvariant)
-			nvariant = leftRes[i].nvariant;
-
-	if (leftRes != NULL)
-	{
-		memcpy(res, leftRes, sizeof(TSLexeme) * leftSize);
-		pfree(leftRes);
-	}
-
-	/*
-	 * Increase nvariant of right-side by the maxixmum nvariant of the
-	 * left-side to avoid collisions
-	 */
-	for (i = 0; i < rightSize && rightRes[i].lexeme != NULL; i++)
-		rightRes[i].nvariant += nvariant;
-
-	if (rightRes != NULL)
-	{
-		memcpy(res + leftSize, rightRes, sizeof(TSLexeme) * (rightSize + 1));
-		pfree(rightRes);
-	}
+	res = TSLexemeCombine(leftRes, rightRes);
 	return res;
 }
 
@@ -628,12 +619,6 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		if (curVal->type != 0)
 		{
 			bool		dictExists = false;
-
-			if (curVal->type >= ld->cfg->lenmap || map->len == 0) /* skip this type of lexeme */
-			{
-				RemoveHead(ld);
-				return NULL;
-			}
 
 			/*
 			 * We should be sure that current type of lexeme is recognized
