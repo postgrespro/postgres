@@ -51,8 +51,8 @@ RIGHT JOIN pg_ts_config_map AS m
     ON (tt.cfgid=m.mapcfg AND tt.tokid=m.maptokentype)
 WHERE
     tt.cfgid IS NULL OR tt.tokid IS NULL;
- cfgid | tokid | mapcfg | maptokentype | mapseqno | mapdict 
--------+-------+--------+--------------+----------+---------
+ cfgid | tokid | mapcfg | maptokentype | mapseqno | mapdict | mapoperator 
+-------+-------+--------+--------------+----------+---------+-------------
 (0 rows)
 
 -- test basic text search behavior without indexes, then with
