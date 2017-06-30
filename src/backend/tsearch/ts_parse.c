@@ -223,8 +223,11 @@ ListParsedLexCopy(ListParsedLex *to, ListParsedLex *from)
 		newnode->type = node->type;
 		newnode->lenlemm = node->lenlemm;
 		newnode->lemm = palloc0(sizeof(char) * node->lenlemm);
+		newnode->next = NULL;
+
 		memcpy(newnode->lemm, node->lemm, sizeof(char) * node->lenlemm);
-		newnode->next = prevNewNode;
+		if (prevNewNode)
+			prevNewNode->next = newnode;
 
 		if (to->head == NULL)
 			to->head = newnode;
@@ -256,6 +259,7 @@ LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeDa
 	ld->tmpRes = NULL;
 	ld->lastRes = NULL;
 
+#if 0
 	if (correspondLexem)
 	{
 		contextList->context[contextList->len - 1].correspondLexem = palloc(sizeof(ParsedLex *));
@@ -265,6 +269,9 @@ LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeDa
 	{
 		contextList->context[contextList->len - 1].correspondLexem = NULL;
 	}
+#else
+	contextList->context[contextList->len - 1].correspondLexem = correspondLexem;
+#endif
 }
 
 static void
@@ -609,6 +616,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 
 			ld->curDictId = DatumGetObjectId(dictId);
 			RemoveHead(ld);
+			setCorrLex(ld, correspondLexem);
 			if (res)
 				setNewTmpRes(ld, curVal, res);
 			return NULL;
@@ -729,7 +737,10 @@ LexizeExec(LexizeContextList *contextList)
 	ld = contextList->context[0].ld; // Get default LexizeData
 	correspondLexem = contextList->context[0].correspondLexem;
 	if (ld->towork.head == NULL)
+	{
+		setCorrLex(ld, correspondLexem);
 		return NULL;
+	}
 
 	curVal = ld->towork.head;
 	while (curVal)
@@ -802,6 +813,7 @@ LexizeExec(LexizeContextList *contextList)
 		setCorrLex(ld, correspondLexem);
 		curVal = ld->towork.head;
 	}
+
 	return res;
 }
 
@@ -880,6 +892,7 @@ LexizeExecOld(LexizeData *ld, ParsedLex **correspondLexem)
 			}
 
 			RemoveHead(ld);
+			setCorrLex(ld, correspondLexem);
 		}
 	}
 	else
@@ -1189,10 +1202,17 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 	ParsedLex  *lexs;
 	TSConfigCacheEntry *cfg;
 	TSParserCacheEntry *prsobj;
+	LexizeContextList *contextList = palloc0(sizeof(LexizeContextList));
 	void	   *prsdata;
 
 	cfg = lookup_ts_config_cache(cfgId);
 	prsobj = lookup_ts_parser_cache(cfg->prsId);
+	contextList->restartProcessing = false;
+	contextList->len = 1;
+	contextList->context = palloc(sizeof(LexizeContext));
+	contextList->context[0].correspondLexem = &lexs;
+	contextList->context[0].dictId = InvalidOid;
+	contextList->context[0].ld = &ldata;
 
 	prsdata = (void *) DatumGetPointer(FunctionCall2(&(prsobj->prsstart),
 													 PointerGetDatum(buf),
@@ -1229,7 +1249,7 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 
 		do
 		{
-			if ((norms = LexizeExecOld(&ldata, &lexs)) != NULL)
+			if ((norms = LexizeExec(contextList)) != NULL)
 			{
 				prs->vectorpos++;
 				addHLParsedLex(prs, query, lexs, norms);
