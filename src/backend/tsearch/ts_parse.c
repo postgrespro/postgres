@@ -451,6 +451,7 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		 */
 		if (contextList->restartProcessing)
 		{
+			contextList->restartProcessing = false;
 			rightRes = leftRes;
 			leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 				: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
@@ -465,6 +466,18 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 				leftRes = res;
 				rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 					: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+				if (contextList->restartProcessing)
+				{
+					res = TSLexemeCombine(leftRes, rightRes);
+					if (leftRes)
+						pfree(leftRes);
+					if (rightRes)
+						pfree(rightRes);
+					leftRes = res;
+					rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
+						: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+				}
+
 				if (leftRes && rightRes)
 					rightRes->flags |= TSL_ADDPOS;
 				res = TSLexemeCombine(leftRes, rightRes);
@@ -473,12 +486,24 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 				if (rightRes)
 					pfree(rightRes);
 			}
-			contextList->restartProcessing = false;
 		}
 		else
 		{
 			res = rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+			if (contextList->restartProcessing)
+			{
+				leftRes = res;
+				rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
+					: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+				if (rightRes)
+					rightRes->flags |= TSL_ADDPOS;
+				res = TSLexemeCombine(leftRes, rightRes);
+				if (leftRes)
+					pfree(leftRes);
+				if (rightRes)
+					pfree(rightRes);
+			}
 		}
 	}
 	return res;
@@ -633,7 +658,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			{
 				/*
 				 * Dictionary can't work with current type of lexeme,
-				 * return to basic mode and redo all stored lexemes
+				 * return to basic mode
 				 */
 				LexizeContextListRemoveContext(contextList, ld->curDictId);
 				contextList->restartProcessing = true;
@@ -699,6 +724,7 @@ LexizeExec(LexizeContextList *contextList)
 	ParsedLex				   *curVal;
 	LexizeData				   *ld;
 	ParsedLex				  **correspondLexem;
+	int							i;
 
 	ld = contextList->context[0].ld; // Get default LexizeData
 	correspondLexem = contextList->context[0].correspondLexem;
@@ -721,12 +747,19 @@ LexizeExec(LexizeContextList *contextList)
 
 		if (curVal->type == 0) // End of the input, finish processing of multi-input dictionaries
 		{
-			int i;
+			TSLexeme *tmpRes;
+
 			for (i = 1; i < contextList->len; i++)
 			{
-				res = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-				if (res != NULL)
-					return res;
+				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
+				if (tmpRes != NULL)
+				{
+					TSLexeme *combinedRes = TSLexemeCombine(res, tmpRes);
+					if (res)
+						pfree(res);
+					pfree(tmpRes);
+					res = combinedRes;
+				}
 				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
 			}
 			return res;
@@ -741,6 +774,30 @@ LexizeExec(LexizeContextList *contextList)
 			Assert(operators->len != 0);
 			res = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], contextList);
 		}
+
+		for (i = 1; i < contextList->len; i++)
+		{
+			if (contextList->context[i].ld->towork.head != NULL)
+			{
+				TSLexeme *tmpRes;
+				TSLexeme *combinedRes;
+
+				contextList->context[i].ld->towork.head->type = 0;
+				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
+
+				if (tmpRes)
+					res->flags |= TSL_ADDPOS;
+
+				combinedRes = TSLexemeCombine(tmpRes, res);
+				if (res)
+					pfree(res);
+				if (tmpRes)
+					pfree(tmpRes);
+				res = combinedRes;
+				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
+			}
+		}
+
 		RemoveHead(ld);
 		setCorrLex(ld, correspondLexem);
 		curVal = ld->towork.head;
