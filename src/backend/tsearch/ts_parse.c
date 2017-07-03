@@ -730,10 +730,49 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 	{
 		for (i = curLexIndex + 1; i < lexemeSize; i++)
 		{
-			if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant && strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
+			if (!shouldCopy[i])
+				continue;
+
+			if (strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
 			{
-				shouldCopy[i] = false;
-				shouldCopyCount--;
+				if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant)
+				{
+					shouldCopy[i] = false;
+					shouldCopyCount--;
+					continue;
+				}
+				else
+				{
+					int		nvariantCountL = 1;
+					int		nvariantCountR = 1;
+					int		nvariantOverlap = 1;
+					int		j;
+
+					for (j = curLexIndex + 1; j < lexemeSize; j++)
+						if (lexeme[curLexIndex].nvariant == lexeme[j].nvariant)
+							nvariantCountL++;
+					for (j = i + 1; j < lexemeSize; j++)
+						if (lexeme[i].nvariant == lexeme[j].nvariant)
+							nvariantCountR++;
+
+					if (nvariantCountL != nvariantCountR)
+						continue;
+
+					for (j = 1; j < nvariantCountR; j++)
+					{
+						if (strcmp(lexeme[curLexIndex + j].lexeme, lexeme[i + j].lexeme) == 0
+								&& lexeme[curLexIndex + j].nvariant == lexeme[i + j].nvariant)
+							nvariantOverlap++;
+					}
+
+					if (nvariantOverlap != nvariantCountR)
+						continue;
+
+					for (j = 0; j < nvariantCountR; j++)
+					{
+						shouldCopy[i + j] = false;
+					}
+				}
 			}
 		}
 	}
