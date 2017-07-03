@@ -259,19 +259,7 @@ LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeDa
 	ld->tmpRes = NULL;
 	ld->lastRes = NULL;
 
-#if 0
-	if (correspondLexem)
-	{
-		contextList->context[contextList->len - 1].correspondLexem = palloc(sizeof(ParsedLex *));
-		memcpy(contextList->context[contextList->len - 1].correspondLexem, correspondLexem, sizeof(ParsedLex *));
-	}
-	else
-	{
-		contextList->context[contextList->len - 1].correspondLexem = NULL;
-	}
-#else
 	contextList->context[contextList->len - 1].correspondLexem = correspondLexem;
-#endif
 }
 
 static void
@@ -325,7 +313,7 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 	if (leftSize > 0)
 		for (ptr = left; ptr->lexeme; ptr++)
 			if (ptr->nvariant > nvariant)
-				nvariant = ptr->nvariant;
+				nvariant = ptr->nvariant + 1;
 
 	if (leftSize > 0)
 		memcpy(res, left, sizeof(TSLexeme) * leftSize);
@@ -338,7 +326,7 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 	 */
 	if (leftSize > 0)
 		for (ptr = res + leftSize; ptr->lexeme; ptr++)
-			ptr->nvariant += nvariant;
+			ptr->nvariant += nvariant + 1;
 
 	return res;
 }
@@ -397,7 +385,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 			rightRes = thenRightRes[i];
 			while (rightRes->lexeme != NULL)
 			{
-				rightRes->nvariant += nvariant;
+				rightRes->nvariant += nvariant + 1;
 				rightRes++;
 			}
 
