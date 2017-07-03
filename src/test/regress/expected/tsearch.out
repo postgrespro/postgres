@@ -565,6 +565,34 @@ SELECT length(to_tsvector('english', '345 qwe@efd.r '' http://www.com/ http://ae
      56
 (1 row)
 
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH english_stem AND simple;
+SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+                                     to_tsvector                                      
+--------------------------------------------------------------------------------------
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'supernova':5 'the':1
+(1 row)
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus OR english_stem;
+SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+              to_tsvector              
+---------------------------------------
+ '1987a':6 'mysteri':2 'ring':3 'sn':5
+(1 row)
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
+SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+                     to_tsvector                     
+-----------------------------------------------------
+ '1987a':7 'mysteri':2 'ring':3 'sn':6 'supernova':5
+(1 row)
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
+SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+   to_tsvector    
+------------------
+ '1987a':7 'sn':6
+(1 row)
+
 -- ts_debug
 SELECT * from ts_debug('english', '<myns:foo-bar_baz.blurfl>abc&nm1;def&#xa9;ghi&#245;jkl</myns:foo-bar_baz.blurfl>');
    alias   |   description   |           token            |  dictionaries  |  dictionary  | lexemes 
