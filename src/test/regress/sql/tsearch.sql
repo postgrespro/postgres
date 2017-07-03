@@ -136,17 +136,30 @@ SELECT length(to_tsvector('english', '345 qwe@efd.r '' http://www.com/ http://ae
 /usr/local/fff /awdf/dwqe/4325 rewt/ewr wefjn /wqe-324/ewr gist.h gist.h.c gist.c. readline 4.2 4.2. 4.2, readline-4.2 readline-4.2. 234
 <i <b> wow  < jqw <> qwerty'));
 
-ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH english_stem AND simple;
-SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+CREATE TEXT SEARCH CONFIGURATION english_multi2(
+					COPY=english_multi
+);
 
-ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus OR english_stem;
-SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH english_stem AND simple;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
-SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus OR english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
-SELECT to_tsvector('english_multi', 'The Mysterious Rings of Supernova 1987A');
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH simple AND (thesaurus OR english_stem);
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND simple;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND (german_stem OR simple);
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
 -- ts_debug
 
