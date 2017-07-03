@@ -616,7 +616,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 
 			ld->curDictId = DatumGetObjectId(dictId);
 			RemoveHead(ld);
-			setCorrLex(ld, correspondLexem);
+//			setCorrLex(ld, correspondLexem);
 			if (res)
 				setNewTmpRes(ld, curVal, res);
 			return NULL;
@@ -639,7 +639,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			{
 				/* skip this type of lexeme */
 				RemoveHead(ld);
-				setCorrLex(ld, correspondLexem);
+//				setCorrLex(ld, correspondLexem);
 			}
 			else
 			{
@@ -722,6 +722,49 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 	return res;
 }
 
+static TSLexeme *
+TSLexemeRemoveDuplications(TSLexeme *lexeme)
+{
+	TSLexeme	   *res;
+	int				curLexIndex;
+	int				i;
+	int				lexemeSize = TSLexemeGetSize(lexeme);
+	int				shouldCopyCount = lexemeSize;
+	bool		   *shouldCopy;
+
+	if (lexeme == NULL)
+		return NULL;
+
+	shouldCopy = palloc(sizeof(bool) * lexemeSize);
+	memset(shouldCopy, true, sizeof(bool) * lexemeSize);
+
+	for (curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
+	{
+		for (i = curLexIndex + 1; i < lexemeSize; i++)
+		{
+			if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant && strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
+			{
+				shouldCopy[i] = false;
+				shouldCopyCount--;
+			}
+		}
+	}
+
+	res = palloc0(sizeof(TSLexeme) * (shouldCopyCount + 1));
+
+	for (i = 0, curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
+	{
+		if (shouldCopy[curLexIndex])
+		{
+			memcpy(res + i, lexeme + curLexIndex, sizeof(TSLexeme));
+			i++;
+		}
+	}
+
+	pfree(shouldCopy);
+	pfree(lexeme);
+	return res;
+}
 
 static TSLexeme *
 LexizeExec(LexizeContextList *contextList)
@@ -773,6 +816,7 @@ LexizeExec(LexizeContextList *contextList)
 				}
 				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
 			}
+			res = TSLexemeRemoveDuplications(res);
 			return res;
 		}
 
@@ -810,10 +854,11 @@ LexizeExec(LexizeContextList *contextList)
 		}
 
 		RemoveHead(ld);
-		setCorrLex(ld, correspondLexem);
 		curVal = ld->towork.head;
 	}
 
+	res = TSLexemeRemoveDuplications(res);
+	setCorrLex(ld, correspondLexem);
 	return res;
 }
 
