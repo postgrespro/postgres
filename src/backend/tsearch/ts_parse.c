@@ -743,15 +743,15 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 				}
 				else
 				{
-					int		nvariantCountL = 1;
-					int		nvariantCountR = 1;
+					int		nvariantCountL = 0;
+					int		nvariantCountR = 0;
 					int		nvariantOverlap = 1;
 					int		j;
 
-					for (j = curLexIndex + 1; j < lexemeSize; j++)
+					for (j = 0; j < lexemeSize; j++)
 						if (lexeme[curLexIndex].nvariant == lexeme[j].nvariant)
 							nvariantCountL++;
-					for (j = i + 1; j < lexemeSize; j++)
+					for (j = 0; j < lexemeSize; j++)
 						if (lexeme[i].nvariant == lexeme[j].nvariant)
 							nvariantCountR++;
 
