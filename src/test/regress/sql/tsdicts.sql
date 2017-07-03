@@ -117,6 +117,35 @@ CREATE TEXT SEARCH DICTIONARY thesaurus (
 
 SELECT ts_lexize('thesaurus', 'one');
 
+-- test dictionary pipeline in configuration
+CREATE TEXT SEARCH CONFIGURATION english_multi(
+						COPY=english
+);
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
+	WITH english_stem AND simple;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
+	WITH ispell;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
+	WITH ispell THEN english_stem;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
 -- Test ispell dictionary in configuration
 CREATE TEXT SEARCH CONFIGURATION ispell_tst (
 						COPY=english
