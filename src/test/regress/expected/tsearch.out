@@ -638,19 +638,19 @@ SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chai
 SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');
     to_tsvector  |      to_tsvector       
 -------------------+------------------------
- 'sporting-ev':2 | 'competit':2 'sport':1
+ 'sporting-ev':1 | 'competit':2 'sport':1
 (1 row)
 
 SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_second_chain', 'ski jumping');
  to_tsvector | to_tsvector 
 -------------+-------------
- 'sport':2   | 'sport':1
+ 'sport':1   | 'sport':1
 (1 row)
 
 SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
    to_tsvector   |      to_tsvector       
 -----------------+------------------------
- 'sporting-ev':2 | 'competit':2 'sport':1
+ 'sporting-ev':1 | 'competit':2 'sport':1
 (1 row)
 
 -- ts_debug
