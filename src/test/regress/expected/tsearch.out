@@ -586,35 +586,35 @@ ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH 
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
                      to_tsvector                     
 -----------------------------------------------------
- '1987a':7 'mysteri':2 'ring':3 'sn':6 'supernova':5
+ '1987a':6 'mysteri':2 'ring':3 'sn':5 'supernova':5
 (1 row)
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
-   to_tsvector    
-------------------
- '1987a':7 'sn':6
+              to_tsvector              
+---------------------------------------
+ '1987a':6 'mysteri':2 'ring':3 'sn':5
 (1 row)
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH simple AND (thesaurus OR english_stem);
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
                                          to_tsvector                                         
 ---------------------------------------------------------------------------------------------
- '1987a':7 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'sn':6 'supernova':5 'the':1
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'sn':5 'supernova':5 'the':1
 (1 row)
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND simple;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
                                          to_tsvector                                         
 ---------------------------------------------------------------------------------------------
- '1987a':7 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'sn':6 'supernova':5 'the':1
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'sn':5 'supernova':5 'the':1
 (1 row)
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND (german_stem OR simple);
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
                                     to_tsvector                                    
 -----------------------------------------------------------------------------------
- '1987a':7 'mysteri':2 'mysterious':2 'of':4 'ring':3 'sn':6 'supernova':5 'the':1
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'sn':5 'supernova':5 'the':1
 (1 row)
 
 -- ts_debug

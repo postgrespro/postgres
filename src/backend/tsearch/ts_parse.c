@@ -62,6 +62,7 @@ typedef struct
 	Oid			dictId;
 	LexizeData *ld;
 	ParsedLex **correspondLexem;
+	bool		skipLexeme;
 } LexizeContext;
 
 typedef struct
@@ -260,6 +261,8 @@ LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeDa
 	ld->lastRes = NULL;
 
 	contextList->context[contextList->len - 1].correspondLexem = correspondLexem;
+
+	contextList->context[contextList->len - 1].skipLexeme = false;
 }
 
 static void
@@ -341,15 +344,26 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 	TSLexeme				  **thenRightRes;
+	ParsedLex				   *oldCurVal;
 	int						   *thenRightSizes;
 	int							nvariant;
 	int							i;
+	int							j;
 	int							resSize;
 	int							leftSize;
 	int							rightSize;
 
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
+
+	if (leftRes == NULL)
+	{
+		if (operator.l_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]))
+			return NULL;
+		else
+			return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
+				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+	}
 
 	resSize = 0;
 	res = palloc0(sizeof(TSLexeme));
@@ -362,10 +376,41 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 * allocate result TSLexeme array in one call without reallocations
 	 * for each right-side result
 	 */
-	for (i = 0; (leftRes + i) != NULL && (leftRes + i)->lexeme; i++)
+	oldCurVal = palloc0(sizeof(ParsedLex));
+	memcpy(oldCurVal, contextList->context[0].ld->towork.head, sizeof(ParsedLex));
+
+	for (i = 0; (leftRes + i) && (leftRes + i)->lexeme; i++)
 	{
-		curVal->lemm = (leftRes + i)->lexeme;
-		curVal->lenlemm = strlen((leftRes + i)->lexeme);
+		curVal->lemm = leftRes[i].lexeme;
+		curVal->lenlemm = strlen(leftRes[i].lexeme);
+		if (leftRes[i].flags & TSL_PREVPOS)
+		{
+			curVal->next = palloc0(sizeof(ParsedLex));
+			memcpy(curVal->next, oldCurVal, sizeof(ParsedLex));
+			curVal->next->next = NULL;
+		}
+		else
+		{
+			curVal->next = NULL;
+		}
+
+		for (j = 0; j < contextList->len; j++)
+			if (contextList->context[j].ld->towork.head)
+			{
+				contextList->context[j].ld->towork.head->lemm = leftRes[i].lexeme;
+				contextList->context[j].ld->towork.head->lenlemm = strlen(leftRes[i].lexeme);
+				if (leftRes[i].flags & TSL_PREVPOS)
+				{
+					contextList->context[j].ld->towork.head->next = palloc0(sizeof(ParsedLex));
+					memcpy(contextList->context[j].ld->towork.head->next, oldCurVal, sizeof(ParsedLex));
+					contextList->context[j].ld->towork.head->next->next = NULL;
+				}
+				else
+				{
+					contextList->context[j].ld->towork.head->next = NULL;
+				}
+			}
+
 		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
 		thenRightSizes[i] = TSLexemeGetSize(thenRightRes[i]);
@@ -408,6 +453,11 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	}
 	pfree(thenRightSizes);
 	pfree(thenRightRes);
+
+	// Restore curVal for other dictionaries
+	memcpy(contextList->context[0].ld->towork.head, oldCurVal, sizeof(ParsedLex));
+	memcpy(curVal, oldCurVal, sizeof(ParsedLex));
+	pfree(oldCurVal);
 	return res;
 }
 
@@ -424,82 +474,16 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
 
-	if (!contextList->restartProcessing &&
-			(leftRes != NULL ||
+	if (leftRes != NULL ||
 			 (operator.l_is_operator == 0 &&
-			  LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL)))
+			  LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL))
 	{
 		res = leftRes;
 	}
 	else
 	{
-		/*
-		 * The dictionary mark the processing to restart.
-		 * In this case, we should re-execute left operand to process curVal
-		 * without saved context.
-		 * There are three sources of lexem:
-		 *   1) first-left side execution
-		 *   2) second-left side execution
-		 *   3) right-side execution
-		 * ride-side results used only if second left-side is NULL and there
-		 * is not new context for the left side.
-		 */
-		if (contextList->restartProcessing)
-		{
-			contextList->restartProcessing = false;
-			rightRes = leftRes;
-			leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
-				: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
-			res = TSLexemeCombine(rightRes, leftRes);
-			if (leftRes)
-				pfree(leftRes);
-			if (rightRes)
-				pfree(rightRes);
-
-			if (leftRes == NULL && !(operator.l_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL))
-			{
-				leftRes = res;
-				rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-					: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-				if (contextList->restartProcessing)
-				{
-					res = TSLexemeCombine(leftRes, rightRes);
-					if (leftRes)
-						pfree(leftRes);
-					if (rightRes)
-						pfree(rightRes);
-					leftRes = res;
-					rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-						: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-				}
-
-				if (leftRes && rightRes)
-					rightRes->flags |= TSL_ADDPOS;
-				res = TSLexemeCombine(leftRes, rightRes);
-				if (leftRes)
-					pfree(leftRes);
-				if (rightRes)
-					pfree(rightRes);
-			}
-		}
-		else
-		{
-			res = rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
+		res = rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-			if (contextList->restartProcessing)
-			{
-				leftRes = res;
-				rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-					: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-				if (rightRes)
-					rightRes->flags |= TSL_ADDPOS;
-				res = TSLexemeCombine(leftRes, rightRes);
-				if (leftRes)
-					pfree(leftRes);
-				if (rightRes)
-					pfree(rightRes);
-			}
-		}
 	}
 	return res;
 }
@@ -604,7 +588,6 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 
 			ld->curDictId = DatumGetObjectId(dictId);
 			RemoveHead(ld);
-//			setCorrLex(ld, correspondLexem);
 			if (res)
 				setNewTmpRes(ld, curVal, res);
 			return NULL;
@@ -615,6 +598,12 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 	{
 		/* Process multi-input dictionary with saved state */
 		ListDictionary	   *map;
+
+		if (context->skipLexeme)
+		{
+			LexizeContextListRemoveContext(contextList, dictId);
+			return NULL;
+		}
 
 		ld = context->ld;
 		correspondLexem = context->correspondLexem;
@@ -627,7 +616,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			{
 				/* skip this type of lexeme */
 				RemoveHead(ld);
-//				setCorrLex(ld, correspondLexem);
+				setCorrLex(ld, correspondLexem);
 			}
 			else
 			{
@@ -636,6 +625,8 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			curVal = ld->towork.head;
 		}
 
+		if (!curVal)
+			return NULL;
 
 		if (curVal->type != 0)
 		{
@@ -691,7 +682,14 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			 */
 			if (!res)
 			{
+				TSLexeme *ptr;
 				res = ld->tmpRes;
+				ptr = res;
+				while (ptr && ptr->lexeme)
+				{
+					ptr->flags |= TSL_PREVPOS;
+					ptr++;
+				}
 				contextList->restartProcessing = true;
 			}
 
@@ -704,7 +702,11 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		 * Dict don't want next lexem and didn't recognize anything, redo
 		 * from ld->towork.head
 		 */
-		LexizeContextListRemoveContext(contextList, ld->curDictId);
+		context->skipLexeme = true;
+		RemoveHead(ld);
+		contextList->context[0].ld->towork = ld->waste;
+		contextList->restartProcessing = true;
+		// LexizeContextListRemoveContext(contextList, ld->curDictId);
 		return res;
 	}
 	return res;
@@ -718,6 +720,7 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 	int				i;
 	int				lexemeSize = TSLexemeGetSize(lexeme);
 	int				shouldCopyCount = lexemeSize;
+	bool			removePrevPosFlag;
 	bool		   *shouldCopy;
 
 	if (lexeme == NULL)
@@ -788,6 +791,14 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 		}
 	}
 
+	removePrevPosFlag = true;
+	for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
+		if ((res[curLexIndex].flags & TSL_PREVPOS) == 0)
+			removePrevPosFlag = false;
+	if (removePrevPosFlag)
+		for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
+			res[curLexIndex].flags &= ~TSL_PREVPOS;
+
 	pfree(shouldCopy);
 	pfree(lexeme);
 	return res;
@@ -815,6 +826,8 @@ LexizeExec(LexizeContextList *contextList)
 	curVal = ld->towork.head;
 	while (curVal)
 	{
+		TSLexeme *newRes;
+		TSLexeme *prevRes;
 		map = ld->cfg->map + curVal->type;
 		operators = ld->cfg->operators + curVal->type;
 
@@ -842,19 +855,40 @@ LexizeExec(LexizeContextList *contextList)
 					res = combinedRes;
 				}
 				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
+				if (contextList->restartProcessing)
+					break;
+			}
+			if (contextList->restartProcessing)
+			{
+				contextList->restartProcessing = false;
+				curVal = ld->towork.head;
+				continue;
 			}
 			res = TSLexemeRemoveDuplications(res);
 			return res;
 		}
 
+		prevRes = res;
 		if (map->len == 1) // There are no operators, just single dictionary
 		{
-			res = LexizeExecDictionary(map->dictIds[0], contextList);
+			newRes = LexizeExecDictionary(map->dictIds[0], contextList);
 		}
 		else // There is a dictionary pipe expression tree, start from top operator
 		{
 			Assert(operators->len != 0);
-			res = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], contextList);
+			newRes = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], contextList);
+		}
+
+		res = TSLexemeCombine(prevRes, newRes);
+		if (prevRes)
+			pfree(prevRes);
+		if (newRes)
+			pfree(newRes);
+
+		if (contextList->restartProcessing)
+		{
+			contextList->restartProcessing = false;
+			continue;
 		}
 
 		for (i = 1; i < contextList->len; i++)
@@ -865,12 +899,12 @@ LexizeExec(LexizeContextList *contextList)
 				TSLexeme *combinedRes;
 
 				contextList->context[i].ld->towork.head->type = 0;
+				contextList->context[i].ld->towork.head->lenlemm = 0;
 				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-
 				if (tmpRes)
-					res->flags |= TSL_ADDPOS;
+					res[0].flags |= TSL_ADDPOS;
 
-				combinedRes = TSLexemeCombine(tmpRes, res);
+				combinedRes = TSLexemeCombine(res, tmpRes);
 				if (res)
 					pfree(res);
 				if (tmpRes)
@@ -1107,6 +1141,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 
 	do
 	{
+
 		type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
 										   PointerGetDatum(prsdata),
 										   PointerGetDatum(&lemm),
@@ -1134,7 +1169,6 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 		{
 			LexizeAddLemm(contextList->context[i].ld, type, lemm, lenlemm);
 		}
-//		LexizeAddLemm(&ldata, type, lemm, lenlemm);
 
 		while ((norms = LexizeExec(contextList)) != NULL)
 		{
@@ -1157,7 +1191,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 				prs->words[prs->curwords].nvariant = ptr->nvariant;
 				prs->words[prs->curwords].flags = ptr->flags & TSL_PREFIX;
 				prs->words[prs->curwords].alen = 0;
-				prs->words[prs->curwords].pos.pos = LIMITPOS(prs->pos);
+				prs->words[prs->curwords].pos.pos = (ptr->flags & TSL_PREVPOS) ? LIMITPOS(prs->pos - 1) : LIMITPOS(prs->pos);
 				ptr++;
 				prs->curwords++;
 			}
