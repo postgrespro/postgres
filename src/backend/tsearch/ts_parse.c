@@ -356,8 +356,15 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
 
+	/*
+	 * If there is no output, transfer control to the next dictionary
+	 */
 	if (leftRes == NULL)
 	{
+		/*
+		 * If left side is dictionary that has it context, don't transfer control
+		 * to next dictionary, since thesaurus waits for more input
+		 */
 		if (operator.l_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]))
 			return NULL;
 		else
@@ -372,13 +379,16 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	thenRightSizes = palloc0(sizeof(int) * leftSize);
 
 	/*
-	 * Store right-side results in array of pointers, in order to
-	 * allocate result TSLexeme array in one call without reallocations
-	 * for each right-side result
+	 * Save curVal value, since it could be used outside operator execution
 	 */
 	oldCurVal = palloc0(sizeof(ParsedLex));
 	memcpy(oldCurVal, contextList->context[0].ld->towork.head, sizeof(ParsedLex));
 
+	/*
+	 * Store right-side results in array of pointers, in order to
+	 * allocate result TSLexeme array in one call without reallocations
+	 * for each right-side result
+	 */
 	for (i = 0; (leftRes + i) && (leftRes + i)->lexeme; i++)
 	{
 		curVal->lemm = leftRes[i].lexeme;
@@ -417,6 +427,9 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		resSize += thenRightSizes[i];
 	}
 
+	/*
+	 * Combine all output into one lexemes list
+	 */
 	res = palloc0(sizeof(TSLexeme) * (resSize + 1));
 	rightSize = 0;
 	nvariant = 0;
@@ -454,7 +467,9 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	pfree(thenRightSizes);
 	pfree(thenRightRes);
 
-	// Restore curVal for other dictionaries
+	/*
+	 * Restore curVal for other dictionaries
+	 */
 	memcpy(contextList->context[0].ld->towork.head, oldCurVal, sizeof(ParsedLex));
 	memcpy(curVal, oldCurVal, sizeof(ParsedLex));
 	pfree(oldCurVal);
@@ -474,6 +489,10 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
 
+	/*
+	 * Return result in case if left side retured not-NULL value or left-side
+	 * dictionary has it's own context and waits for one input
+	 */
 	if (leftRes != NULL ||
 			 (operator.l_is_operator == 0 &&
 			  LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL))
@@ -575,8 +594,8 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		if (ld->dictState.getnext)
 		{
 			/*
-			 * dictionary wants next word, so setup and store current
-			 * position and go to multiword mode
+			 * Dictionary wants next word, so setup custom context for the
+			 * dictionary and go to multi-input mode
 			 */
 			LexizeContext	   *context;
 
@@ -594,11 +613,15 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		}
 		return res;
 	}
-	else
+	else /* Process multi-input dictionary with saved state */
 	{
-		/* Process multi-input dictionary with saved state */
 		ListDictionary	   *map;
 
+		/*
+		 * If dictionary get one word as input and second word is not accepted
+		 * the skipLexeme flag is set in order to skip this word during
+		 * repetition of the processing of the word.
+		 */
 		if (context->skipLexeme)
 		{
 			LexizeContextListRemoveContext(contextList, dictId);
@@ -635,7 +658,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			/*
 			 * We should be sure that current type of lexeme is recognized
 			 * by our dictionary: we just check is it exist in list of
-			 * dictionaries ?
+			 * dictionaries
 			 */
 			for (i = 0; i < map->len && !dictExists; i++)
 				if (ld->curDictId == DatumGetObjectId(map->dictIds[i]))
@@ -702,12 +725,15 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		 * Dict don't want next lexem and didn't recognize anything, redo
 		 * from ld->towork.head
 		 */
-		context->skipLexeme = true;
+		if (ld->waste.head == ld->waste.tail) // If there is only one word in waste list, the dictionary should skip the lexeme after restart of the processing
+			context->skipLexeme = true;
+		else
+			LexizeContextListRemoveContext(contextList, ld->curDictId);
+
 		RemoveHead(ld);
 		contextList->context[0].ld->towork = ld->waste;
 		contextList->restartProcessing = true;
-		// LexizeContextListRemoveContext(contextList, ld->curDictId);
-		return res;
+		return NULL;
 	}
 	return res;
 }
@@ -746,6 +772,9 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 				}
 				else
 				{
+					/*
+					 * Check for same set of lexemes in another nvariant series
+					 */
 					int		nvariantCountL = 0;
 					int		nvariantCountR = 0;
 					int		nvariantOverlap = 1;
@@ -791,13 +820,13 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 		}
 	}
 
-	removePrevPosFlag = true;
-	for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
-		if ((res[curLexIndex].flags & TSL_PREVPOS) == 0)
-			removePrevPosFlag = false;
-	if (removePrevPosFlag)
-		for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
-			res[curLexIndex].flags &= ~TSL_PREVPOS;
+//	removePrevPosFlag = true;
+//	for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
+//		if ((res[curLexIndex].flags & TSL_PREVPOS) == 0)
+//			removePrevPosFlag = false;
+//	if (removePrevPosFlag)
+//		for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
+//			res[curLexIndex].flags &= ~TSL_PREVPOS;
 
 	pfree(shouldCopy);
 	pfree(lexeme);
@@ -891,6 +920,10 @@ LexizeExec(LexizeContextList *contextList)
 			continue;
 		}
 
+		/*
+		 * Stop processing of the multi-input dictionaries that didn't
+		 * processed last input
+		 */
 		for (i = 1; i < contextList->len; i++)
 		{
 			if (contextList->context[i].ld->towork.head != NULL)
