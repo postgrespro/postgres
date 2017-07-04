@@ -708,11 +708,11 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 				TSLexeme *ptr;
 				res = ld->tmpRes;
 				ptr = res;
-//				while (ptr && ptr->lexeme)
-//				{
-//					ptr->flags |= TSL_PREVPOS;
-//					ptr++;
-//				}
+				while (ptr && ptr->lexeme)
+				{
+					ptr->flags |= TSL_PREVPOS;
+					ptr++;
+				}
 				contextList->restartProcessing = true;
 			}
 
@@ -843,9 +843,6 @@ LexizeExec(LexizeContextList *contextList)
 	LexizeData				   *ld;
 	ParsedLex				  **correspondLexem;
 	int							i;
-	bool						incrementPosition;
-
-	incrementPosition = false;
 
 	ld = contextList->context[0].ld; // Get default LexizeData
 	correspondLexem = contextList->context[0].correspondLexem;
@@ -910,11 +907,6 @@ LexizeExec(LexizeContextList *contextList)
 			Assert(operators->len != 0);
 			newRes = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], contextList);
 		}
-		if (incrementPosition && newRes)
-		{
-			newRes->flags |= TSL_ADDPOS;
-			incrementPosition = false;
-		}
 
 		res = TSLexemeCombine(prevRes, newRes);
 		if (prevRes)
@@ -925,7 +917,6 @@ LexizeExec(LexizeContextList *contextList)
 		if (contextList->restartProcessing)
 		{
 			contextList->restartProcessing = false;
-			incrementPosition = true;
 			continue;
 		}
 
@@ -944,9 +935,9 @@ LexizeExec(LexizeContextList *contextList)
 				contextList->context[i].ld->towork.head->lenlemm = 0;
 				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
 				if (tmpRes)
-					res->flags |= TSL_ADDPOS;
+					res[0].flags |= TSL_ADDPOS;
 
-				combinedRes = TSLexemeCombine(tmpRes, res);
+				combinedRes = TSLexemeCombine(res, tmpRes);
 				if (res)
 					pfree(res);
 				if (tmpRes)
