@@ -161,6 +161,27 @@ SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND (german_stem OR simple);
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
+CREATE TEXT SEARCH CONFIGURATION thesaurus_chain(
+					COPY=english
+);
+
+CREATE TEXT SEARCH CONFIGURATION thesaurus_second_chain(
+					COPY=english
+);
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR 
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus THEN thesaurus_second THEN english_stem;
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR 
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus THEN english_stem;
+
+SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chain', 'ski');
+SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');
+SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_second_chain', 'ski jumping');
+SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
+
 -- ts_debug
 
 SELECT * from ts_debug('english', '<myns:foo-bar_baz.blurfl>abc&nm1;def&#xa9;ghi&#245;jkl</myns:foo-bar_baz.blurfl>');

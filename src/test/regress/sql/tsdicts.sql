@@ -115,6 +115,12 @@ CREATE TEXT SEARCH DICTIONARY thesaurus (
 						Dictionary=english_stem
 );
 
+CREATE TEXT SEARCH DICTIONARY thesaurus_second (
+                        Template=thesaurus,
+						DictFile=thesaurus_second_sample,
+						Dictionary=english_stem
+);
+
 SELECT ts_lexize('thesaurus', 'one');
 
 -- test dictionary pipeline in configuration

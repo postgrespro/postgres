@@ -15,7 +15,7 @@ DICTDIR=tsearch_data
 
 # List of dictionaries files
 DICTFILES=synonym_sample.syn thesaurus_sample.ths \
-	hunspell_sample.affix \
+	hunspell_sample.affix thesaurus_second_sample.ths \
 	ispell_sample.affix ispell_sample.dict \
 	hunspell_sample_long.affix hunspell_sample_long.dict \
 	hunspell_sample_num.affix hunspell_sample_num.dict
