@@ -352,6 +352,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	int							resSize;
 	int							leftSize;
 	int							rightSize;
+	bool						noResults = true;
 
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
 		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
@@ -391,6 +392,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 */
 	for (i = 0; (leftRes + i) && (leftRes + i)->lexeme; i++)
 	{
+		TSLexeme *ptr;
 		curVal->lemm = leftRes[i].lexeme;
 		curVal->lenlemm = strlen(leftRes[i].lexeme);
 		if (leftRes[i].flags & TSL_PREVPOS)
@@ -423,47 +425,66 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
 				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+
+		if (thenRightRes[i] != NULL || (operator.r_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.r_pos])))
+			noResults = false;
+
+		ptr = thenRightRes[i];
+		while (ptr && ptr->lexeme)
+		{
+			ptr->flags |= leftRes[i].flags;
+			ptr++;
+		}
+
 		thenRightSizes[i] = TSLexemeGetSize(thenRightRes[i]);
 		resSize += thenRightSizes[i];
 	}
 
-	/*
-	 * Combine all output into one lexemes list
-	 */
-	res = palloc0(sizeof(TSLexeme) * (resSize + 1));
-	rightSize = 0;
-	nvariant = 0;
-	for (i--; i >= 0; i--)
+	if (noResults)
 	{
-		if (thenRightRes[i] != NULL)
+		res = NULL;
+	}
+	else
+	{
+		/*
+		 * Combine all output into one lexemes list
+		 */
+		res = palloc0(sizeof(TSLexeme) * (resSize + 1));
+		rightSize = 0;
+		nvariant = 0;
+		for (i--; i >= 0; i--)
 		{
-			/*
-			 * Increase nvariant of the results to avoid nvariant collisions
-			 */
-			rightRes = thenRightRes[i];
-			while (rightRes->lexeme != NULL)
+			if (thenRightRes[i] != NULL)
 			{
-				rightRes->nvariant += nvariant + 1;
-				rightRes++;
+				/*
+				 * Increase nvariant of the results to avoid nvariant collisions
+				 */
+				rightRes = thenRightRes[i];
+				while (rightRes->lexeme != NULL)
+				{
+					rightRes->nvariant += nvariant + 1;
+					rightRes++;
+				}
+
+				memcpy(res + rightSize, thenRightRes[i], sizeof(TSLexeme) * thenRightSizes[i]);
+				rightSize += thenRightSizes[i];
+
+				/*
+				 * Update maximum nvariant already used
+				 */
+				rightRes = thenRightRes[i];
+				while (rightRes->lexeme != NULL)
+				{
+					if (nvariant < rightRes->nvariant)
+						nvariant = rightRes->nvariant;
+					rightRes++;
+				}
+
+				pfree(thenRightRes[i]);
 			}
-
-			memcpy(res + rightSize, thenRightRes[i], sizeof(TSLexeme) * thenRightSizes[i]);
-			rightSize += thenRightSizes[i];
-
-			/*
-			 * Update maximum nvariant already used
-			 */
-			rightRes = thenRightRes[i];
-			while (rightRes->lexeme != NULL)
-			{
-				if (nvariant < rightRes->nvariant)
-					nvariant = rightRes->nvariant;
-				rightRes++;
-			}
-
-			pfree(thenRightRes[i]);
 		}
 	}
+
 	pfree(thenRightSizes);
 	pfree(thenRightRes);
 
@@ -746,7 +767,6 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 	int				i;
 	int				lexemeSize = TSLexemeGetSize(lexeme);
 	int				shouldCopyCount = lexemeSize;
-	bool			removePrevPosFlag;
 	bool		   *shouldCopy;
 
 	if (lexeme == NULL)
@@ -819,14 +839,6 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 			i++;
 		}
 	}
-
-//	removePrevPosFlag = true;
-//	for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
-//		if ((res[curLexIndex].flags & TSL_PREVPOS) == 0)
-//			removePrevPosFlag = false;
-//	if (removePrevPosFlag)
-//		for (curLexIndex = 0; curLexIndex < shouldCopyCount; curLexIndex++)
-//			res[curLexIndex].flags &= ~TSL_PREVPOS;
 
 	pfree(shouldCopy);
 	pfree(lexeme);
@@ -934,8 +946,8 @@ LexizeExec(LexizeContextList *contextList)
 				contextList->context[i].ld->towork.head->type = 0;
 				contextList->context[i].ld->towork.head->lenlemm = 0;
 				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-				if (tmpRes)
-					res[0].flags |= TSL_ADDPOS;
+				// if (tmpRes)
+				//	res[0].flags |= TSL_ADDPOS;
 
 				combinedRes = TSLexemeCombine(res, tmpRes);
 				if (res)
@@ -1156,6 +1168,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	void	   *prsdata;
 	LexizeContextList *contextList = palloc(sizeof(LexizeContextList));
 	int			i;
+	bool		prevInsert = false;
 
 	cfg = lookup_ts_config_cache(cfgId);
 	prsobj = lookup_ts_parser_cache(cfg->prsId);
@@ -1206,6 +1219,30 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 		while ((norms = LexizeExec(contextList)) != NULL)
 		{
 			TSLexeme   *ptr = norms;
+			bool		mixedLexemes = false;
+			int			prevFlag = ptr->flags;
+			while (ptr->lexeme)
+			{
+				if (ptr->flags != prevFlag)
+				{
+					mixedLexemes = true;
+					break;
+				}
+				prevFlag = ptr->flags;
+				ptr++;
+			}
+			ptr = norms;
+
+			while (ptr->lexeme)
+			{
+				if (ptr->flags & TSL_PREVPOS && mixedLexemes && !prevInsert)
+				{
+					prs->pos++;
+					break;
+				}
+				ptr++;
+			}
+			ptr = norms;
 
 			prs->pos++;			/* set pos */
 
@@ -1224,11 +1261,15 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 				prs->words[prs->curwords].nvariant = ptr->nvariant;
 				prs->words[prs->curwords].flags = ptr->flags & TSL_PREFIX;
 				prs->words[prs->curwords].alen = 0;
-				prs->words[prs->curwords].pos.pos = (ptr->flags & TSL_PREVPOS) ? LIMITPOS(prs->pos - 1) : LIMITPOS(prs->pos);
+				prs->words[prs->curwords].pos.pos = (prevInsert || mixedLexemes) && (ptr->flags & TSL_PREVPOS) ? LIMITPOS(prs->pos - 1) : LIMITPOS(prs->pos);
 				ptr++;
 				prs->curwords++;
 			}
 			pfree(norms);
+			if (contextList->len > 1)
+				prevInsert = true;
+			else
+				prevInsert = false;
 		}
 	} while (type > 0);
 
