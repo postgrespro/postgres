@@ -182,6 +182,18 @@ SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus
 SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_second_chain', 'ski jumping');
 SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
 
+ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus AND thesaurus_second;
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus OR thesaurus_second;
+
+SELECT to_tsvector('thesaurus_chain', 'one two'), to_tsvector('thesaurus_second_chain', 'one two');
+SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesaurus_second_chain', 'one two three four');
+SELECT to_tsvector('thesaurus_chain', 'one two three four four'), to_tsvector('thesaurus_second_chain', 'one two three four four');
+
 -- ts_debug
 
 SELECT * from ts_debug('english', '<myns:foo-bar_baz.blurfl>abc&nm1;def&#xa9;ghi&#245;jkl</myns:foo-bar_baz.blurfl>');
