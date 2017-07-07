@@ -671,10 +671,16 @@ SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesau
  '123':1 '234':2 | '123':1 'iv':2
 (1 row)
 
-SELECT to_tsvector('thesaurus_chain', 'one two three four four'), to_tsvector('thesaurus_second_chain', 'one two three four four');
-      to_tsvector       |   to_tsvector    
-------------------------+------------------
- '123':1 '234':2 'iv':3 | '123':1 'iv':2,3
+SELECT to_tsvector('thesaurus_chain', 'three four five'), to_tsvector('thesaurus_second_chain', 'three four five');
+ to_tsvector | to_tsvector 
+-------------+-------------
+ '345':1     | '345':1
+(1 row)
+
+SELECT to_tsvector('thesaurus_chain', 'three four'), to_tsvector('thesaurus_second_chain', 'three four');
+  to_tsvector   |  to_tsvector   
+----------------+----------------
+ 'iii':1 'iv':2 | 'iii':1 'iv':2
 (1 row)
 
 -- ts_debug

@@ -10,6 +10,7 @@ one two three : *123
 one two : *12
 one : *1
 two : *2
+three four six : 346
 
 supernovae stars : *sn
 supernovae : *sn

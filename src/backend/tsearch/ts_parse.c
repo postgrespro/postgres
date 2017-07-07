@@ -47,6 +47,7 @@ typedef struct
 	ParsedLex  *curSub;
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
+	ListParsedLex lexemesBuffer;/* processed lexemes that can be returned into towork */
 
 	/*
 	 * fields to store last variant to lexize (basically, thesaurus or similar
@@ -63,6 +64,7 @@ typedef struct
 	LexizeData *ld;
 	ParsedLex **correspondLexem;
 	bool		skipLexeme;
+	bool		processed;
 } LexizeContext;
 
 typedef struct
@@ -85,6 +87,7 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->posDict = 0;
 	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
+	ld->lexemesBuffer.head = ld->lexemesBuffer.tail = NULL;
 	ld->lastRes = NULL;
 	ld->tmpRes = NULL;
 }
@@ -129,9 +132,33 @@ LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 }
 
 static void
+ClearLexemesBuffer(LexizeData *ld)
+{
+	ParsedLex  *tmp,
+			   *ptr = ld->lexemesBuffer.head;
+
+	while (ptr)
+	{
+		tmp = ptr->next;
+		pfree(ptr);
+		ptr = tmp;
+	}
+	ld->lexemesBuffer.head = ld->lexemesBuffer.tail = NULL;
+}
+
+static void
 RemoveHead(LexizeData *ld)
 {
-	LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
+	ParsedLex *toworkHead = LPLRemoveHead(&ld->towork);
+	ParsedLex *toworkHeadCopy = NULL;
+
+	if (toworkHead)
+	{
+		toworkHeadCopy = palloc0(sizeof(ParsedLex));
+		memcpy(toworkHeadCopy, toworkHead, sizeof(ParsedLex));
+	}
+	LPLAddTail(&ld->waste, toworkHead);
+	LPLAddTail(&ld->lexemesBuffer, toworkHeadCopy);
 
 	ld->posDict = 0;
 }
@@ -209,6 +236,19 @@ setNewTmpRes(LexizeData *ld, ParsedLex *lex, TSLexeme *res)
 	ld->lastRes = lex;
 }
 
+static int
+ListParsedLexSize(ListParsedLex *list)
+{
+	int			result = 0;
+	ParsedLex  *ptr = list->head;
+	while (ptr)
+	{
+		ptr = ptr->next;
+		result++;
+	}
+	return result;
+}
+
 static void
 ListParsedLexCopy(ListParsedLex *to, ListParsedLex *from)
 {
@@ -254,6 +294,8 @@ LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeDa
 	memcpy(contextList->context[contextList->len - 1].ld, ld, sizeof(LexizeData));
 	ListParsedLexCopy(&contextList->context[contextList->len - 1].ld->towork, &ld->towork);
 	ListParsedLexCopy(&contextList->context[contextList->len - 1].ld->waste, &ld->waste);
+	contextList->context[contextList->len - 1].ld->lexemesBuffer.head = NULL;
+	contextList->context[contextList->len - 1].ld->lexemesBuffer.tail = NULL;
 
 	contextList->context[contextList->len - 1].ld->tmpRes = ld->tmpRes;
 	contextList->context[contextList->len - 1].ld->lastRes = ld->lastRes;
@@ -406,11 +448,14 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 			curVal->next = NULL;
 		}
 
+		// Update input queue for all multi-input dictionaries
 		for (j = 0; j < contextList->len; j++)
 			if (contextList->context[j].ld->towork.head)
 			{
 				contextList->context[j].ld->towork.head->lemm = leftRes[i].lexeme;
 				contextList->context[j].ld->towork.head->lenlemm = strlen(leftRes[i].lexeme);
+
+				// If the current value wasn't processed by previous dictionary, we should add it to the input
 				if (leftRes[i].flags & TSL_PREVPOS)
 				{
 					contextList->context[j].ld->towork.head->next = palloc0(sizeof(ParsedLex));
@@ -630,8 +675,13 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			RemoveHead(ld);
 			if (res)
 				setNewTmpRes(ld, curVal, res);
-			return NULL;
+			if (contextList->restartProcessing)
+				return NULL;
+			else
+				return LexizeExecDictionary(dictId, contextList);
 		}
+		if (res)
+			ClearLexemesBuffer(ld);
 		return res;
 	}
 	else /* Process multi-input dictionary with saved state */
@@ -649,6 +699,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			return NULL;
 		}
 
+		context->processed = true;
 		ld = context->ld;
 		correspondLexem = context->correspondLexem;
 		curVal = ld->towork.head;
@@ -693,7 +744,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 				 */
 				LexizeContextListRemoveContext(contextList, ld->curDictId);
 				contextList->restartProcessing = true;
-				return NULL;
+				return ld->tmpRes;
 			}
 		}
 
@@ -711,9 +762,13 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		if (ld->dictState.getnext)
 		{
 			/* Dictionary wants one more */
-			if (res)
-				setNewTmpRes(ld, curVal, res);
 			RemoveHead(ld);
+			if (res)
+			{
+				setNewTmpRes(ld, curVal, res);
+				ClearLexemesBuffer(ld);
+			}
+			curVal = ld->towork.head;
 			return NULL;
 		}
 
@@ -724,6 +779,7 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			 * used lexemes, return to basic mode and redo end of stack
 			 * (if it exists)
 			 */
+			RemoveHead(ld);
 			if (!res)
 			{
 				TSLexeme *ptr;
@@ -736,6 +792,10 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 				}
 				contextList->restartProcessing = true;
 			}
+			else
+			{
+				ClearLexemesBuffer(ld);
+			}
 
 			/* reset to initial state */
 			LexizeContextListRemoveContext(contextList, ld->curDictId);
@@ -746,13 +806,9 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 		 * Dict don't want next lexem and didn't recognize anything, redo
 		 * from ld->towork.head
 		 */
-		if (ld->waste.head == ld->waste.tail) // If there is only one word in waste list, the dictionary should skip the lexeme after restart of the processing
-			context->skipLexeme = true;
-		else
-			LexizeContextListRemoveContext(contextList, ld->curDictId);
-
+		context->skipLexeme = true;
 		RemoveHead(ld);
-		contextList->context[0].ld->towork = ld->waste;
+		contextList->context[0].ld->towork = ld->lexemesBuffer;
 		contextList->restartProcessing = true;
 		return NULL;
 	}
@@ -846,6 +902,40 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 }
 
 static TSLexeme *
+StopDictionariesProcessing(LexizeContextList *contextList)
+{
+	int i;
+	TSLexeme *res = NULL;
+
+	for (i = 1; i < contextList->len; i++)
+	{
+		if (!contextList->context[i].processed)
+		{
+			TSLexeme *tmpRes;
+			TSLexeme *combinedRes;
+			if (!contextList->context[i].ld->towork.head)
+			{
+				contextList->context[i].ld->towork.head = contextList->context[i].ld->towork.tail = palloc0(sizeof(ParsedLex));
+				contextList->context[i].ld->towork.head->lemm = NULL;
+			}
+			contextList->context[i].ld->towork.head->type = 0;
+			contextList->context[i].ld->towork.head->lenlemm = 0;
+			contextList->context[i].ld->towork.head->next = NULL;
+			tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
+
+			combinedRes = TSLexemeCombine(res, tmpRes);
+			if (res)
+				pfree(res);
+			if (tmpRes)
+				pfree(tmpRes);
+			res = combinedRes;
+			i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
+		}
+	}
+	return res;
+}
+
+static TSLexeme *
 LexizeExec(LexizeContextList *contextList)
 {
 	ListDictionary			   *map;
@@ -855,6 +945,9 @@ LexizeExec(LexizeContextList *contextList)
 	LexizeData				   *ld;
 	ParsedLex				  **correspondLexem;
 	int							i;
+
+	for (i = 1; i < contextList->len; i++)
+		contextList->context[i].processed = false;
 
 	ld = contextList->context[0].ld; // Get default LexizeData
 	correspondLexem = contextList->context[0].correspondLexem;
@@ -872,12 +965,15 @@ LexizeExec(LexizeContextList *contextList)
 		map = ld->cfg->map + curVal->type;
 		operators = ld->cfg->operators + curVal->type;
 
+		for (i = 1; i < contextList->len; i++)
+			contextList->context[i].processed = false;
+
 		if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0 || operators->len == 0))
 		{
 			/* skip this type of lexeme */
 			RemoveHead(ld);
 			setCorrLex(ld, correspondLexem);
-			return NULL;
+			return res;
 		}
 
 		if (curVal->type == 0) // End of the input, finish processing of multi-input dictionaries
@@ -906,6 +1002,7 @@ LexizeExec(LexizeContextList *contextList)
 				continue;
 			}
 			res = TSLexemeRemoveDuplications(res);
+			RemoveHead(ld);
 			return res;
 		}
 
@@ -936,28 +1033,13 @@ LexizeExec(LexizeContextList *contextList)
 		 * Stop processing of the multi-input dictionaries that didn't
 		 * processed last input
 		 */
-		for (i = 1; i < contextList->len; i++)
-		{
-			if (contextList->context[i].ld->towork.head != NULL)
-			{
-				TSLexeme *tmpRes;
-				TSLexeme *combinedRes;
-
-				contextList->context[i].ld->towork.head->type = 0;
-				contextList->context[i].ld->towork.head->lenlemm = 0;
-				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-				// if (tmpRes)
-				//	res[0].flags |= TSL_ADDPOS;
-
-				combinedRes = TSLexemeCombine(res, tmpRes);
-				if (res)
-					pfree(res);
-				if (tmpRes)
-					pfree(tmpRes);
-				res = combinedRes;
-				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
-			}
-		}
+		prevRes = res;
+		newRes = StopDictionariesProcessing(contextList);
+		res = TSLexemeCombine(prevRes, newRes);
+		if (prevRes)
+			pfree(prevRes);
+		if (newRes)
+			pfree(newRes);
 
 		RemoveHead(ld);
 		curVal = ld->towork.head;
@@ -1216,11 +1298,18 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 			LexizeAddLemm(contextList->context[i].ld, type, lemm, lenlemm);
 		}
 
-		while ((norms = LexizeExec(contextList)) != NULL)
+		while (contextList->context[0].ld->towork.head)
 		{
-			TSLexeme   *ptr = norms;
+			TSLexeme   *ptr;
 			bool		mixedLexemes = false;
-			int			prevFlag = ptr->flags;
+			int			prevFlag;
+
+			norms = LexizeExec(contextList);
+			if (norms == NULL)
+				continue;
+
+			ptr = norms;
+			prevFlag = ptr->flags;
 			while (ptr->lexeme)
 			{
 				if (ptr->flags != prevFlag)

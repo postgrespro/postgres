@@ -192,7 +192,8 @@ ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR
 
 SELECT to_tsvector('thesaurus_chain', 'one two'), to_tsvector('thesaurus_second_chain', 'one two');
 SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesaurus_second_chain', 'one two three four');
-SELECT to_tsvector('thesaurus_chain', 'one two three four four'), to_tsvector('thesaurus_second_chain', 'one two three four four');
+SELECT to_tsvector('thesaurus_chain', 'three four five'), to_tsvector('thesaurus_second_chain', 'three four five');
+SELECT to_tsvector('thesaurus_chain', 'three four'), to_tsvector('thesaurus_second_chain', 'three four');
 
 -- ts_debug
 
