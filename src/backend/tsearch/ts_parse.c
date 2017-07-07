@@ -376,6 +376,19 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 	return res;
 }
 
+static bool
+IsLeftSideThesaurusInProgress(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+{
+	ListDictionary			   *map = cfg->map + curVal->type;
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+
+	if (operator.l_is_operator)
+		return IsLeftSideThesaurusInProgress(cfg, curVal, operators->operators[operator.l_pos], contextList);
+	else
+		return LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL;
+}
+
 static TSLexeme *
 LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
@@ -408,7 +421,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		 * If left side is dictionary that has it context, don't transfer control
 		 * to next dictionary, since thesaurus waits for more input
 		 */
-		if (operator.l_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]))
+		if (IsLeftSideThesaurusInProgress(cfg, curVal, operator, contextList))
 			return NULL;
 		else
 			return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
@@ -559,9 +572,7 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 * Return result in case if left side retured not-NULL value or left-side
 	 * dictionary has it's own context and waits for one input
 	 */
-	if (leftRes != NULL ||
-			 (operator.l_is_operator == 0 &&
-			  LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL))
+	if (leftRes != NULL || IsLeftSideThesaurusInProgress(cfg, curVal, operator, contextList))
 	{
 		res = leftRes;
 	}
