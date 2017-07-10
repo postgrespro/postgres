@@ -29,6 +29,10 @@ typedef struct ParsedLex
 	int			type;
 	char	   *lemm;
 	int			lenlemm;
+	bool	   *accepted;
+	bool	   *rejected;
+	bool	   *notFinished;
+	bool	   *holdAccepted;
 	struct ParsedLex *next;
 } ParsedLex;
 
@@ -47,7 +51,6 @@ typedef struct
 	ParsedLex  *curSub;
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
-	ListParsedLex lexemesBuffer;/* processed lexemes that can be returned into towork */
 
 	/*
 	 * fields to store last variant to lexize (basically, thesaurus or similar
@@ -58,26 +61,12 @@ typedef struct
 	TSLexeme   *tmpRes;
 } LexizeData;
 
-typedef struct
-{
-	Oid			dictId;
-	LexizeData *ld;
-	ParsedLex **correspondLexem;
-	bool		skipLexeme;
-	bool		processed;
-} LexizeContext;
-
-typedef struct
-{
-	int					len;
-	LexizeContext	   *context;
-	bool				restartProcessing;
-} LexizeContextList;
-
-static TSLexeme *LexizeExec(LexizeContextList *contextList);
-static TSLexeme *LexizeExecDictionary(int dictId, LexizeContextList *contextList);
+static bool IsOperatorRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator);
+static TSLexeme *LexizeExec(LexizeData *ld, ParsedLex **correspondLexem);
 static TSLexeme *LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal, 
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList);
+		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem);
+static TSLexeme *LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos);
 
 static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
@@ -87,7 +76,6 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->posDict = 0;
 	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
-	ld->lexemesBuffer.head = ld->lexemesBuffer.tail = NULL;
 	ld->lastRes = NULL;
 	ld->tmpRes = NULL;
 }
@@ -123,42 +111,33 @@ static void
 LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 {
 	ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
+	int len;
+
+	if (type != 0 && (type >= ld->cfg->lenmap))
+	{
+		len = 1;
+	}
+	else
+	{
+		ListDictionary	   *map = ld->cfg->map + type;
+		len = map->len;
+	}
 
 	newpl->type = type;
 	newpl->lemm = lemm;
 	newpl->lenlemm = lenlemm;
+	newpl->accepted = palloc0(sizeof(bool) * len);
+	newpl->rejected = palloc0(sizeof(bool) * len);
+	newpl->notFinished = palloc0(sizeof(bool) * len);
+	newpl->holdAccepted = palloc0(sizeof(bool) * len);
 	LPLAddTail(&ld->towork, newpl);
 	ld->curSub = ld->towork.tail;
 }
 
 static void
-ClearLexemesBuffer(LexizeData *ld)
-{
-	ParsedLex  *tmp,
-			   *ptr = ld->lexemesBuffer.head;
-
-	while (ptr)
-	{
-		tmp = ptr->next;
-		pfree(ptr);
-		ptr = tmp;
-	}
-	ld->lexemesBuffer.head = ld->lexemesBuffer.tail = NULL;
-}
-
-static void
 RemoveHead(LexizeData *ld)
 {
-	ParsedLex *toworkHead = LPLRemoveHead(&ld->towork);
-	ParsedLex *toworkHeadCopy = NULL;
-
-	if (toworkHead)
-	{
-		toworkHeadCopy = palloc0(sizeof(ParsedLex));
-		memcpy(toworkHeadCopy, toworkHead, sizeof(ParsedLex));
-	}
-	LPLAddTail(&ld->waste, toworkHead);
-	LPLAddTail(&ld->lexemesBuffer, toworkHeadCopy);
+	LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
 
 	ld->posDict = 0;
 }
@@ -183,22 +162,6 @@ setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 		}
 	}
 	ld->waste.head = ld->waste.tail = NULL;
-}
-
-static void
-moveToWaste(LexizeData *ld, ParsedLex *stop)
-{
-	bool		go = true;
-
-	while (ld->towork.head && go)
-	{
-		if (ld->towork.head == stop)
-		{
-			ld->curSub = stop->next;
-			go = false;
-		}
-		RemoveHead(ld);
-	}
 }
 
 static int
@@ -234,108 +197,6 @@ setNewTmpRes(LexizeData *ld, ParsedLex *lex, TSLexeme *res)
 		memcpy(ld->tmpRes[i].lexeme, res[i].lexeme, sizeof(char) * strlen(res[i].lexeme));
 	}
 	ld->lastRes = lex;
-}
-
-static int
-ListParsedLexSize(ListParsedLex *list)
-{
-	int			result = 0;
-	ParsedLex  *ptr = list->head;
-	while (ptr)
-	{
-		ptr = ptr->next;
-		result++;
-	}
-	return result;
-}
-
-static void
-ListParsedLexCopy(ListParsedLex *to, ListParsedLex *from)
-{
-	ParsedLex *node = from->head;
-	ParsedLex *prevNewNode = NULL;
-
-	to->head = to->tail = NULL;
-
-	while (node)
-	{
-		ParsedLex *newnode = palloc0(sizeof(ParsedLex));
-
-		newnode->type = node->type;
-		newnode->lenlemm = node->lenlemm;
-		newnode->lemm = palloc0(sizeof(char) * node->lenlemm);
-		newnode->next = NULL;
-
-		memcpy(newnode->lemm, node->lemm, sizeof(char) * node->lenlemm);
-		if (prevNewNode)
-			prevNewNode->next = newnode;
-
-		if (to->head == NULL)
-			to->head = newnode;
-		prevNewNode = newnode;
-		to->tail = newnode;
-		node = node->next;
-	}
-}
-
-static void
-LexizeContextListAddContext(LexizeContextList *contextList, Oid dictId, LexizeData *ld, ParsedLex **correspondLexem)
-{
-	contextList->len++;
-
-	if (contextList->context)
-		contextList->context = repalloc(contextList->context, sizeof(LexizeData) * contextList->len);
-	else
-		contextList->context = palloc(sizeof(LexizeData) * contextList->len);
-
-	contextList->context[contextList->len - 1].dictId = dictId;
-
-	contextList->context[contextList->len - 1].ld = palloc0(sizeof(LexizeData));
-	memcpy(contextList->context[contextList->len - 1].ld, ld, sizeof(LexizeData));
-	ListParsedLexCopy(&contextList->context[contextList->len - 1].ld->towork, &ld->towork);
-	ListParsedLexCopy(&contextList->context[contextList->len - 1].ld->waste, &ld->waste);
-	contextList->context[contextList->len - 1].ld->lexemesBuffer.head = NULL;
-	contextList->context[contextList->len - 1].ld->lexemesBuffer.tail = NULL;
-
-	contextList->context[contextList->len - 1].ld->tmpRes = ld->tmpRes;
-	contextList->context[contextList->len - 1].ld->lastRes = ld->lastRes;
-	ld->tmpRes = NULL;
-	ld->lastRes = NULL;
-
-	contextList->context[contextList->len - 1].correspondLexem = correspondLexem;
-
-	contextList->context[contextList->len - 1].skipLexeme = false;
-}
-
-static void
-LexizeContextListRemoveContext(LexizeContextList *contextList, Oid dictId)
-{
-	int i;
-	for (i = 0; i < contextList->len; i++)
-	{
-		if (contextList->context[i].dictId == dictId)
-		{
-			if (contextList->context[i].ld)
-				pfree(contextList->context[i].ld);
-			if (contextList->context[i].correspondLexem)
-				pfree(contextList->context[i].correspondLexem);
-			memcpy(contextList->context + i, contextList->context + i + 1, sizeof(LexizeContext) * (contextList->len - i - 1));
-			contextList->len--;
-			// Shrink size of allocated memory
-			contextList->context = repalloc(contextList->context, sizeof(LexizeContext) * contextList->len);
-			return;
-		}
-	}
-}
-
-static LexizeContext *
-LexizeContextListGetContext(LexizeContextList *contextList, Oid dictId)
-{
-	int i;
-	for (i = 0; i < contextList->len; i++)
-		if (contextList->context[i].dictId == dictId)
-			return contextList->context + i;
-	return NULL;
 }
 
 static TSLexeme *
@@ -377,55 +238,281 @@ TSLexemeCombine(TSLexeme *left, TSLexeme *right)
 }
 
 static bool
-IsLeftSideThesaurusInProgress(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+IsOperatorAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
 {
-	ListDictionary			   *map = cfg->map + curVal->type;
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_accepted = false;
+	bool						r_accepted = false;
+	bool						l_rejected = false;
+	bool						r_rejected = false;
+
+	l_accepted = operator.l_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.l_pos])
+		: curVal->accepted[operator.l_pos];
+	r_accepted = operator.r_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.r_pos])
+		: curVal->accepted[operator.r_pos];
+
+	l_rejected = operator.l_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos])
+		: curVal->rejected[operator.l_pos];
+	r_rejected = operator.r_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos])
+		: curVal->rejected[operator.r_pos];
+
+	switch (operator.oper)
+	{
+		case DICTPIPE_OP_OR:
+			return l_accepted || r_accepted;
+			break;
+		case DICTPIPE_OP_AND:
+			return (l_accepted && r_accepted) || (l_rejected && r_accepted) || (l_accepted && r_rejected);
+			break;
+		case DICTPIPE_OP_THEN:
+			return !l_accepted || r_accepted;
+			break;
+	}
+	return false;
+}
+
+static bool
+IsOperatorRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_rejected = false;
+	bool						r_rejected = false;
+
+	l_rejected = operator.l_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos])
+		: curVal->rejected[operator.l_pos];
+	r_rejected = operator.r_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos])
+		: curVal->rejected[operator.r_pos];
+
+	return l_rejected && r_rejected;
+}
+
+static bool
+IsNotFinished(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_not_fully_finished = false;
+	bool						r_not_fully_finished = false;
+
+	if (operator.l_is_operator)
+		l_not_fully_finished = IsNotFinished(cfg, curVal, operators->operators[operator.l_pos]);
+	else
+		l_not_fully_finished = curVal->notFinished[operator.l_pos];
+
+	if (operator.r_is_operator)
+		r_not_fully_finished = IsNotFinished(cfg, curVal, operators->operators[operator.r_pos]);
+	else
+		r_not_fully_finished = curVal->notFinished[operator.r_pos];
+
+	return l_not_fully_finished || r_not_fully_finished;
+}
+
+static bool
+IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_accepted = false;
+	bool						r_accepted = false;
+	bool						l_rejected = false;
+	bool						r_rejected = false;
+	bool						l_not_finished = false;
+	bool						r_not_finished = false;
+
+	if (operator.l_is_operator)
+	{
+		l_accepted = IsOperatorAccepted(cfg, curVal, operators->operators[operator.l_pos]);
+		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
+		l_not_finished = IsNotFinished(cfg, curVal, operators->operators[operator.l_pos]);
+	}
+	else
+	{
+		l_accepted = curVal->accepted[operator.l_pos];
+		l_rejected = curVal->rejected[operator.l_pos];
+		l_not_finished = curVal->notFinished[operator.l_pos];
+	}
+	if (operator.r_is_operator)
+	{
+		r_accepted = IsOperatorAccepted(cfg, curVal, operators->operators[operator.r_pos]);
+		r_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos]);
+		r_not_finished = IsNotFinished(cfg, curVal, operators->operators[operator.r_pos]);
+	}
+	else
+	{
+		r_accepted = curVal->accepted[operator.r_pos];
+		r_rejected = curVal->rejected[operator.r_pos];
+		r_not_finished = curVal->notFinished[operator.r_pos];
+	}
+
+	switch (operator.oper)
+	{
+		case DICTPIPE_OP_OR:
+			return (l_accepted && !l_not_finished) || (l_rejected && r_accepted && !r_not_finished) || (l_rejected && r_rejected);
+			break;
+		case DICTPIPE_OP_AND:
+			return ((l_accepted && !l_not_finished) || l_rejected) && ((r_accepted && !r_not_finished) || r_rejected);
+			break;
+		case DICTPIPE_OP_THEN:
+			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished);
+			break;
+	}
+	return false;
+}
+
+static bool
+IsLeftSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_accepted = false;
+	bool						l_rejected = false;
+	bool						l_not_finished = false;
+
+	if (curVal->type == 0)
+		return true;
+
+	if (operator.l_is_operator)
+	{
+		return IsProcessingComplete(cfg, curVal, operators->operators[operator.l_pos]);
+	}
+	else
+	{
+		l_accepted = curVal->accepted[operator.l_pos];
+		l_rejected = curVal->rejected[operator.l_pos];
+		l_not_finished = curVal->notFinished[operator.l_pos];
+	}
+	return (l_accepted && !l_not_finished) || l_rejected;
+}
+
+static bool
+IsLeftSideRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						l_rejected = false;
+
+	if (operator.l_is_operator)
+	{
+		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
+	}
+	else
+	{
+		l_rejected = curVal->rejected[operator.l_pos];
+	}
+	return l_rejected;
+}
+
+
+static bool
+IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	bool						r_accepted = false;
+	bool						r_rejected = false;
+	bool						r_not_finished = false;
+
+	if (curVal->type == 0)
+		return true;
+
+	if (operator.r_is_operator)
+	{
+		return IsProcessingComplete(cfg, curVal, operators->operators[operator.r_pos]);
+	}
+	else
+	{
+		r_accepted = curVal->accepted[operator.r_pos];
+		r_rejected = curVal->rejected[operator.r_pos];
+		r_not_finished = curVal->notFinished[operator.r_pos];
+	}
+	return (r_accepted && !r_not_finished) || r_rejected;
+}
+
+static void
+UnmarkBranchAsAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 
 	if (operator.l_is_operator)
-		return IsLeftSideThesaurusInProgress(cfg, curVal, operators->operators[operator.l_pos], contextList);
+		UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
 	else
-		return LexizeContextListGetContext(contextList, map->dictIds[operator.l_pos]) != NULL;
+		curVal->accepted[operator.l_pos] = false;
+
+	if (operator.r_is_operator)
+		UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.r_pos]);
+	else
+		curVal->accepted[operator.r_pos] = false;
+}
+
+static void
+CopyCompletionMarks(TSConfigCacheEntry *cfg, ParsedLex *from, ParsedLex *to,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + to->type;
+
+	if (operator.l_is_operator)
+		CopyCompletionMarks(cfg, from, to, operators->operators[operator.l_pos]);
+	else
+	{
+		to->accepted[operator.l_pos] = from->accepted[operator.l_pos];
+		to->rejected[operator.l_pos] = from->rejected[operator.l_pos];
+		to->notFinished[operator.l_pos] = from->notFinished[operator.l_pos];
+	}
+
+	if (operator.r_is_operator)
+		CopyCompletionMarks(cfg, from, to, operators->operators[operator.r_pos]);
+	else
+	{
+		to->accepted[operator.r_pos] = from->accepted[operator.r_pos];
+		to->rejected[operator.r_pos] = from->rejected[operator.r_pos];
+		to->notFinished[operator.r_pos] = from->notFinished[operator.r_pos];
+	}
 }
 
 static TSLexeme *
 LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
-	ListDictionary			   *map = cfg->map + curVal->type;
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	TSLexeme				   *leftRes;
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 	TSLexeme				  **thenRightRes;
-	ParsedLex				   *oldCurVal;
+	ParsedLex				   *newCurVal;
+	ParsedLex				   *pl;
+	ListDictionary			   *map;
 	int						   *thenRightSizes;
 	int							nvariant;
 	int							i;
-	int							j;
 	int							resSize;
 	int							leftSize;
 	int							rightSize;
 	bool						noResults = true;
 
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
-		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
+	if (IsLeftSideProcessingComplete(cfg, curVal, operator) && IsRightSideProcessingComplete(cfg, curVal, operator))
+		return NULL;
+
+	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
+		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
+	
+	// Wait until next execution
+	if (!IsLeftSideProcessingComplete(cfg, curVal, operator))
+		return NULL;
 
 	/*
 	 * If there is no output, transfer control to the next dictionary
 	 */
-	if (leftRes == NULL)
+	if (IsLeftSideRejected(cfg, curVal, operator))
 	{
 		/*
 		 * If left side is dictionary that has it context, don't transfer control
 		 * to next dictionary, since thesaurus waits for more input
 		 */
-		if (IsLeftSideThesaurusInProgress(cfg, curVal, operator, contextList))
-			return NULL;
-		else
-			return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
+			: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
 	}
 
 	resSize = 0;
@@ -433,58 +520,52 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftSize = TSLexemeGetSize(leftRes);
 	thenRightRes = palloc0(sizeof(TSLexeme*) * leftSize);
 	thenRightSizes = palloc0(sizeof(int) * leftSize);
+	newCurVal = palloc0(sizeof(ParsedLex));
 
-	/*
-	 * Save curVal value, since it could be used outside operator execution
-	 */
-	oldCurVal = palloc0(sizeof(ParsedLex));
-	memcpy(oldCurVal, contextList->context[0].ld->towork.head, sizeof(ParsedLex));
+	newCurVal->type = curVal->type;
+	newCurVal->accepted = curVal->accepted;
+	newCurVal->rejected = curVal->rejected;
+	newCurVal->notFinished = curVal->notFinished;
+	pl = curVal->next;
+	while (pl && pl->type != 0 && IsLeftSideProcessingComplete(cfg, pl, operator))
+		pl = pl->next;
+	newCurVal->next = pl;
+	ld->towork.head = newCurVal;
+	map = cfg->map + newCurVal->type;
 
 	/*
 	 * Store right-side results in array of pointers, in order to
 	 * allocate result TSLexeme array in one call without reallocations
 	 * for each right-side result
 	 */
-	for (i = 0; (leftRes + i) && (leftRes + i)->lexeme; i++)
+	for (i = 0; (leftRes + i) && leftRes[i].lexeme; i++)
 	{
-		TSLexeme *ptr;
-		curVal->lemm = leftRes[i].lexeme;
-		curVal->lenlemm = strlen(leftRes[i].lexeme);
-		if (leftRes[i].flags & TSL_PREVPOS)
-		{
-			curVal->next = palloc0(sizeof(ParsedLex));
-			memcpy(curVal->next, oldCurVal, sizeof(ParsedLex));
-			curVal->next->next = NULL;
-		}
-		else
-		{
-			curVal->next = NULL;
-		}
+		ParsedLex  *plptr = curVal->next;
+		TSLexeme   *ptr;
 
-		// Update input queue for all multi-input dictionaries
-		for (j = 0; j < contextList->len; j++)
-			if (contextList->context[j].ld->towork.head)
+		newCurVal->lemm = leftRes[i].lexeme;
+		newCurVal->lenlemm = strlen(leftRes[i].lexeme);
+
+		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, newCurVal, operators->operators[operator.r_pos], ld, correspondLexem)
+				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+		while (plptr && plptr != newCurVal->next)
+		{
+			if (operator.r_is_operator)
+				CopyCompletionMarks(cfg, newCurVal, plptr, operators->operators[operator.r_pos]);
+			else
 			{
-				contextList->context[j].ld->towork.head->lemm = leftRes[i].lexeme;
-				contextList->context[j].ld->towork.head->lenlemm = strlen(leftRes[i].lexeme);
-
-				// If the current value wasn't processed by previous dictionary, we should add it to the input
-				if (leftRes[i].flags & TSL_PREVPOS)
+				ListDictionary *ptr_map = cfg->map + plptr->type;
+				if (map->len == ptr_map->len)
 				{
-					contextList->context[j].ld->towork.head->next = palloc0(sizeof(ParsedLex));
-					memcpy(contextList->context[j].ld->towork.head->next, oldCurVal, sizeof(ParsedLex));
-					contextList->context[j].ld->towork.head->next->next = NULL;
-				}
-				else
-				{
-					contextList->context[j].ld->towork.head->next = NULL;
+					plptr->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
+					plptr->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
+					plptr->notFinished[operator.r_pos] = newCurVal->notFinished[operator.r_pos];
 				}
 			}
+			plptr = plptr->next;
+		}
 
-		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-
-		if (thenRightRes[i] != NULL || (operator.r_is_operator == 0 && LexizeContextListGetContext(contextList, map->dictIds[operator.r_pos])))
+		if (thenRightRes[i] != NULL)
 			noResults = false;
 
 		ptr = thenRightRes[i];
@@ -501,6 +582,10 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	if (noResults)
 	{
 		res = NULL;
+		if (operator.l_is_operator)
+			UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
+		else
+			curVal->accepted[operator.l_pos] = false;
 	}
 	else
 	{
@@ -545,60 +630,48 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 	pfree(thenRightSizes);
 	pfree(thenRightRes);
+	pfree(newCurVal);
+	ld->towork.head = curVal;
 
-	/*
-	 * Restore curVal for other dictionaries
-	 */
-	memcpy(contextList->context[0].ld->towork.head, oldCurVal, sizeof(ParsedLex));
-	memcpy(curVal, oldCurVal, sizeof(ParsedLex));
-	pfree(oldCurVal);
 	return res;
 }
 
 static TSLexeme *
 LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
-	ListDictionary			   *map = cfg->map + curVal->type;
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	TSLexeme				   *leftRes;
-	TSLexeme				   *rightRes;
-	TSLexeme				   *res;
 
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
-		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
+	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
+		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
 
 	/*
 	 * Return result in case if left side retured not-NULL value or left-side
 	 * dictionary has it's own context and waits for one input
 	 */
-	if (leftRes != NULL || IsLeftSideThesaurusInProgress(cfg, curVal, operator, contextList))
-	{
-		res = leftRes;
-	}
+
+	if (IsLeftSideRejected(cfg, curVal, operator))
+		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
+				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
 	else
-	{
-		res = rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-				: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
-	}
-	return res;
+		return leftRes;
 }
 
 static TSLexeme *
 LexizeExecOperatorAnd(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
-	ListDictionary			   *map = cfg->map + curVal->type;
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	TSLexeme				   *leftRes;
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], contextList)
-		: LexizeExecDictionary(map->dictIds[operator.l_pos], contextList);
+	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
+		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
 
-	rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], contextList)
-		: LexizeExecDictionary(map->dictIds[operator.r_pos], contextList);
+	rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
+		: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
 
 	res = TSLexemeCombine(leftRes, rightRes);
 	return res;
@@ -606,22 +679,25 @@ LexizeExecOperatorAnd(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 static TSLexeme *
 LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal, 
-		TSConfigurationOperatorDescriptor operator, LexizeContextList *contextList)
+		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
 	TSLexeme				   *res;
 
 	Assert(operator.presented == 1);
 
+	if (IsProcessingComplete(cfg, curVal, operator))
+		return NULL;
+
 	switch (operator.oper)
 	{
 		case DICTPIPE_OP_THEN:
-			res = LexizeExecOperatorThen(cfg, curVal, operator, contextList);
+			res = LexizeExecOperatorThen(cfg, curVal, operator, ld, correspondLexem);
 			break;
 		case DICTPIPE_OP_OR:
-			res = LexizeExecOperatorOr(cfg, curVal, operator, contextList);
+			res = LexizeExecOperatorOr(cfg, curVal, operator, ld, correspondLexem);
 			break;
 		case DICTPIPE_OP_AND:
-			res = LexizeExecOperatorAnd(cfg, curVal, operator, contextList);
+			res = LexizeExecOperatorAnd(cfg, curVal, operator, ld, correspondLexem);
 			break;
 		default:
 			res = NULL;
@@ -636,28 +712,25 @@ LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 }
 
 static TSLexeme *
-LexizeExecDictionary(int dictId, LexizeContextList *contextList)
+LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 {
 	ParsedLex				   *curVal;
-	LexizeData				   *ld;
-	ParsedLex				  **correspondLexem;
 	TSDictionaryCacheEntry	   *dict;
 	TSLexeme				   *res = NULL;
-	LexizeContext			   *context;
 	int							i;
+	ListDictionary			   *map;
+	int							dictId;
 
-	context = LexizeContextListGetContext(contextList, dictId);
+	curVal = ld->towork.head;
+	map = ld->cfg->map + curVal->type;
+	dictId = map->dictIds[dictPos];
 	dict = lookup_ts_dictionary_cache(dictId);
 
-	if (context == NULL) /* Standard mode */
+	if (curVal->accepted[dictPos] && !curVal->notFinished[dictPos])
+		return NULL;
+
+	if (ld->curDictId == InvalidOid) /* Standard mode */
 	{
-		context = LexizeContextListGetContext(contextList, InvalidOid);
-		Assert(context != NULL);
-
-		ld = context->ld;
-		correspondLexem = context->correspondLexem;
-
-		curVal = ld->towork.head;
 		ld->dictState.isend = ld->dictState.getnext = false;
 		ld->dictState.private_state = NULL;
 		res = (TSLexeme *) DatumGetPointer(FunctionCall4(
@@ -674,156 +747,183 @@ LexizeExecDictionary(int dictId, LexizeContextList *contextList)
 			 * Dictionary wants next word, so setup custom context for the
 			 * dictionary and go to multi-input mode
 			 */
-			LexizeContext	   *context;
-
-			LexizeContextListAddContext(contextList, dictId, ld, correspondLexem);
-			context = LexizeContextListGetContext(contextList, dictId);
-
-			ld = context->ld;
-			correspondLexem = context->correspondLexem;
-
-			ld->curDictId = DatumGetObjectId(dictId);
-			RemoveHead(ld);
+			ParsedLex *ptr = curVal;
 			if (res)
+			{
 				setNewTmpRes(ld, curVal, res);
-			if (contextList->restartProcessing)
-				return NULL;
-			else
-				return LexizeExecDictionary(dictId, contextList);
+				curVal->accepted[dictPos] = true;
+			}
+			curVal->notFinished[dictPos] = true;
+
+			ld->curDictId = dict->dictId;
+			ld->curSub = curVal->next;
+			res = LexizeExecDictionary(ld, correspondLexem, dictPos);
+			ld->curDictId = InvalidOid;
+
+			while (ptr)
+			{
+				if (ptr->type == curVal->type)
+				{
+					if (!res)
+						ptr->accepted[dictPos] = false;
+					ptr->notFinished[dictPos] = false;
+				}
+				ptr = ptr->next;
+			}
+
+			return res;
 		}
 		if (res)
-			ClearLexemesBuffer(ld);
+			curVal->accepted[dictPos] = true;
+		else
+			curVal->rejected[dictPos] = true;
 		return res;
 	}
 	else /* Process multi-input dictionary with saved state */
 	{
-		ListDictionary	   *map;
+		ParsedLex *ptr;
 
-		/*
-		 * If dictionary get one word as input and second word is not accepted
-		 * the skipLexeme flag is set in order to skip this word during
-		 * repetition of the processing of the word.
-		 */
-		if (context->skipLexeme)
-		{
-			LexizeContextListRemoveContext(contextList, dictId);
-			return NULL;
-		}
-
-		context->processed = true;
-		ld = context->ld;
-		correspondLexem = context->correspondLexem;
-		curVal = ld->towork.head;
+		curVal = ld->curSub;
 
 		while (curVal)
 		{
-			map = ld->cfg->map + curVal->type;
-			if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0))
+			while (curVal)
 			{
-				/* skip this type of lexeme */
-				RemoveHead(ld);
-				setCorrLex(ld, correspondLexem);
+				map = ld->cfg->map + curVal->type;
+				if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0))
+				{
+					/* skip this type of lexeme */
+					curVal = curVal->next;
+				}
+				else
+				{
+					break;
+				}
 			}
-			else
+
+			if (!curVal)
+				return NULL;
+
+			if (curVal->type != 0)
 			{
-				break;
+				bool		dictExists = false;
+
+				/*
+				 * We should be sure that current type of lexeme is recognized
+				 * by our dictionary: we just check is it exist in list of
+				 * dictionaries
+				 */
+				for (i = 0; i < map->len && !dictExists; i++)
+					if (dictId == DatumGetObjectId(map->dictIds[i]))
+						dictExists = true;
+
+				if (!dictExists)
+				{
+					/*
+					 * Dictionary can't work with current type of lexeme,
+					 * return to basic mode
+					 */
+					if (ld->tmpRes)
+					{
+						res = ld->tmpRes;
+						ld->tmpRes = NULL;
+						return res;
+					}
+					else
+					{
+						ptr = ld->towork.head;
+						while (ptr)
+						{
+							ptr->rejected[dictPos] = true;
+							if (ptr == curVal)
+								break;
+							ptr = ptr->next;
+						}
+						return NULL;
+					}
+				}
 			}
-			curVal = ld->towork.head;
-		}
 
-		if (!curVal)
-			return NULL;
+			ld->dictState.isend = (curVal->type == 0) ? true : false;
+			ld->dictState.getnext = false;
 
-		if (curVal->type != 0)
-		{
-			bool		dictExists = false;
+			res = (TSLexeme *) DatumGetPointer(FunctionCall4(
+															 &(dict->lexize),
+											 PointerGetDatum(dict->dictData),
+											   PointerGetDatum(curVal->lemm),
+											  Int32GetDatum(curVal->lenlemm),
+											  PointerGetDatum(&ld->dictState)
+															 ));
 
-			/*
-			 * We should be sure that current type of lexeme is recognized
-			 * by our dictionary: we just check is it exist in list of
-			 * dictionaries
-			 */
-			for (i = 0; i < map->len && !dictExists; i++)
-				if (ld->curDictId == DatumGetObjectId(map->dictIds[i]))
-					dictExists = true;
+			if (ld->dictState.getnext)
+			{
+				/* Dictionary wants one more */
+				if (res)
+				{
+					setNewTmpRes(ld, curVal, res);
 
-			if (!dictExists)
+					ptr = ld->towork.head;
+					while (ptr)
+					{
+						ptr->accepted[dictPos] = true;
+						ptr->notFinished[dictPos] = true;
+						if (ptr == curVal)
+							break;
+						ptr = ptr->next;
+					}
+				}
+				curVal = curVal->next;
+				continue;
+			}
+
+			if (res || ld->tmpRes)
 			{
 				/*
-				 * Dictionary can't work with current type of lexeme,
-				 * return to basic mode
+				 * Dictionary normalizes lexemes, so we remove from stack all
+				 * used lexemes, return to basic mode and redo end of stack
+				 * (if it exists)
 				 */
-				LexizeContextListRemoveContext(contextList, ld->curDictId);
-				contextList->restartProcessing = true;
-				return ld->tmpRes;
+				if (!res)
+				{
+					res = ld->tmpRes;
+				}
+				else
+				{
+					ptr = ld->towork.head;
+					while (ptr)
+					{
+						ptr->accepted[dictPos] = true;
+						if (ptr == curVal)
+							break;
+						ptr = ptr->next;
+					}
+				}
+
+				ptr = ld->towork.head;
+				while (ptr)
+				{
+					ptr->notFinished[dictPos] = false;
+					ptr = ptr->next;
+				}
+				ld->tmpRes = NULL;
+				return res;
 			}
-		}
 
-		ld->dictState.isend = (curVal->type == 0) ? true : false;
-		ld->dictState.getnext = false;
-
-		res = (TSLexeme *) DatumGetPointer(FunctionCall4(
-														 &(dict->lexize),
-										 PointerGetDatum(dict->dictData),
-										   PointerGetDatum(curVal->lemm),
-										  Int32GetDatum(curVal->lenlemm),
-										  PointerGetDatum(&ld->dictState)
-														 ));
-
-		if (ld->dictState.getnext)
-		{
-			/* Dictionary wants one more */
-			RemoveHead(ld);
-			if (res)
+			/*
+			 * Dict don't want next lexem and didn't recognize anything, redo
+			 * from ld->towork.head
+			 */
+			ptr = ld->towork.head;
+			while (ptr && ptr != curVal)
 			{
-				setNewTmpRes(ld, curVal, res);
-				ClearLexemesBuffer(ld);
+				ptr->notFinished[dictPos] = false;
+				ptr->rejected[dictPos] = true;
+				ptr = ptr->next;
 			}
-			curVal = ld->towork.head;
 			return NULL;
 		}
-
-		if (res || ld->tmpRes)
-		{
-			/*
-			 * Dictionary normalizes lexemes, so we remove from stack all
-			 * used lexemes, return to basic mode and redo end of stack
-			 * (if it exists)
-			 */
-			RemoveHead(ld);
-			if (!res)
-			{
-				TSLexeme *ptr;
-				res = ld->tmpRes;
-				ptr = res;
-				while (ptr && ptr->lexeme)
-				{
-					ptr->flags |= TSL_PREVPOS;
-					ptr++;
-				}
-				contextList->restartProcessing = true;
-			}
-			else
-			{
-				ClearLexemesBuffer(ld);
-			}
-
-			/* reset to initial state */
-			LexizeContextListRemoveContext(contextList, ld->curDictId);
-			return res;
-		}
-
-		/*
-		 * Dict don't want next lexem and didn't recognize anything, redo
-		 * from ld->towork.head
-		 */
-		context->skipLexeme = true;
-		RemoveHead(ld);
-		contextList->context[0].ld->towork = ld->lexemesBuffer;
-		contextList->restartProcessing = true;
-		return NULL;
 	}
-	return res;
+	return NULL;
 }
 
 static TSLexeme *
@@ -912,56 +1012,52 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 	return res;
 }
 
-static TSLexeme *
-StopDictionariesProcessing(LexizeContextList *contextList)
+static bool
+CleanToworkQueue(LexizeData *ld, ParsedLex **correspondLexem)
 {
-	int i;
-	TSLexeme *res = NULL;
+	ListDictionary			   *map;
+	ListDictionaryOperators	   *operators;
+	ParsedLex				   *curVal;
+	bool						result = false;;
 
-	for (i = 1; i < contextList->len; i++)
+	while ((curVal = ld->towork.head) != NULL)
 	{
-		if (!contextList->context[i].processed)
+		map = ld->cfg->map + curVal->type;
+		operators = ld->cfg->operators + curVal->type;
+		if ((map->len > 1 && IsProcessingComplete(ld->cfg, curVal, operators->operators[0]))
+				|| (map->len == 1 && ((curVal->accepted[0] && !curVal->notFinished[0]) || curVal->rejected[0])))
 		{
-			TSLexeme *tmpRes;
-			TSLexeme *combinedRes;
-			if (!contextList->context[i].ld->towork.head)
+			ParsedLex *ptr = curVal->next;
+			while (ptr)
 			{
-				contextList->context[i].ld->towork.head = contextList->context[i].ld->towork.tail = palloc0(sizeof(ParsedLex));
-				contextList->context[i].ld->towork.head->lemm = NULL;
+				int dictIndex = 0;
+				ListDictionary *ptr_map = ld->cfg->map + ptr->type;
+				for (dictIndex = 0; dictIndex < ptr_map->len; dictIndex++)
+				{
+					if (map->len == ptr_map->len && curVal->accepted[dictIndex] && ptr->accepted[dictIndex])
+						ptr->holdAccepted[dictIndex] = true;
+				}
+				ptr = ptr->next;
 			}
-			contextList->context[i].ld->towork.head->type = 0;
-			contextList->context[i].ld->towork.head->lenlemm = 0;
-			contextList->context[i].ld->towork.head->next = NULL;
-			tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-
-			combinedRes = TSLexemeCombine(res, tmpRes);
-			if (res)
-				pfree(res);
-			if (tmpRes)
-				pfree(tmpRes);
-			res = combinedRes;
-			i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
+			RemoveHead(ld);
+			result = true;
+		}
+		else
+		{
+			break;
 		}
 	}
-	return res;
+	return result;
 }
 
 static TSLexeme *
-LexizeExec(LexizeContextList *contextList)
+LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
 	ListDictionary			   *map;
 	ListDictionaryOperators	   *operators;
 	TSLexeme				   *res = NULL;
 	ParsedLex				   *curVal;
-	LexizeData				   *ld;
-	ParsedLex				  **correspondLexem;
-	int							i;
 
-	for (i = 1; i < contextList->len; i++)
-		contextList->context[i].processed = false;
-
-	ld = contextList->context[0].ld; // Get default LexizeData
-	correspondLexem = contextList->context[0].correspondLexem;
 	if (ld->towork.head == NULL)
 	{
 		setCorrLex(ld, correspondLexem);
@@ -969,278 +1065,61 @@ LexizeExec(LexizeContextList *contextList)
 	}
 
 	curVal = ld->towork.head;
-	while (curVal)
+	map = ld->cfg->map + curVal->type;
+	operators = ld->cfg->operators + curVal->type;
+
+	if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0 || operators->len == 0))
 	{
-		TSLexeme *newRes;
-		TSLexeme *prevRes;
-		map = ld->cfg->map + curVal->type;
-		operators = ld->cfg->operators + curVal->type;
-
-		for (i = 1; i < contextList->len; i++)
-			contextList->context[i].processed = false;
-
-		if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0 || operators->len == 0))
-		{
-			/* skip this type of lexeme */
-			RemoveHead(ld);
-			setCorrLex(ld, correspondLexem);
-			return res;
-		}
-
-		if (curVal->type == 0) // End of the input, finish processing of multi-input dictionaries
-		{
-			TSLexeme *tmpRes;
-
-			for (i = 1; i < contextList->len; i++)
-			{
-				tmpRes = LexizeExecDictionary(contextList->context[i].dictId, contextList);
-				if (tmpRes != NULL)
-				{
-					TSLexeme *combinedRes = TSLexemeCombine(res, tmpRes);
-					if (res)
-						pfree(res);
-					pfree(tmpRes);
-					res = combinedRes;
-				}
-				i = 0; // Possibly the contextList has been changed during LexizeExecDictionary execution, restart in the loop
-				if (contextList->restartProcessing)
-					break;
-			}
-			if (contextList->restartProcessing)
-			{
-				contextList->restartProcessing = false;
-				curVal = ld->towork.head;
-				continue;
-			}
-			res = TSLexemeRemoveDuplications(res);
-			RemoveHead(ld);
-			return res;
-		}
-
-		prevRes = res;
-		if (map->len == 1) // There are no operators, just single dictionary
-		{
-			newRes = LexizeExecDictionary(map->dictIds[0], contextList);
-		}
-		else // There is a dictionary pipe expression tree, start from top operator
-		{
-			Assert(operators->len != 0);
-			newRes = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], contextList);
-		}
-
-		res = TSLexemeCombine(prevRes, newRes);
-		if (prevRes)
-			pfree(prevRes);
-		if (newRes)
-			pfree(newRes);
-
-		if (contextList->restartProcessing)
-		{
-			contextList->restartProcessing = false;
-			continue;
-		}
-
-		/*
-		 * Stop processing of the multi-input dictionaries that didn't
-		 * processed last input
-		 */
-		prevRes = res;
-		newRes = StopDictionariesProcessing(contextList);
-		res = TSLexemeCombine(prevRes, newRes);
-		if (prevRes)
-			pfree(prevRes);
-		if (newRes)
-			pfree(newRes);
-
+		/* skip this type of lexeme */
 		RemoveHead(ld);
-		curVal = ld->towork.head;
+		setCorrLex(ld, correspondLexem);
+		return NULL;
 	}
 
-	res = TSLexemeRemoveDuplications(res);
+	if (CleanToworkQueue(ld, correspondLexem))
+		return NULL;
+
+	if (curVal->type == 0) // End of the input, finish processing of multi-input dictionaries
+	{
+		res = TSLexemeRemoveDuplications(res);
+		RemoveHead(ld);
+		setCorrLex(ld, correspondLexem);
+		return res;
+	}
+
+	ld->curDictId = InvalidOid;
+	if (map->len == 1) // There are no operators, just single dictionary
+	{
+		res = LexizeExecDictionary(ld, correspondLexem, 0);
+	}
+	else // There is a dictionary pipe expression tree, start from top operator
+	{
+		Assert(operators->len != 0);
+		res = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], ld, correspondLexem);
+	}
+	if (!((map->len > 1 && IsProcessingComplete(ld->cfg, curVal, operators->operators[0]))
+			|| (map->len == 1 && ((curVal->accepted[0] && !curVal->notFinished[0]) || curVal->rejected[0]))))
+	{
+		// Reset accept and notFinished flags
+		ParsedLex *ptr = curVal;
+		while (ptr)
+		{
+			int dictIndex = 0;
+			ListDictionary *ptr_map = ld->cfg->map + ptr->type;
+			for (dictIndex = 0; dictIndex < ptr_map->len; dictIndex++)
+			{
+				if (!ptr->holdAccepted[dictIndex])
+					ptr->accepted[dictIndex] = false;
+				ptr->notFinished[dictIndex] = false;
+			}
+			ptr = ptr->next;
+		}
+		return NULL;
+	}
+
+	CleanToworkQueue(ld, correspondLexem);
 	setCorrLex(ld, correspondLexem);
 	return res;
-}
-
-static TSLexeme *
-LexizeExecOld(LexizeData *ld, ParsedLex **correspondLexem)
-{
-	int			i;
-	ListDictionary *map;
-	TSDictionaryCacheEntry *dict;
-	TSLexeme   *res;
-
-	if (ld->curDictId == InvalidOid)
-	{
-		/*
-		 * usual mode: dictionary wants only one word, but we should keep in
-		 * mind that we should go through all stack
-		 */
-
-		while (ld->towork.head)
-		{
-			ParsedLex  *curVal = ld->towork.head;
-			char	   *curValLemm = curVal->lemm;
-			int			curValLenLemm = curVal->lenlemm;
-
-			map = ld->cfg->map + curVal->type;
-
-			if (curVal->type == 0 || curVal->type >= ld->cfg->lenmap || map->len == 0)
-			{
-				/* skip this type of lexeme */
-				RemoveHead(ld);
-				continue;
-			}
-
-			for (i = ld->posDict; i < map->len; i++)
-			{
-				dict = lookup_ts_dictionary_cache(map->dictIds[i]);
-
-				ld->dictState.isend = ld->dictState.getnext = false;
-				ld->dictState.private_state = NULL;
-				res = (TSLexeme *) DatumGetPointer(FunctionCall4(
-																 &(dict->lexize),
-																 PointerGetDatum(dict->dictData),
-																 PointerGetDatum(curValLemm),
-																 Int32GetDatum(curValLenLemm),
-																 PointerGetDatum(&ld->dictState)
-																 ));
-
-				if (ld->dictState.getnext)
-				{
-					/*
-					 * dictionary wants next word, so setup and store current
-					 * position and go to multiword mode
-					 */
-
-					ld->curDictId = DatumGetObjectId(map->dictIds[i]);
-					ld->posDict = i + 1;
-					ld->curSub = curVal->next;
-					if (res)
-						setNewTmpRes(ld, curVal, res);
-					return LexizeExecOld(ld, correspondLexem);
-				}
-
-				if (!res)		/* dictionary doesn't know this lexeme */
-					continue;
-
-				if (res->flags & TSL_FILTER)
-				{
-					curValLemm = res->lexeme;
-					curValLenLemm = strlen(res->lexeme);
-					continue;
-				}
-
-				RemoveHead(ld);
-				setCorrLex(ld, correspondLexem);
-				return res;
-			}
-
-			RemoveHead(ld);
-			setCorrLex(ld, correspondLexem);
-		}
-	}
-	else
-	{							/* curDictId is valid */
-		dict = lookup_ts_dictionary_cache(ld->curDictId);
-
-		/*
-		 * Dictionary ld->curDictId asks  us about following words
-		 */
-
-		while (ld->curSub)
-		{
-			ParsedLex  *curVal = ld->curSub;
-
-			map = ld->cfg->map + curVal->type;
-
-			if (curVal->type != 0)
-			{
-				bool		dictExists = false;
-
-				if (curVal->type >= ld->cfg->lenmap || map->len == 0)
-				{
-					/* skip this type of lexeme */
-					ld->curSub = curVal->next;
-					continue;
-				}
-
-				/*
-				 * We should be sure that current type of lexeme is recognized
-				 * by our dictionary: we just check is it exist in list of
-				 * dictionaries ?
-				 */
-				for (i = 0; i < map->len && !dictExists; i++)
-					if (ld->curDictId == DatumGetObjectId(map->dictIds[i]))
-						dictExists = true;
-
-				if (!dictExists)
-				{
-					/*
-					 * Dictionary can't work with current tpe of lexeme,
-					 * return to basic mode and redo all stored lexemes
-					 */
-					ld->curDictId = InvalidOid;
-					return LexizeExecOld(ld, correspondLexem);
-				}
-			}
-
-			ld->dictState.isend = (curVal->type == 0) ? true : false;
-			ld->dictState.getnext = false;
-
-			res = (TSLexeme *) DatumGetPointer(FunctionCall4(
-															 &(dict->lexize),
-															 PointerGetDatum(dict->dictData),
-															 PointerGetDatum(curVal->lemm),
-															 Int32GetDatum(curVal->lenlemm),
-															 PointerGetDatum(&ld->dictState)
-															 ));
-
-			if (ld->dictState.getnext)
-			{
-				/* Dictionary wants one more */
-				ld->curSub = curVal->next;
-				if (res)
-					setNewTmpRes(ld, curVal, res);
-				continue;
-			}
-
-			if (res || ld->tmpRes)
-			{
-				/*
-				 * Dictionary normalizes lexemes, so we remove from stack all
-				 * used lexemes, return to basic mode and redo end of stack
-				 * (if it exists)
-				 */
-				if (res)
-				{
-					moveToWaste(ld, ld->curSub);
-				}
-				else
-				{
-					res = ld->tmpRes;
-					moveToWaste(ld, ld->lastRes);
-				}
-
-				/* reset to initial state */
-				ld->curDictId = InvalidOid;
-				ld->posDict = 0;
-				ld->lastRes = NULL;
-				ld->tmpRes = NULL;
-				setCorrLex(ld, correspondLexem);
-				return res;
-			}
-
-			/*
-			 * Dict don't want next lexem and didn't recognize anything, redo
-			 * from ld->towork.head
-			 */
-			ld->curDictId = InvalidOid;
-			return LexizeExecOld(ld, correspondLexem);
-		}
-	}
-
-	setCorrLex(ld, correspondLexem);
-	return NULL;
 }
 
 /*
@@ -1251,7 +1130,7 @@ LexizeExecOld(LexizeData *ld, ParsedLex **correspondLexem)
 void
 parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 {
-	int			type,
+	int			type = -1,
 				lenlemm;
 	char	   *lemm = NULL;
 	LexizeData	ldata;
@@ -1259,18 +1138,9 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	TSConfigCacheEntry *cfg;
 	TSParserCacheEntry *prsobj;
 	void	   *prsdata;
-	LexizeContextList *contextList = palloc(sizeof(LexizeContextList));
-	int			i;
-	bool		prevInsert = false;
 
 	cfg = lookup_ts_config_cache(cfgId);
 	prsobj = lookup_ts_parser_cache(cfg->prsId);
-	contextList->restartProcessing = false;
-	contextList->len = 1;
-	contextList->context = palloc(sizeof(LexizeContext));
-	contextList->context[0].correspondLexem = NULL;
-	contextList->context[0].dictId = InvalidOid;
-	contextList->context[0].ld = &ldata;
 
 	prsdata = (void *) DatumGetPointer(FunctionCall2(&prsobj->prsstart,
 													 PointerGetDatum(buf),
@@ -1280,68 +1150,37 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 
 	do
 	{
-
-		type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
-										   PointerGetDatum(prsdata),
-										   PointerGetDatum(&lemm),
-										   PointerGetDatum(&lenlemm)));
-
-		if (type > 0 && lenlemm >= MAXSTRLEN)
+		if (type != 0)
 		{
+			type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
+											   PointerGetDatum(prsdata),
+											   PointerGetDatum(&lemm),
+											   PointerGetDatum(&lenlemm)));
+
+			if (type > 0 && lenlemm >= MAXSTRLEN)
+			{
 #ifdef IGNORE_LONGLEXEME
-			ereport(NOTICE,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
-			continue;
+				ereport(NOTICE,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("word is too long to be indexed"),
+						 errdetail("Words longer than %d characters are ignored.",
+								   MAXSTRLEN)));
+				continue;
 #else
-			ereport(ERROR,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
+				ereport(ERROR,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("word is too long to be indexed"),
+						 errdetail("Words longer than %d characters are ignored.",
+								   MAXSTRLEN)));
 #endif
+			}
+
+			LexizeAddLemm(&ldata, type, lemm, lenlemm);
 		}
 
-		for (i = 0; i < contextList->len; i++)
-		{
-			LexizeAddLemm(contextList->context[i].ld, type, lemm, lenlemm);
-		}
-
-		while (contextList->context[0].ld->towork.head)
+		while ((norms = LexizeExec(&ldata, NULL)) != NULL)
 		{
 			TSLexeme   *ptr;
-			bool		mixedLexemes = false;
-			int			prevFlag;
-
-			norms = LexizeExec(contextList);
-			if (norms == NULL)
-				continue;
-
-			ptr = norms;
-			prevFlag = ptr->flags;
-			while (ptr->lexeme)
-			{
-				if (ptr->flags != prevFlag)
-				{
-					mixedLexemes = true;
-					break;
-				}
-				prevFlag = ptr->flags;
-				ptr++;
-			}
-			ptr = norms;
-
-			while (ptr->lexeme)
-			{
-				if (ptr->flags & TSL_PREVPOS && mixedLexemes && !prevInsert)
-				{
-					prs->pos++;
-					break;
-				}
-				ptr++;
-			}
 			ptr = norms;
 
 			prs->pos++;			/* set pos */
@@ -1361,17 +1200,13 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 				prs->words[prs->curwords].nvariant = ptr->nvariant;
 				prs->words[prs->curwords].flags = ptr->flags & TSL_PREFIX;
 				prs->words[prs->curwords].alen = 0;
-				prs->words[prs->curwords].pos.pos = (prevInsert || mixedLexemes) && (ptr->flags & TSL_PREVPOS) ? LIMITPOS(prs->pos - 1) : LIMITPOS(prs->pos);
+				prs->words[prs->curwords].pos.pos = LIMITPOS(prs->pos);
 				ptr++;
 				prs->curwords++;
 			}
 			pfree(norms);
-			if (contextList->len > 1)
-				prevInsert = true;
-			else
-				prevInsert = false;
 		}
-	} while (type > 0);
+	} while (type != 0 || ldata.towork.head);
 
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
@@ -1474,7 +1309,7 @@ addHLParsedLex(HeadlineParsedText *prs, TSQuery query, ParsedLex *lexs, TSLexeme
 void
 hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int buflen)
 {
-	int			type,
+	int			type = -1,
 				lenlemm;
 	char	   *lemm = NULL;
 	LexizeData	ldata;
@@ -1482,17 +1317,10 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 	ParsedLex  *lexs;
 	TSConfigCacheEntry *cfg;
 	TSParserCacheEntry *prsobj;
-	LexizeContextList *contextList = palloc0(sizeof(LexizeContextList));
 	void	   *prsdata;
 
 	cfg = lookup_ts_config_cache(cfgId);
 	prsobj = lookup_ts_parser_cache(cfg->prsId);
-	contextList->restartProcessing = false;
-	contextList->len = 1;
-	contextList->context = palloc(sizeof(LexizeContext));
-	contextList->context[0].correspondLexem = &lexs;
-	contextList->context[0].dictId = InvalidOid;
-	contextList->context[0].ld = &ldata;
 
 	prsdata = (void *) DatumGetPointer(FunctionCall2(&(prsobj->prsstart),
 													 PointerGetDatum(buf),
@@ -1502,34 +1330,37 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 
 	do
 	{
-		type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
-										   PointerGetDatum(prsdata),
-										   PointerGetDatum(&lemm),
-										   PointerGetDatum(&lenlemm)));
-
-		if (type > 0 && lenlemm >= MAXSTRLEN)
+		if (type != 0)
 		{
-#ifdef IGNORE_LONGLEXEME
-			ereport(NOTICE,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
-			continue;
-#else
-			ereport(ERROR,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
-#endif
-		}
+			type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
+											   PointerGetDatum(prsdata),
+											   PointerGetDatum(&lemm),
+											   PointerGetDatum(&lenlemm)));
 
-		LexizeAddLemm(&ldata, type, lemm, lenlemm);
+			if (type > 0 && lenlemm >= MAXSTRLEN)
+			{
+#ifdef IGNORE_LONGLEXEME
+				ereport(NOTICE,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("word is too long to be indexed"),
+						 errdetail("Words longer than %d characters are ignored.",
+								   MAXSTRLEN)));
+				continue;
+#else
+				ereport(ERROR,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("word is too long to be indexed"),
+						 errdetail("Words longer than %d characters are ignored.",
+								   MAXSTRLEN)));
+#endif
+			}
+
+			LexizeAddLemm(&ldata, type, lemm, lenlemm);
+		}
 
 		do
 		{
-			if ((norms = LexizeExec(contextList)) != NULL)
+			if ((norms = LexizeExec(&ldata, &lexs)) != NULL)
 			{
 				prs->vectorpos++;
 				addHLParsedLex(prs, query, lexs, norms);
@@ -1538,7 +1369,7 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 				addHLParsedLex(prs, query, lexs, NULL);
 		} while (norms);
 
-	} while (type > 0);
+	} while (type != 0 || ldata.towork.head);
 
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
