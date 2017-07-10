@@ -198,7 +198,7 @@ SELECT to_tsquery('hunspell_tst', 'footballyklubber:b & rebookings:A & sky');
 
 -- Test synonym dictionary in configuration
 CREATE TEXT SEARCH CONFIGURATION synonym_tst (
-						COPY=english
+					COPY=english
 );
 
 ALTER TEXT SEARCH CONFIGURATION synonym_tst ALTER MAPPING FOR
@@ -223,3 +223,61 @@ ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR
 SELECT to_tsvector('thesaurus_tst', 'one postgres one two one two three one');
 SELECT to_tsvector('thesaurus_tst', 'Supernovae star is very new star and usually called supernovae (abbreviation SN)');
 SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a tickets');
+CREATE TEXT SEARCH CONFIGURATION english_multi2(
+					COPY=english_multi
+);
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH english_stem AND simple;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus OR english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH simple AND (thesaurus OR english_stem);
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND simple;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND (german_stem OR simple);
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
+CREATE TEXT SEARCH CONFIGURATION thesaurus_chain(
+					COPY=english
+);
+
+CREATE TEXT SEARCH CONFIGURATION thesaurus_second_chain(
+					COPY=english
+);
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR 
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus THEN thesaurus_second THEN english_stem;
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR 
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus THEN english_stem;
+
+SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chain', 'ski');
+SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');
+SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_second_chain', 'ski jumping');
+SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus AND thesaurus_second;
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word
+	WITH thesaurus OR thesaurus_second;
+
+SELECT to_tsvector('thesaurus_chain', 'one two'), to_tsvector('thesaurus_second_chain', 'one two');
+SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesaurus_second_chain', 'one two three four');
+SELECT to_tsvector('thesaurus_chain', 'three four five'), to_tsvector('thesaurus_second_chain', 'three four five');
+SELECT to_tsvector('thesaurus_chain', 'three four'), to_tsvector('thesaurus_second_chain', 'three four');
