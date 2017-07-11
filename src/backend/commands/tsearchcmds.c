@@ -1093,8 +1093,8 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 			mapvalues[Anum_pg_ts_config_map_maptokentype - 1] = cfgmap->maptokentype;
 			mapvalues[Anum_pg_ts_config_map_mapseqno - 1] = cfgmap->mapseqno;
 			mapvalues[Anum_pg_ts_config_map_mapdict - 1] = cfgmap->mapdict;
-			mapvalues[Anum_pg_ts_config_map_mapoption - 1] = cfgmap->mapoption;
 			mapvalues[Anum_pg_ts_config_map_mapoperator - 1] = cfgmap->mapoperator;
+			mapvalues[Anum_pg_ts_config_map_mapoption - 1] = cfgmap->mapoption;
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
 
@@ -1570,8 +1570,8 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
 				values[Anum_pg_ts_config_map_mapseqno - 1] = Int32GetDatum(j + 1);
 				values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(dictIds[j]);
-				values[Anum_pg_ts_config_map_mapoption -1] = Int32GetDatum(options[j]);
-				values[Anum_pg_ts_config_map_mapoperator- 1] = Int32GetDatum(operators[j]);
+				values[Anum_pg_ts_config_map_mapoperator - 1] = Int32GetDatum(operators[j]);
+				values[Anum_pg_ts_config_map_mapoption - 1] = Int32GetDatum(options[j]);
 
 				tup = heap_form_tuple(relMap->rd_att, values, nulls);
 				CatalogTupleInsert(relMap, tup);

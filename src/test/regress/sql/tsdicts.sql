@@ -236,6 +236,9 @@ SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus(accept) THEN english_stem;
+SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
@@ -258,11 +261,11 @@ CREATE TEXT SEARCH CONFIGURATION thesaurus_second_chain(
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR 
 	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus THEN thesaurus_second THEN english_stem;
+	WITH thesaurus(accept) THEN thesaurus_second(accept) THEN english_stem;
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR 
 	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus THEN english_stem;
+	WITH thesaurus(accept) THEN english_stem;
 
 SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chain', 'ski');
 SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');

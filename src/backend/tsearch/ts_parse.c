@@ -314,6 +314,7 @@ IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator)
 {
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	ListDictionary			   *map = cfg->map + curVal->type;
 	bool						l_accepted = false;
 	bool						r_accepted = false;
 	bool						l_rejected = false;
@@ -355,7 +356,8 @@ IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 			return ((l_accepted && !l_not_finished) || l_rejected) && ((r_accepted && !r_not_finished) || r_rejected);
 			break;
 		case DICTPIPE_OP_THEN:
-			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished);
+			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished) ||
+				(l_rejected && (operator.l_is_operator == 0) && ((map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT) == 0));
 			break;
 	}
 	return false;
@@ -431,6 +433,23 @@ IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 }
 
 static void
+MarkAsRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+		TSConfigurationOperatorDescriptor operator)
+{
+	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+
+	if (operator.l_is_operator)
+		MarkAsRejected(cfg, curVal, operators->operators[operator.l_pos]);
+	else
+		curVal->rejected[operator.l_pos] = true;
+
+	if (operator.r_is_operator)
+		MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
+	else
+		curVal->rejected[operator.r_pos] = true;
+}
+
+static void
 UnmarkBranchAsAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator)
 {
@@ -477,13 +496,13 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
+	ListDictionary			   *map = cfg->map + curVal->type;
 	TSLexeme				   *leftRes;
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 	TSLexeme				  **thenRightRes;
 	ParsedLex				   *newCurVal;
 	ParsedLex				   *pl;
-	ListDictionary			   *map;
 	int						   *thenRightSizes;
 	int							nvariant;
 	int							i;
@@ -507,12 +526,19 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 */
 	if (IsLeftSideRejected(cfg, curVal, operator))
 	{
-		/*
-		 * If left side is dictionary that has it context, don't transfer control
-		 * to next dictionary, since thesaurus waits for more input
-		 */
-		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
-			: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+		if (operator.l_is_operator == 0 && map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT)
+		{
+			return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
+				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+		}
+		else
+		{
+			if (operator.r_is_operator)
+				MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
+			else
+				curVal->rejected[operator.r_pos] = true;
+			return NULL;
+		}
 	}
 
 	resSize = 0;
@@ -579,7 +605,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		resSize += thenRightSizes[i];
 	}
 
-	if (noResults)
+	if (noResults && !IsRightSideProcessingComplete(cfg, curVal, operator))
 	{
 		res = NULL;
 		if (operator.l_is_operator)

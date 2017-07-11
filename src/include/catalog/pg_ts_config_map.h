@@ -37,7 +37,7 @@ CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 	int32		mapseqno;		/* order in which to consult dictionaries */
 	Oid			mapdict;		/* dictionary to consult */
 	int32		mapoperator;	/* operator descriptor. See TSConfigurationOperatorDescriptor */
-	int8		mapoption;		/* dictionary additional options */
+	int32		mapoption;		/* dictionary additional options */
 } FormData_pg_ts_config_map;
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;

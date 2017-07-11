@@ -533,6 +533,7 @@ lookup_ts_config_cache(Oid cfgId)
 				}
 				maxtokentype = toktype;
 				mapdicts[0] = cfgmap->mapdict;
+				mapoptions[0] = cfgmap->mapoption;
 				mapoperators[0].raw = cfgmap->mapoperator;
 				ndicts = 1;
 			}
