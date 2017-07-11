@@ -1093,6 +1093,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 			mapvalues[Anum_pg_ts_config_map_maptokentype - 1] = cfgmap->maptokentype;
 			mapvalues[Anum_pg_ts_config_map_mapseqno - 1] = cfgmap->mapseqno;
 			mapvalues[Anum_pg_ts_config_map_mapdict - 1] = cfgmap->mapdict;
+			mapvalues[Anum_pg_ts_config_map_mapoption - 1] = cfgmap->mapoption;
 			mapvalues[Anum_pg_ts_config_map_mapoperator - 1] = cfgmap->mapoperator;
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
@@ -1342,7 +1343,7 @@ DictPipeTreeNodeGetPosition(DictPipeElem *head, DictPipeElem *chk_node)
 
 static void
 DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operators,
-						int *operatorsPos, Oid *dictIds, int *dictIdsPos)
+						int *operatorsPos, Oid *dictIds, int *dictIdsPos, int8 *options)
 {
 	/* Guard against stack overflow due to recursive event trigger */
 	check_stack_depth();
@@ -1352,6 +1353,7 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operato
 	{
 		List   *names = lfirst(node->dictname->head);
 		dictIds[*dictIdsPos] = get_ts_dict_oid(names, false);
+		options[*dictIdsPos] = node->options;
 		(*dictIdsPos)++;
 	}
 	else
@@ -1362,18 +1364,20 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operato
 		Assert(node->kind == DICT_PIPE_OPERATOR);
 
 		descriptor.presented = 1;
-		descriptor.l_is_operator = node->left->kind == DICT_PIPE_OPERAND ? 0 : 1;
-		descriptor.r_is_operator = node->right->kind == DICT_PIPE_OPERAND ? 0 : 1;
+		descriptor.l_is_operator = node->left->kind == DICT_PIPE_OPERATOR ? 1 : 0;
+		descriptor.r_is_operator = node->right->kind == DICT_PIPE_OPERATOR ? 1 : 0;
 		descriptor.oper = node->oper;
-		descriptor._notused = 0;
 		descriptor.l_pos = DictPipeTreeNodeGetPosition(head, node->left);
 		descriptor.r_pos = DictPipeTreeNodeGetPosition(head, node->right);
+		descriptor.is_legacy = node->options & DICTPIPE_OPERATOR_OPT_COMMA ? 1 : 0;
+		descriptor._notused = 0;
+
 
 		operators[*operatorsPos] = descriptor.raw;
 		(*operatorsPos)++;
 
-		DictPipeTreeParse_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos);
-		DictPipeTreeParse_recurse(head, node->right, operators, operatorsPos, dictIds, dictIdsPos);
+		DictPipeTreeParse_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos, options);
+		DictPipeTreeParse_recurse(head, node->right, operators, operatorsPos, dictIds, dictIdsPos, options);
 	}
 }
 
@@ -1384,13 +1388,14 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operato
  */
 static void
 DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int32 **operators,
-				int *noperators, Oid **dictIds, int *ndict)
+				int *noperators, Oid **dictIds, int *ndict, int8 **options, int *noptions)
 {
 	DictPipeElem   *head = stmt->dict_pipe;
 	int				operatorsPos = 0;
 	int				dictIdsPos = 0;
 
 	DictPipeTreeCalculateSize_recurse(head, noperators, ndict);
+	*noptions = *ndict;
 
 	// Since all operators are binary, the number of dictionaries should be
 	// greater than number of operators.
@@ -1398,8 +1403,9 @@ DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int32 **operators,
 
 	(*operators) = (int *) palloc0(sizeof(int) * (*ndict));
 	(*dictIds) = (Oid *) palloc(sizeof(Oid) * (*ndict));
+	(*options) = (int8 *) palloc0(sizeof(int8) * (*ndict));
 
-	DictPipeTreeParse_recurse(head, head, *operators, &operatorsPos, *dictIds, &dictIdsPos);
+	DictPipeTreeParse_recurse(head, head, *operators, &operatorsPos, *dictIds, &dictIdsPos, *options);
 }
 
 /*
@@ -1420,6 +1426,8 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				ntoken;
 	Oid		   *dictIds;
 	int32	   *operators;
+	int8	   *options;
+	int			noptions = 0;
 	int			noperators = 0;
 	int			ndict = 0;
 	ListCell   *c;
@@ -1476,7 +1484,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 
 	if (stmt->dict_pipe)
 	{
-		DictPipeTreeParse(stmt, &operators, &noperators, &dictIds, &ndict);
+		DictPipeTreeParse(stmt, &operators, &noperators, &dictIds, &ndict, &options, &noptions);
 	}
 
 	if (stmt->replace)
@@ -1562,6 +1570,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
 				values[Anum_pg_ts_config_map_mapseqno - 1] = Int32GetDatum(j + 1);
 				values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(dictIds[j]);
+				values[Anum_pg_ts_config_map_mapoption -1] = Int32GetDatum(options[j]);
 				values[Anum_pg_ts_config_map_mapoperator- 1] = Int32GetDatum(operators[j]);
 
 				tup = heap_form_tuple(relMap->rd_att, values, nulls);

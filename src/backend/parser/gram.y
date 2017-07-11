@@ -587,6 +587,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					dictionary_pipe_expr_and dictionary_pipe_expr_or
 					dictionary_pipe_expr_paren dictionary_pipe_expr_then
 					dictionary_pipe_expr_comma dictionary_pipe_expr_comma_ext
+%type <ival>		dictionary_pipe_elem_options_list dictionary_pipe_elem_option
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -610,7 +611,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  */
 
 /* ordinary key words in alphabetical order */
-%token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
+%token <keyword> ABORT_P ABSOLUTE_P ACCEPT ACCESS ACTION ADD_P ADMIN AFTER
 	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
 	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
@@ -10093,15 +10094,33 @@ dictionary_pipe_elem:
 					n->left = n->right = NULL;
 					$$ = n;
 				}
+			| any_name '(' dictionary_pipe_elem_options_list ')'
+				{
+					DictPipeElem *n = makeNode(DictPipeElem);
+					n->kind = DICT_PIPE_OPERAND;
+					n->dictname = list_make1($1);
+					n->options = $3;
+					n->left = n->right = NULL;
+					$$ = n;
+				}
+		;
+
+dictionary_pipe_elem_option:
+			ACCEPT { $$ = DICTPIPE_ELEM_OPT_ACCEPT; }
+		;
+
+dictionary_pipe_elem_options_list:
+			dictionary_pipe_elem_option { $$ = $1; }
+			| dictionary_pipe_elem_option ',' dictionary_pipe_elem_options_list { $$ = $1 | $3; }
 		;
 
 dictionary_pipe_expr:
-			dictionary_pipe_expr_then { $$ = $1; }
+			dictionary_pipe_expr_or { $$ = $1; }
 			| dictionary_pipe_expr_comma { $$ = $1; }
 		;
 
 dictionary_pipe_expr_then:
-			dictionary_pipe_expr_or THEN dictionary_pipe_expr_then
+			dictionary_pipe_expr_paren THEN dictionary_pipe_expr_then
 			{
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
@@ -10111,7 +10130,7 @@ dictionary_pipe_expr_then:
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_or { $$ = $1; }
+			| dictionary_pipe_expr_paren { $$ = $1; }
 		;
 
 dictionary_pipe_expr_or:
@@ -10129,7 +10148,7 @@ dictionary_pipe_expr_or:
 		;
 
 dictionary_pipe_expr_and:
-			dictionary_pipe_expr_paren AND dictionary_pipe_expr_and
+			dictionary_pipe_expr_then AND dictionary_pipe_expr_and
 			{
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
@@ -10139,11 +10158,11 @@ dictionary_pipe_expr_and:
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_paren { $$ = $1; }
+			| dictionary_pipe_expr_then { $$ = $1; }
 		;
 
 dictionary_pipe_expr_paren:
-			'(' dictionary_pipe_expr_then ')' { $$ = $2; }
+			'(' dictionary_pipe_expr_or ')' { $$ = $2; }
 			| dictionary_pipe_elem { $$ = $1; }
 		;
 
@@ -10153,7 +10172,7 @@ dictionary_pipe_expr_comma:
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
 				n->oper = DICTPIPE_OP_OR;
-				n->options = 0;
+				n->options = DICTPIPE_OPERATOR_OPT_COMMA;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
@@ -10171,7 +10190,7 @@ dictionary_pipe_expr_comma_ext:
 				DictPipeElem *n = makeNode(DictPipeElem);
 				n->kind = DICT_PIPE_OPERATOR;
 				n->oper = DICTPIPE_OP_OR;
-				n->options = 0;
+				n->options = DICTPIPE_OPERATOR_OPT_COMMA;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
@@ -14702,6 +14721,7 @@ ColLabel:	IDENT									{ $$ = $1; }
 unreserved_keyword:
 			  ABORT_P
 			| ABSOLUTE_P
+			| ACCEPT
 			| ACCESS
 			| ACTION
 			| ADD_P
