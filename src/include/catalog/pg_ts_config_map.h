@@ -36,8 +36,8 @@ CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 	int32		maptokentype;	/* token type from parser */
 	int32		mapseqno;		/* order in which to consult dictionaries */
 	Oid			mapdict;		/* dictionary to consult */
-	int8		mapoption;		/* dictionary additional options */
 	int32		mapoperator;	/* operator descriptor. See TSConfigurationOperatorDescriptor */
+	int8		mapoption;		/* dictionary additional options */
 } FormData_pg_ts_config_map;
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
@@ -71,8 +71,8 @@ typedef union TSConfigurationOperatorDescriptor
 #define Anum_pg_ts_config_map_maptokentype	2
 #define Anum_pg_ts_config_map_mapseqno		3
 #define Anum_pg_ts_config_map_mapdict		4
-#define Anum_pg_ts_config_map_mapoption		5
-#define Anum_pg_ts_config_map_mapoperator	6
+#define Anum_pg_ts_config_map_mapoperator	5
+#define Anum_pg_ts_config_map_mapoption		6
 
 /* ----------------
  *		Dictionary pipeline operators constants
