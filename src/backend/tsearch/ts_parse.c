@@ -678,10 +678,44 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 */
 
 	if (IsLeftSideRejected(cfg, curVal, operator))
+	{
 		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
 				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+	}
 	else
+	{
+		if (leftRes && operator.is_legacy && leftRes->flags & TSL_FILTER)
+		{
+			TSLexeme	   *res;
+			ParsedLex	   *newCurVal = palloc(sizeof(ParsedLex));
+
+			memcpy(newCurVal, curVal, sizeof(ParsedLex));
+			newCurVal->lemm = leftRes->lexeme;
+			newCurVal->lenlemm = strlen(leftRes->lexeme);
+			ld->towork.head = newCurVal;
+			res = operator.r_is_operator ? LexizeExecOperator(cfg, newCurVal, operators->operators[operator.r_pos], ld, correspondLexem)
+					: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+			if (operator.r_is_operator)
+				CopyCompletionMarks(cfg, newCurVal, curVal, operators->operators[operator.r_pos]);
+			else
+			{
+				ListDictionary	   *map = cfg->map + curVal->type;
+				ListDictionary	   *ptr_map = cfg->map + curVal->type;
+
+				if (map->len == ptr_map->len)
+				{
+					curVal->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
+					curVal->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
+					curVal->notFinished[operator.r_pos] = newCurVal->notFinished[operator.r_pos];
+				}
+			}
+			ld->towork.head = curVal;
+			pfree(newCurVal);
+			pfree(leftRes);
+			return res;
+		}
 		return leftRes;
+	}
 }
 
 static TSLexeme *
