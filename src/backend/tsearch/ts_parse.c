@@ -508,7 +508,7 @@ MergeParsedLexFlags(ParsedLex *to, ParsedLex *from, int mapLen)
 	{
 		to->accepted[i] = to->accepted[i] || from->accepted[i];
 		to->rejected[i] = to->rejected[i] || from->rejected[i];
-		to->notFinished[i] = to->notFinished[i] && from->notFinished[i];
+		to->notFinished[i] = to->notFinished[i] || from->notFinished[i];
 		to->holdAccepted[i] = to->holdAccepted[i] || from->holdAccepted[i];
 	}
 }
@@ -523,7 +523,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 	TSLexeme				  **thenRightRes;
-	ParsedLex				   *pl;
+	ParsedLex				   *nonProcessedLex;
 	ParsedLex				   *resCurVal;
 	int						   *thenRightSizes;
 	int							nvariant;
@@ -539,12 +539,13 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
 		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
 	
-	// Wait until next execution
+	// Wait until next execution for more lexemes
 	if (!IsLeftSideProcessingComplete(cfg, curVal, operator))
 		return NULL;
 
 	/*
-	 * If there is no output, transfer control to the next dictionary
+	 * If there is no output, transfer control to the next dictionary or
+	 * return NULL based on configuration
 	 */
 	if (IsLeftSideRejected(cfg, curVal, operator))
 	{
@@ -555,6 +556,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		}
 		else
 		{
+			// Mark right-side as rejected in order to skip possible processing in future
 			if (operator.r_is_operator)
 				MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
 			else
@@ -569,9 +571,10 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	thenRightRes = palloc0(sizeof(TSLexeme*) * leftSize);
 	thenRightSizes = palloc0(sizeof(int) * leftSize);
 
-	pl = curVal->next;
-	while (pl && pl->type != 0 && IsLeftSideProcessingComplete(cfg, pl, operator))
-		pl = pl->next;
+	// Find first lexem that is not processed by left-side subexpression
+	nonProcessedLex = curVal->next;
+	while (nonProcessedLex && nonProcessedLex->type != 0 && IsLeftSideProcessingComplete(cfg, nonProcessedLex, operator))
+		nonProcessedLex = nonProcessedLex->next;
 	resCurVal = CopyParsedLex(curVal, map->len);
 
 	/*
@@ -581,37 +584,93 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	 */
 	for (i = 0; i < leftSize; i++)
 	{
-		ParsedLex  *plptr = curVal->next;
 		TSLexeme   *ptr;
-		ParsedLex  *newCurVal;
+		ParsedLex  *processedLex = curVal->next;
+		ParsedLex  *curValSub = NULL;
+		ParsedLex  *curValSubLast = NULL;
+		int			j = i + 1;
 
-		newCurVal = CopyParsedLex(curVal, map->len);
-		newCurVal->next = pl;
-		ld->towork.head = newCurVal;
+		curValSub = CopyParsedLex(curVal, map->len);
+		curValSub->next = nonProcessedLex;
 
-		newCurVal->lemm = leftRes[i].lexeme;
-		newCurVal->lenlemm = strlen(leftRes[i].lexeme);
+		curValSub->lemm = leftRes[i].lexeme;
+		curValSub->lenlemm = strlen(leftRes[i].lexeme);
 
-		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, newCurVal, operators->operators[operator.r_pos], ld, correspondLexem)
-				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+		ld->towork.head = curValSub;
+		curValSubLast = curValSub;
 
-		MergeParsedLexFlags(resCurVal, newCurVal, map->len);
-
-		while (plptr && plptr != newCurVal->next)
+		// Add all lexemes with same nvariant in order to process it as a phrase
+		while (j < leftSize && leftRes[i].nvariant == leftRes[j].nvariant)
 		{
-			if (operator.r_is_operator)
-				CopyCompletionMarks(cfg, newCurVal, plptr, operators->operators[operator.r_pos]);
+			ParsedLex *curValSubNext = CopyParsedLex(curVal, map->len);
+
+			curValSubNext->lemm = leftRes[j].lexeme;
+			curValSubNext->lenlemm = strlen(leftRes[j].lexeme);
+			curValSubLast->next = curValSubNext;
+			curValSubNext->next = nonProcessedLex;
+			curValSubLast = curValSubNext ;
+			j++;
+		}
+
+		while (curValSub != nonProcessedLex)
+		{
+			TSLexeme *curRes;
+			TSLexeme *prevRes = thenRightRes[i];
+			curRes = operator.r_is_operator ? LexizeExecOperator(cfg, curValSub, operators->operators[operator.r_pos], ld, correspondLexem)
+				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+			if (prevRes && curRes)
+				curRes->flags |= TSL_ADDPOS;
+			thenRightRes[i] = TSLexemeCombine(prevRes, curRes);
+			MergeParsedLexFlags(resCurVal, curValSub, map->len);
+			if (prevRes)
+				pfree(prevRes);
+			if (curRes)
+				pfree(curRes);
+			if (IsRightSideProcessingComplete(cfg, curValSub, operator))
+			{
+				ld->towork.head = curValSub->next;
+				pfree(curValSub);
+				curValSub = ld->towork.head;
+			}
 			else
 			{
-				ListDictionary *ptr_map = cfg->map + plptr->type;
+				/*
+				 * The dictionary didn't complete the processing of current 
+				 * lexeme, stop processing and revert flags in order to
+				 * process it during next iteration with more lexemes in
+				 * the queue
+				 */
+				memcpy(resCurVal->accepted, curVal->accepted, sizeof(bool) * map->len);
+				memcpy(resCurVal->rejected, curVal->rejected, sizeof(bool) * map->len);
+				memcpy(resCurVal->notFinished, curVal->notFinished, sizeof(bool) * map->len);
+				memcpy(resCurVal->holdAccepted, curVal->holdAccepted, sizeof(bool) * map->len);
+				j = leftSize;
+				thenRightRes[i] = NULL;
+				break;
+			}
+		}
+
+		/*
+		 * Copy flags of lexemes processed by right subexpression
+		 * to all lexemes processed by left subexpression, since all of then
+		 * are processed the same way (in terms of completeness)
+		 */
+		while (processedLex && processedLex != nonProcessedLex)
+		{
+			if (operator.r_is_operator)
+				CopyCompletionMarks(cfg, resCurVal, processedLex, operators->operators[operator.r_pos]);
+			else
+			{
+				ListDictionary *ptr_map = cfg->map + processedLex->type;
 				if (map->len == ptr_map->len && map->dictIds[operator.r_pos] == ptr_map->dictIds[operator.r_pos])
 				{
-					plptr->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
-					plptr->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
-					plptr->notFinished[operator.r_pos] = newCurVal->notFinished[operator.r_pos];
+					processedLex->accepted[operator.r_pos] = resCurVal->accepted[operator.r_pos];
+					processedLex->rejected[operator.r_pos] = resCurVal->rejected[operator.r_pos];
+					processedLex->notFinished[operator.r_pos] = resCurVal->notFinished[operator.r_pos];
+					processedLex->holdAccepted[operator.r_pos] = resCurVal->holdAccepted[operator.r_pos];
 				}
 			}
-			plptr = plptr->next;
+			processedLex = processedLex->next;
 		}
 
 		if (thenRightRes[i] != NULL)
@@ -626,23 +685,28 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 		thenRightSizes[i] = TSLexemeGetSize(thenRightRes[i]);
 		resSize += thenRightSizes[i];
-		pfree(newCurVal);
+		i = j - 1;
 	}
+
 	MergeParsedLexFlags(curVal, resCurVal, map->len);
 
-	if (noResults && !IsRightSideProcessingComplete(cfg, curVal, operator))
+	if (noResults)
 	{
 		res = NULL;
-		if (operator.l_is_operator)
-			UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
-		else
-			curVal->accepted[operator.l_pos] = false;
+		if (!IsRightSideProcessingComplete(cfg, curVal, operator))
+		{
+			if (operator.l_is_operator)
+				UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
+			else
+				curVal->accepted[operator.l_pos] = false;
+		}
 	}
 	else
 	{
 		/*
 		 * Combine all output into one lexemes list
 		 */
+
 		res = palloc0(sizeof(TSLexeme) * (resSize + 1));
 		rightSize = 0;
 		nvariant = 0;
@@ -696,11 +760,6 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
 		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
 
-	/*
-	 * Return result in case if left side retured not-NULL value or left-side
-	 * dictionary has it's own context and waits for one input
-	 */
-
 	if (IsLeftSideRejected(cfg, curVal, operator))
 	{
 		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
@@ -708,6 +767,10 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	}
 	else
 	{
+		/*
+		 * Check for flags to simulate TSL_FILTER behavior in 
+		 * backward compatible mode
+		 */
 		if (leftRes && operator.is_legacy && leftRes->flags & TSL_FILTER)
 		{
 			TSLexeme	   *res;
@@ -794,16 +857,16 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 	ParsedLex				   *curVal;
 	TSDictionaryCacheEntry	   *dict;
 	TSLexeme				   *res = NULL;
-	int							i;
 	ListDictionary			   *map;
 	int							dictId;
+	int							i;
 
 	curVal = ld->towork.head;
 	map = ld->cfg->map + curVal->type;
 	dictId = map->dictIds[dictPos];
 	dict = lookup_ts_dictionary_cache(dictId);
 
-	if (curVal->accepted[dictPos] && !curVal->notFinished[dictPos])
+	if ((curVal->accepted[dictPos] && !curVal->notFinished[dictPos]) || curVal->rejected[dictPos])
 		return NULL;
 
 	if (ld->curDictId == InvalidOid) /* Standard mode */
@@ -898,7 +961,9 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 				{
 					/*
 					 * Dictionary can't work with current type of lexeme,
-					 * return to basic mode
+					 * return to basic mode.
+					 * If there is a tmpRes, return it, otherwise mark lexemes
+					 * as rejected
 					 */
 					if (ld->tmpRes)
 					{
@@ -956,9 +1021,8 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 			if (res || ld->tmpRes)
 			{
 				/*
-				 * Dictionary normalizes lexemes, so we remove from stack all
-				 * used lexemes, return to basic mode and redo end of stack
-				 * (if it exists)
+				 * Dictionary normalizes lexemes, so we mark all
+				 * used lexemes and return to basic mode
 				 */
 				if (!res)
 				{
@@ -987,8 +1051,8 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 			}
 
 			/*
-			 * Dict don't want next lexem and didn't recognize anything, redo
-			 * from ld->towork.head
+			 * Dict don't want next lexem and didn't recognize anything, mark
+			 * input as rejected
 			 */
 			ptr = ld->towork.head;
 			while (ptr && ptr != curVal)
