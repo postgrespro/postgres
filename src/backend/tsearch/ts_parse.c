@@ -53,11 +53,9 @@ typedef struct
 	ListParsedLex waste;		/* list of lexemes that already lexized */
 
 	/*
-	 * fields to store last variant to lexize (basically, thesaurus or similar
+	 * field to store last variant to lexize (basically, thesaurus or similar
 	 * to, which wants	several lexemes
 	 */
-
-	ParsedLex  *lastRes;
 	TSLexeme   *tmpRes;
 } LexizeData;
 
@@ -76,7 +74,6 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->posDict = 0;
 	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
-	ld->lastRes = NULL;
 	ld->tmpRes = NULL;
 }
 
@@ -196,7 +193,6 @@ setNewTmpRes(LexizeData *ld, ParsedLex *lex, TSLexeme *res)
 		ld->tmpRes[i].lexeme = palloc0(sizeof(char) * (strlen(res[i].lexeme) + 1));
 		memcpy(ld->tmpRes[i].lexeme, res[i].lexeme, sizeof(char) * strlen(res[i].lexeme));
 	}
-	ld->lastRes = lex;
 }
 
 static TSLexeme *
@@ -261,15 +257,13 @@ IsOperatorAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	{
 		case DICTPIPE_OP_OR:
 			return l_accepted || r_accepted;
-			break;
 		case DICTPIPE_OP_AND:
 			return (l_accepted && r_accepted) || (l_rejected && r_accepted) || (l_accepted && r_rejected);
-			break;
 		case DICTPIPE_OP_THEN:
 			return !l_accepted || r_accepted;
-			break;
+		default:
+			return false;
 	}
-	return false;
 }
 
 static bool
@@ -351,16 +345,14 @@ IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	{
 		case DICTPIPE_OP_OR:
 			return (l_accepted && !l_not_finished) || (l_rejected && r_accepted && !r_not_finished) || (l_rejected && r_rejected);
-			break;
 		case DICTPIPE_OP_AND:
 			return ((l_accepted && !l_not_finished) || l_rejected) && ((r_accepted && !r_not_finished) || r_rejected);
-			break;
 		case DICTPIPE_OP_THEN:
 			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished) ||
 				(l_rejected && (operator.l_is_operator == 0) && ((map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT) == 0));
-			break;
+		default:
+			return false;
 	}
-	return false;
 }
 
 static bool
@@ -384,8 +376,8 @@ IsLeftSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		l_accepted = curVal->accepted[operator.l_pos];
 		l_rejected = curVal->rejected[operator.l_pos];
 		l_not_finished = curVal->notFinished[operator.l_pos];
+		return (l_accepted && !l_not_finished) || l_rejected;
 	}
-	return (l_accepted && !l_not_finished) || l_rejected;
 }
 
 static bool
@@ -396,13 +388,10 @@ IsLeftSideRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	bool						l_rejected = false;
 
 	if (operator.l_is_operator)
-	{
 		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
-	}
 	else
-	{
 		l_rejected = curVal->rejected[operator.l_pos];
-	}
+
 	return l_rejected;
 }
 
@@ -428,8 +417,8 @@ IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		r_accepted = curVal->accepted[operator.r_pos];
 		r_rejected = curVal->rejected[operator.r_pos];
 		r_not_finished = curVal->notFinished[operator.r_pos];
+		return (r_accepted && !r_not_finished) || r_rejected;
 	}
-	return (r_accepted && !r_not_finished) || r_rejected;
 }
 
 static void
@@ -491,6 +480,39 @@ CopyCompletionMarks(TSConfigCacheEntry *cfg, ParsedLex *from, ParsedLex *to,
 	}
 }
 
+static ParsedLex *
+CopyParsedLex(ParsedLex *pl, int mapLen)
+{
+	ParsedLex  *res = palloc0(sizeof(ParsedLex));
+
+	memcpy(res, pl, sizeof(ParsedLex));
+
+	res->accepted = palloc0(sizeof(bool) * mapLen);
+	res->rejected = palloc0(sizeof(bool) * mapLen);
+	res->notFinished = palloc0(sizeof(bool) * mapLen);
+	res->holdAccepted = palloc0(sizeof(bool) * mapLen);
+
+	memcpy(res->accepted, pl->accepted, sizeof(bool) * mapLen);
+	memcpy(res->rejected, pl->rejected, sizeof(bool) * mapLen);
+	memcpy(res->notFinished, pl->notFinished, sizeof(bool) * mapLen);
+	memcpy(res->holdAccepted, pl->holdAccepted, sizeof(bool) * mapLen);
+
+	return res;
+}
+
+static void
+MergeParsedLexFlags(ParsedLex *to, ParsedLex *from, int mapLen)
+{
+	int i;
+	for (i = 0; i < mapLen; i++)
+	{
+		to->accepted[i] = to->accepted[i] || from->accepted[i];
+		to->rejected[i] = to->rejected[i] || from->rejected[i];
+		to->notFinished[i] = to->notFinished[i] && from->notFinished[i];
+		to->holdAccepted[i] = to->holdAccepted[i] || from->holdAccepted[i];
+	}
+}
+
 static TSLexeme *
 LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
@@ -501,8 +523,8 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	TSLexeme				   *rightRes;
 	TSLexeme				   *res;
 	TSLexeme				  **thenRightRes;
-	ParsedLex				   *newCurVal;
 	ParsedLex				   *pl;
+	ParsedLex				   *resCurVal;
 	int						   *thenRightSizes;
 	int							nvariant;
 	int							i;
@@ -546,34 +568,35 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	leftSize = TSLexemeGetSize(leftRes);
 	thenRightRes = palloc0(sizeof(TSLexeme*) * leftSize);
 	thenRightSizes = palloc0(sizeof(int) * leftSize);
-	newCurVal = palloc0(sizeof(ParsedLex));
 
-	newCurVal->type = curVal->type;
-	newCurVal->accepted = curVal->accepted;
-	newCurVal->rejected = curVal->rejected;
-	newCurVal->notFinished = curVal->notFinished;
 	pl = curVal->next;
 	while (pl && pl->type != 0 && IsLeftSideProcessingComplete(cfg, pl, operator))
 		pl = pl->next;
-	newCurVal->next = pl;
-	ld->towork.head = newCurVal;
-	map = cfg->map + newCurVal->type;
+	resCurVal = CopyParsedLex(curVal, map->len);
 
 	/*
 	 * Store right-side results in array of pointers, in order to
 	 * allocate result TSLexeme array in one call without reallocations
 	 * for each right-side result
 	 */
-	for (i = 0; (leftRes + i) && leftRes[i].lexeme; i++)
+	for (i = 0; i < leftSize; i++)
 	{
 		ParsedLex  *plptr = curVal->next;
 		TSLexeme   *ptr;
+		ParsedLex  *newCurVal;
+
+		newCurVal = CopyParsedLex(curVal, map->len);
+		newCurVal->next = pl;
+		ld->towork.head = newCurVal;
 
 		newCurVal->lemm = leftRes[i].lexeme;
 		newCurVal->lenlemm = strlen(leftRes[i].lexeme);
 
 		thenRightRes[i] = operator.r_is_operator ? LexizeExecOperator(cfg, newCurVal, operators->operators[operator.r_pos], ld, correspondLexem)
 				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+
+		MergeParsedLexFlags(resCurVal, newCurVal, map->len);
+
 		while (plptr && plptr != newCurVal->next)
 		{
 			if (operator.r_is_operator)
@@ -581,7 +604,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 			else
 			{
 				ListDictionary *ptr_map = cfg->map + plptr->type;
-				if (map->len == ptr_map->len)
+				if (map->len == ptr_map->len && map->dictIds[operator.r_pos] == ptr_map->dictIds[operator.r_pos])
 				{
 					plptr->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
 					plptr->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
@@ -603,7 +626,9 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 		thenRightSizes[i] = TSLexemeGetSize(thenRightRes[i]);
 		resSize += thenRightSizes[i];
+		pfree(newCurVal);
 	}
+	MergeParsedLexFlags(curVal, resCurVal, map->len);
 
 	if (noResults && !IsRightSideProcessingComplete(cfg, curVal, operator))
 	{
@@ -621,7 +646,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		res = palloc0(sizeof(TSLexeme) * (resSize + 1));
 		rightSize = 0;
 		nvariant = 0;
-		for (i--; i >= 0; i--)
+		for (i = 0; i < leftSize; i++)
 		{
 			if (thenRightRes[i] != NULL)
 			{
@@ -656,7 +681,6 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 
 	pfree(thenRightSizes);
 	pfree(thenRightRes);
-	pfree(newCurVal);
 	ld->towork.head = curVal;
 
 	return res;
@@ -702,7 +726,7 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 				ListDictionary	   *map = cfg->map + curVal->type;
 				ListDictionary	   *ptr_map = cfg->map + curVal->type;
 
-				if (map->len == ptr_map->len)
+				if (map->len == ptr_map->len && map->dictIds[operator.r_pos] == ptr_map->dictIds[operator.r_pos])
 				{
 					curVal->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
 					curVal->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
@@ -741,8 +765,6 @@ static TSLexeme *
 LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal, 
 		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
 {
-	TSLexeme				   *res;
-
 	Assert(operator.presented == 1);
 
 	if (IsProcessingComplete(cfg, curVal, operator))
@@ -751,24 +773,19 @@ LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	switch (operator.oper)
 	{
 		case DICTPIPE_OP_THEN:
-			res = LexizeExecOperatorThen(cfg, curVal, operator, ld, correspondLexem);
-			break;
+			return LexizeExecOperatorThen(cfg, curVal, operator, ld, correspondLexem);
 		case DICTPIPE_OP_OR:
-			res = LexizeExecOperatorOr(cfg, curVal, operator, ld, correspondLexem);
-			break;
+			return LexizeExecOperatorOr(cfg, curVal, operator, ld, correspondLexem);
 		case DICTPIPE_OP_AND:
-			res = LexizeExecOperatorAnd(cfg, curVal, operator, ld, correspondLexem);
-			break;
+			return LexizeExecOperatorAnd(cfg, curVal, operator, ld, correspondLexem);
 		default:
-			res = NULL;
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("Operator entry in TSConfiguration is corrupted"),
+					 errmsg("Operator entry in text search configuration is corrupted"),
 					 errdetail("Operator id %d is invalid.",
 							   operator.oper)));
-			break;
+			return NULL;
 	}
-	return res;
 }
 
 static TSLexeme *
@@ -1094,7 +1111,8 @@ CleanToworkQueue(LexizeData *ld, ParsedLex **correspondLexem)
 				ListDictionary *ptr_map = ld->cfg->map + ptr->type;
 				for (dictIndex = 0; dictIndex < ptr_map->len; dictIndex++)
 				{
-					if (map->len == ptr_map->len && curVal->accepted[dictIndex] && ptr->accepted[dictIndex])
+					if (map->len == ptr_map->len && map->dictIds[dictIndex] == ptr_map->dictIds[dictIndex]
+							&& curVal->accepted[dictIndex] && ptr->accepted[dictIndex])
 						ptr->holdAccepted[dictIndex] = true;
 				}
 				ptr = ptr->next;
