@@ -78,8 +78,8 @@ typedef union TSConfigurationOperatorDescriptor
  *		Dictionary pipeline operators constants
  * ----------------
  */
-#define DICTPIPE_OP_AND  1
-#define DICTPIPE_OP_OR   2
+#define DICTPIPE_OP_OR   1
+#define DICTPIPE_OP_AND  2
 #define DICTPIPE_OP_THEN 3
 
 /* ----------------
@@ -93,6 +93,7 @@ typedef union TSConfigurationOperatorDescriptor
  * ----------------
  */
 #define DICTPIPE_ELEM_OPT_ACCEPT 1
+#define DICTPIPE_ELEM_OPT_ACCEPT_LITERAL "accept"
 
 /* ----------------
  *		initial contents of pg_ts_config_map

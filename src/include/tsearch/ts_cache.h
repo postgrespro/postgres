@@ -67,7 +67,7 @@ typedef struct
 {
 	int			len;
 	Oid		   *dictIds;
-	int8	   *dictOptions;
+	int32	   *dictOptions;
 } ListDictionary;
 
 typedef struct

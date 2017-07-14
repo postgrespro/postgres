@@ -418,7 +418,7 @@ lookup_ts_config_cache(Oid cfgId)
 		ListDictionary						maplists[MAXTOKENTYPE + 1];
 		ListDictionaryOperators				operatorslist[MAXTOKENTYPE + 1];
 		Oid									mapdicts[MAXDICTSPERTT];
-		int8								mapoptions[MAXDICTSPERTT];
+		int32								mapoptions[MAXDICTSPERTT];
 		TSConfigurationOperatorDescriptor	mapoperators[MAXOPERATORSPERTT];
 		int									maxtokentype;
 		int									ndicts;
@@ -517,9 +517,9 @@ lookup_ts_config_cache(Oid cfgId)
 					maplists[maxtokentype].dictIds = (Oid *)
 						MemoryContextAlloc(CacheMemoryContext,
 										   sizeof(Oid) * ndicts);
-					maplists[maxtokentype].dictOptions = (int8 *)
+					maplists[maxtokentype].dictOptions = (int32 *)
 						MemoryContextAlloc(CacheMemoryContext,
-										   sizeof(int8) * ndicts);
+										   sizeof(int32) * ndicts);
 					operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
 						MemoryContextAlloc(CacheMemoryContext,
 										   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
@@ -527,7 +527,7 @@ lookup_ts_config_cache(Oid cfgId)
 					memcpy(maplists[maxtokentype].dictIds, mapdicts,
 						   sizeof(Oid) * ndicts);
 					memcpy(maplists[maxtokentype].dictOptions, mapoptions,
-						   sizeof(int8) * ndicts);
+						   sizeof(int32) * ndicts);
 					memcpy(operatorslist[maxtokentype].operators, mapoperators,
 						   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 				}
@@ -561,16 +561,16 @@ lookup_ts_config_cache(Oid cfgId)
 			maplists[maxtokentype].dictIds = (Oid *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(Oid) * ndicts);
-			maplists[maxtokentype].dictOptions = (int8 *)
+			maplists[maxtokentype].dictOptions = (int32 *)
 				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(int8) * ndicts);
+								   sizeof(int32) * ndicts);
 			operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			memcpy(maplists[maxtokentype].dictIds, mapdicts,
 				   sizeof(Oid) * ndicts);
 			memcpy(maplists[maxtokentype].dictOptions, mapoptions,
-				   sizeof(int8) * ndicts);
+				   sizeof(int32) * ndicts);
 			memcpy(operatorslist[maxtokentype].operators, mapoperators,
 				   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			/* and save the overall map */
