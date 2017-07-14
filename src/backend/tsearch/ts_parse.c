@@ -29,6 +29,7 @@ typedef struct ParsedLex
 	int			type;
 	char	   *lemm;
 	int			lenlemm;
+	int			maplen;
 	bool	   *accepted;
 	bool	   *rejected;
 	bool	   *notFinished;
@@ -123,6 +124,7 @@ LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 	newpl->type = type;
 	newpl->lemm = lemm;
 	newpl->lenlemm = lenlemm;
+	newpl->maplen = len;
 	newpl->accepted = palloc0(sizeof(bool) * len);
 	newpl->rejected = palloc0(sizeof(bool) * len);
 	newpl->notFinished = palloc0(sizeof(bool) * len);
@@ -174,7 +176,7 @@ TSLexemeGetSize(TSLexeme *lexeme)
 }
 
 static void
-setNewTmpRes(LexizeData *ld, ParsedLex *lex, TSLexeme *res)
+setNewTmpRes(LexizeData *ld, TSLexeme *res)
 {
 	int i;
 	if (ld->tmpRes)
@@ -184,6 +186,11 @@ setNewTmpRes(LexizeData *ld, ParsedLex *lex, TSLexeme *res)
 		for (ptr = ld->tmpRes; ptr->lexeme; ptr++)
 			pfree(ptr->lexeme);
 		pfree(ld->tmpRes);
+	}
+	if (res == NULL)
+	{
+		ld->tmpRes = NULL;
+		return;
 	}
 	ld->tmpRes = palloc0(sizeof(TSLexeme) * (TSLexemeGetSize(res) + 1));
 	for (i = 0; i < TSLexemeGetSize(res); i++)
@@ -243,6 +250,9 @@ IsOperatorAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	bool						l_rejected = false;
 	bool						r_rejected = false;
 
+	if (curVal->type == 0 || operators->len <= 0)
+		return true;
+
 	l_accepted = operator.l_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.l_pos])
 		: curVal->accepted[operator.l_pos];
 	r_accepted = operator.r_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.r_pos])
@@ -260,7 +270,7 @@ IsOperatorAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		case DICTPIPE_OP_AND:
 			return (l_accepted && r_accepted) || (l_rejected && r_accepted) || (l_accepted && r_rejected);
 		case DICTPIPE_OP_THEN:
-			return !l_accepted || r_accepted;
+			return !l_accepted || r_accepted || r_rejected;
 		default:
 			return false;
 	}
@@ -273,6 +283,9 @@ IsOperatorRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	bool						l_rejected = false;
 	bool						r_rejected = false;
+
+	if (curVal->type == 0 || operators->len <= 0)
+		return false;
 
 	l_rejected = operator.l_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos])
 		: curVal->rejected[operator.l_pos];
@@ -289,6 +302,9 @@ IsNotFinished(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	bool						l_not_fully_finished = false;
 	bool						r_not_fully_finished = false;
+
+	if (curVal->type == 0 || operators->len <= 0)
+		return true;
 
 	if (operator.l_is_operator)
 		l_not_fully_finished = IsNotFinished(cfg, curVal, operators->operators[operator.l_pos]);
@@ -315,6 +331,9 @@ IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	bool						r_rejected = false;
 	bool						l_not_finished = false;
 	bool						r_not_finished = false;
+
+	if (curVal->type == 0 || operators->len <= 0 || map->len <= 0)
+		return true;
 
 	if (operator.l_is_operator)
 	{
@@ -346,9 +365,10 @@ IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		case DICTPIPE_OP_OR:
 			return (l_accepted && !l_not_finished) || (l_rejected && r_accepted && !r_not_finished) || (l_rejected && r_rejected);
 		case DICTPIPE_OP_AND:
-			return ((l_accepted && !l_not_finished) || l_rejected) && ((r_accepted && !r_not_finished) || r_rejected);
+			return ((l_accepted && !l_not_finished) && r_rejected) || ((r_accepted && !r_not_finished) && l_rejected) || (l_rejected && r_rejected) || (l_accepted && !l_not_finished && r_accepted && !r_not_finished);
 		case DICTPIPE_OP_THEN:
 			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished) ||
+				(l_accepted && !l_not_finished && r_rejected) || (l_rejected && r_rejected) ||
 				(l_rejected && (operator.l_is_operator == 0) && ((map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT) == 0));
 		default:
 			return false;
@@ -364,7 +384,7 @@ IsLeftSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	bool						l_rejected = false;
 	bool						l_not_finished = false;
 
-	if (curVal->type == 0)
+	if (curVal->type == 0 || operators->len <= 0)
 		return true;
 
 	if (operator.l_is_operator)
@@ -387,6 +407,9 @@ IsLeftSideRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 	bool						l_rejected = false;
 
+	if (curVal->type == 0 || operators->len <= 0)
+		return false;
+
 	if (operator.l_is_operator)
 		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
 	else
@@ -405,7 +428,7 @@ IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	bool						r_rejected = false;
 	bool						r_not_finished = false;
 
-	if (curVal->type == 0)
+	if (curVal->type == 0 || operators->len <= 0)
 		return true;
 
 	if (operator.r_is_operator)
@@ -768,7 +791,7 @@ LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	else
 	{
 		/*
-		 * Check for flags to simulate TSL_FILTER behavior in 
+		 * Check flags to simulate TSL_FILTER behavior in
 		 * backward compatible mode
 		 */
 		if (leftRes && operator.is_legacy && leftRes->flags & TSL_FILTER)
@@ -890,7 +913,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 			ParsedLex *ptr = curVal;
 			if (res)
 			{
-				setNewTmpRes(ld, curVal, res);
+				setNewTmpRes(ld, res);
 				curVal->accepted[dictPos] = true;
 			}
 			curVal->notFinished[dictPos] = true;
@@ -900,6 +923,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 			res = LexizeExecDictionary(ld, correspondLexem, dictPos);
 			ld->curDictId = InvalidOid;
 
+			// Reset flags after multi-input processing complete based on result
 			while (ptr)
 			{
 				if (ptr->type == curVal->type)
@@ -942,7 +966,10 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 			}
 
 			if (!curVal)
+			{
+				setNewTmpRes(ld, NULL); // Clean tmpRes
 				return NULL;
+			}
 
 			if (curVal->type != 0)
 			{
@@ -974,11 +1001,8 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 					else
 					{
 						ptr = ld->towork.head;
-						while (ptr)
-						{
+						while (ptr && ptr != curVal) {
 							ptr->rejected[dictPos] = true;
-							if (ptr == curVal)
-								break;
 							ptr = ptr->next;
 						}
 						return NULL;
@@ -1002,7 +1026,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 				/* Dictionary wants one more */
 				if (res)
 				{
-					setNewTmpRes(ld, curVal, res);
+					setNewTmpRes(ld, res);
 
 					ptr = ld->towork.head;
 					while (ptr)
@@ -1030,6 +1054,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 				}
 				else
 				{
+					setNewTmpRes(ld, NULL);
 					ptr = ld->towork.head;
 					while (ptr)
 					{
@@ -1256,6 +1281,8 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 			}
 			ptr = ptr->next;
 		}
+		if (res)
+			pfree(res);
 		return NULL;
 	}
 
