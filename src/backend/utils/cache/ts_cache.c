@@ -39,6 +39,7 @@
 #include "catalog/pg_ts_template.h"
 #include "commands/defrem.h"
 #include "tsearch/ts_cache.h"
+#include "tsearch/ts_public.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
@@ -534,7 +535,7 @@ lookup_ts_config_cache(Oid cfgId)
 				maxtokentype = toktype;
 				mapdicts[0] = cfgmap->mapdict;
 				mapoptions[0] = cfgmap->mapoption;
-				mapoperators[0].raw = cfgmap->mapoperator;
+				mapoperators[0] = deserialize_ts_configuration_operator_descriptor(cfgmap->mapoperator);
 				ndicts = 1;
 			}
 			else
@@ -544,7 +545,7 @@ lookup_ts_config_cache(Oid cfgId)
 					elog(ERROR, "too many pg_ts_config_map entries for one token type");
 				mapdicts[ndicts] = cfgmap->mapdict;
 				mapoptions[ndicts] = cfgmap->mapoption;
-				mapoperators[ndicts].raw = cfgmap->mapoperator;
+				mapoperators[ndicts] = deserialize_ts_configuration_operator_descriptor(cfgmap->mapoperator);
 				ndicts++;
 			}
 		}

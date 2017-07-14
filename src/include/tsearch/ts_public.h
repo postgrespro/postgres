@@ -14,6 +14,7 @@
 #define _PG_TS_PUBLIC_H_
 
 #include "tsearch/ts_type.h"
+#include "catalog/pg_ts_config_map.h"
 
 /*
  * Parser's framework
@@ -79,6 +80,16 @@ typedef struct
 extern void readstoplist(const char *fname, StopList *s,
 			 char *(*wordop) (const char *));
 extern bool searchstoplist(StopList *s, char *key);
+
+/*
+ * Compiler-independent TSConfigurationOperatorDescriptor serialization/deserialization
+ */
+
+int32
+serialize_ts_configuration_operator_descriptor(TSConfigurationOperatorDescriptor operator);
+
+TSConfigurationOperatorDescriptor
+deserialize_ts_configuration_operator_descriptor(int32 operator);
 
 /*
  * Interface with dictionaries

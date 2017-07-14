@@ -321,3 +321,42 @@ dictionary_pipe_to_text(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(result);
 }
 
+/*
+ * Since field order in bit fields is not guaranteed, make a manual
+ * serialization/deserialization in order to keep data in common format
+ * regardless bitfield structure after compilation
+ */
+int32
+serialize_ts_configuration_operator_descriptor(TSConfigurationOperatorDescriptor operator)
+{
+	int32 result = 0;
+
+	result |= operator.presented << 31;
+	result |= operator.l_is_operator << 30;
+	result |= operator.l_pos << 18;
+	result |= operator.r_is_operator << 17;
+	result |= operator.r_pos << 5;
+	result |= operator.oper << 3;
+	result |= operator._notused << 1;
+	result |= operator.is_legacy << 0;
+
+	return result;
+}
+
+TSConfigurationOperatorDescriptor
+deserialize_ts_configuration_operator_descriptor(int32 operator)
+{
+	TSConfigurationOperatorDescriptor result;
+
+	result.presented = operator >> 31;
+	result.l_is_operator = operator >> 30;
+	result.l_pos = operator >> 18;
+	result.r_is_operator = operator >> 17;
+	result.r_pos = operator >> 5;
+	result.oper = operator >> 3;
+	result._notused = operator >> 1;
+	result.is_legacy = operator >> 0;
+
+	return result;
+}
+

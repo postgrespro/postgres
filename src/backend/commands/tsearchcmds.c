@@ -39,6 +39,7 @@
 #include "nodes/makefuncs.h"
 #include "parser/parse_func.h"
 #include "tsearch/ts_cache.h"
+#include "tsearch/ts_public.h"
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -1359,7 +1360,7 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operato
 	else
 	{
 		TSConfigurationOperatorDescriptor descriptor;
-		descriptor.raw = 0;
+		memset(&descriptor, 0, sizeof(descriptor));
 
 		Assert(node->kind == DICT_PIPE_OPERATOR);
 
@@ -1372,8 +1373,7 @@ DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operato
 		descriptor.is_legacy = node->options & DICTPIPE_OPERATOR_OPT_COMMA ? 1 : 0;
 		descriptor._notused = 0;
 
-
-		operators[*operatorsPos] = descriptor.raw;
+		operators[*operatorsPos] = serialize_ts_configuration_operator_descriptor(descriptor);
 		(*operatorsPos)++;
 
 		DictPipeTreeParse_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos, options);
