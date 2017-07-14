@@ -4925,6 +4925,9 @@ DESCR("transform jsonb to tsvector");
 DATA(insert OID = 4212 (  to_tsvector		PGNSP PGUID 12 100 0 0 0 f f f f t f i s 2 0 3614 "3734 114" _null_ _null_ _null_ _null_ _null_ json_to_tsvector_byid _null_ _null_ _null_ ));
 DESCR("transform json to tsvector");
 
+DATA(insert OID = 8891 (  dictionary_pipe_to_text	PGNSP PGUID 12 100 0 0 0 f f f f t f s s 2 0 25 "26 23" _null_ _null_ _null_ _null_ _null_ dictionary_pipe_to_text _null_ _null_ _null_ ));
+DESCR("returns text representation of dictionary pipe");
+
 DATA(insert OID = 3752 (  tsvector_update_trigger			PGNSP PGUID 12 1 0 0 0 f f f f f f v s 0 0 2279 "" _null_ _null_ _null_ _null_ _null_ tsvector_update_trigger_byid _null_ _null_ _null_ ));
 DESCR("trigger for automatic update of tsvector column");
 DATA(insert OID = 3753 (  tsvector_update_trigger_column	PGNSP PGUID 12 1 0 0 0 f f f f f f v s 0 0 2279 "" _null_ _null_ _null_ _null_ _null_ tsvector_update_trigger_bycolumn _null_ _null_ _null_ ));

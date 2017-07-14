@@ -19,7 +19,17 @@
 #include "miscadmin.h"
 #include "tsearch/ts_locale.h"
 #include "tsearch/ts_utils.h"
-
+#include "catalog/indexing.h"
+#include "catalog/pg_ts_config_map.h"
+#include "catalog/pg_ts_dict.h"
+#include "storage/lockdefs.h"
+#include "access/heapam.h"
+#include "access/genam.h"
+#include "access/htup_details.h"
+#include "access/sysattr.h"
+#include "utils/fmgroids.h"
+#include "utils/builtins.h"
+#include "tsearch/ts_cache.h"
 
 /*
  * Given the base name and extension of a tsearch config file, return
@@ -144,3 +154,170 @@ searchstoplist(StopList *s, char *key)
 			bsearch(&key, s->stop, s->len,
 					sizeof(char *), pg_qsort_strcmp)) ? true : false;
 }
+
+static char *
+dictionary_pipe_to_text_print_options(int32 *options, int curDict)
+{
+	int len = 0;
+	int pos = 0;
+	char *result;
+
+	if (options[curDict] == 0)
+		return NULL;
+
+	if (options[curDict] & DICTPIPE_ELEM_OPT_ACCEPT)
+		len += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
+
+	result = palloc0(sizeof(char) * (len + 1));
+
+	if (options[curDict] & DICTPIPE_ELEM_OPT_ACCEPT)
+	{
+		memcpy(result + pos, DICTPIPE_ELEM_OPT_ACCEPT_LITERAL, sizeof(char) * strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL));
+		pos += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
+	}
+
+	return result;
+}
+
+static char *
+dictionary_pipe_to_text_print_dict(Oid *dictIds, int32 *options, int curDict)
+{
+	Relation							maprel;
+	Relation							mapidx;
+	ScanKeyData							mapskey;
+	SysScanDesc							mapscan;
+	HeapTuple							maptup;
+	Form_pg_ts_dict						dict;
+	char							   *result;
+
+	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
+	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
+
+	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
+			BTEqualStrategyNumber, F_OIDEQ,
+			ObjectIdGetDatum(dictIds[curDict]));
+	mapscan = systable_beginscan_ordered(maprel, mapidx,
+									 NULL, 1, &mapskey);
+
+	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
+	dict = (Form_pg_ts_dict) GETSTRUCT(maptup);
+	result = palloc0(sizeof(char) * (strlen(dict->dictname.data) + 1));
+	memcpy(result, dict->dictname.data, sizeof(char) * strlen(dict->dictname.data));
+
+	systable_endscan_ordered(mapscan);
+	index_close(mapidx, AccessShareLock);
+	heap_close(maprel, AccessShareLock);
+
+	if (options[curDict])
+	{
+		char *tmp = result;
+		char *options_str = dictionary_pipe_to_text_print_options(options, curDict);
+		result = palloc0(sizeof(char) * (strlen(tmp) + strlen(options_str) + 3));
+		memcpy(result, tmp, sizeof(char) * strlen(tmp));
+		result[strlen(tmp)] = '(';
+		memcpy(result + strlen(tmp) + 1, options_str, sizeof(char) * strlen(options_str));
+		result[strlen(tmp) + strlen(options_str) + 1] = ')';
+	}
+
+	return result;
+}
+
+static char *
+dictionary_pipe_to_text_recurse(Oid *dictIds, int32 *options,
+		TSConfigurationOperatorDescriptor *operators, int curOperator)
+{
+	char							   *l_name;
+	char							   *operator_name;
+	char							   *r_name;
+	char							   *result;
+	TSConfigurationOperatorDescriptor	operator = operators[curOperator];
+
+	if (operator.l_is_operator)
+	{
+		l_name = dictionary_pipe_to_text_recurse(dictIds, options, operators, operator.l_pos);
+		if (operators[operator.l_pos].oper < operator.oper)
+		{
+			char *tmp = l_name;
+			l_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
+			l_name[0] = '(';
+			memcpy(l_name + 1, tmp, sizeof(char) * strlen(tmp));
+			l_name[strlen(tmp) + 1] = ')';
+			pfree(tmp);
+		}
+	}
+	else
+	{
+		l_name = dictionary_pipe_to_text_print_dict(dictIds, options, operator.l_pos);
+	}
+
+	switch (operator.oper)
+	{
+		case DICTPIPE_OP_AND:
+			operator_name = " AND ";
+			break;
+		case DICTPIPE_OP_OR:
+			if (operator.is_legacy)
+				operator_name = ", ";
+			else
+				operator_name = " OR ";
+			break;
+		case DICTPIPE_OP_THEN:
+			operator_name = " THEN ";
+			break;
+	}
+
+	if (operator.r_is_operator)
+	{
+		r_name = dictionary_pipe_to_text_recurse(dictIds, options, operators, operator.r_pos);
+		if (operators[operator.r_pos].oper < operator.oper)
+		{
+			char *tmp = r_name;
+			r_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
+			r_name[0] = '(';
+			memcpy(r_name + 1, tmp, sizeof(char) * strlen(tmp));
+			r_name[strlen(tmp) + 1] = ')';
+			pfree(tmp);
+		}
+	}
+	else
+	{
+		r_name = dictionary_pipe_to_text_print_dict(dictIds, options, operator.r_pos);
+	}
+
+	result = palloc0(sizeof(char) * (strlen(l_name) + strlen(operator_name) + strlen(r_name) + 1));
+	memcpy(result, l_name, sizeof(char) * strlen(l_name));
+	memcpy(result + strlen(l_name), operator_name, sizeof(char) * strlen(operator_name));
+	memcpy(result + strlen(l_name) + strlen(operator_name), r_name, sizeof(char) * strlen(r_name));
+
+	pfree(l_name);
+	pfree(r_name);
+
+	return result;
+}
+
+Datum
+dictionary_pipe_to_text(PG_FUNCTION_ARGS)
+{
+	Oid									cfgOid = PG_GETARG_OID(0);
+	int32								tokentype = PG_GETARG_INT32(1);
+	char							   *rawResult;
+	text							   *result;
+	TSConfigCacheEntry				   *cacheEntry;
+
+	cacheEntry = lookup_ts_config_cache(cfgOid);
+
+	if (cacheEntry->map[tokentype].len > 1)
+		rawResult = dictionary_pipe_to_text_recurse(cacheEntry->map[tokentype].dictIds,
+													cacheEntry->map[tokentype].dictOptions,
+													cacheEntry->operators[tokentype].operators,
+													0);
+	else
+		rawResult = dictionary_pipe_to_text_print_dict(	cacheEntry->map[tokentype].dictIds,
+														cacheEntry->map[tokentype].dictOptions,
+														0);
+	result = cstring_to_text(rawResult);
+	pfree(rawResult);
+
+	PG_RETURN_TEXT_P(result);
+}
+
