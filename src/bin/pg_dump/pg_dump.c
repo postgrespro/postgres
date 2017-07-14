@@ -53,6 +53,7 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_ts_config_map.h"
 #include "libpq/libpq-fs.h"
 
 #include "dumputils.h"
@@ -14130,6 +14131,176 @@ dumpTSTemplate(Archive *fout, TSTemplateInfo *tmplinfo)
 }
 
 /*
+ * Function to generate a text representation of text search configuration
+ */
+static TSConfigurationOperatorDescriptor
+deserialize_ts_configuration_operator_descriptor(int32 operator)
+{
+	TSConfigurationOperatorDescriptor result;
+
+	result.presented = operator >> 31;
+	result.l_is_operator = operator >> 30;
+	result.l_pos = operator >> 18;
+	result.r_is_operator = operator >> 17;
+	result.r_pos = operator >> 5;
+	result.oper = operator >> 3;
+	result._notused = operator >> 1;
+	result.is_legacy = operator >> 0;
+
+	return result;
+}
+
+static char *
+dictionary_pipe_to_text_print_options(int32 options)
+{
+	int len = 0;
+	int pos = 0;
+	char *result;
+
+	if (options == 0)
+		return NULL;
+
+	if (options & DICTPIPE_ELEM_OPT_ACCEPT)
+		len += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
+
+	result = palloc0(sizeof(char) * (len + 1));
+
+	if (options & DICTPIPE_ELEM_OPT_ACCEPT)
+	{
+		memcpy(result + pos, DICTPIPE_ELEM_OPT_ACCEPT_LITERAL, sizeof(char) * strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL));
+		pos += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
+	}
+
+	return result;
+}
+
+static char *
+dictionary_pipe_to_text_print_dict(PGresult *res, int i_dictname, int i_dictoption, int i_operator,
+		int token_offset, int dict_offset)
+{
+	char							   *result;
+	char							   *dictname;
+	int32								options;
+
+	options = atoi(PQgetvalue(res, token_offset + dict_offset, i_dictoption));
+	dictname = PQgetvalue(res, token_offset + dict_offset, i_dictname);
+	result = palloc0(sizeof(char) * (strlen(dictname) + 1));
+	memcpy(result, dictname, sizeof(char) * strlen(dictname));
+
+	if (options)
+	{
+		char *tmp = result;
+		char *options_str = dictionary_pipe_to_text_print_options(options);
+		result = palloc0(sizeof(char) * (strlen(tmp) + strlen(options_str) + 3));
+		memcpy(result, tmp, sizeof(char) * strlen(tmp));
+		result[strlen(tmp)] = '(';
+		memcpy(result + strlen(tmp) + 1, options_str, sizeof(char) * strlen(options_str));
+		result[strlen(tmp) + strlen(options_str) + 1] = ')';
+	}
+
+	return result;
+}
+
+static char *
+dictionary_pipe_to_text_recurse(PGresult *res, int i_dictname, int i_dictoption, int i_operator,
+		int token_offset, int operator_offset)
+{
+	char							   *l_name;
+	char							   *operator_name;
+	char							   *r_name;
+	char							   *result;
+	int									operator_raw = atoi(PQgetvalue(res, token_offset + operator_offset, i_operator));
+	TSConfigurationOperatorDescriptor	operator = deserialize_ts_configuration_operator_descriptor(operator_raw);
+
+	if (operator.l_is_operator)
+	{
+		int									l_operator_raw = atoi(PQgetvalue(res, token_offset + operator.l_pos, i_operator));
+		TSConfigurationOperatorDescriptor	l_operator = deserialize_ts_configuration_operator_descriptor(l_operator_raw);
+
+		l_name = dictionary_pipe_to_text_recurse(res, i_dictname, i_dictoption, i_operator, token_offset, operator.l_pos);
+
+		if (l_operator.oper < operator.oper)
+		{
+			char *tmp = l_name;
+			l_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
+			l_name[0] = '(';
+			memcpy(l_name + 1, tmp, sizeof(char) * strlen(tmp));
+			l_name[strlen(tmp) + 1] = ')';
+			pfree(tmp);
+		}
+	}
+	else
+	{
+		l_name = dictionary_pipe_to_text_print_dict(res, i_dictname, i_dictoption, i_operator, token_offset, operator.l_pos);
+	}
+
+	switch (operator.oper)
+	{
+		case DICTPIPE_OP_AND:
+			operator_name = " AND ";
+			break;
+		case DICTPIPE_OP_OR:
+			if (operator.is_legacy)
+				operator_name = ", ";
+			else
+				operator_name = " OR ";
+			break;
+		case DICTPIPE_OP_THEN:
+			operator_name = " THEN ";
+			break;
+	}
+
+	if (operator.r_is_operator)
+	{
+		int									r_operator_raw = atoi(PQgetvalue(res, token_offset + operator.r_pos, i_operator));
+		TSConfigurationOperatorDescriptor	r_operator = deserialize_ts_configuration_operator_descriptor(r_operator_raw);
+
+		r_name = dictionary_pipe_to_text_recurse(res, i_dictname, i_dictoption, i_operator, token_offset, operator.r_pos);
+
+		if (r_operator.oper < operator.oper)
+		{
+			char *tmp = r_name;
+			r_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
+			r_name[0] = '(';
+			memcpy(r_name + 1, tmp, sizeof(char) * strlen(tmp));
+			r_name[strlen(tmp) + 1] = ')';
+			pfree(tmp);
+		}
+	}
+	else
+	{
+		r_name = dictionary_pipe_to_text_print_dict(res, i_dictname, i_dictoption, i_operator, token_offset, operator.r_pos);
+	}
+
+	result = palloc0(sizeof(char) * (strlen(l_name) + strlen(operator_name) + strlen(r_name) + 1));
+	memcpy(result, l_name, sizeof(char) * strlen(l_name));
+	memcpy(result + strlen(l_name), operator_name, sizeof(char) * strlen(operator_name));
+	memcpy(result + strlen(l_name) + strlen(operator_name), r_name, sizeof(char) * strlen(r_name));
+
+	pfree(l_name);
+	pfree(r_name);
+
+	return result;
+}
+
+static char*
+dump_dictionary_pipe_to_text(PGresult *res, int i_dictname, int i_dictoption, int i_operator,
+		int token_offset)
+{
+	char							   *result;
+	int									operator_raw = atoi(PQgetvalue(res, token_offset, i_operator));
+	TSConfigurationOperatorDescriptor	operator = deserialize_ts_configuration_operator_descriptor(operator_raw);
+
+	if (operator.presented)
+		result = dictionary_pipe_to_text_recurse(res, i_dictname, i_dictoption, i_operator,
+													token_offset, 0);
+	else
+		result = dictionary_pipe_to_text_print_dict(res, i_dictname, i_dictoption, i_operator,
+													token_offset, 0);
+	return result;
+}
+
+/*
  * dumpTSConfig
  *	  write out a single text search configuration
  */
@@ -14148,6 +14319,8 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 				i;
 	int			i_tokenname;
 	int			i_dictname;
+	int			i_dictoption;
+	int			i_operator;
 
 	/* Skip if not to be dumped */
 	if (!cfginfo->dobj.dump || dopt->dataOnly)
@@ -14186,7 +14359,9 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 					  "SELECT\n"
 					  "  ( SELECT alias FROM pg_catalog.ts_token_type('%u'::pg_catalog.oid) AS t\n"
 					  "    WHERE t.tokid = m.maptokentype ) AS tokenname,\n"
-					  "  m.mapdict::pg_catalog.regdictionary AS dictname\n"
+					  "  m.mapdict::pg_catalog.regdictionary AS dictname,\n"
+					  "  m.mapoption AS dictoption,\n"
+					  "  m.mapoperator AS operator\n"
 					  "FROM pg_catalog.pg_ts_config_map AS m\n"
 					  "WHERE m.mapcfg = '%u'\n"
 					  "ORDER BY m.mapcfg, m.maptokentype, m.mapseqno",
@@ -14197,11 +14372,12 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 
 	i_tokenname = PQfnumber(res, "tokenname");
 	i_dictname = PQfnumber(res, "dictname");
+	i_dictoption = PQfnumber(res, "dictoption");
+	i_operator = PQfnumber(res, "operator");
 
 	for (i = 0; i < ntups; i++)
 	{
 		char	   *tokenname = PQgetvalue(res, i, i_tokenname);
-		char	   *dictname = PQgetvalue(res, i, i_dictname);
 
 		if (i == 0 ||
 			strcmp(tokenname, PQgetvalue(res, i - 1, i_tokenname)) != 0)
@@ -14213,10 +14389,8 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 							  fmtId(cfginfo->dobj.name));
 			/* tokenname needs quoting, dictname does NOT */
 			appendPQExpBuffer(q, "    ADD MAPPING FOR %s WITH %s",
-							  fmtId(tokenname), dictname);
+							  fmtId(tokenname), dump_dictionary_pipe_to_text(res, i_dictname, i_dictoption, i_operator, i));
 		}
-		else
-			appendPQExpBuffer(q, ", %s", dictname);
 	}
 
 	if (ntups > 0)
