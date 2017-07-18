@@ -445,18 +445,18 @@ IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 }
 
 static void
-MarkAsRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
+MarkBranchAsRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		TSConfigurationOperatorDescriptor operator)
 {
 	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
 
 	if (operator.l_is_operator)
-		MarkAsRejected(cfg, curVal, operators->operators[operator.l_pos]);
+		MarkBranchAsRejected(cfg, curVal, operators->operators[operator.l_pos]);
 	else
 		curVal->rejected[operator.l_pos] = true;
 
 	if (operator.r_is_operator)
-		MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
+		MarkBranchAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
 	else
 		curVal->rejected[operator.r_pos] = true;
 }
@@ -581,7 +581,7 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 		{
 			// Mark right-side as rejected in order to skip possible processing in future
 			if (operator.r_is_operator)
-				MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
+				MarkBranchAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
 			else
 				curVal->rejected[operator.r_pos] = true;
 			return NULL;
@@ -1092,92 +1092,6 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 	return NULL;
 }
 
-static TSLexeme *
-TSLexemeRemoveDuplications(TSLexeme *lexeme)
-{
-	TSLexeme	   *res;
-	int				curLexIndex;
-	int				i;
-	int				lexemeSize = TSLexemeGetSize(lexeme);
-	int				shouldCopyCount = lexemeSize;
-	bool		   *shouldCopy;
-
-	if (lexeme == NULL)
-		return NULL;
-
-	shouldCopy = palloc(sizeof(bool) * lexemeSize);
-	memset(shouldCopy, true, sizeof(bool) * lexemeSize);
-
-	for (curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
-	{
-		for (i = curLexIndex + 1; i < lexemeSize; i++)
-		{
-			if (!shouldCopy[i])
-				continue;
-
-			if (strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
-			{
-				if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant)
-				{
-					shouldCopy[i] = false;
-					shouldCopyCount--;
-					continue;
-				}
-				else
-				{
-					/*
-					 * Check for same set of lexemes in another nvariant series
-					 */
-					int		nvariantCountL = 0;
-					int		nvariantCountR = 0;
-					int		nvariantOverlap = 1;
-					int		j;
-
-					for (j = 0; j < lexemeSize; j++)
-						if (lexeme[curLexIndex].nvariant == lexeme[j].nvariant)
-							nvariantCountL++;
-					for (j = 0; j < lexemeSize; j++)
-						if (lexeme[i].nvariant == lexeme[j].nvariant)
-							nvariantCountR++;
-
-					if (nvariantCountL != nvariantCountR)
-						continue;
-
-					for (j = 1; j < nvariantCountR; j++)
-					{
-						if (strcmp(lexeme[curLexIndex + j].lexeme, lexeme[i + j].lexeme) == 0
-								&& lexeme[curLexIndex + j].nvariant == lexeme[i + j].nvariant)
-							nvariantOverlap++;
-					}
-
-					if (nvariantOverlap != nvariantCountR)
-						continue;
-
-					for (j = 0; j < nvariantCountR; j++)
-					{
-						shouldCopy[i + j] = false;
-					}
-				}
-			}
-		}
-	}
-
-	res = palloc0(sizeof(TSLexeme) * (shouldCopyCount + 1));
-
-	for (i = 0, curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
-	{
-		if (shouldCopy[curLexIndex])
-		{
-			memcpy(res + i, lexeme + curLexIndex, sizeof(TSLexeme));
-			i++;
-		}
-	}
-
-	pfree(shouldCopy);
-	pfree(lexeme);
-	return res;
-}
-
 static bool
 CleanToworkQueue(LexizeData *ld, ParsedLex **correspondLexem)
 {
@@ -1246,12 +1160,11 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	if (CleanToworkQueue(ld, correspondLexem))
 		return NULL;
 
-	if (curVal->type == 0) // End of the input, finish processing of multi-input dictionaries
+	if (curVal->type == 0)
 	{
-		res = TSLexemeRemoveDuplications(res);
 		RemoveHead(ld);
 		setCorrLex(ld, correspondLexem);
-		return res;
+		return NULL;
 	}
 
 	ld->curDictId = InvalidOid;

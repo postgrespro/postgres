@@ -1424,9 +1424,9 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 	Oid			prsId;
 	int		   *tokens,
 				ntoken;
-	Oid		   *dictIds;
-	int32	   *operators;
-	int8	   *options;
+	Oid		   *dictIds = NULL;
+	int32	   *operators = NULL;
+	int8	   *options = NULL;
 	int			noptions = 0;
 	int			noperators = 0;
 	int			ndict = 0;
