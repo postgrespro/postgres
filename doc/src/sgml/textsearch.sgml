@@ -733,9 +733,10 @@ SELECT to_tsvector('english', 'a fat  cat sat on a mat - it ate a fat rats');
     which breaks the document text into tokens and assigns a type to
     each token.  For each token, a list of
     dictionaries (<xref linkend="textsearch-dictionaries">) is consulted,
-    where the list can vary depending on the token type.  The first dictionary
-    that <firstterm>recognizes</firstterm> the token emits one or more normalized
-    <firstterm>lexemes</firstterm> to represent the token.  For example,
+    where the list can vary depending on the token type.  The first or a set of
+    dictionaries (depends on configuration) that <firstterm>recognize</> 
+    the token emits one or more normalized <firstterm>lexemes</firstterm>
+    to represent the token.  For example,
     <literal>rats</literal> became <literal>rat</literal> because one of the
     dictionaries recognized that the word <literal>rats</literal> is a plural
     form of <literal>rat</literal>.  Some words are recognized as
@@ -2267,35 +2268,67 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
    until some dictionary recognizes it as a known word.  If it is identified
    as a stop word, or if no dictionary recognizes the token, it will be
    discarded and not indexed or searched for.
-   Normally, the first dictionary that returns a non-<literal>NULL</literal>
+  </para>
+
+  <para>
+   A set of dictionaries that determines the result is depends on
+   configuration and operators that connects dictionaries between each others.
+   Operator <literal>AND</literal> combines output of both left and right
+   dictionaries and can be used in order to create multi-language text search
+   configuration. Operator <literal>OR</literal> returns first non-<literal>NULL</literal>
+   output. Operator <literal>THEN</literal> passes a left side output to subsequent
+   dictionary if the output is not <literal>NULL</literal> (behavior can be changed
+   via dictionary options, see <xref linkend="SQL-ALTERTSCONFIG"> for
+   details) and can be used to filter
+   some words before processing by another dictionary.
+   Additionaly, you can use a comma-separated list of dictionaries.
+   In this case, the first dictionary that returns a non-<literal>NULL</literal>
    output determines the result, and any remaining dictionaries are not
    consulted; but a filtering dictionary can replace the given word
    with a modified word, which is then passed to subsequent dictionaries.
   </para>
 
   <para>
-   The general rule for configuring a list of dictionaries
+   The general rule for configuring a list of dictionaries connected by
+   <literal>OR</literal> operators
    is to place first the most narrow, most specific dictionary, then the more
    general dictionaries, finishing with a very general dictionary, like
    a <application>Snowball</application> stemmer or <literal>simple</literal>, which
-   recognizes everything.  For example, for an astronomy-specific search
+   recognizes everything.  In case of multi-language configuration
+   lists of dictionaries for each language should be conncted by
+   <literal>AND</literal> operator. For example, for an astronomy-specific search
    (<literal>astro_en</literal> configuration) one could bind token type
    <type>asciiword</type> (ASCII word) to a synonym dictionary of astronomical
-   terms, a general English dictionary and a <application>Snowball</application> English
-   stemmer:
+   terms, a general English dictionary and a <application>Snowball</literal> English
+   stemmer via comma-separated variant of mapping:
 
 <programlisting>
 ALTER TEXT SEARCH CONFIGURATION astro_en
     ADD MAPPING FOR asciiword WITH astrosyn, english_ispell, english_stem;
 </programlisting>
+
+   Another example is a configuration for both english and german languages via
+   operator-separated variant of mapping:
+
+<programlisting>
+ALTER TEXT SEARCH CONFIGURATION multi_en_de
+    ADD MAPPING FOR asciiword, word WITH (english_ispell OR english_stem) AND (german_ispell OR german_stem);
+</programlisting>
+
   </para>
 
   <para>
-   A filtering dictionary can be placed anywhere in the list, except at the
-   end where it'd be useless.  Filtering dictionaries are useful to partially
+   A filtering dictionary can be placed anywhere in comma-separated list,
+   except at the end where it'd be useless.
+   Filtering dictionaries are useful to partially
    normalize words to simplify the task of later dictionaries.  For example,
    a filtering dictionary could be used to remove accents from accented
    letters, as is done by the <xref linkend="unaccent"> module.
+   In case of operator-separated list of dictionries, the filter dictionry
+   should be placed before <literal>THEN</> operator. If the dictionary
+   returns <literal>NULL</> for unknown words additional option
+   <literal>accept</> should be added to the filter dictionary in order to
+   pass initial token in case of <literal>NULL</>-output.
   </para>
 
   <sect2 id="textsearch-stopwords">
@@ -2631,6 +2664,17 @@ more sample word(s) : more indexed word(s)
     definition like <literal>one 7</literal> will not work since token type
     <literal>uint</literal> is not assigned to the thesaurus dictionary.
    </para>
+
+   <caution>
+    <para>
+     If a thesaurus dictionary is following filtering dictionary (both
+     dictionary with <literal>TSL_FILTER</> flagged output in comma-separated
+     variant or <literal>THEN</> operator) the preceding dictionary will
+     process only one token in a phrase recognizable by thesaurus.
+     Rest of the tokens in the pharse would not be processed by
+     preceding dictionary.
+    </para>
+   </caution>
 
    <caution>
     <para>
