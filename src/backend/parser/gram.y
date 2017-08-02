@@ -242,7 +242,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	PartitionSpec		*partspec;
 	PartitionBoundSpec	*partboundspec;
 	RoleSpec			*rolespec;
-	DictPipeElem		*dpipe;
+	DictMapExprElem		*dmapexpr;
+	DictMapElem			*dmap;
 }
 
 %type <node>	stmt schema_stmt
@@ -398,8 +399,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				relation_expr_list dostmt_opt_list
 				transform_element_list transform_type_list
 				TriggerTransitions TriggerReferencing
-				publication_name_list
-				vacuum_relation_list opt_vacuum_relation_list
+				publication_name_list dictionary_map_list dictionary_map
+				dictionary_map_case
 
 %type <list>	group_by_list
 %type <node>	group_by_item empty_grouping_set rollup_clause cube_clause
@@ -583,11 +584,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <node>		partbound_datum PartitionRangeDatum
 %type <list>		partbound_datum_list range_datum_list
 
-%type <dpipe>		dictionary_pipe_elem dictionary_pipe_expr
-					dictionary_pipe_expr_and dictionary_pipe_expr_or
-					dictionary_pipe_expr_paren dictionary_pipe_expr_then
-					dictionary_pipe_expr_comma dictionary_pipe_expr_comma_ext
-%type <ival>		dictionary_pipe_elem_options_list dictionary_pipe_elem_option
+%type <ival>		dictionary_map_clause_expr_dict_not dictionary_map_clause_expr_dict_flag
+%type <dmapexpr>	dictionary_map_clause dictionary_map_clause_expr_not
+					dictionary_map_command dictionary_map_command_expr_paren
+					dictionary_map_dict dictionary_map_clause_expr_or
+					dictionary_map_clause_expr_and dictionary_map_clause_expr_mapby
+					dictionary_map_clause_expr_paren dictionary_map_clause_expr_dict
+%type <dmap>		dictionary_map_else dictionary_map_element
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -611,7 +614,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  */
 
 /* ordinary key words in alphabetical order */
-%token <keyword> ABORT_P ABSOLUTE_P ACCEPT ACCESS ACTION ADD_P ADMIN AFTER
+%token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
 	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
 	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
@@ -656,7 +659,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
-	MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE MONTH_P MOVE
+	MAP MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE
+	MONTH_P MOVE
 
 	NAME_P NAMES NATIONAL NATURAL NCHAR NEW NEXT NO NONE
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
@@ -679,7 +683,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	SAVEPOINT SCHEMA SCHEMAS SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
 	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
-	START STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P
+	START STATEMENT STATISTICS STDIN STDOUT STOP STORAGE STRICT_P STRIP_P
 	SUBSCRIPTION SUBSTRING SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
@@ -10013,25 +10017,25 @@ AlterTSDictionaryStmt:
 		;
 
 AlterTSConfigurationStmt:
-			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with dictionary_pipe_expr
+			ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with dictionary_map
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ADD_MAPPING;
 					n->cfgname = $5;
 					n->tokentype = $9;
-					n->dict_pipe = $11;
+					n->dict_map = $11;
 					n->dicts = NULL;
 					n->override = false;
 					n->replace = false;
 					$$ = (Node*)n;
 				}
-			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with dictionary_pipe_expr
+			| ALTER TEXT_P SEARCH CONFIGURATION any_name ALTER MAPPING FOR name_list any_with dictionary_map
 				{
 					AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt);
 					n->kind = ALTER_TSCONFIG_ALTER_MAPPING_FOR_TOKEN;
 					n->cfgname = $5;
 					n->tokentype = $9;
-					n->dict_pipe = $11;
+					n->dict_map = $11;
 					n->dicts = NULL;
 					n->override = true;
 					n->replace = false;
@@ -10084,118 +10088,247 @@ any_with:	WITH									{}
 			| WITH_LA								{}
 		;
 
-dictionary_pipe_elem:
+dictionary_map:
+			dictionary_map_case { $$ = $1; }
+			| any_name_list
+			{
+				DictMapElem *n = makeNode(DictMapElem);
+				n->condition = NULL;
+				n->command = NULL;
+				n->commandmaps = NULL;
+				n->dictnames = $1;
+				$$ = list_make1(n);
+			}
+		;
+
+dictionary_map_case:
+			CASE dictionary_map_list END_P
+			{
+				$$ = $2;
+			}
+			| CASE dictionary_map_list dictionary_map_else END_P
+			{
+				$$ = lappend($2, $3);
+			}
+		;
+
+dictionary_map_list:
+			dictionary_map_element							{ $$ = list_make1($1); }
+			| dictionary_map_list dictionary_map_element	{ $$ = lappend($1, $2); }
+		;
+
+dictionary_map_else:
+			ELSE dictionary_map_command
+			{
+				DictMapElem *n = makeNode(DictMapElem);
+				n->command = $2;
+				n->commandmaps = NULL;
+				n->dictnames = NULL;
+
+				n->condition = makeNode(DictMapExprElem);
+				n->condition->kind = DICT_MAP_CONST_TRUE;
+				n->condition->oper = 0;
+				n->condition->options = 0;
+				n->condition->left = NULL;
+				n->condition->right = NULL;
+
+				$$ = n;
+			}
+			| ELSE dictionary_map_case
+			{
+				DictMapElem *n = makeNode(DictMapElem);
+				n->command = NULL;
+				n->commandmaps = $2;
+				n->dictnames = NULL;
+
+				n->condition = makeNode(DictMapExprElem);
+				n->condition->kind = DICT_MAP_CONST_TRUE;
+				n->condition->oper = 0;
+				n->condition->options = 0;
+				n->condition->left = NULL;
+				n->condition->right = NULL;
+
+				$$ = n;
+			}
+		;
+
+dictionary_map_element:
+			WHEN dictionary_map_clause THEN dictionary_map_command
+			{
+				DictMapElem *n = makeNode(DictMapElem);
+				n->condition = $2;
+				n->command = $4;
+				n->commandmaps = NULL;
+				n->dictnames = NULL;
+				$$ = n;
+			}
+			| WHEN dictionary_map_clause THEN dictionary_map_case
+			{
+				DictMapElem *n = makeNode(DictMapElem);
+				n->condition = $2;
+				n->command = NULL;
+				n->commandmaps = $4;
+				n->dictnames = NULL;
+				$$ = n;
+			}
+		;
+
+dictionary_map_clause:
+			dictionary_map_clause_expr_or { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_or:
+			dictionary_map_clause_expr_and OR dictionary_map_clause_expr_or
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_OR;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+			| dictionary_map_clause_expr_and { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_and:
+			dictionary_map_clause_expr_mapby AND dictionary_map_clause_expr_and
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_AND;
+				n->options = 0;
+				n->left = $1;
+				n->right = $3;
+				$$ = n;
+			}
+			| dictionary_map_clause_expr_mapby { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_mapby:
+			dictionary_map_clause_expr_not MAP BY dictionary_map_clause_expr_mapby
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_MAPBY;
+				n->options = 0;
+				n->left = $1;
+				n->right = $4;
+				$$ = n;
+			}
+			| dictionary_map_clause_expr_not { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_not:
+			NOT dictionary_map_clause_expr_not
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_NOT;
+				n->options = 0;
+				n->left = NULL;
+				n->right = $2;
+				$$ = n;
+			}
+			| dictionary_map_clause_expr_paren { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_paren:
+			'(' dictionary_map_clause_expr_or ')'	{ $$ = $2; }
+			| dictionary_map_clause_expr_dict		{ $$ = $1; }
+		;
+
+dictionary_map_clause_expr_dict:
 			any_name
-				{
-					DictPipeElem *n = makeNode(DictPipeElem);
-					n->kind = DICT_PIPE_OPERAND;
-					n->dictname = list_make1($1);
-					n->options = 0;
-					n->left = n->right = NULL;
-					$$ = n;
-				}
-			| any_name '(' dictionary_pipe_elem_options_list ')'
-				{
-					DictPipeElem *n = makeNode(DictPipeElem);
-					n->kind = DICT_PIPE_OPERAND;
-					n->dictname = list_make1($1);
-					n->options = $3;
-					n->left = n->right = NULL;
-					$$ = n;
-				}
-		;
-
-dictionary_pipe_elem_option:
-			ACCEPT { $$ = DICTPIPE_ELEM_OPT_ACCEPT; }
-		;
-
-dictionary_pipe_elem_options_list:
-			dictionary_pipe_elem_option { $$ = $1; }
-			| dictionary_pipe_elem_option ',' dictionary_pipe_elem_options_list { $$ = $1 | $3; }
-		;
-
-dictionary_pipe_expr:
-			dictionary_pipe_expr_or { $$ = $1; }
-			| dictionary_pipe_expr_comma { $$ = $1; }
-		;
-
-dictionary_pipe_expr_then:
-			dictionary_pipe_expr_paren THEN dictionary_pipe_expr_then
 			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_THEN;
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERAND;
+				n->dictname = $1;
+				n->oper = 0;
+				n->options = DICTMAP_OPT_NOT | DICTMAP_OPT_IS_NULL | DICTMAP_OPT_IS_STOP;
+				n->left = n->right = NULL;
+				$$ = n;
+			}
+			| any_name IS dictionary_map_clause_expr_dict_not dictionary_map_clause_expr_dict_flag
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERAND;
+				n->dictname = $1;
+				n->oper = 0;
+				n->options = $3 | $4;
+				n->left = n->right = NULL;
+			}
+		;
+
+dictionary_map_clause_expr_dict_not:
+			NOT				{ $$ = DICTMAP_OPT_NOT; }
+			| /* EMPTY */	{ $$ = 0; }
+		;
+
+dictionary_map_clause_expr_dict_flag:
+			NULL_P			{ $$ = DICTMAP_OPT_IS_NULL; }
+			| STOP			{ $$ = DICTMAP_OPT_IS_STOP; }
+		;
+
+dictionary_map_command:
+			dictionary_map_command_expr_paren { $$ = $1; }
+			| dictionary_map_command_expr_paren UNION dictionary_map_command_expr_paren
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_UNION;
 				n->options = 0;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_paren { $$ = $1; }
-		;
-
-dictionary_pipe_expr_or:
-			dictionary_pipe_expr_and OR dictionary_pipe_expr_or
+			| dictionary_map_command_expr_paren EXCEPT dictionary_map_command_expr_paren
 			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_OR;
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_EXCEPT;
 				n->options = 0;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_and { $$ = $1; }
-		;
-
-dictionary_pipe_expr_and:
-			dictionary_pipe_expr_then AND dictionary_pipe_expr_and
+			| dictionary_map_command_expr_paren INTERSECT dictionary_map_command_expr_paren
 			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_AND;
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_INTERSECT;
 				n->options = 0;
 				n->left = $1;
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_pipe_expr_then { $$ = $1; }
-		;
-
-dictionary_pipe_expr_paren:
-			'(' dictionary_pipe_expr_or ')' { $$ = $2; }
-			| dictionary_pipe_elem { $$ = $1; }
-		;
-
-dictionary_pipe_expr_comma:
-			dictionary_pipe_elem ',' dictionary_pipe_expr_comma_ext
+			| dictionary_map_command_expr_paren MAP BY dictionary_map_command_expr_paren
 			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_OR;
-				n->options = DICTPIPE_OPERATOR_OPT_COMMA;
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_MAPBY;
+				n->options = 0;
 				n->left = $1;
-				n->right = $3;
+				n->right = $4;
 				$$ = n;
 			}
 		;
 
-/*
- * Additional nonterminal, which resolves reduce/reduce conflic.
- * Since both new and old syntax accept signle dictionary with same meaning
- * one of them should not accept it to resolve the conflic.
- */
-dictionary_pipe_expr_comma_ext:
-			dictionary_pipe_elem ',' dictionary_pipe_expr_comma_ext
+dictionary_map_command_expr_paren:
+			'(' dictionary_map_command ')'	{ $$ = $2; }
+			| dictionary_map_dict			{ $$ = $1; }
+		;
+
+dictionary_map_dict:
+			any_name
 			{
-				DictPipeElem *n = makeNode(DictPipeElem);
-				n->kind = DICT_PIPE_OPERATOR;
-				n->oper = DICTPIPE_OP_OR;
-				n->options = DICTPIPE_OPERATOR_OPT_COMMA;
-				n->left = $1;
-				n->right = $3;
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERAND;
+				n->dictname = $1;
+				n->options = 0;
+				n->left = n->right = NULL;
 				$$ = n;
 			}
-			| dictionary_pipe_elem { $$ = $1; }
 		;
 
 /*****************************************************************************
@@ -14721,7 +14854,6 @@ ColLabel:	IDENT									{ $$ = $1; }
 unreserved_keyword:
 			  ABORT_P
 			| ABSOLUTE_P
-			| ACCEPT
 			| ACCESS
 			| ACTION
 			| ADD_P
@@ -14852,6 +14984,7 @@ unreserved_keyword:
 			| LOCK_P
 			| LOCKED
 			| LOGGED
+			| MAP
 			| MAPPING
 			| MATCH
 			| MATERIALIZED
@@ -14955,6 +15088,7 @@ unreserved_keyword:
 			| STATISTICS
 			| STDIN
 			| STDOUT
+			| STOP
 			| STORAGE
 			| STRICT_P
 			| STRIP_P

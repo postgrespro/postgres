@@ -39,7 +39,7 @@
 #include "catalog/pg_ts_template.h"
 #include "commands/defrem.h"
 #include "tsearch/ts_cache.h"
-#include "tsearch/ts_public.h"
+#include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
@@ -417,13 +417,12 @@ lookup_ts_config_cache(Oid cfgId)
 		SysScanDesc							mapscan;
 		HeapTuple							maptup;
 		ListDictionary						maplists[MAXTOKENTYPE + 1];
-		ListDictionaryOperators				operatorslist[MAXTOKENTYPE + 1];
 		Oid									mapdicts[MAXDICTSPERTT];
-		int32								mapoptions[MAXDICTSPERTT];
-		TSConfigurationOperatorDescriptor	mapoperators[MAXOPERATORSPERTT];
+		TSMapRuleList						mapruleslist[MAXTOKENTYPE + 1];
 		int									maxtokentype;
 		int									ndicts;
 		int									i;
+		TSMapRuleList					   *rules_tmp;
 
 		tp = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgId));
 		if (!HeapTupleIsValid(tp))
@@ -462,13 +461,6 @@ lookup_ts_config_cache(Oid cfgId)
 				}
 				pfree(entry->map);
 			}
-			if (entry->operators)
-			{
-				for (i = 0; i < entry->lenmap; i++)
-					if (entry->operators[i].operators)
-						pfree(entry->operators[i].operators);
-				pfree(entry->operators);
-			}
 		}
 
 		MemSet(entry, 0, sizeof(TSConfigCacheEntry));
@@ -485,7 +477,6 @@ lookup_ts_config_cache(Oid cfgId)
 		 * each token type, even though we didn't explicitly ask for that.
 		 */
 		MemSet(maplists, 0, sizeof(maplists));
-		MemSet(operatorslist, 0, sizeof(operatorslist));
 		maxtokentype = 0;
 		ndicts = 0;
 
@@ -514,29 +505,28 @@ lookup_ts_config_cache(Oid cfgId)
 				if (ndicts > 0)
 				{
 					maplists[maxtokentype].len = ndicts;
-					operatorslist[maxtokentype].len = ndicts;
 					maplists[maxtokentype].dictIds = (Oid *)
 						MemoryContextAlloc(CacheMemoryContext,
 										   sizeof(Oid) * ndicts);
 					maplists[maxtokentype].dictOptions = (int32 *)
 						MemoryContextAlloc(CacheMemoryContext,
 										   sizeof(int32) * ndicts);
-					operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
-						MemoryContextAlloc(CacheMemoryContext,
-										   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 
 					memcpy(maplists[maxtokentype].dictIds, mapdicts,
 						   sizeof(Oid) * ndicts);
-					memcpy(maplists[maxtokentype].dictOptions, mapoptions,
-						   sizeof(int32) * ndicts);
-					memcpy(operatorslist[maxtokentype].operators, mapoperators,
-						   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
+					memcpy(mapruleslist + maxtokentype, rules_tmp, sizeof(TSMapRuleList));
+					pfree(rules_tmp);
 				}
 				maxtokentype = toktype;
-				mapdicts[0] = cfgmap->mapdict;
-				mapoptions[0] = cfgmap->mapoption;
-				mapoperators[0] = deserialize_ts_configuration_operator_descriptor(cfgmap->mapoperator);
-				ndicts = 1;
+				rules_tmp = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+				for (i = 0; i < rules_tmp->count; i++)
+				{
+					if (rules_tmp->data[i].dictionary != InvalidOid)
+						mapdicts[i] = rules_tmp->data[i].dictionary;
+					else
+						break;
+				}
+				ndicts = i;
 			}
 			else
 			{
@@ -544,8 +534,6 @@ lookup_ts_config_cache(Oid cfgId)
 				if (ndicts >= MAXDICTSPERTT)
 					elog(ERROR, "too many pg_ts_config_map entries for one token type");
 				mapdicts[ndicts] = cfgmap->mapdict;
-				mapoptions[ndicts] = cfgmap->mapoption;
-				mapoperators[ndicts] = deserialize_ts_configuration_operator_descriptor(cfgmap->mapoperator);
 				ndicts++;
 			}
 		}
@@ -558,34 +546,21 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the last token type's dictionaries */
 			maplists[maxtokentype].len = ndicts;
-			operatorslist[maxtokentype].len = ndicts;
 			maplists[maxtokentype].dictIds = (Oid *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(Oid) * ndicts);
 			maplists[maxtokentype].dictOptions = (int32 *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(int32) * ndicts);
-			operatorslist[maxtokentype].operators = (TSConfigurationOperatorDescriptor *)
-				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			memcpy(maplists[maxtokentype].dictIds, mapdicts,
 				   sizeof(Oid) * ndicts);
-			memcpy(maplists[maxtokentype].dictOptions, mapoptions,
-				   sizeof(int32) * ndicts);
-			memcpy(operatorslist[maxtokentype].operators, mapoperators,
-				   sizeof(TSConfigurationOperatorDescriptor) * ndicts);
 			/* and save the overall map */
 			entry->lenmap = maxtokentype + 1;
 			entry->map = (ListDictionary *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(ListDictionary) * entry->lenmap);
-			entry->operators = (ListDictionaryOperators *)
-				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(ListDictionaryOperators) * entry->lenmap);
 			memcpy(entry->map, maplists,
 				   sizeof(ListDictionary) * entry->lenmap);
-			memcpy(entry->operators, operatorslist,
-				   sizeof(ListDictionaryOperators) * entry->lenmap);
 		}
 
 		entry->isvalid = true;

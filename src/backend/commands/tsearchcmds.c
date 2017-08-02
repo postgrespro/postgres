@@ -53,6 +53,7 @@ static void MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 						 HeapTuple tup, Relation relMap);
 static void DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 						 HeapTuple tup, Relation relMap);
+static TSMapRuleList *ParseTSMapList(List *dictMapList);
 
 
 /* --------------------- TS Parser commands ------------------------ */
@@ -1094,8 +1095,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 			mapvalues[Anum_pg_ts_config_map_maptokentype - 1] = cfgmap->maptokentype;
 			mapvalues[Anum_pg_ts_config_map_mapseqno - 1] = cfgmap->mapseqno;
 			mapvalues[Anum_pg_ts_config_map_mapdict - 1] = cfgmap->mapdict;
-			mapvalues[Anum_pg_ts_config_map_mapoperator - 1] = cfgmap->mapoperator;
-			mapvalues[Anum_pg_ts_config_map_mapoption - 1] = cfgmap->mapoption;
+			mapvalues[Anum_pg_ts_config_map_mapdicts - 1] = PointerGetDatum(&cfgmap->mapdicts);
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
 
@@ -1198,7 +1198,7 @@ AlterTSConfiguration(AlterTSConfigurationStmt *stmt)
 	relMap = heap_open(TSConfigMapRelationId, RowExclusiveLock);
 
 	/* Add or drop mappings */
-	if (stmt->dicts || stmt->dict_pipe)
+	if (stmt->dicts || stmt->dict_map)
 		MakeConfigurationMapping(stmt, tup, relMap);
 	else if (stmt->tokentype)
 		DropConfigurationMapping(stmt, tup, relMap);
@@ -1274,138 +1274,95 @@ getTokenTypes(Oid prsId, List *tokennames)
 	return res;
 }
 
-static void
-DictPipeTreeCalculateSize_recurse(DictPipeElem *node, int *noperators, int *ndict)
+static TSMapExpression *
+ParseTSMapExpression(DictMapExprElem *head)
 {
-	/* Guard against stack overflow due to recursive event trigger */
-	check_stack_depth();
+	TSMapExpression *result;
+	result = palloc0(sizeof(TSMapExpression));
 
-	Assert(IsA(node, DictPipeElem));
-	if (node->kind == DICT_PIPE_OPERAND)
+	if (head->kind == DICT_MAP_OPERATOR)
 	{
-		(*ndict)++;
+		result->left = ParseTSMapExpression(head->left);
+		result->right = ParseTSMapExpression(head->right);
+		result->operator = head->oper;
 	}
-	else
+	else if (head->kind == DICT_MAP_CONST_TRUE)
 	{
-		Assert(node->kind == DICT_PIPE_OPERATOR);
-		(*noperators)++;
-		DictPipeTreeCalculateSize_recurse(node->left, noperators, ndict);
-		DictPipeTreeCalculateSize_recurse(node->right, noperators, ndict);
+		result->left = result->right = NULL;
+		result->is_true = true;
+		result->options = result->operator = 0;
 	}
-}
-
-static int
-DictPipeTreeNodeGetPosition_recurse(DictPipeElem *node, DictPipeElem *chk_node,
-									int *operandId, int *operatorId)
-{
-	/* Guard against stack overflow due to recursive event trigger */
-	check_stack_depth();
-
-	if (node == chk_node)
+	else /* head->kind == DICT_MAP_OPERAND */
 	{
-		return node->kind == DICT_PIPE_OPERAND ? *operandId : *operatorId;
+		result->dictionary = get_ts_dict_oid(head->dictname, false);
+		result->options = head->options;
 	}
-	else
-	{
-		if (node->kind == DICT_PIPE_OPERAND)
-		{
-			(*operandId)++;
-			return -1;
-		}
-		else
-		{
-			int left_res;
-			int right_res;
-			(*operatorId)++;
-			left_res = DictPipeTreeNodeGetPosition_recurse(node->left, chk_node, operandId, operatorId);
-			right_res = DictPipeTreeNodeGetPosition_recurse(node->right, chk_node, operandId, operatorId);
-
-			return left_res != -1 ? left_res : right_res;
-		}
-	}
-}
-
-/*
- * Search for the chk_node in Dictionary pipe tree which starts at head
- * Return index in plain pre-order tree representation which is used in
- * pg_ts_config_map table
- */
-static int
-DictPipeTreeNodeGetPosition(DictPipeElem *head, DictPipeElem *chk_node)
-{
-	int operandId = 0;
-	int operatorId = 0;
-	int result = DictPipeTreeNodeGetPosition_recurse(head, chk_node, &operandId, &operatorId);
-
-	Assert(result != -1);
 
 	return result;
 }
 
-static void
-DictPipeTreeParse_recurse(DictPipeElem *head, DictPipeElem *node, int32 *operators,
-						int *operatorsPos, Oid *dictIds, int *dictIdsPos, int8 *options)
+static TSMapRule
+ParseTSMapRule(DictMapElem *elem)
 {
-	/* Guard against stack overflow due to recursive event trigger */
-	check_stack_depth();
+	TSMapRule result;
+	memset(&result, 0, sizeof(result));
 
-	Assert(IsA(node, DictPipeElem));
-	if (node->kind == DICT_PIPE_OPERAND)
+	result.condition.expression = ParseTSMapExpression(elem->condition);
+	if (elem->commandmaps)
 	{
-		List   *names = lfirst(node->dictname->head);
-		dictIds[*dictIdsPos] = get_ts_dict_oid(names, false);
-		options[*dictIdsPos] = node->options;
-		(*dictIdsPos)++;
+		result.command.ruleList = ParseTSMapList(elem->commandmaps);
+		result.command.is_expression = false;
+		result.command.expression = NULL;
 	}
 	else
 	{
-		TSConfigurationOperatorDescriptor descriptor;
-		memset(&descriptor, 0, sizeof(descriptor));
-
-		Assert(node->kind == DICT_PIPE_OPERATOR);
-
-		descriptor.presented = 1;
-		descriptor.l_is_operator = node->left->kind == DICT_PIPE_OPERATOR ? 1 : 0;
-		descriptor.r_is_operator = node->right->kind == DICT_PIPE_OPERATOR ? 1 : 0;
-		descriptor.oper = node->oper;
-		descriptor.l_pos = DictPipeTreeNodeGetPosition(head, node->left);
-		descriptor.r_pos = DictPipeTreeNodeGetPosition(head, node->right);
-		descriptor.is_legacy = node->options & DICTPIPE_OPERATOR_OPT_COMMA ? 1 : 0;
-		descriptor._notused = 0;
-
-		operators[*operatorsPos] = serialize_ts_configuration_operator_descriptor(descriptor);
-		(*operatorsPos)++;
-
-		DictPipeTreeParse_recurse(head, node->left, operators, operatorsPos, dictIds, dictIdsPos, options);
-		DictPipeTreeParse_recurse(head, node->right, operators, operatorsPos, dictIds, dictIdsPos, options);
+		result.command.ruleList = NULL;
+		result.command.is_expression = true;
+		result.command.expression = ParseTSMapExpression(elem->command);
 	}
+
+	return result;
 }
 
-/*
- * Prase Dictionary pipe tree and convert it into plain pre-order
- * representation in two arrays (dictionary list and operators list).
- * The size of both arrays are stored in ndict and noperators
- */
-static void
-DictPipeTreeParse(AlterTSConfigurationStmt *stmt, int32 **operators,
-				int *noperators, Oid **dictIds, int *ndict, int8 **options, int *noptions)
+static TSMapRuleList *
+ParseTSMapList(List *dictMapList)
 {
-	DictPipeElem   *head = stmt->dict_pipe;
-	int				operatorsPos = 0;
-	int				dictIdsPos = 0;
+	int				i;
+	TSMapRuleList  *result;
+	ListCell	   *c;
 
-	DictPipeTreeCalculateSize_recurse(head, noperators, ndict);
-	*noptions = *ndict;
+	if (list_length(dictMapList) == 1 && ((DictMapElem*)lfirst(dictMapList->head))->dictnames)
+	{
+		DictMapElem *elem = (DictMapElem *) lfirst(dictMapList->head);
 
-	// Since all operators are binary, the number of dictionaries should be
-	// greater than number of operators.
-	Assert((*noperators) < (*ndict));
+		result = palloc0(sizeof(TSMapRuleList));
+		result->count = list_length(elem->dictnames);
+		result->data = palloc0(sizeof(TSMapRule) * result->count);
 
-	(*operators) = (int *) palloc0(sizeof(int) * (*ndict));
-	(*dictIds) = (Oid *) palloc(sizeof(Oid) * (*ndict));
-	(*options) = (int8 *) palloc0(sizeof(int8) * (*ndict));
+		i = 0;
+		foreach (c, elem->dictnames)
+		{
+			List *names = (List *) lfirst(c);
+			result->data[i].dictionary = get_ts_dict_oid(names, false);
+			i++;
+		}
+	}
+	else
+	{
+		result = palloc0(sizeof(TSMapRuleList));
+		result->count = list_length(dictMapList);
+		result->data = palloc0(sizeof(TSMapRule) * result->count);
 
-	DictPipeTreeParse_recurse(head, head, *operators, &operatorsPos, *dictIds, &dictIdsPos, *options);
+		i = 0;
+		foreach (c, dictMapList)
+		{
+			List *l = (List*)lfirst(c);
+			result->data[i] = ParseTSMapRule((DictMapElem *)l);
+			i++;
+		}
+	}
+
+	return result;
 }
 
 /*
@@ -1425,11 +1382,8 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 	int		   *tokens,
 				ntoken;
 	Oid		   *dictIds = NULL;
-	int32	   *operators = NULL;
-	int8	   *options = NULL;
-	int			noptions = 0;
-	int			noperators = 0;
 	int			ndict = 0;
+	TSMapRuleList *mapRules = NULL;
 	ListCell   *c;
 
 	prsId = ((Form_pg_ts_config) GETSTRUCT(tup))->cfgparser;
@@ -1482,10 +1436,8 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 		}
 	}
 
-	if (stmt->dict_pipe)
-	{
-		DictPipeTreeParse(stmt, &operators, &noperators, &dictIds, &ndict, &options, &noptions);
-	}
+	if (stmt->dict_map)
+		mapRules = ParseTSMapList(stmt->dict_map);
 
 	if (stmt->replace)
 	{
@@ -1560,24 +1512,23 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 
 		for (i = 0; i < ntoken; i++)
 		{
-			for (j = 0; j < ndict; j++)
-			{
-				Datum		values[Natts_pg_ts_config_map];
-				bool		nulls[Natts_pg_ts_config_map];
+			Datum		values[Natts_pg_ts_config_map];
+			bool		nulls[Natts_pg_ts_config_map];
 
-				memset(nulls, false, sizeof(nulls));
-				values[Anum_pg_ts_config_map_mapcfg - 1] = ObjectIdGetDatum(cfgId);
-				values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
-				values[Anum_pg_ts_config_map_mapseqno - 1] = Int32GetDatum(j + 1);
-				values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(dictIds[j]);
-				values[Anum_pg_ts_config_map_mapoperator - 1] = Int32GetDatum(operators[j]);
-				values[Anum_pg_ts_config_map_mapoption - 1] = Int32GetDatum(options[j]);
+			memset(nulls, false, sizeof(nulls));
+			values[Anum_pg_ts_config_map_mapcfg - 1] = ObjectIdGetDatum(cfgId);
+			values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
+			values[Anum_pg_ts_config_map_mapseqno - 1] = Int32GetDatum(1);
+			values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(0);
+			if (mapRules)
+				values[Anum_pg_ts_config_map_mapdicts - 1] = PointerGetDatum(TSMapToJsonb(mapRules));
+			else
+				nulls[Anum_pg_ts_config_map_mapdicts - 1] = true;
 
-				tup = heap_form_tuple(relMap->rd_att, values, nulls);
-				CatalogTupleInsert(relMap, tup);
+			tup = heap_form_tuple(relMap->rd_att, values, nulls);
+			CatalogTupleInsert(relMap, tup);
 
-				heap_freetuple(tup);
-			}
+			heap_freetuple(tup);
 		}
 	}
 

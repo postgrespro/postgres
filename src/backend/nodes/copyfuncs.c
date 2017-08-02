@@ -4371,16 +4371,26 @@ _copyReassignOwnedStmt(const ReassignOwnedStmt *from)
 	return newnode;
 }
 
-static DictPipeElem *
-_copyDictPipeElem(const DictPipeElem *from)
+static DictMapExprElem *
+_copyDictMapExprElem(const DictMapExprElem *from)
 {
-	DictPipeElem *newnode = makeNode(DictPipeElem);
+	DictMapExprElem *newnode = makeNode(DictMapExprElem);
 	COPY_NODE_FIELD(dictname);
 	COPY_NODE_FIELD(left);
 	COPY_NODE_FIELD(right);
 	COPY_SCALAR_FIELD(kind);
 	COPY_SCALAR_FIELD(oper);
 	COPY_SCALAR_FIELD(options);
+
+	return newnode;
+}
+
+static DictMapElem *
+_copyDictMapElem(const DictMapElem *from)
+{
+	DictMapElem *newnode = makeNode(DictMapElem);
+	COPY_NODE_FIELD(condition);
+	COPY_NODE_FIELD(command);
 
 	return newnode;
 }
@@ -5387,8 +5397,11 @@ copyObjectImpl(const void *from)
 		case T_ReassignOwnedStmt:
 			retval = _copyReassignOwnedStmt(from);
 			break;
-		case T_DictPipeElem:
-			retval = _copyDictPipeElem(from);
+		case T_DictMapExprElem:
+			retval = _copyDictMapExprElem(from);
+			break;
+		case T_DictMapElem:
+			retval = _copyDictMapElem(from);
 			break;
 		case T_AlterTSDictionaryStmt:
 			retval = _copyAlterTSDictionaryStmt(from);

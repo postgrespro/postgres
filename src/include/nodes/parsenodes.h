@@ -3371,20 +3371,30 @@ typedef enum AlterTSConfigType
 
 typedef enum DictPipeElemType
 {
-	DICT_PIPE_OPERAND,
-	DICT_PIPE_OPERATOR
+	DICT_MAP_OPERAND,
+	DICT_MAP_OPERATOR,
+	DICT_MAP_CONST_TRUE
 } DictPipeType;
 
-typedef struct DictPipeElem
+typedef struct DictMapExprElem
 {
 	NodeTag		type;
-	int8		kind;				/* See DictPipeElemType */
-	List	   *dictname;			/* Used in DICT_PIPE_OPERAND */
-	struct DictPipeElem *left;		/* Used in DICT_PIPE_OPERATOR */
-	struct DictPipeElem *right;		/* Used in DICT_PIPE_OPERATOR */
-	int8		oper;				/* Used in DICT_PIPE_OPERATOR */
+	int8		kind;				/* See DictMapExprElemType */
+	List	   *dictname;			/* Used in DICT_MAP_EXPR_OPERAND */
+	struct DictMapExprElem *left;		/* Used in DICT_MAP_EXPR_OPERATOR */
+	struct DictMapExprElem *right;		/* Used in DICT_MAP_EXPR_OPERATOR */
+	int8		oper;				/* Used in DICT_MAP_EXPR_OPERATOR */
 	int8		options;			/* Can be used in the future */
-} DictPipeElem;
+} DictMapExprElem;
+
+typedef struct DictMapElem
+{
+	NodeTag				type;
+	DictMapExprElem    *condition;
+	DictMapExprElem    *command;
+	List			   *commandmaps;
+	List			   *dictnames;
+} DictMapElem;
 
 typedef struct AlterTSConfigurationStmt
 {
@@ -3398,7 +3408,7 @@ typedef struct AlterTSConfigurationStmt
 	 */
 	List	   *tokentype;		/* list of Value strings */
 	List	   *dicts;			/* list of list of Value strings */
-	DictPipeElem *dict_pipe;	/* pipeline of dictionaries */
+	List	   *dict_map;
 	bool		override;		/* if true - remove old variant */
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */

@@ -86,7 +86,6 @@ typedef struct
 
 	int			lenmap;
 	ListDictionary *map;
-	ListDictionaryOperators *operators;
 } TSConfigCacheEntry;
 
 

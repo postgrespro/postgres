@@ -32,6 +32,48 @@
 #include "tsearch/ts_cache.h"
 
 /*
+ * Used during the parsing of TSMapRuleList from JSONB into internal
+ * datastructures.
+ */
+typedef enum TSMapRuleParseState {
+	TSMRPS_BEGINING,
+	TSMRPS_IN_CASES_ARRAY,
+	TSMRPS_IN_CASE,
+	TSMRPS_IN_CONDITION,
+	TSMRPS_IN_COMMAND,
+	TSMRPS_IN_EXPRESSION
+} TSMapRuleParseState;
+
+typedef enum TSMapRuleParseNodeType {
+	TSMRPT_UNKNOWN,
+	TSMRPT_NUMERIC,
+	TSMRPT_EXPRESSION,
+	TSMRPT_RULE_LIST,
+	TSMRPT_RULE,
+	TSMRPT_COMMAND,
+	TSMRPT_CONDITION,
+	TSMRPT_BOOL
+} TSMapRuleParseNodeType;
+
+typedef struct TSMapParseNode {
+	TSMapRuleParseNodeType type;
+	union {
+		int					num_val;
+		TSMapExpression	   *expression_val;
+		TSMapRuleList	   *rule_list_val;
+		TSMapRule		   *rule_val;
+		TSMapCommand	   *command_val;
+		TSMapCondition	   *condition_val;
+		bool				bool_val;
+	};
+} TSMapParseNode;
+
+static JsonbValue *
+TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state);
+static TSMapParseNode *
+JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state);
+
+/*
  * Given the base name and extension of a tsearch config file, return
  * its full path name.  The base name is assumed to be user-supplied,
  * and is checked to prevent pathname attacks.  The extension is assumed
@@ -155,170 +197,385 @@ searchstoplist(StopList *s, char *key)
 					sizeof(char *), pg_qsort_strcmp)) ? true : false;
 }
 
-static char *
-dictionary_pipe_to_text_print_options(int32 *options, int curDict)
-{
-	int len = 0;
-	int pos = 0;
-	char *result;
-
-	if (options[curDict] == 0)
-		return NULL;
-
-	if (options[curDict] & DICTPIPE_ELEM_OPT_ACCEPT)
-		len += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
-
-	result = palloc0(sizeof(char) * (len + 1));
-
-	if (options[curDict] & DICTPIPE_ELEM_OPT_ACCEPT)
-	{
-		memcpy(result + pos, DICTPIPE_ELEM_OPT_ACCEPT_LITERAL, sizeof(char) * strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL));
-		pos += strlen(DICTPIPE_ELEM_OPT_ACCEPT_LITERAL);
-	}
-
-	return result;
-}
-
-static char *
-dictionary_pipe_to_text_print_dict(Oid *dictIds, int32 *options, int curDict)
-{
-	Relation							maprel;
-	Relation							mapidx;
-	ScanKeyData							mapskey;
-	SysScanDesc							mapscan;
-	HeapTuple							maptup;
-	Form_pg_ts_dict						dict;
-	char							   *result;
-
-	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
-	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
-
-	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
-			BTEqualStrategyNumber, F_OIDEQ,
-			ObjectIdGetDatum(dictIds[curDict]));
-	mapscan = systable_beginscan_ordered(maprel, mapidx,
-									 NULL, 1, &mapskey);
-
-	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
-	dict = (Form_pg_ts_dict) GETSTRUCT(maptup);
-	result = palloc0(sizeof(char) * (strlen(dict->dictname.data) + 1));
-	memcpy(result, dict->dictname.data, sizeof(char) * strlen(dict->dictname.data));
-
-	systable_endscan_ordered(mapscan);
-	index_close(mapidx, AccessShareLock);
-	heap_close(maprel, AccessShareLock);
-
-	if (options[curDict])
-	{
-		char *tmp = result;
-		char *options_str = dictionary_pipe_to_text_print_options(options, curDict);
-		result = palloc0(sizeof(char) * (strlen(tmp) + strlen(options_str) + 3));
-		memcpy(result, tmp, sizeof(char) * strlen(tmp));
-		result[strlen(tmp)] = '(';
-		memcpy(result + strlen(tmp) + 1, options_str, sizeof(char) * strlen(options_str));
-		result[strlen(tmp) + strlen(options_str) + 1] = ')';
-	}
-
-	return result;
-}
-
-static char *
-dictionary_pipe_to_text_recurse(Oid *dictIds, int32 *options,
-		TSConfigurationOperatorDescriptor *operators, int curOperator)
-{
-	char							   *l_name;
-	char							   *operator_name;
-	char							   *r_name;
-	char							   *result;
-	TSConfigurationOperatorDescriptor	operator = operators[curOperator];
-
-	if (operator.l_is_operator)
-	{
-		l_name = dictionary_pipe_to_text_recurse(dictIds, options, operators, operator.l_pos);
-		if (operators[operator.l_pos].oper < operator.oper)
-		{
-			char *tmp = l_name;
-			l_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
-			l_name[0] = '(';
-			memcpy(l_name + 1, tmp, sizeof(char) * strlen(tmp));
-			l_name[strlen(tmp) + 1] = ')';
-			pfree(tmp);
-		}
-	}
-	else
-	{
-		l_name = dictionary_pipe_to_text_print_dict(dictIds, options, operator.l_pos);
-	}
-
-	switch (operator.oper)
-	{
-		case DICTPIPE_OP_AND:
-			operator_name = " AND ";
-			break;
-		case DICTPIPE_OP_OR:
-			if (operator.is_legacy)
-				operator_name = ", ";
-			else
-				operator_name = " OR ";
-			break;
-		case DICTPIPE_OP_THEN:
-			operator_name = " THEN ";
-			break;
-	}
-
-	if (operator.r_is_operator)
-	{
-		r_name = dictionary_pipe_to_text_recurse(dictIds, options, operators, operator.r_pos);
-		if (operators[operator.r_pos].oper < operator.oper)
-		{
-			char *tmp = r_name;
-			r_name = palloc0(sizeof(char) * (strlen(tmp) + 3));
-			r_name[0] = '(';
-			memcpy(r_name + 1, tmp, sizeof(char) * strlen(tmp));
-			r_name[strlen(tmp) + 1] = ')';
-			pfree(tmp);
-		}
-	}
-	else
-	{
-		r_name = dictionary_pipe_to_text_print_dict(dictIds, options, operator.r_pos);
-	}
-
-	result = palloc0(sizeof(char) * (strlen(l_name) + strlen(operator_name) + strlen(r_name) + 1));
-	memcpy(result, l_name, sizeof(char) * strlen(l_name));
-	memcpy(result + strlen(l_name), operator_name, sizeof(char) * strlen(operator_name));
-	memcpy(result + strlen(l_name) + strlen(operator_name), r_name, sizeof(char) * strlen(r_name));
-
-	pfree(l_name);
-	pfree(r_name);
-
-	return result;
-}
-
 Datum
 dictionary_pipe_to_text(PG_FUNCTION_ARGS)
 {
-	Oid									cfgOid = PG_GETARG_OID(0);
-	int32								tokentype = PG_GETARG_INT32(1);
-	char							   *rawResult;
-	text							   *result;
-	TSConfigCacheEntry				   *cacheEntry;
+	PG_RETURN_NULL();
+}
 
-	cacheEntry = lookup_ts_config_cache(cfgOid);
+static JsonbValue *
+TSIntToJsonbValue(int int_value)
+{
+	char			buffer[16];
+	JsonbValue	   *value = palloc0(sizeof(JsonbValue));
 
-	if (cacheEntry->map[tokentype].len > 1)
-		rawResult = dictionary_pipe_to_text_recurse(cacheEntry->map[tokentype].dictIds,
-													cacheEntry->map[tokentype].dictOptions,
-													cacheEntry->operators[tokentype].operators,
-													0);
+	memset(buffer, 0, sizeof(char) * 16);
+
+	pg_ltoa(int_value, buffer);
+	value->type = jbvNumeric;
+	value->val.numeric = DatumGetNumeric(DirectFunctionCall3(
+														  numeric_in,
+														  CStringGetDatum(buffer),
+														  ObjectIdGetDatum(InvalidOid),
+														  Int32GetDatum(-1)
+														  ));
+	return value;
+
+}
+
+static JsonbValue *
+TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
+{
+	if (expression->dictionary != InvalidOid)
+	{
+		return TSIntToJsonbValue(expression->dictionary);
+	}
+	else if (expression->is_true)
+	{
+		JsonbValue *value = palloc0(sizeof(JsonbValue));
+		value->type = jbvBool;
+		value->val.boolean = true;
+		return value;
+	}
 	else
-		rawResult = dictionary_pipe_to_text_print_dict(	cacheEntry->map[tokentype].dictIds,
-														cacheEntry->map[tokentype].dictOptions,
-														0);
-	result = cstring_to_text(rawResult);
-	pfree(rawResult);
+	{
+		JsonbValue		key;
+		JsonbValue	   *value = NULL;
 
-	PG_RETURN_TEXT_P(result);
+		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("operator");
+		key.val.string.val = "operator";
+		value = TSIntToJsonbValue(expression->operator);
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("left");
+		key.val.string.val = "left";
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		value = TSExpressionToJsonb(expression->left, jsonb_state);
+		if (IsAJsonbScalar(value))
+			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("right");
+		key.val.string.val = "right";
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		value = TSExpressionToJsonb(expression->right, jsonb_state);
+		if (IsAJsonbScalar(value))
+			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+	}
+}
+
+static JsonbValue *
+TSRuleToJsonbValue(TSMapRule *rule, JsonbParseState *jsonb_state)
+{
+	if (rule->dictionary != InvalidOid)
+	{
+		return TSIntToJsonbValue(rule->dictionary);
+	}
+	else
+	{
+		JsonbValue		key;
+		JsonbValue	   *value = NULL;
+
+		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("condition");
+		key.val.string.val = "condition";
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		value = TSExpressionToJsonb(rule->condition.expression, jsonb_state);
+
+		if (IsAJsonbScalar(value))
+			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("command");
+		key.val.string.val = "command";
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		if (rule->command.is_expression)
+			value = TSExpressionToJsonb(rule->command.expression, jsonb_state);
+		else
+			value = TSMapToJsonbValue(rule->command.ruleList, jsonb_state);
+
+		if (IsAJsonbScalar(value))
+			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+	}
+}
+
+static JsonbValue *
+TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state)
+{
+	JsonbValue	   *out;
+	int				i;
+
+	pushJsonbValue(&jsonb_state, WJB_BEGIN_ARRAY, NULL);
+	for (i = 0; i < rules->count; i++)
+	{
+		JsonbValue *value = TSRuleToJsonbValue(&rules->data[i], jsonb_state);
+		if (IsAJsonbScalar(value))
+			pushJsonbValue(&jsonb_state, WJB_ELEM, value);
+	}
+	out = pushJsonbValue(&jsonb_state, WJB_END_ARRAY, NULL);
+	return out;
+}
+
+Jsonb *
+TSMapToJsonb(TSMapRuleList *rules)
+{
+	JsonbParseState *jsonb_state = NULL;
+	JsonbValue	   *out;
+	Jsonb		   *result;
+
+	out = TSMapToJsonbValue(rules, jsonb_state);
+
+	result = JsonbValueToJsonb(out);
+	return result;
+}
+
+static inline TSMapExpression *
+JsonbToTSMapGetExpression(TSMapParseNode *node)
+{
+	TSMapExpression *result;
+	if (node->type == TSMRPT_NUMERIC)
+	{
+		result = palloc0(sizeof(TSMapExpression));
+		result->dictionary = node->num_val;
+	}
+	else if (node->type == TSMRPT_BOOL)
+	{
+		result = palloc0(sizeof(TSMapExpression));
+		result->is_true = node->bool_val;
+	}
+	else
+		result = node->expression_val;
+
+	pfree(node);
+
+	return result;
+}
+
+static TSMapParseNode *
+JsonbToTSMapParseObject(JsonbValue *value, TSMapRuleParseState *parse_state)
+{
+	TSMapParseNode	   *result = palloc0(sizeof(TSMapParseNode));
+	char			   *str;
+	switch (value->type)
+	{
+		case jbvNumeric:
+			result->type = TSMRPT_NUMERIC;
+			str = DatumGetCString(
+					DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
+			result->num_val = pg_atoi(str, sizeof(result->num_val), 0);
+			break;
+		case jbvArray:
+			Assert(*parse_state == TSMRPS_IN_COMMAND);
+		case jbvBinary:
+			result = JsonbToTSMapParse(value->val.binary.data, parse_state);
+			break;
+		case jbvBool:
+			result->type = TSMRPT_BOOL;
+			result->bool_val = value->val.boolean;
+			break;
+		case jbvObject:
+		case jbvNull:
+		case jbvString:
+			break;
+	}
+	return result;
+}
+
+static TSMapParseNode *
+JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
+{
+	JsonbIteratorToken r;
+	JsonbValue		val;
+	JsonbIterator  *it;
+	TSMapParseNode *result;
+	TSMapParseNode *nested_result;
+	char		   *key;
+	TSMapRuleList  *rule_list = NULL;
+
+	it = JsonbIteratorInit(root);
+	result = palloc0(sizeof(TSMapParseNode));
+	result->type = TSMRPT_UNKNOWN;
+	while ((r = JsonbIteratorNext(&it, &val, true)) != WJB_DONE)
+	{
+		switch (r)
+		{
+			case WJB_BEGIN_ARRAY:
+				if (*parse_state == TSMRPS_BEGINING || *parse_state == TSMRPS_IN_EXPRESSION)
+				{
+					*parse_state = TSMRPS_IN_CASES_ARRAY;
+					rule_list = palloc0(sizeof(TSMapRuleList));
+				}
+				break;
+			case WJB_KEY:
+				key = palloc0(sizeof(char) * (val.val.string.len + 1));
+				memcpy(key, val.val.string.val, sizeof(char) * val.val.string.len);
+
+				r = JsonbIteratorNext(&it, &val, true);
+				if (*parse_state == TSMRPS_IN_CASE)
+				{
+					if (strcmp(key, "command") == 0)
+						*parse_state = TSMRPS_IN_EXPRESSION;
+					else if (strcmp(key, "condition") == 0)
+						*parse_state = TSMRPS_IN_EXPRESSION;
+				}
+
+				nested_result = JsonbToTSMapParseObject(&val, parse_state);
+
+				if (result->type == TSMRPT_RULE)
+				{
+					if (strcmp(key, "command") == 0)
+					{
+						result->rule_val->command.is_expression = nested_result->type == TSMRPT_EXPRESSION ||
+															nested_result->type == TSMRPT_NUMERIC;
+
+						if (result->rule_val->command.is_expression)
+							result->rule_val->command.expression = JsonbToTSMapGetExpression(nested_result);
+						else
+							result->rule_val->command.ruleList = nested_result->rule_list_val;
+					}
+					else if (strcmp(key, "condition") == 0)
+					{
+						result->rule_val->condition.expression = JsonbToTSMapGetExpression(nested_result);
+					}
+					*parse_state = TSMRPS_IN_CASE;
+				}
+				else if (result->type == TSMRPT_COMMAND)
+				{
+					result->command_val->is_expression = nested_result->type == TSMRPT_EXPRESSION;
+					if (result->command_val->is_expression)
+						result->command_val->expression = JsonbToTSMapGetExpression(nested_result);
+					else
+						result->command_val->ruleList = nested_result->rule_list_val;
+					*parse_state = TSMRPS_IN_COMMAND;
+				}
+				else if (result->type == TSMRPT_CONDITION)
+				{
+					result->condition_val->expression = JsonbToTSMapGetExpression(nested_result);
+					*parse_state = TSMRPS_IN_COMMAND;
+				}
+				else if (result->type == TSMRPT_EXPRESSION)
+				{
+					if (strcmp(key, "left") == 0)
+						result->expression_val->left = JsonbToTSMapGetExpression(nested_result);
+					else if (strcmp(key, "right") == 0)
+						result->expression_val->right = JsonbToTSMapGetExpression(nested_result);
+					else if (strcmp(key, "operator") == 0)
+						result->expression_val->operator = nested_result->num_val;
+				}
+
+				break;
+			case WJB_BEGIN_OBJECT:
+				if (*parse_state == TSMRPS_IN_CASES_ARRAY)
+				{
+					*parse_state = TSMRPS_IN_CASE;
+					result->type = TSMRPT_RULE;
+					result->rule_val = palloc0(sizeof(TSMapRule));
+				}
+				else if (*parse_state == TSMRPS_IN_COMMAND)
+				{
+					result->type = TSMRPT_COMMAND;
+					result->command_val = palloc0(sizeof(TSMapCommand));
+				}
+				else if (*parse_state == TSMRPS_IN_CONDITION)
+				{
+					result->type = TSMRPT_CONDITION;
+					result->condition_val = palloc0(sizeof(TSMapCondition));
+				}
+				else if (*parse_state == TSMRPS_IN_EXPRESSION)
+				{
+					result->type = TSMRPT_EXPRESSION;
+					result->expression_val = palloc0(sizeof(TSMapExpression));
+				}
+				break;
+			case WJB_END_OBJECT:
+				if (*parse_state == TSMRPS_IN_CASE)
+					*parse_state = TSMRPS_IN_CASES_ARRAY;
+				else if (*parse_state == TSMRPS_IN_CONDITION || *parse_state == TSMRPS_IN_COMMAND)
+					*parse_state = TSMRPS_IN_CASE;
+				if (rule_list && result->type == TSMRPT_RULE)
+				{
+					rule_list->count++;
+					if (rule_list->data)
+						rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
+					else
+						rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
+					memcpy(rule_list->data + rule_list->count - 1, result->rule_val, sizeof(TSMapRule));
+				}
+				else
+					return result;
+			case WJB_END_ARRAY:
+				break;
+			default:
+				nested_result = JsonbToTSMapParseObject(&val, parse_state);
+				if (nested_result->type == TSMRPT_NUMERIC)
+				{
+					if (*parse_state == TSMRPS_IN_CASES_ARRAY)
+					{
+						/* Add dictionary Oid into array (comma-separated configuration) */
+						rule_list->count++;
+						if (rule_list->data)
+							rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
+						else
+							rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
+						memset(rule_list->data + rule_list->count - 1, 0, sizeof(TSMapRule));
+						rule_list->data[rule_list->count - 1].dictionary = nested_result->num_val;
+					}
+					else if (result->type == TSMRPT_UNKNOWN && *parse_state == TSMRPS_IN_EXPRESSION)
+					{
+						result->type = TSMRPT_EXPRESSION;
+						result->expression_val = palloc0(sizeof(TSMapExpression));
+					}
+					if (result->type == TSMRPT_EXPRESSION)
+						result->expression_val->dictionary = nested_result->num_val;
+				}
+				else if (nested_result->type == TSMRPT_RULE && rule_list)
+				{
+					rule_list->count++;
+					if (rule_list->data)
+						rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
+					else
+						rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
+					memcpy(rule_list->data + rule_list->count - 1, nested_result->rule_val, sizeof(TSMapRule));
+				}
+				break;
+		}
+	}
+	result->type = TSMRPT_RULE_LIST;
+	result->rule_list_val = rule_list;
+	return result;
+}
+
+TSMapRuleList *
+JsonbToTSMap(Jsonb *json)
+{
+	JsonbContainer *root = &json->root;
+	TSMapRuleList  *result = palloc0(sizeof(TSMapRuleList));
+	TSMapRuleParseState parse_state = TSMRPS_BEGINING;
+	TSMapParseNode *parsing_result;
+
+	parsing_result = JsonbToTSMapParse(root, &parse_state);
+
+	Assert(parsing_result->type == TSMRPT_RULE_LIST);
+	result = parsing_result->rule_list_val;
+	pfree(parsing_result);
+
+	return result;
 }
 
 /*

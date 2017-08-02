@@ -22,6 +22,7 @@
 #define PG_TS_CONFIG_MAP_H
 
 #include "catalog/genbki.h"
+#include "utils/jsonb.h"
 
 /* ----------------
  *		pg_ts_config_map definition.  cpp turns this into
@@ -30,14 +31,15 @@
  */
 #define TSConfigMapRelationId	3603
 
+typedef Jsonb jsonb;
+
 CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 {
 	Oid			mapcfg;			/* OID of configuration owning this entry */
 	int32		maptokentype;	/* token type from parser */
 	int32		mapseqno;		/* order in which to consult dictionaries */
 	Oid			mapdict;		/* dictionary to consult */
-	int32		mapoperator;	/* operator descriptor. See TSConfigurationOperatorDescriptor */
-	int32		mapoption;		/* dictionary additional options */
+	jsonb		mapdicts;		/* dictionary map Jsonb representation */
 } FormData_pg_ts_config_map;
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
@@ -62,62 +64,97 @@ typedef union TSConfigurationOperatorDescriptor
 	int32	raw;					/* raw data, can be used to cast-less assign to/from mapoperator */
 } TSConfigurationOperatorDescriptor;
 
+typedef struct TSMapExpression
+{
+	int		operator;
+	Oid		dictionary;
+	int		options;
+	bool	is_true;
+	struct TSMapExpression *left;
+	struct TSMapExpression *right;
+} TSMapExpression;
+
+typedef struct TSMapCommand
+{
+	bool				is_expression;
+	void			   *ruleList; /* this is a TSMapRuleList object */
+	TSMapExpression	   *expression;
+} TSMapCommand;
+
+typedef struct TSMapCondition
+{
+	TSMapExpression *expression;
+} TSMapCondition;
+
+typedef struct TSMapRule
+{
+	Oid				dictionary;
+	TSMapCondition	condition;
+	TSMapCommand	command;
+} TSMapRule;
+
+typedef struct TSMapRuleList
+{
+	TSMapRule *data;
+	int count;
+} TSMapRuleList;
+
 /* ----------------
  *		compiler constants for pg_ts_config_map
  * ----------------
  */
-#define Natts_pg_ts_config_map				6
+#define Natts_pg_ts_config_map				5
 #define Anum_pg_ts_config_map_mapcfg		1
 #define Anum_pg_ts_config_map_maptokentype	2
 #define Anum_pg_ts_config_map_mapseqno		3
 #define Anum_pg_ts_config_map_mapdict		4
-#define Anum_pg_ts_config_map_mapoperator	5
-#define Anum_pg_ts_config_map_mapoption		6
+#define Anum_pg_ts_config_map_mapdicts		5
 
 /* ----------------
- *		Dictionary pipeline operators constants
+ *		Dictionary map operators
  * ----------------
  */
-#define DICTPIPE_OP_OR   1
-#define DICTPIPE_OP_AND  2
-#define DICTPIPE_OP_THEN 3
+#define DICTMAP_OP_OR			1
+#define DICTMAP_OP_AND			2
+#define DICTMAP_OP_THEN			3
+#define DICTMAP_OP_MAPBY		4
+#define DICTMAP_OP_UNION		5
+#define DICTMAP_OP_EXCEPT		6
+#define DICTMAP_OP_INTERSECT	7
+#define DICTMAP_OP_NOT			8
 
 /* ----------------
- *		Dictionary pipeline operator options
+ *		Dictionary map operant options (bit mask)
  * ----------------
  */
-#define DICTPIPE_OPERATOR_OPT_COMMA 1
 
-/* ----------------
- *		Dictionary pipeline operand options
- * ----------------
- */
-#define DICTPIPE_ELEM_OPT_ACCEPT 1
-#define DICTPIPE_ELEM_OPT_ACCEPT_LITERAL "accept"
+#define DICTMAP_OPT_NOT			1
+#define DICTMAP_OPT_IS_NULL		2
+#define DICTMAP_OPT_IS_STOP		4
 
 /* ----------------
  *		initial contents of pg_ts_config_map
  * ----------------
  */
 
-DATA(insert ( 3748	1	1	3765	0	0 ));
-DATA(insert ( 3748	2	1	3765	0	0 ));
-DATA(insert ( 3748	3	1	3765	0	0 ));
-DATA(insert ( 3748	4	1	3765	0	0 ));
-DATA(insert ( 3748	5	1	3765	0	0 ));
-DATA(insert ( 3748	6	1	3765	0	0 ));
-DATA(insert ( 3748	7	1	3765	0	0 ));
-DATA(insert ( 3748	8	1	3765	0	0 ));
-DATA(insert ( 3748	9	1	3765	0	0 ));
-DATA(insert ( 3748	10	1	3765	0	0 ));
-DATA(insert ( 3748	11	1	3765	0	0 ));
-DATA(insert ( 3748	15	1	3765	0	0 ));
-DATA(insert ( 3748	16	1	3765	0	0 ));
-DATA(insert ( 3748	17	1	3765	0	0 ));
-DATA(insert ( 3748	18	1	3765	0	0 ));
-DATA(insert ( 3748	19	1	3765	0	0 ));
-DATA(insert ( 3748	20	1	3765	0	0 ));
-DATA(insert ( 3748	21	1	3765	0	0 ));
-DATA(insert ( 3748	22	1	3765	0	0 ));
+DATA(insert ( 3748	1	1	3765	"[3765]" ));
+DATA(insert ( 3748	2	1	3765	"[3765]" ));
+DATA(insert ( 3748	3	1	3765	"[3765]" ));
+DATA(insert ( 3748	4	1	3765	"[3765]" ));
+DATA(insert ( 3748	5	1	3765	"[3765]" ));
+DATA(insert ( 3748	6	1	3765	"[3765]" ));
+DATA(insert ( 3748	7	1	3765	"[3765]" ));
+DATA(insert ( 3748	8	1	3765	"[3765]" ));
+DATA(insert ( 3748	9	1	3765	"[3765]" ));
+DATA(insert ( 3748	10	1	3765	"[3765]" ));
+DATA(insert ( 3748	11	1	3765	"[3765]" ));
+DATA(insert ( 3748	15	1	3765	"[3765]" ));
+DATA(insert ( 3748	16	1	3765	"[3765]" ));
+DATA(insert ( 3748	17	1	3765	"[3765]" ));
+DATA(insert ( 3748	18	1	3765	"[3765]" ));
+DATA(insert ( 3748	19	1	3765	"[3765]" ));
+DATA(insert ( 3748	20	1	3765	"[3765]" ));
+DATA(insert ( 3748	21	1	3765	"[3765]" ));
+DATA(insert ( 3748	22	1	3765	"[3765]" ));
 
 #endif							/* PG_TS_CONFIG_MAP_H */
