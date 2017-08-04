@@ -36,11 +36,11 @@ WHERE cfgnamespace = 0 OR cfgowner = 0 OR cfgparser = 0;
 -----+---------
 (0 rows)
 
-SELECT mapcfg, maptokentype, mapseqno
+SELECT mapcfg, maptokentype
 FROM pg_ts_config_map
-WHERE mapcfg = 0 OR mapdict = 0;
- mapcfg | maptokentype | mapseqno 
---------+--------------+----------
+WHERE mapcfg = 0;
+ mapcfg | maptokentype 
+--------+--------------
 (0 rows)
 
 -- Look for pg_ts_config_map entries that aren't one of parser's token types
@@ -51,8 +51,8 @@ RIGHT JOIN pg_ts_config_map AS m
     ON (tt.cfgid=m.mapcfg AND tt.tokid=m.maptokentype)
 WHERE
     tt.cfgid IS NULL OR tt.tokid IS NULL;
- cfgid | tokid | mapcfg | maptokentype | mapseqno | mapdict | mapoperator | mapoption 
--------+-------+--------+--------------+----------+---------+-------------+-----------
+ cfgid | tokid | mapcfg | maptokentype | mapdicts 
+-------+-------+--------+--------------+----------
 (0 rows)
 
 -- test basic text search behavior without indexes, then with

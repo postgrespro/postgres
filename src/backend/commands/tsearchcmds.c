@@ -937,11 +937,21 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 		while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
+			TSMapRuleList *mapdicts = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			Oid *dictionaryOids = TSMapGetDictionariesList(mapdicts);
+			Oid *currentOid = dictionaryOids;
 
-			referenced.classId = TSDictionaryRelationId;
-			referenced.objectId = cfgmap->mapdict;
-			referenced.objectSubId = 0;
-			add_exact_object_address(&referenced, addrs);
+			while (*currentOid != InvalidOid)
+			{
+				referenced.classId = TSDictionaryRelationId;
+				referenced.objectId = *currentOid;
+				referenced.objectSubId = 0;
+				add_exact_object_address(&referenced, addrs);
+
+				currentOid++;
+			}
+			pfree(dictionaryOids);
+			pfree(mapdicts);
 		}
 
 		systable_endscan(scan);
@@ -1093,9 +1103,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 
 			mapvalues[Anum_pg_ts_config_map_mapcfg - 1] = cfgOid;
 			mapvalues[Anum_pg_ts_config_map_maptokentype - 1] = cfgmap->maptokentype;
-			mapvalues[Anum_pg_ts_config_map_mapseqno - 1] = cfgmap->mapseqno;
-			mapvalues[Anum_pg_ts_config_map_mapdict - 1] = cfgmap->mapdict;
-			mapvalues[Anum_pg_ts_config_map_mapdicts - 1] = PointerGetDatum(&cfgmap->mapdicts);
+			mapvalues[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(&cfgmap->mapdicts);
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
 
@@ -1458,6 +1466,10 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 		while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
+			Datum		repl_val[Natts_pg_ts_config_map];
+			bool		repl_null[Natts_pg_ts_config_map];
+			bool		repl_repl[Natts_pg_ts_config_map];
+			HeapTuple	newtup;
 
 			/*
 			 * check if it's one of target token types
@@ -1481,25 +1493,21 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			/*
 			 * replace dictionary if match
 			 */
-			if (cfgmap->mapdict == dictOld)
-			{
-				Datum		repl_val[Natts_pg_ts_config_map];
-				bool		repl_null[Natts_pg_ts_config_map];
-				bool		repl_repl[Natts_pg_ts_config_map];
-				HeapTuple	newtup;
+			mapRules = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			TSMapReplaceDictionary(mapRules, dictOld, dictNew);
 
-				memset(repl_val, 0, sizeof(repl_val));
-				memset(repl_null, false, sizeof(repl_null));
-				memset(repl_repl, false, sizeof(repl_repl));
+			memset(repl_val, 0, sizeof(repl_val));
+			memset(repl_null, false, sizeof(repl_null));
+			memset(repl_repl, false, sizeof(repl_repl));
 
-				repl_val[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(dictNew);
-				repl_repl[Anum_pg_ts_config_map_mapdict - 1] = true;
+			repl_val[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(TSMapToJsonb(mapRules));
+			repl_repl[Anum_pg_ts_config_map_mapdicts - 1] = true;
 
-				newtup = heap_modify_tuple(maptup,
-										   RelationGetDescr(relMap),
-										   repl_val, repl_null, repl_repl);
-				CatalogTupleUpdate(relMap, &newtup->t_self, newtup);
-			}
+			newtup = heap_modify_tuple(maptup,
+									   RelationGetDescr(relMap),
+									   repl_val, repl_null, repl_repl);
+			CatalogTupleUpdate(relMap, &newtup->t_self, newtup);
+			pfree(mapRules);
 		}
 
 		systable_endscan(scan);
@@ -1518,12 +1526,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			memset(nulls, false, sizeof(nulls));
 			values[Anum_pg_ts_config_map_mapcfg - 1] = ObjectIdGetDatum(cfgId);
 			values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
-			values[Anum_pg_ts_config_map_mapseqno - 1] = Int32GetDatum(1);
-			values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(0);
-			if (mapRules)
-				values[Anum_pg_ts_config_map_mapdicts - 1] = PointerGetDatum(TSMapToJsonb(mapRules));
-			else
-				nulls[Anum_pg_ts_config_map_mapdicts - 1] = true;
+			values[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(TSMapToJsonb(mapRules));
 
 			tup = heap_form_tuple(relMap->rd_att, values, nulls);
 			CatalogTupleInsert(relMap, tup);

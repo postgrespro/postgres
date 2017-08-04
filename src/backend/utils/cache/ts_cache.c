@@ -59,7 +59,6 @@
  */
 #define MAXTOKENTYPE		256
 #define MAXDICTSPERTT		100
-#define MAXOPERATORSPERTT	MAXDICTSPERTT
 
 
 static HTAB *TSParserCacheHash = NULL;
@@ -416,11 +415,8 @@ lookup_ts_config_cache(Oid cfgId)
 		ScanKeyData							mapskey;
 		SysScanDesc							mapscan;
 		HeapTuple							maptup;
-		ListDictionary						maplists[MAXTOKENTYPE + 1];
-		Oid									mapdicts[MAXDICTSPERTT];
 		TSMapRuleList						mapruleslist[MAXTOKENTYPE + 1];
 		int									maxtokentype;
-		int									ndicts;
 		int									i;
 		TSMapRuleList					   *rules_tmp;
 
@@ -454,10 +450,8 @@ lookup_ts_config_cache(Oid cfgId)
 			{
 				for (i = 0; i < entry->lenmap; i++)
 				{
-					if (entry->map[i].dictIds)
-						pfree(entry->map[i].dictIds);
-					if (entry->map[i].dictOptions)
-						pfree(entry->map[i].dictOptions);
+					// if (entry->map[i].data)
+						// pfree(entry->map[i].data);
 				}
 				pfree(entry->map);
 			}
@@ -472,13 +466,11 @@ lookup_ts_config_cache(Oid cfgId)
 		/*
 		 * Scan pg_ts_config_map to gather dictionary list for each token type
 		 *
-		 * Because the index is on (mapcfg, maptokentype, mapseqno), we will
-		 * see the entries in maptokentype order, and in mapseqno order for
-		 * each token type, even though we didn't explicitly ask for that.
+		 * Because the index is on (mapcfg, maptokentype), we will
+		 * see the entries in maptokentype order
+		 * even though we didn't explicitly ask for that.
 		 */
-		MemSet(maplists, 0, sizeof(maplists));
 		maxtokentype = 0;
-		ndicts = 0;
 
 		ScanKeyInit(&mapskey,
 					Anum_pg_ts_config_map_mapcfg,
@@ -490,6 +482,7 @@ lookup_ts_config_cache(Oid cfgId)
 		mapscan = systable_beginscan_ordered(maprel, mapidx,
 											 NULL, 1, &mapskey);
 
+		memset(mapruleslist, 0, sizeof(mapruleslist));
 		while ((maptup = systable_getnext_ordered(mapscan, ForwardScanDirection)) != NULL)
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
@@ -499,68 +492,27 @@ lookup_ts_config_cache(Oid cfgId)
 				elog(ERROR, "maptokentype value %d is out of range", toktype);
 			if (toktype < maxtokentype)
 				elog(ERROR, "maptokentype entries are out of order");
-			if (toktype > maxtokentype)
-			{
-				/* starting a new token type, but first save the prior data */
-				if (ndicts > 0)
-				{
-					maplists[maxtokentype].len = ndicts;
-					maplists[maxtokentype].dictIds = (Oid *)
-						MemoryContextAlloc(CacheMemoryContext,
-										   sizeof(Oid) * ndicts);
-					maplists[maxtokentype].dictOptions = (int32 *)
-						MemoryContextAlloc(CacheMemoryContext,
-										   sizeof(int32) * ndicts);
 
-					memcpy(maplists[maxtokentype].dictIds, mapdicts,
-						   sizeof(Oid) * ndicts);
-					memcpy(mapruleslist + maxtokentype, rules_tmp, sizeof(TSMapRuleList));
-					pfree(rules_tmp);
-				}
-				maxtokentype = toktype;
-				rules_tmp = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
-				for (i = 0; i < rules_tmp->count; i++)
-				{
-					if (rules_tmp->data[i].dictionary != InvalidOid)
-						mapdicts[i] = rules_tmp->data[i].dictionary;
-					else
-						break;
-				}
-				ndicts = i;
-			}
-			else
-			{
-				/* continuing data for current token type */
-				if (ndicts >= MAXDICTSPERTT)
-					elog(ERROR, "too many pg_ts_config_map entries for one token type");
-				mapdicts[ndicts] = cfgmap->mapdict;
-				ndicts++;
-			}
+			maxtokentype = toktype;
+			rules_tmp = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			mapruleslist[maxtokentype] = *TSMapMoveToMemoryContext(rules_tmp, CacheMemoryContext);
+			pfree(rules_tmp);
+			rules_tmp = NULL;
 		}
 
 		systable_endscan_ordered(mapscan);
 		index_close(mapidx, AccessShareLock);
 		heap_close(maprel, AccessShareLock);
 
-		if (ndicts > 0)
+		if (maxtokentype > 0)
 		{
-			/* save the last token type's dictionaries */
-			maplists[maxtokentype].len = ndicts;
-			maplists[maxtokentype].dictIds = (Oid *)
-				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(Oid) * ndicts);
-			maplists[maxtokentype].dictOptions = (int32 *)
-				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(int32) * ndicts);
-			memcpy(maplists[maxtokentype].dictIds, mapdicts,
-				   sizeof(Oid) * ndicts);
-			/* and save the overall map */
+			/* save the overall map */
 			entry->lenmap = maxtokentype + 1;
-			entry->map = (ListDictionary *)
+			entry->map = (TSMapRuleList *)
 				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(ListDictionary) * entry->lenmap);
-			memcpy(entry->map, maplists,
-				   sizeof(ListDictionary) * entry->lenmap);
+								   sizeof(TSMapRuleList) * entry->lenmap);
+			memcpy(entry->map, mapruleslist,
+				   sizeof(TSMapRuleList) * entry->lenmap);
 		}
 
 		entry->isvalid = true;

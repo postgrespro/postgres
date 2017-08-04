@@ -574,31 +574,12 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 	{
 		if (operator.l_is_operator == 0 && map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT)
 		{
-			return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
-				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
-		}
-		else
-		{
-			// Mark right-side as rejected in order to skip possible processing in future
-			if (operator.r_is_operator)
-				MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
-			else
-				curVal->rejected[operator.r_pos] = true;
-			return NULL;
-		}
-	}
+			ParsedLex  *curVal = ld->towork.head;
+			char	   *curValLemm = curVal->lemm;
+			int			curValLenLemm = curVal->lenlemm;
+			TSMapRuleList *rules = ld->cfg->map + curVal->type;
 
-	resSize = 0;
-	res = palloc0(sizeof(TSLexeme));
-	leftSize = TSLexemeGetSize(leftRes);
-	thenRightRes = palloc0(sizeof(TSLexeme*) * leftSize);
-	thenRightSizes = palloc0(sizeof(int) * leftSize);
-
-	// Find first lexem that is not processed by left-side subexpression
-	nonProcessedLex = curVal->next;
-	while (nonProcessedLex && nonProcessedLex->type != 0 && IsLeftSideProcessingComplete(cfg, nonProcessedLex, operator))
-		nonProcessedLex = nonProcessedLex->next;
-	resCurVal = CopyParsedLex(curVal, map->len);
+			map = TSMapGetListDictionary(rules);
 
 	/*
 	 * Store right-side results in array of pointers, in order to
@@ -906,22 +887,10 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 
 		if (ld->dictState.getnext)
 		{
-			/*
-			 * Dictionary wants next word, so setup custom context for the
-			 * dictionary and go to multi-input mode
-			 */
-			ParsedLex *ptr = curVal;
-			if (res)
-			{
-				setNewTmpRes(ld, res);
-				curVal->accepted[dictPos] = true;
-			}
-			curVal->notFinished[dictPos] = true;
+			ParsedLex  *curVal = ld->curSub;
+			TSMapRuleList *rules = ld->cfg->map + curVal->type;
 
-			ld->curDictId = dict->dictId;
-			ld->curSub = curVal->next;
-			res = LexizeExecDictionary(ld, correspondLexem, dictPos);
-			ld->curDictId = InvalidOid;
+			map = TSMapGetListDictionary(rules);
 
 			// Reset flags after multi-input processing complete based on result
 			while (ptr)

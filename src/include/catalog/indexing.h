@@ -260,7 +260,7 @@ DECLARE_UNIQUE_INDEX(pg_ts_config_cfgname_index, 3608, on pg_ts_config using btr
 DECLARE_UNIQUE_INDEX(pg_ts_config_oid_index, 3712, on pg_ts_config using btree(oid oid_ops));
 #define TSConfigOidIndexId	3712
 
-DECLARE_UNIQUE_INDEX(pg_ts_config_map_index, 3609, on pg_ts_config_map using btree(mapcfg oid_ops, maptokentype int4_ops, mapseqno int4_ops));
+DECLARE_UNIQUE_INDEX(pg_ts_config_map_index, 3609, on pg_ts_config_map using btree(mapcfg oid_ops, maptokentype int4_ops));
 #define TSConfigMapIndexId	3609
 
 DECLARE_UNIQUE_INDEX(pg_ts_dict_dictname_index, 3604, on pg_ts_dict using btree(dictname name_ops, dictnamespace oid_ops));

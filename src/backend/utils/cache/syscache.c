@@ -828,11 +828,10 @@ static const struct cachedesc cacheinfo[] = {
 	},
 	{TSConfigMapRelationId,		/* TSCONFIGMAP */
 		TSConfigMapIndexId,
-		3,
+		2,
 		{
 			Anum_pg_ts_config_map_mapcfg,
 			Anum_pg_ts_config_map_maptokentype,
-			Anum_pg_ts_config_map_mapseqno,
 			0
 		},
 		2

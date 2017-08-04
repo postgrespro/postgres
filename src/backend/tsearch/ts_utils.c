@@ -578,41 +578,236 @@ JsonbToTSMap(Jsonb *json)
 	return result;
 }
 
-/*
- * Since field order in bit fields is not guaranteed, make a manual
- * serialization/deserialization in order to keep data in common format
- * regardless bitfield structure after compilation
- */
-int32
-serialize_ts_configuration_operator_descriptor(TSConfigurationOperatorDescriptor operator)
+static void
+TSMapReplaceDictionaryParseExpression(TSMapExpression *expr, Oid oldDict, Oid newDict)
 {
-	int32 result = 0;
+	if (expr->left)
+		TSMapReplaceDictionaryParseExpression(expr->left, oldDict, newDict);
+	if (expr->right)
+		TSMapReplaceDictionaryParseExpression(expr->right, oldDict, newDict);
 
-	result |= operator.presented << 31;
-	result |= operator.l_is_operator << 30;
-	result |= operator.l_pos << 18;
-	result |= operator.r_is_operator << 17;
-	result |= operator.r_pos << 5;
-	result |= operator.oper << 3;
-	result |= operator._notused << 1;
-	result |= operator.is_legacy << 0;
+	if (expr->dictionary == oldDict)
+		expr->dictionary = newDict;
+}
+
+static void
+TSMapReplaceDictionaryParseMap(TSMapRule *rule, Oid oldDict, Oid newDict)
+{
+	if (rule->dictionary != InvalidOid)
+	{
+		Oid *result;
+		result = palloc0(sizeof(Oid) * 2);
+		result[0] = rule->dictionary;
+		result[1] = InvalidOid;
+	}
+	else
+	{
+		TSMapReplaceDictionaryParseExpression(rule->condition.expression, oldDict, newDict);
+
+		if (rule->command.is_expression)
+			TSMapReplaceDictionaryParseExpression(rule->command.expression, oldDict, newDict);
+		else
+			TSMapReplaceDictionary(rule->command.ruleList, oldDict, newDict);
+	}
+}
+
+void
+TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDict)
+{
+	int i;
+
+	for (i = 0; i < rules->count; i++)
+		TSMapReplaceDictionaryParseMap(&rules->data[i], oldDict, newDict);
+}
+
+static Oid *
+TSMapGetDictionariesParseExpression(TSMapExpression *expr)
+{
+	Oid *left_res;
+	Oid *right_res;
+	Oid *result;
+
+	left_res = right_res = NULL;
+
+	if (expr->left && expr->right)
+	{
+		Oid *ptr;
+		int count_l;
+		int count_r;
+
+		left_res = TSMapGetDictionariesParseExpression(expr->left);
+		right_res = TSMapGetDictionariesParseExpression(expr->right);
+
+		for (ptr = left_res, count_l = 0; *ptr != InvalidOid; count_l++, ptr++)
+			/* EMPTY */ ;
+		for (ptr = right_res, count_r = 0; *ptr != InvalidOid; count_r++, ptr++)
+			/* EMPTY */ ;
+
+		result = palloc0(sizeof(Oid) * (count_l + count_r + 1));
+		memcpy(result, left_res, sizeof(Oid) * count_l);
+		memcpy(result + count_l, right_res, sizeof(Oid) * count_r);
+		result[count_l + count_r] = InvalidOid;
+
+		pfree(left_res);
+		pfree(right_res);
+	}
+	else
+	{
+		result = palloc0(sizeof(Oid) * 2);
+		result[0] = expr->dictionary;
+		result[1] = InvalidOid;
+	}
 
 	return result;
 }
 
-TSConfigurationOperatorDescriptor
-deserialize_ts_configuration_operator_descriptor(int32 operator)
+static Oid *
+TSMapGetDictionariesParseRule(TSMapRule *rule)
 {
-	TSConfigurationOperatorDescriptor result;
+	Oid *result;
 
-	result.presented = operator >> 31;
-	result.l_is_operator = operator >> 30;
-	result.l_pos = operator >> 18;
-	result.r_is_operator = operator >> 17;
-	result.r_pos = operator >> 5;
-	result.oper = operator >> 3;
-	result._notused = operator >> 1;
-	result.is_legacy = operator >> 0;
+	if (rule->dictionary)
+	{
+		result = palloc0(sizeof(Oid) * 2);
+		result[0] = rule->dictionary;
+		result[1] = InvalidOid;
+	}
+	else
+	{
+		if (rule->command.is_expression)
+			result = TSMapGetDictionariesParseExpression(rule->command.expression);
+		else
+			result = TSMapGetDictionariesList(rule->command.ruleList);
+	}
+	return result;
+}
+
+Oid *
+TSMapGetDictionariesList(TSMapRuleList *rules)
+{
+	int		i;
+	Oid	  **results_arr;
+	int	   *sizes;
+	Oid	   *result;
+	int		size;
+	int		offset;
+
+	results_arr = palloc0(sizeof(Oid*) * rules->count);
+	sizes = palloc0(sizeof(int) * rules->count);
+	size = 0;
+	for (i = 0; i < rules->count; i++)
+	{
+		int count;
+		Oid *ptr;
+
+		results_arr[i] = TSMapGetDictionariesParseRule(&rules->data[i]);
+
+		for (count = 0, ptr = results_arr[i]; *ptr != InvalidOid; count++, ptr++)
+			/* EMPTY */ ;
+
+		sizes[i] = count;
+		size += count;
+	}
+
+	result = palloc(sizeof(Oid) * (size + 1));
+	offset = 0;
+	for (i = 0; i < rules->count; i++)
+	{
+		memcpy(result + offset, results_arr[i], sizeof(Oid) * sizes[i]);
+		offset += sizes[i];
+		pfree(results_arr[i]);
+	}
+	result[offset] = InvalidOid;
+
+	pfree(results_arr);
+	pfree(sizes);
+
+	return result;
+}
+
+ListDictionary *
+TSMapGetListDictionary(TSMapRuleList *rules)
+{
+	ListDictionary *result = palloc0(sizeof(ListDictionary));
+	Oid			   *oids = TSMapGetDictionariesList(rules);
+	int				i;
+	int				count;
+	Oid			   *ptr;
+
+	ptr = oids;
+	count = 0;
+	while (*ptr != InvalidOid)
+	{
+		count++;
+		ptr++;
+	}
+
+	result->len = count;
+	result->dictIds = palloc0(sizeof(Oid) * result->len);
+	ptr = oids;
+	i = 0;
+	while (*ptr != InvalidOid)
+		result->dictIds[i++] = *(ptr++);
+
+	return result;
+}
+
+static TSMapExpression *
+TSMapExpressionMoveToMemoryContext(TSMapExpression *expr, MemoryContext context)
+{
+	TSMapExpression *result = MemoryContextAlloc(context, sizeof(TSMapExpression));
+	memset(result, 0, sizeof(TSMapExpression));
+	if (expr->dictionary != InvalidOid || expr->is_true)
+	{
+		result->dictionary = expr->dictionary;
+		result->is_true = expr->is_true;
+	}
+	else
+	{
+		result->left = TSMapExpressionMoveToMemoryContext(expr->left, context);
+		result->right = TSMapExpressionMoveToMemoryContext(expr->right, context);
+		result->operator = expr->operator;
+	}
+	return result;
+}
+
+static TSMapRule
+TSMapRuleMoveToMemoryContext(TSMapRule *rule, MemoryContext context)
+{
+	TSMapRule result;
+	memset(&result, 0, sizeof(TSMapRule));
+
+	if (rule->dictionary)
+	{
+		result.dictionary = rule->dictionary;
+	}
+	else
+	{
+		result.condition.expression = TSMapExpressionMoveToMemoryContext(rule->condition.expression, context);
+
+		result.command.is_expression = rule->command.is_expression;
+		if (rule->command.is_expression)
+			result.command.expression = TSMapExpressionMoveToMemoryContext(rule->command.expression, context);
+		else
+			result.command.ruleList = TSMapMoveToMemoryContext(rule->command.ruleList, context);
+	}
+
+	return result;
+}
+
+TSMapRuleList *
+TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context)
+{
+	int				i;
+	TSMapRuleList  *result = MemoryContextAlloc(context, sizeof(TSMapRuleList));
+
+	memset(result, 0, sizeof(TSMapRuleList));
+
+	result->count = rules->count;
+	result->data = MemoryContextAlloc(context, sizeof(TSMapRule) * result->count);
+
+	for (i = 0; i < result->count; i++)
+		result->data[i] = TSMapRuleMoveToMemoryContext(&rules->data[i], context);
 
 	return result;
 }

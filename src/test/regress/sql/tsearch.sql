@@ -26,9 +26,9 @@ SELECT oid, cfgname
 FROM pg_ts_config
 WHERE cfgnamespace = 0 OR cfgowner = 0 OR cfgparser = 0;
 
-SELECT mapcfg, maptokentype, mapseqno
+SELECT mapcfg, maptokentype
 FROM pg_ts_config_map
-WHERE mapcfg = 0 OR mapdict = 0;
+WHERE mapcfg = 0;
 
 -- Look for pg_ts_config_map entries that aren't one of parser's token types
 SELECT * FROM

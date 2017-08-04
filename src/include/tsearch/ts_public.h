@@ -82,16 +82,6 @@ extern void readstoplist(const char *fname, StopList *s,
 extern bool searchstoplist(StopList *s, char *key);
 
 /*
- * Compiler-independent TSConfigurationOperatorDescriptor serialization/deserialization
- */
-
-int32
-serialize_ts_configuration_operator_descriptor(TSConfigurationOperatorDescriptor operator);
-
-TSConfigurationOperatorDescriptor
-deserialize_ts_configuration_operator_descriptor(int32 operator);
-
-/*
  * Interface with dictionaries
  */
 
