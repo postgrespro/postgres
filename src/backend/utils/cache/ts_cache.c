@@ -415,7 +415,7 @@ lookup_ts_config_cache(Oid cfgId)
 		ScanKeyData							mapskey;
 		SysScanDesc							mapscan;
 		HeapTuple							maptup;
-		TSMapRuleList						mapruleslist[MAXTOKENTYPE + 1];
+		TSMapRuleList					   *mapruleslist[MAXTOKENTYPE + 1];
 		int									maxtokentype;
 		int									i;
 		TSMapRuleList					   *rules_tmp;
@@ -450,8 +450,8 @@ lookup_ts_config_cache(Oid cfgId)
 			{
 				for (i = 0; i < entry->lenmap; i++)
 				{
-					// if (entry->map[i].data)
-						// pfree(entry->map[i].data);
+					if (entry->map[i])
+						TSMapFree(entry->map[i]);
 				}
 				pfree(entry->map);
 			}
@@ -495,8 +495,8 @@ lookup_ts_config_cache(Oid cfgId)
 
 			maxtokentype = toktype;
 			rules_tmp = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
-			mapruleslist[maxtokentype] = *TSMapMoveToMemoryContext(rules_tmp, CacheMemoryContext);
-			pfree(rules_tmp);
+			mapruleslist[maxtokentype] = TSMapMoveToMemoryContext(rules_tmp, CacheMemoryContext);
+			TSMapFree(rules_tmp);
 			rules_tmp = NULL;
 		}
 
@@ -508,11 +508,11 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the overall map */
 			entry->lenmap = maxtokentype + 1;
-			entry->map = (TSMapRuleList *)
+			entry->map = (TSMapRuleList **)
 				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(TSMapRuleList) * entry->lenmap);
+								   sizeof(TSMapRuleList *) * entry->lenmap);
 			memcpy(entry->map, mapruleslist,
-				   sizeof(TSMapRuleList) * entry->lenmap);
+				   sizeof(TSMapRuleList *) * entry->lenmap);
 		}
 
 		entry->isvalid = true;

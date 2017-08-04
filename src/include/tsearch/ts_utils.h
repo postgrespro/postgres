@@ -103,6 +103,7 @@ extern void TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDic
 extern Oid *TSMapGetDictionariesList(TSMapRuleList *rules);
 extern ListDictionary *TSMapGetListDictionary(TSMapRuleList *rules);
 extern TSMapRuleList *TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context);
+extern void TSMapFree(TSMapRuleList *rules);
 
 /*
  * headline framework, flow in common to generate:

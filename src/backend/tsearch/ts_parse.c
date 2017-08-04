@@ -43,6 +43,20 @@ typedef struct ListParsedLex
 	ParsedLex  *tail;
 } ListParsedLex;
 
+typedef struct DictState
+{
+	Oid				relatedDictionary;
+	DictSubState	subState;
+	ParsedLex	   *acceptedTokens;
+	TSLexeme	   *tmpResult;
+} DictState;
+
+typedef struct DictStateList
+{
+	int			listLength;
+	DictState  *states;
+} DictStateList;
+
 typedef struct
 {
 	TSConfigCacheEntry *cfg;
@@ -50,6 +64,7 @@ typedef struct
 	int			posDict;
 	DictSubState dictState;
 	ParsedLex  *curSub;
+	DictStateList dslist;
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
 
@@ -76,6 +91,8 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
 	ld->tmpRes = NULL;
+	ld->dslist.listLength = 0;
+	ld->dslist.states = NULL;
 }
 
 static void
@@ -577,9 +594,17 @@ LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
 			ParsedLex  *curVal = ld->towork.head;
 			char	   *curValLemm = curVal->lemm;
 			int			curValLenLemm = curVal->lenlemm;
-			TSMapRuleList *rules = ld->cfg->map + curVal->type;
+			TSMapRuleList *rules = ld->cfg->map[curVal->type];
 
-			map = TSMapGetListDictionary(rules);
+			if (ld->cfg->lenmap > curVal->type && rules)
+			{
+				map = TSMapGetListDictionary(rules);
+			}
+			else
+			{
+				map = palloc0(sizeof(ListDictionary));
+				map->len = 0;
+			}
 
 	/*
 	 * Store right-side results in array of pointers, in order to
@@ -888,9 +913,17 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
 		if (ld->dictState.getnext)
 		{
 			ParsedLex  *curVal = ld->curSub;
-			TSMapRuleList *rules = ld->cfg->map + curVal->type;
+			TSMapRuleList *rules = ld->cfg->map[curVal->type];
 
-			map = TSMapGetListDictionary(rules);
+			if (ld->cfg->lenmap > curVal->type && rules)
+			{
+				map = TSMapGetListDictionary(rules);
+			}
+			else
+			{
+				map = palloc0(sizeof(ListDictionary));
+				map->len = 0;
+			}
 
 			// Reset flags after multi-input processing complete based on result
 			while (ptr)

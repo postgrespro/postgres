@@ -812,3 +812,37 @@ TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context)
 	return result;
 }
 
+static void
+TSMapExpressionFree(TSMapExpression *expression)
+{
+	if (expression->left)
+		TSMapExpressionFree(expression->left);
+	if (expression->right)
+		TSMapExpressionFree(expression->right);
+	pfree(expression);
+}
+
+static void
+TSMapRuleFree(TSMapRule rule)
+{
+	if (rule.dictionary == InvalidOid)
+	{
+		if (rule.command.is_expression)
+			TSMapExpressionFree(rule.command.expression);
+		else
+			TSMapFree(rule.command.ruleList);
+
+		TSMapExpressionFree(rule.condition.expression);
+	}
+}
+
+void
+TSMapFree(TSMapRuleList *rules)
+{
+	int i;
+	for (i = 0; i < rules->count; i++)
+		TSMapRuleFree(rules->data[i]);
+	pfree(rules->data);
+	pfree(rules);
+}
+
