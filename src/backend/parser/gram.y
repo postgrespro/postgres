@@ -588,7 +588,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <dmapexpr>	dictionary_map_clause dictionary_map_clause_expr_not
 					dictionary_map_command dictionary_map_command_expr_paren
 					dictionary_map_dict dictionary_map_clause_expr_or
-					dictionary_map_clause_expr_and dictionary_map_clause_expr_mapby
+					dictionary_map_clause_expr_and dictionary_map_clause_expr_mapby_ext
+					dictionary_map_clause_expr_mapby
 					dictionary_map_clause_expr_paren dictionary_map_clause_expr_dict
 %type <dmap>		dictionary_map_else dictionary_map_element
 
@@ -10192,7 +10193,7 @@ dictionary_map_clause_expr_or:
 		;
 
 dictionary_map_clause_expr_and:
-			dictionary_map_clause_expr_mapby AND dictionary_map_clause_expr_and
+			dictionary_map_clause_expr_not AND dictionary_map_clause_expr_and
 			{
 				DictMapExprElem *n = makeNode(DictMapExprElem);
 				n->kind = DICT_MAP_OPERATOR;
@@ -10202,11 +10203,11 @@ dictionary_map_clause_expr_and:
 				n->right = $3;
 				$$ = n;
 			}
-			| dictionary_map_clause_expr_mapby { $$ = $1; }
+			| dictionary_map_clause_expr_not { $$ = $1; }
 		;
 
-dictionary_map_clause_expr_mapby:
-			dictionary_map_clause_expr_not MAP BY dictionary_map_clause_expr_mapby
+dictionary_map_clause_expr_mapby_ext:
+			dictionary_map_clause_expr_dict MAP BY dictionary_map_clause_expr_mapby_ext
 			{
 				DictMapExprElem *n = makeNode(DictMapExprElem);
 				n->kind = DICT_MAP_OPERATOR;
@@ -10216,7 +10217,20 @@ dictionary_map_clause_expr_mapby:
 				n->right = $4;
 				$$ = n;
 			}
-			| dictionary_map_clause_expr_not { $$ = $1; }
+			| dictionary_map_clause_expr_dict { $$ = $1; }
+		;
+
+dictionary_map_clause_expr_mapby:
+			dictionary_map_clause_expr_dict MAP BY dictionary_map_clause_expr_mapby_ext
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				n->kind = DICT_MAP_OPERATOR;
+				n->oper = DICTMAP_OP_MAPBY;
+				n->options = 0;
+				n->left = $1;
+				n->right = $4;
+				$$ = n;
+			}
 		;
 
 dictionary_map_clause_expr_not:
@@ -10235,6 +10249,16 @@ dictionary_map_clause_expr_not:
 
 dictionary_map_clause_expr_paren:
 			'(' dictionary_map_clause_expr_or ')'	{ $$ = $2; }
+			| '(' dictionary_map_clause_expr_mapby ')' IS dictionary_map_clause_expr_dict_not dictionary_map_clause_expr_dict_flag
+			{
+				$$ = $2;
+				$$->options = $5 | $6;
+			}
+			| '(' dictionary_map_clause_expr_mapby ')'
+			{
+				$$ = $2;
+				$$->options = DICTMAP_OPT_NOT | DICTMAP_OPT_IS_NULL | DICTMAP_OPT_IS_STOP;
+			}
 			| dictionary_map_clause_expr_dict		{ $$ = $1; }
 		;
 
@@ -10257,6 +10281,7 @@ dictionary_map_clause_expr_dict:
 				n->oper = 0;
 				n->options = $3 | $4;
 				n->left = n->right = NULL;
+				$$ = n;
 			}
 		;
 

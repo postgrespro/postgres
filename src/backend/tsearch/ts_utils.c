@@ -226,6 +226,8 @@ TSIntToJsonbValue(int int_value)
 static JsonbValue *
 TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 {
+	if (expression == NULL)
+		return NULL;
 	if (expression->dictionary != InvalidOid)
 	{
 		return TSIntToJsonbValue(expression->dictionary);
@@ -253,12 +255,20 @@ TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
 
 		key.type = jbvString;
+		key.val.string.len = strlen("options");
+		key.val.string.val = "options";
+		value = TSIntToJsonbValue(expression->options);
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		key.type = jbvString;
 		key.val.string.len = strlen("left");
 		key.val.string.val = "left";
 
 		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
 		value = TSExpressionToJsonb(expression->left, jsonb_state);
-		if (IsAJsonbScalar(value))
+		if (value && IsAJsonbScalar(value))
 			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
 
 		key.type = jbvString;
@@ -267,7 +277,7 @@ TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 
 		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
 		value = TSExpressionToJsonb(expression->right, jsonb_state);
-		if (IsAJsonbScalar(value))
+		if (value && IsAJsonbScalar(value))
 			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
 
 		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
@@ -477,6 +487,8 @@ JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
 						result->expression_val->right = JsonbToTSMapGetExpression(nested_result);
 					else if (strcmp(key, "operator") == 0)
 						result->expression_val->operator = nested_result->num_val;
+					else if (strcmp(key, "options") == 0)
+						result->expression_val->options = nested_result->num_val;
 				}
 
 				break;
@@ -755,18 +767,27 @@ TSMapGetListDictionary(TSMapRuleList *rules)
 static TSMapExpression *
 TSMapExpressionMoveToMemoryContext(TSMapExpression *expr, MemoryContext context)
 {
-	TSMapExpression *result = MemoryContextAlloc(context, sizeof(TSMapExpression));
+	TSMapExpression *result;
+	if (expr == NULL)
+		return NULL;
+	result = MemoryContextAlloc(context, sizeof(TSMapExpression));
 	memset(result, 0, sizeof(TSMapExpression));
 	if (expr->dictionary != InvalidOid || expr->is_true)
 	{
 		result->dictionary = expr->dictionary;
 		result->is_true = expr->is_true;
+		result->options = expr->options;
+		result->left = result->right = NULL;
+		result->operator = 0;
 	}
 	else
 	{
 		result->left = TSMapExpressionMoveToMemoryContext(expr->left, context);
 		result->right = TSMapExpressionMoveToMemoryContext(expr->right, context);
 		result->operator = expr->operator;
+		result->options = expr->options;
+		result->dictionary = InvalidOid;
+		result->is_true = false;
 	}
 	return result;
 }

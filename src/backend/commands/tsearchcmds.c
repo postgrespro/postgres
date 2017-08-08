@@ -1286,6 +1286,9 @@ static TSMapExpression *
 ParseTSMapExpression(DictMapExprElem *head)
 {
 	TSMapExpression *result;
+	if (head == NULL)
+		return NULL;
+
 	result = palloc0(sizeof(TSMapExpression));
 
 	if (head->kind == DICT_MAP_OPERATOR)
