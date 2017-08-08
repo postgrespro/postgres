@@ -47,7 +47,10 @@ typedef struct DictState
 {
 	Oid				relatedDictionary;
 	DictSubState	subState;
-	ParsedLex	   *acceptedTokens;
+	ListParsedLex  *acceptedTokens;
+	ListParsedLex  *intermediateTokens;
+	bool			storeToAccepted;
+	bool			processed;
 	TSLexeme	   *tmpResult;
 } DictState;
 
@@ -56,6 +59,19 @@ typedef struct DictStateList
 	int			listLength;
 	DictState  *states;
 } DictStateList;
+
+typedef struct LexemesBufferEntry
+{
+	Oid			dictId;
+	ParsedLex  *token;
+	TSLexeme   *data;
+} LexemesBufferEntry;
+
+typedef struct LexemesBuffer
+{
+	int					size;
+	LexemesBufferEntry *data;
+} LexemesBuffer;
 
 typedef struct
 {
@@ -67,6 +83,7 @@ typedef struct
 	DictStateList dslist;
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
+	LexemesBuffer buffer;
 
 	/*
 	 * field to store last variant to lexize (basically, thesaurus or similar
@@ -75,12 +92,7 @@ typedef struct
 	TSLexeme   *tmpRes;
 } LexizeData;
 
-static bool IsOperatorRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator);
-static TSLexeme *LexizeExec(LexizeData *ld, ParsedLex **correspondLexem);
-static TSLexeme *LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal, 
-		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem);
-static TSLexeme *LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos);
+static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
 
 static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
@@ -93,6 +105,8 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->tmpRes = NULL;
 	ld->dslist.listLength = 0;
 	ld->dslist.states = NULL;
+	ld->buffer.size = 0;
+	ld->buffer.data = NULL;
 }
 
 static void
@@ -219,1077 +233,538 @@ setNewTmpRes(LexizeData *ld, TSLexeme *res)
 	}
 }
 
-static TSLexeme *
-TSLexemeCombine(TSLexeme *left, TSLexeme *right)
-{
-	int leftSize;
-	int rightSize;
-	int nvariant;
-	TSLexeme *res;
-	TSLexeme *ptr;
-
-	if (left == NULL && right == NULL)
-		return NULL;
-
-	leftSize = TSLexemeGetSize(left);
-	rightSize = TSLexemeGetSize(right);
-	res = palloc0(sizeof(TSLexeme) * (leftSize + rightSize + 1));
-
-	nvariant = 0;
-	if (leftSize > 0)
-		for (ptr = left; ptr->lexeme; ptr++)
-			if (ptr->nvariant > nvariant)
-				nvariant = ptr->nvariant + 1;
-
-	if (leftSize > 0)
-		memcpy(res, left, sizeof(TSLexeme) * leftSize);
-	if (rightSize > 0)
-		memcpy(res + leftSize, right, sizeof(TSLexeme) * (rightSize + 1));
-
-	/*
-	 * Increase nvariant of right-side by the maxixmum nvariant of the
-	 * left-side to avoid collisions
-	 */
-	if (leftSize > 0)
-		for (ptr = res + leftSize; ptr->lexeme; ptr++)
-			ptr->nvariant += nvariant + 1;
-
-	return res;
-}
-
-static bool
-IsOperatorAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						l_accepted = false;
-	bool						r_accepted = false;
-	bool						l_rejected = false;
-	bool						r_rejected = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return true;
-
-	l_accepted = operator.l_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.l_pos])
-		: curVal->accepted[operator.l_pos];
-	r_accepted = operator.r_is_operator ? IsOperatorAccepted(cfg, curVal, operators->operators[operator.r_pos])
-		: curVal->accepted[operator.r_pos];
-
-	l_rejected = operator.l_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos])
-		: curVal->rejected[operator.l_pos];
-	r_rejected = operator.r_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos])
-		: curVal->rejected[operator.r_pos];
-
-	switch (operator.oper)
-	{
-		case DICTPIPE_OP_OR:
-			return l_accepted || r_accepted;
-		case DICTPIPE_OP_AND:
-			return (l_accepted && r_accepted) || (l_rejected && r_accepted) || (l_accepted && r_rejected);
-		case DICTPIPE_OP_THEN:
-			return !l_accepted || r_accepted || r_rejected;
-		default:
-			return false;
-	}
-}
-
-static bool
-IsOperatorRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						l_rejected = false;
-	bool						r_rejected = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return false;
-
-	l_rejected = operator.l_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos])
-		: curVal->rejected[operator.l_pos];
-	r_rejected = operator.r_is_operator ? IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos])
-		: curVal->rejected[operator.r_pos];
-
-	return l_rejected && r_rejected;
-}
-
-static bool
-IsNotFinished(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						l_not_fully_finished = false;
-	bool						r_not_fully_finished = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return true;
-
-	if (operator.l_is_operator)
-		l_not_fully_finished = IsNotFinished(cfg, curVal, operators->operators[operator.l_pos]);
-	else
-		l_not_fully_finished = curVal->notFinished[operator.l_pos];
-
-	if (operator.r_is_operator)
-		r_not_fully_finished = IsNotFinished(cfg, curVal, operators->operators[operator.r_pos]);
-	else
-		r_not_fully_finished = curVal->notFinished[operator.r_pos];
-
-	return l_not_fully_finished || r_not_fully_finished;
-}
-
-static bool
-IsProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	ListDictionary			   *map = cfg->map + curVal->type;
-	bool						l_accepted = false;
-	bool						r_accepted = false;
-	bool						l_rejected = false;
-	bool						r_rejected = false;
-	bool						l_not_finished = false;
-	bool						r_not_finished = false;
-
-	if (curVal->type == 0 || operators->len <= 0 || map->len <= 0)
-		return true;
-
-	if (operator.l_is_operator)
-	{
-		l_accepted = IsOperatorAccepted(cfg, curVal, operators->operators[operator.l_pos]);
-		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
-		l_not_finished = IsNotFinished(cfg, curVal, operators->operators[operator.l_pos]);
-	}
-	else
-	{
-		l_accepted = curVal->accepted[operator.l_pos];
-		l_rejected = curVal->rejected[operator.l_pos];
-		l_not_finished = curVal->notFinished[operator.l_pos];
-	}
-	if (operator.r_is_operator)
-	{
-		r_accepted = IsOperatorAccepted(cfg, curVal, operators->operators[operator.r_pos]);
-		r_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.r_pos]);
-		r_not_finished = IsNotFinished(cfg, curVal, operators->operators[operator.r_pos]);
-	}
-	else
-	{
-		r_accepted = curVal->accepted[operator.r_pos];
-		r_rejected = curVal->rejected[operator.r_pos];
-		r_not_finished = curVal->notFinished[operator.r_pos];
-	}
-
-	switch (operator.oper)
-	{
-		case DICTPIPE_OP_OR:
-			return (l_accepted && !l_not_finished) || (l_rejected && r_accepted && !r_not_finished) || (l_rejected && r_rejected);
-		case DICTPIPE_OP_AND:
-			return ((l_accepted && !l_not_finished) && r_rejected) || ((r_accepted && !r_not_finished) && l_rejected) || (l_rejected && r_rejected) || (l_accepted && !l_not_finished && r_accepted && !r_not_finished);
-		case DICTPIPE_OP_THEN:
-			return (l_accepted && !l_not_finished && r_accepted && !r_not_finished) || (l_rejected && r_accepted && !r_not_finished) ||
-				(l_accepted && !l_not_finished && r_rejected) || (l_rejected && r_rejected) ||
-				(l_rejected && (operator.l_is_operator == 0) && ((map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT) == 0));
-		default:
-			return false;
-	}
-}
-
-static bool
-IsLeftSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						l_accepted = false;
-	bool						l_rejected = false;
-	bool						l_not_finished = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return true;
-
-	if (operator.l_is_operator)
-	{
-		return IsProcessingComplete(cfg, curVal, operators->operators[operator.l_pos]);
-	}
-	else
-	{
-		l_accepted = curVal->accepted[operator.l_pos];
-		l_rejected = curVal->rejected[operator.l_pos];
-		l_not_finished = curVal->notFinished[operator.l_pos];
-		return (l_accepted && !l_not_finished) || l_rejected;
-	}
-}
-
-static bool
-IsLeftSideRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						l_rejected = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return false;
-
-	if (operator.l_is_operator)
-		l_rejected = IsOperatorRejected(cfg, curVal, operators->operators[operator.l_pos]);
-	else
-		l_rejected = curVal->rejected[operator.l_pos];
-
-	return l_rejected;
-}
-
-
-static bool
-IsRightSideProcessingComplete(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	bool						r_accepted = false;
-	bool						r_rejected = false;
-	bool						r_not_finished = false;
-
-	if (curVal->type == 0 || operators->len <= 0)
-		return true;
-
-	if (operator.r_is_operator)
-	{
-		return IsProcessingComplete(cfg, curVal, operators->operators[operator.r_pos]);
-	}
-	else
-	{
-		r_accepted = curVal->accepted[operator.r_pos];
-		r_rejected = curVal->rejected[operator.r_pos];
-		r_not_finished = curVal->notFinished[operator.r_pos];
-		return (r_accepted && !r_not_finished) || r_rejected;
-	}
-}
-
-static void
-MarkAsRejected(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-
-	if (operator.l_is_operator)
-		MarkAsRejected(cfg, curVal, operators->operators[operator.l_pos]);
-	else
-		curVal->rejected[operator.l_pos] = true;
-
-	if (operator.r_is_operator)
-		MarkAsRejected(cfg, curVal, operators->operators[operator.r_pos]);
-	else
-		curVal->rejected[operator.r_pos] = true;
-}
-
-static void
-UnmarkBranchAsAccepted(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-
-	if (operator.l_is_operator)
-		UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
-	else
-		curVal->accepted[operator.l_pos] = false;
-
-	if (operator.r_is_operator)
-		UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.r_pos]);
-	else
-		curVal->accepted[operator.r_pos] = false;
-}
-
-static void
-CopyCompletionMarks(TSConfigCacheEntry *cfg, ParsedLex *from, ParsedLex *to,
-		TSConfigurationOperatorDescriptor operator)
-{
-	ListDictionaryOperators	   *operators = cfg->operators + to->type;
-
-	if (operator.l_is_operator)
-		CopyCompletionMarks(cfg, from, to, operators->operators[operator.l_pos]);
-	else
-	{
-		to->accepted[operator.l_pos] = from->accepted[operator.l_pos];
-		to->rejected[operator.l_pos] = from->rejected[operator.l_pos];
-		to->notFinished[operator.l_pos] = from->notFinished[operator.l_pos];
-	}
-
-	if (operator.r_is_operator)
-		CopyCompletionMarks(cfg, from, to, operators->operators[operator.r_pos]);
-	else
-	{
-		to->accepted[operator.r_pos] = from->accepted[operator.r_pos];
-		to->rejected[operator.r_pos] = from->rejected[operator.r_pos];
-		to->notFinished[operator.r_pos] = from->notFinished[operator.r_pos];
-	}
-}
-
-static ParsedLex *
-CopyParsedLex(ParsedLex *pl, int mapLen)
-{
-	ParsedLex  *res = palloc0(sizeof(ParsedLex));
-
-	memcpy(res, pl, sizeof(ParsedLex));
-
-	res->accepted = palloc0(sizeof(bool) * mapLen);
-	res->rejected = palloc0(sizeof(bool) * mapLen);
-	res->notFinished = palloc0(sizeof(bool) * mapLen);
-	res->holdAccepted = palloc0(sizeof(bool) * mapLen);
-
-	memcpy(res->accepted, pl->accepted, sizeof(bool) * mapLen);
-	memcpy(res->rejected, pl->rejected, sizeof(bool) * mapLen);
-	memcpy(res->notFinished, pl->notFinished, sizeof(bool) * mapLen);
-	memcpy(res->holdAccepted, pl->holdAccepted, sizeof(bool) * mapLen);
-
-	return res;
-}
-
-static void
-MergeParsedLexFlags(ParsedLex *to, ParsedLex *from, int mapLen)
+static DictState *
+DictStateListGet(DictStateList *list, Oid dictId)
 {
 	int i;
-	for (i = 0; i < mapLen; i++)
+	DictState *result = NULL;
+
+	for (i = 0; i < list->listLength; i++)
+		if (list->states[i].relatedDictionary == dictId)
+			result = &list->states[i];
+
+	return result;
+}
+
+static void
+DictStateListRemove(DictStateList *list, Oid dictId)
+{
+	int i;
+
+	for (i = 0; i < list->listLength; i++)
+		if (list->states[i].relatedDictionary == dictId)
+			break;
+
+	if (i != list->listLength)
 	{
-		to->accepted[i] = to->accepted[i] || from->accepted[i];
-		to->rejected[i] = to->rejected[i] || from->rejected[i];
-		to->notFinished[i] = to->notFinished[i] || from->notFinished[i];
-		to->holdAccepted[i] = to->holdAccepted[i] || from->holdAccepted[i];
+		memcpy(list->states + i, list->states + i + 1, sizeof(DictState) * (list->listLength - 1));
+		list->listLength--;
+		if (list->listLength == 0)
+			list->states = NULL;
+		else
+			list->states = repalloc(list->states, sizeof(DictState) * list->listLength);
 	}
 }
 
-static TSLexeme *
-LexizeExecOperatorThen(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
+static DictState *
+DictStateListAdd(DictStateList *list, DictState *state)
 {
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	ListDictionary			   *map = cfg->map + curVal->type;
-	TSLexeme				   *leftRes;
-	TSLexeme				   *rightRes;
-	TSLexeme				   *res;
-	TSLexeme				  **thenRightRes;
-	ParsedLex				   *nonProcessedLex;
-	ParsedLex				   *resCurVal;
-	int						   *thenRightSizes;
-	int							nvariant;
-	int							i;
-	int							resSize;
-	int							leftSize;
-	int							rightSize;
-	bool						noResults = true;
+	DictStateListRemove(list, state->relatedDictionary);
 
-	if (IsLeftSideProcessingComplete(cfg, curVal, operator) && IsRightSideProcessingComplete(cfg, curVal, operator))
-		return NULL;
-
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
-		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
-	
-	// Wait until next execution for more lexemes
-	if (!IsLeftSideProcessingComplete(cfg, curVal, operator))
-		return NULL;
-
-	/*
-	 * If there is no output, transfer control to the next dictionary or
-	 * return NULL based on configuration
-	 */
-	if (IsLeftSideRejected(cfg, curVal, operator))
-	{
-		if (operator.l_is_operator == 0 && map->dictOptions[operator.l_pos] & DICTPIPE_ELEM_OPT_ACCEPT)
-		{
-			ParsedLex  *curVal = ld->towork.head;
-			char	   *curValLemm = curVal->lemm;
-			int			curValLenLemm = curVal->lenlemm;
-			TSMapRuleList *rules = ld->cfg->map[curVal->type];
-
-			if (ld->cfg->lenmap > curVal->type && rules)
-			{
-				map = TSMapGetListDictionary(rules);
-			}
-			else
-			{
-				map = palloc0(sizeof(ListDictionary));
-				map->len = 0;
-			}
-
-	/*
-	 * Store right-side results in array of pointers, in order to
-	 * allocate result TSLexeme array in one call without reallocations
-	 * for each right-side result
-	 */
-	for (i = 0; i < leftSize; i++)
-	{
-		TSLexeme   *ptr;
-		ParsedLex  *processedLex = curVal->next;
-		ParsedLex  *curValSub = NULL;
-		ParsedLex  *curValSubLast = NULL;
-		int			j = i + 1;
-
-		curValSub = CopyParsedLex(curVal, map->len);
-		curValSub->next = nonProcessedLex;
-
-		curValSub->lemm = leftRes[i].lexeme;
-		curValSub->lenlemm = strlen(leftRes[i].lexeme);
-
-		ld->towork.head = curValSub;
-		curValSubLast = curValSub;
-
-		// Add all lexemes with same nvariant in order to process it as a phrase
-		while (j < leftSize && leftRes[i].nvariant == leftRes[j].nvariant)
-		{
-			ParsedLex *curValSubNext = CopyParsedLex(curVal, map->len);
-
-			curValSubNext->lemm = leftRes[j].lexeme;
-			curValSubNext->lenlemm = strlen(leftRes[j].lexeme);
-			curValSubLast->next = curValSubNext;
-			curValSubNext->next = nonProcessedLex;
-			curValSubLast = curValSubNext ;
-			j++;
-		}
-
-		while (curValSub != nonProcessedLex)
-		{
-			TSLexeme *curRes;
-			TSLexeme *prevRes = thenRightRes[i];
-			curRes = operator.r_is_operator ? LexizeExecOperator(cfg, curValSub, operators->operators[operator.r_pos], ld, correspondLexem)
-				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
-			if (prevRes && curRes)
-				curRes->flags |= TSL_ADDPOS;
-			thenRightRes[i] = TSLexemeCombine(prevRes, curRes);
-			MergeParsedLexFlags(resCurVal, curValSub, map->len);
-			if (prevRes)
-				pfree(prevRes);
-			if (curRes)
-				pfree(curRes);
-			if (IsRightSideProcessingComplete(cfg, curValSub, operator))
-			{
-				ld->towork.head = curValSub->next;
-				pfree(curValSub);
-				curValSub = ld->towork.head;
-			}
-			else
-			{
-				/*
-				 * The dictionary didn't complete the processing of current 
-				 * lexeme, stop processing and revert flags in order to
-				 * process it during next iteration with more lexemes in
-				 * the queue
-				 */
-				memcpy(resCurVal->accepted, curVal->accepted, sizeof(bool) * map->len);
-				memcpy(resCurVal->rejected, curVal->rejected, sizeof(bool) * map->len);
-				memcpy(resCurVal->notFinished, curVal->notFinished, sizeof(bool) * map->len);
-				memcpy(resCurVal->holdAccepted, curVal->holdAccepted, sizeof(bool) * map->len);
-				j = leftSize;
-				thenRightRes[i] = NULL;
-				break;
-			}
-		}
-
-		/*
-		 * Copy flags of lexemes processed by right subexpression
-		 * to all lexemes processed by left subexpression, since all of then
-		 * are processed the same way (in terms of completeness)
-		 */
-		while (processedLex && processedLex != nonProcessedLex)
-		{
-			if (operator.r_is_operator)
-				CopyCompletionMarks(cfg, resCurVal, processedLex, operators->operators[operator.r_pos]);
-			else
-			{
-				ListDictionary *ptr_map = cfg->map + processedLex->type;
-				if (map->len == ptr_map->len && map->dictIds[operator.r_pos] == ptr_map->dictIds[operator.r_pos])
-				{
-					processedLex->accepted[operator.r_pos] = resCurVal->accepted[operator.r_pos];
-					processedLex->rejected[operator.r_pos] = resCurVal->rejected[operator.r_pos];
-					processedLex->notFinished[operator.r_pos] = resCurVal->notFinished[operator.r_pos];
-					processedLex->holdAccepted[operator.r_pos] = resCurVal->holdAccepted[operator.r_pos];
-				}
-			}
-			processedLex = processedLex->next;
-		}
-
-		if (thenRightRes[i] != NULL)
-			noResults = false;
-
-		ptr = thenRightRes[i];
-		while (ptr && ptr->lexeme)
-		{
-			ptr->flags |= leftRes[i].flags;
-			ptr++;
-		}
-
-		thenRightSizes[i] = TSLexemeGetSize(thenRightRes[i]);
-		resSize += thenRightSizes[i];
-		i = j - 1;
-	}
-
-	MergeParsedLexFlags(curVal, resCurVal, map->len);
-
-	if (noResults)
-	{
-		res = NULL;
-		if (!IsRightSideProcessingComplete(cfg, curVal, operator))
-		{
-			if (operator.l_is_operator)
-				UnmarkBranchAsAccepted(cfg, curVal, operators->operators[operator.l_pos]);
-			else
-				curVal->accepted[operator.l_pos] = false;
-		}
-	}
+	list->listLength++;
+	if (list->states)
+		list->states = repalloc(list->states, sizeof(DictState) * list->listLength);
 	else
-	{
-		/*
-		 * Combine all output into one lexemes list
-		 */
+		list->states = palloc0(sizeof(DictState) * list->listLength);
 
-		res = palloc0(sizeof(TSLexeme) * (resSize + 1));
-		rightSize = 0;
-		nvariant = 0;
-		for (i = 0; i < leftSize; i++)
-		{
-			if (thenRightRes[i] != NULL)
-			{
-				/*
-				 * Increase nvariant of the results to avoid nvariant collisions
-				 */
-				rightRes = thenRightRes[i];
-				while (rightRes->lexeme != NULL)
-				{
-					rightRes->nvariant += nvariant + 1;
-					rightRes++;
-				}
+	memcpy(list->states + list->listLength - 1, state, sizeof(DictState));
 
-				memcpy(res + rightSize, thenRightRes[i], sizeof(TSLexeme) * thenRightSizes[i]);
-				rightSize += thenRightSizes[i];
+	return list->states + list->listLength - 1;
+}
 
-				/*
-				 * Update maximum nvariant already used
-				 */
-				rightRes = thenRightRes[i];
-				while (rightRes->lexeme != NULL)
-				{
-					if (nvariant < rightRes->nvariant)
-						nvariant = rightRes->nvariant;
-					rightRes++;
-				}
-
-				pfree(thenRightRes[i]);
-			}
-		}
-	}
-
-	pfree(thenRightSizes);
-	pfree(thenRightRes);
-	ld->towork.head = curVal;
-
-	return res;
+static void
+DictStateListClear(DictStateList *list)
+{
+	list->listLength = 0;
+	if (list->states)
+		pfree(list->states);
+	list->states = NULL;
 }
 
 static TSLexeme *
-LexizeExecOperatorOr(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
+LexemesBufferGet(LexemesBuffer *buffer, Oid dictId, ParsedLex *token)
 {
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	TSLexeme				   *leftRes;
+	int i;
+	TSLexeme *result = NULL;
 
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
-		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
+	for (i = 0; i < buffer->size; i++)
+		if (buffer->data[i].dictId == dictId && buffer->data[i].token == token)
+			result = buffer->data[i].data;
 
-	if (IsLeftSideRejected(cfg, curVal, operator))
+	return result;
+}
+
+static void
+LexemesBufferRemove(LexemesBuffer *buffer, Oid dictId, ParsedLex *token)
+{
+	int i;
+
+	for (i = 0; i < buffer->size; i++)
+		if (buffer->data[i].dictId == dictId && buffer->data[i].token == token)
+			break;
+
+	if (i != buffer->size)
 	{
-		return operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
-				: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
+		memcpy(buffer->data + i, buffer->data + i + 1, sizeof(LexemesBufferEntry) * (buffer->size - i - 1));
+		buffer->size--;
+		if (buffer->size == 0)
+			buffer->data = NULL;
+		else
+			buffer->data = repalloc(buffer->data, sizeof(LexemesBufferEntry) * buffer->size);
 	}
+}
+
+static void
+LexemesBufferAdd(LexemesBuffer *buffer, Oid dictId, ParsedLex *token, TSLexeme *data)
+{
+	LexemesBufferRemove(buffer, dictId, token);
+
+	buffer->size++;
+	if (buffer->data)
+		buffer->data = repalloc(buffer->data, sizeof(LexemesBufferEntry) * buffer->size);
 	else
+		buffer->data = palloc0(sizeof(LexemesBufferEntry) * buffer->size);
+
+	buffer->data[buffer->size - 1].token = token;
+	buffer->data[buffer->size - 1].dictId = dictId;
+	buffer->data[buffer->size - 1].data = data;
+}
+
+static void
+LexemesBufferClear(LexemesBuffer *buffer)
+{
+	buffer->size = 0;
+	if (buffer->data)
+		pfree(buffer->data);
+	buffer->data = NULL;
+}
+
+static int
+TSLexemeGetSize(TSLexeme *lex)
+{
+	int result = 0;
+	TSLexeme *ptr = lex;
+
+	while (ptr && ptr->lexeme)
 	{
-		/*
-		 * Check flags to simulate TSL_FILTER behavior in
-		 * backward compatible mode
-		 */
-		if (leftRes && operator.is_legacy && leftRes->flags & TSL_FILTER)
+		result++;
+		ptr++;
+	}
+
+	return result;
+}
+
+static TSLexeme *
+TSLexemeUnion(TSLexeme *left, TSLexeme *right)
+{
+	TSLexeme *result;
+	int left_size = TSLexemeGetSize(left);
+	int right_size = TSLexemeGetSize(right);
+	int left_max_nvariant = 0;
+	int i;
+
+	// TODO: TLS_ADDPOS flag ordering
+
+	result = palloc0(sizeof(TSLexeme) * (left_size + right_size + 1));
+
+	for (i = 0; i < left_size; i++)
+		if (left[i].nvariant > left_max_nvariant)
+			left_max_nvariant = left[i].nvariant;
+
+	memcpy(result, left, sizeof(TSLexeme) * left_size);
+	memcpy(result + left_size, right, sizeof(TSLexeme) * right_size);
+
+	for (i = left_size; i < left_size + right_size; i++)
+		result[i].nvariant += left_max_nvariant;
+
+	return result;
+}
+
+static TSLexeme *
+TSLexemeExcept(TSLexeme *left, TSLexeme *right)
+{
+	TSLexeme *result = NULL;
+	int i, j, k;
+	int left_size = TSLexemeGetSize(left);
+	int right_size = TSLexemeGetSize(right);
+
+	result = palloc0(sizeof(TSLexeme) * (left_size + 1));
+
+	for (k = 0, i = 0; i < left_size; i++)
+	{
+		bool found = false;
+		for (j = 0; j < right_size; j++)
 		{
-			TSLexeme	   *res;
-			ParsedLex	   *newCurVal = palloc(sizeof(ParsedLex));
-
-			memcpy(newCurVal, curVal, sizeof(ParsedLex));
-			newCurVal->lemm = leftRes->lexeme;
-			newCurVal->lenlemm = strlen(leftRes->lexeme);
-			ld->towork.head = newCurVal;
-			res = operator.r_is_operator ? LexizeExecOperator(cfg, newCurVal, operators->operators[operator.r_pos], ld, correspondLexem)
-					: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
-			if (operator.r_is_operator)
-				CopyCompletionMarks(cfg, newCurVal, curVal, operators->operators[operator.r_pos]);
-			else
-			{
-				ListDictionary	   *map = cfg->map + curVal->type;
-				ListDictionary	   *ptr_map = cfg->map + curVal->type;
-
-				if (map->len == ptr_map->len && map->dictIds[operator.r_pos] == ptr_map->dictIds[operator.r_pos])
-				{
-					curVal->accepted[operator.r_pos] = newCurVal->accepted[operator.r_pos];
-					curVal->rejected[operator.r_pos] = newCurVal->rejected[operator.r_pos];
-					curVal->notFinished[operator.r_pos] = newCurVal->notFinished[operator.r_pos];
-				}
-			}
-			ld->towork.head = curVal;
-			pfree(newCurVal);
-			pfree(leftRes);
-			return res;
+			if (strcmp(left[i].lexeme, right[j].lexeme) == 0)
+				found = true;
 		}
-		return leftRes;
+
+		if (!found)
+			result[k++] = left[i];
 	}
+
+	return result;
 }
 
 static TSLexeme *
-LexizeExecOperatorAnd(TSConfigCacheEntry *cfg, ParsedLex *curVal,
-		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
+TSLexemeIntersect(TSLexeme *left, TSLexeme *right)
 {
-	ListDictionaryOperators	   *operators = cfg->operators + curVal->type;
-	TSLexeme				   *leftRes;
-	TSLexeme				   *rightRes;
-	TSLexeme				   *res;
+	TSLexeme *result = NULL;
+	int i, j, k;
+	int left_size = TSLexemeGetSize(left);
+	int right_size = TSLexemeGetSize(right);
 
-	leftRes = operator.l_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.l_pos], ld, correspondLexem)
-		: LexizeExecDictionary(ld, correspondLexem, operator.l_pos);
+	result = palloc0(sizeof(TSLexeme) * (left_size + 1));
 
-	rightRes = operator.r_is_operator ? LexizeExecOperator(cfg, curVal, operators->operators[operator.r_pos], ld, correspondLexem)
-		: LexizeExecDictionary(ld, correspondLexem, operator.r_pos);
-
-	res = TSLexemeCombine(leftRes, rightRes);
-	return res;
-}
-
-static TSLexeme *
-LexizeExecOperator(TSConfigCacheEntry *cfg, ParsedLex *curVal, 
-		TSConfigurationOperatorDescriptor operator, LexizeData *ld, ParsedLex **correspondLexem)
-{
-	Assert(operator.presented == 1);
-
-	if (IsProcessingComplete(cfg, curVal, operator))
-		return NULL;
-
-	switch (operator.oper)
+	for (k = 0, i = 0; i < left_size; i++)
 	{
-		case DICTPIPE_OP_THEN:
-			return LexizeExecOperatorThen(cfg, curVal, operator, ld, correspondLexem);
-		case DICTPIPE_OP_OR:
-			return LexizeExecOperatorOr(cfg, curVal, operator, ld, correspondLexem);
-		case DICTPIPE_OP_AND:
-			return LexizeExecOperatorAnd(cfg, curVal, operator, ld, correspondLexem);
-		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("Operator entry in text search configuration is corrupted"),
-					 errdetail("Operator id %d is invalid.",
-							   operator.oper)));
-			return NULL;
+		bool found = false;
+		for (j = 0; j < right_size; j++)
+		{
+			if (strcmp(left[i].lexeme, right[j].lexeme) == 0)
+				found = true;
+		}
+
+		if (found)
+			result[k++] = left[i];
 	}
+
+	return result;
 }
 
 static TSLexeme *
-LexizeExecDictionary(LexizeData *ld, ParsedLex **correspondLexem, int dictPos)
+LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 {
-	ParsedLex				   *curVal;
-	TSDictionaryCacheEntry	   *dict;
-	TSLexeme				   *res = NULL;
-	ListDictionary			   *map;
-	int							dictId;
-	int							i;
+	TSLexeme *res;
+	TSDictionaryCacheEntry *dict;
+	DictSubState subState;
 
-	curVal = ld->towork.head;
-	map = ld->cfg->map + curVal->type;
-	dictId = map->dictIds[dictPos];
-	dict = lookup_ts_dictionary_cache(dictId);
-
-	if ((curVal->accepted[dictPos] && !curVal->notFinished[dictPos]) || curVal->rejected[dictPos])
-		return NULL;
-
-	if (ld->curDictId == InvalidOid) /* Standard mode */
+	res = LexemesBufferGet(&ld->buffer, dictId, token);
+	if (!res)
 	{
-		ld->dictState.isend = ld->dictState.getnext = false;
-		ld->dictState.private_state = NULL;
+		char	   *curValLemm = token->lemm;
+		int			curValLenLemm = token->lenlemm;
+		DictState  *state = DictStateListGet(&ld->dslist, dictId);
+
+		dict = lookup_ts_dictionary_cache(dictId);
+
+		if (state)
+		{
+			subState = state->subState;
+			state->processed = true;
+		}
+		else
+		{
+			subState.isend = subState.getnext = false;
+			subState.private_state = NULL;
+		}
+
 		res = (TSLexeme *) DatumGetPointer(FunctionCall4(
 													 &(dict->lexize),
 									 PointerGetDatum(dict->dictData),
-									   PointerGetDatum(curVal->lemm),
-									  Int32GetDatum(curVal->lenlemm),
-									  PointerGetDatum(&ld->dictState)
+										 PointerGetDatum(curValLemm),
+										Int32GetDatum(curValLenLemm),
+										  PointerGetDatum(&subState)
 														 ));
 
-		if (ld->dictState.getnext)
-		{
-			ParsedLex  *curVal = ld->curSub;
-			TSMapRuleList *rules = ld->cfg->map[curVal->type];
+		LexemesBufferAdd(&ld->buffer, dictId, token, res);
 
-			if (ld->cfg->lenmap > curVal->type && rules)
+		if (subState.getnext)
+		{
+			/*
+			 * Dictionary wants next word, so store current context and state
+			 * in the DictStateList
+			 */
+			if (state == NULL)
 			{
-				map = TSMapGetListDictionary(rules);
+				state = palloc0(sizeof(DictState));
+				state->processed = true;
+				state->relatedDictionary = dictId;
+				/*
+				 * Add state to the list and update pointer in order to work with
+				 * copy from the list
+				 */
+				state = DictStateListAdd(&ld->dslist, state);
 			}
+
+			state->subState = subState;
+			state->storeToAccepted = res != NULL;
+
+			if (res)
+			{
+				if (state->intermediateTokens != NULL)
+				{
+					ParsedLex *ptr = state->intermediateTokens->head;
+					while (ptr)
+					{
+						LPLAddTail(state->acceptedTokens, ptr);
+						ptr = ptr->next;
+					}
+				}
+
+				if (state->tmpResult)
+					pfree(state->tmpResult);
+				state->tmpResult = res;
+			}
+		}
+		else if (state != NULL)
+		{
+			if (res)
+				DictStateListRemove(&ld->dslist, dictId);
 			else
 			{
-				map = palloc0(sizeof(ListDictionary));
-				map->len = 0;
-			}
-
-			// Reset flags after multi-input processing complete based on result
-			while (ptr)
-			{
-				if (ptr->type == curVal->type)
-				{
-					if (!res)
-						ptr->accepted[dictPos] = false;
-					ptr->notFinished[dictPos] = false;
-				}
-				ptr = ptr->next;
-			}
-
-			return res;
-		}
-		if (res)
-			curVal->accepted[dictPos] = true;
-		else
-			curVal->rejected[dictPos] = true;
-		return res;
-	}
-	else /* Process multi-input dictionary with saved state */
-	{
-		ParsedLex *ptr;
-
-		curVal = ld->curSub;
-
-		while (curVal)
-		{
-			while (curVal)
-			{
-				map = ld->cfg->map + curVal->type;
-				if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0))
-				{
-					/* skip this type of lexeme */
-					curVal = curVal->next;
-				}
-				else
-				{
-					break;
-				}
-			}
-
-			if (!curVal)
-			{
-				setNewTmpRes(ld, NULL); // Clean tmpRes
-				return NULL;
-			}
-
-			if (curVal->type != 0)
-			{
-				bool		dictExists = false;
-
-				/*
-				 * We should be sure that current type of lexeme is recognized
-				 * by our dictionary: we just check is it exist in list of
-				 * dictionaries
-				 */
-				for (i = 0; i < map->len && !dictExists; i++)
-					if (dictId == DatumGetObjectId(map->dictIds[i]))
-						dictExists = true;
-
-				if (!dictExists)
-				{
-					/*
-					 * Dictionary can't work with current type of lexeme,
-					 * return to basic mode.
-					 * If there is a tmpRes, return it, otherwise mark lexemes
-					 * as rejected
-					 */
-					if (ld->tmpRes)
-					{
-						res = ld->tmpRes;
-						ld->tmpRes = NULL;
-						return res;
-					}
-					else
-					{
-						ptr = ld->towork.head;
-						while (ptr && ptr != curVal) {
-							ptr->rejected[dictPos] = true;
-							ptr = ptr->next;
-						}
-						return NULL;
-					}
-				}
-			}
-
-			ld->dictState.isend = (curVal->type == 0) ? true : false;
-			ld->dictState.getnext = false;
-
-			res = (TSLexeme *) DatumGetPointer(FunctionCall4(
-															 &(dict->lexize),
-											 PointerGetDatum(dict->dictData),
-											   PointerGetDatum(curVal->lemm),
-											  Int32GetDatum(curVal->lenlemm),
-											  PointerGetDatum(&ld->dictState)
-															 ));
-
-			if (ld->dictState.getnext)
-			{
-				/* Dictionary wants one more */
-				if (res)
-				{
-					setNewTmpRes(ld, res);
-
-					ptr = ld->towork.head;
-					while (ptr)
-					{
-						ptr->accepted[dictPos] = true;
-						ptr->notFinished[dictPos] = true;
-						if (ptr == curVal)
-							break;
-						ptr = ptr->next;
-					}
-				}
-				curVal = curVal->next;
-				continue;
-			}
-
-			if (res || ld->tmpRes)
-			{
-				/*
-				 * Dictionary normalizes lexemes, so we mark all
-				 * used lexemes and return to basic mode
-				 */
-				if (!res)
-				{
-					res = ld->tmpRes;
-				}
-				else
-				{
-					setNewTmpRes(ld, NULL);
-					ptr = ld->towork.head;
-					while (ptr)
-					{
-						ptr->accepted[dictPos] = true;
-						if (ptr == curVal)
-							break;
-						ptr = ptr->next;
-					}
-				}
-
-				ptr = ld->towork.head;
-				while (ptr)
-				{
-					ptr->notFinished[dictPos] = false;
-					ptr = ptr->next;
-				}
-				ld->tmpRes = NULL;
-				return res;
-			}
-
-			/*
-			 * Dict don't want next lexem and didn't recognize anything, mark
-			 * input as rejected
-			 */
-			ptr = ld->towork.head;
-			while (ptr && ptr != curVal)
-			{
-				ptr->notFinished[dictPos] = false;
-				ptr->rejected[dictPos] = true;
-				ptr = ptr->next;
-			}
-			return NULL;
-		}
-	}
-	return NULL;
-}
-
-static TSLexeme *
-TSLexemeRemoveDuplications(TSLexeme *lexeme)
-{
-	TSLexeme	   *res;
-	int				curLexIndex;
-	int				i;
-	int				lexemeSize = TSLexemeGetSize(lexeme);
-	int				shouldCopyCount = lexemeSize;
-	bool		   *shouldCopy;
-
-	if (lexeme == NULL)
-		return NULL;
-
-	shouldCopy = palloc(sizeof(bool) * lexemeSize);
-	memset(shouldCopy, true, sizeof(bool) * lexemeSize);
-
-	for (curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
-	{
-		for (i = curLexIndex + 1; i < lexemeSize; i++)
-		{
-			if (!shouldCopy[i])
-				continue;
-
-			if (strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
-			{
-				if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant)
-				{
-					shouldCopy[i] = false;
-					shouldCopyCount--;
-					continue;
-				}
-				else
-				{
-					/*
-					 * Check for same set of lexemes in another nvariant series
-					 */
-					int		nvariantCountL = 0;
-					int		nvariantCountR = 0;
-					int		nvariantOverlap = 1;
-					int		j;
-
-					for (j = 0; j < lexemeSize; j++)
-						if (lexeme[curLexIndex].nvariant == lexeme[j].nvariant)
-							nvariantCountL++;
-					for (j = 0; j < lexemeSize; j++)
-						if (lexeme[i].nvariant == lexeme[j].nvariant)
-							nvariantCountR++;
-
-					if (nvariantCountL != nvariantCountR)
-						continue;
-
-					for (j = 1; j < nvariantCountR; j++)
-					{
-						if (strcmp(lexeme[curLexIndex + j].lexeme, lexeme[i + j].lexeme) == 0
-								&& lexeme[curLexIndex + j].nvariant == lexeme[i + j].nvariant)
-							nvariantOverlap++;
-					}
-
-					if (nvariantOverlap != nvariantCountR)
-						continue;
-
-					for (j = 0; j < nvariantCountR; j++)
-					{
-						shouldCopy[i + j] = false;
-					}
-				}
+				// TODO: Rollback 
 			}
 		}
 	}
 
-	res = palloc0(sizeof(TSLexeme) * (shouldCopyCount + 1));
-
-	for (i = 0, curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
-	{
-		if (shouldCopy[curLexIndex])
-		{
-			memcpy(res + i, lexeme + curLexIndex, sizeof(TSLexeme));
-			i++;
-		}
-	}
-
-	pfree(shouldCopy);
-	pfree(lexeme);
 	return res;
 }
 
 static bool
-CleanToworkQueue(LexizeData *ld, ParsedLex **correspondLexem)
+LexizeExecDictionaryWaitNext(LexizeData *ld, ParsedLex *token, Oid dictId)
 {
-	ListDictionary			   *map;
-	ListDictionaryOperators	   *operators;
-	ParsedLex				   *curVal;
-	bool						result = false;;
+	DictState *state = DictStateListGet(&ld->dslist, dictId);
+	if (state)
+		return state->subState.getnext;
+	else
+		return false;
+}
 
-	while ((curVal = ld->towork.head) != NULL)
+static bool
+LexizeExecIsNull(LexizeData *ld, ParsedLex *token, Oid dictId)
+{
+	TSLexeme *lexemes = LexizeExecDictionary(ld, token, dictId);
+	if (lexemes)
+		return false;
+	else
+		return !LexizeExecDictionaryWaitNext(ld, token, dictId);
+}
+
+static bool
+LexizeExecIsStop(LexizeData *ld, ParsedLex *token, Oid dictId)
+{
+	TSLexeme *lex = LexizeExecDictionary(ld, token, dictId);
+	return lex != NULL && lex[0].lexeme == NULL;
+}
+
+static bool
+LexizeExecExpressionBool(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
+{
+	bool result;
+	if (expression == NULL)
+		return false;
+
+	if (expression->is_true)
+		result = true;
+
+	if (expression->dictionary != InvalidOid)
 	{
-		map = ld->cfg->map + curVal->type;
-		operators = ld->cfg->operators + curVal->type;
-		if ((map->len > 1 && IsProcessingComplete(ld->cfg, curVal, operators->operators[0]))
-				|| (map->len == 1 && ((curVal->accepted[0] && !curVal->notFinished[0]) || curVal->rejected[0])))
+		bool is_null = LexizeExecIsNull(ld, token, expression->dictionary);
+		bool is_stop = LexizeExecIsStop(ld, token, expression->dictionary);
+		bool invert = (expression->options & DICTMAP_OPT_NOT) != 0;
+
+		result = true;
+		if ((expression->options & DICTMAP_OPT_IS_NULL) != 0)
+			result = result && (invert ? !is_null : is_null);
+		if ((expression->options & DICTMAP_OPT_IS_STOP) != 0)
+			result = result && (invert ? !is_stop : is_stop);
+	}
+	else
+	{
+
+		if (expression->operator == DICTMAP_OP_MAPBY)
 		{
-			ParsedLex *ptr = curVal->next;
-			while (ptr)
-			{
-				int dictIndex = 0;
-				ListDictionary *ptr_map = ld->cfg->map + ptr->type;
-				for (dictIndex = 0; dictIndex < ptr_map->len; dictIndex++)
-				{
-					if (map->len == ptr_map->len && map->dictIds[dictIndex] == ptr_map->dictIds[dictIndex]
-							&& curVal->accepted[dictIndex] && ptr->accepted[dictIndex])
-						ptr->holdAccepted[dictIndex] = true;
-				}
-				ptr = ptr->next;
-			}
-			RemoveHead(ld);
+			TSLexeme *mapby_result = LexizeExecMapBy(ld, token, expression->left, expression->right);
+			bool is_null = mapby_result == NULL;
+			bool is_stop = mapby_result != NULL && mapby_result[0].lexeme == NULL;
+			bool invert = (expression->options & DICTMAP_OPT_NOT) != 0;
+
 			result = true;
+			if ((expression->options & DICTMAP_OPT_IS_NULL) != 0)
+				result = result && (invert ? !is_null : is_null);
+			if ((expression->options & DICTMAP_OPT_IS_STOP) != 0)
+				result = result && (invert ? !is_stop : is_stop);
 		}
 		else
 		{
-			break;
+			bool res_left = LexizeExecExpressionBool(ld, token, expression->left);
+			bool res_right = LexizeExecExpressionBool(ld, token, expression->right);
+			switch (expression->operator)
+			{
+				case DICTMAP_OP_NOT:
+					result = !res_right;
+					break;
+				case DICTMAP_OP_OR:
+					result = res_left || res_right;
+					break;
+				case DICTMAP_OP_AND:
+					result = res_left && res_right;
+					break;
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("invalid text search configuration boolean expression")));
+					break;
+			}
 		}
 	}
+
 	return result;
+}
+
+static TSLexeme *
+LexizeExecExpressionSet(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
+{
+	TSLexeme *result;
+
+	if (expression->dictionary != InvalidOid)
+	{
+		result = LexizeExecDictionary(ld, token, expression->dictionary);
+	}
+	else
+	{
+		if (expression->operator == DICTMAP_OP_MAPBY)
+		{
+			result = LexizeExecMapBy(ld, token, expression->left, expression->right);
+		}
+		else
+		{
+			TSLexeme *res_left = LexizeExecExpressionSet(ld, token, expression->left);
+			TSLexeme *res_right = LexizeExecExpressionSet(ld, token, expression->right);
+
+			switch (expression->operator)
+			{
+				case DICTMAP_OP_UNION:
+					result = TSLexemeUnion(res_left, res_right);
+					break;
+				case DICTMAP_OP_EXCEPT:
+					result = TSLexemeExcept(res_left, res_right);
+					break;
+				case DICTMAP_OP_INTERSECT:
+					result = TSLexemeIntersect(res_left, res_right);
+					break;
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("invalid text search configuration result set expression")));
+					result = NULL;
+					break;
+			}
+		}
+	}
+
+	return result;
+}
+
+static TSLexeme *
+LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right)
+{
+	TSLexeme *left_res = LexizeExecExpressionSet(ld, token, left);
+	TSLexeme *result;
+	int left_size = TSLexemeGetSize(left_res);
+	int i;
+	int result_size;
+
+	result = NULL;
+	result_size = 0;
+	for (i = 0; i < left_size; i++)
+	{
+		TSLexeme *tmp_res;
+		ParsedLex tmp_token;
+
+		tmp_token.lemm = left_res[i].lexeme;
+		tmp_token.lenlemm = strlen(left_res[i].lexeme);
+		tmp_token.type = token->type;
+		tmp_token.next = NULL;
+
+		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, right);
+		if (tmp_res)
+		{
+			int tmp_res_size = TSLexemeGetSize(tmp_res);
+			int result_size_prev = result_size;
+
+			if (tmp_res_size == 0 && result != NULL)
+				continue;
+
+			result_size += tmp_res_size;
+			if (result)
+				result = repalloc(result, sizeof(TSLexeme) * (result_size + 1));
+			else
+				result = palloc0(sizeof(TSLexeme) * (result_size + 1));
+
+			memcpy(result + result_size_prev, tmp_res, sizeof(TSLexeme) * tmp_res_size);
+			memset(result + result_size, 0, sizeof(TSLexeme));
+		}
+	}
+
+	return result;
+}
+
+static TSLexeme *
+LexizeExecCase(LexizeData *ld, ParsedLex *token, TSMapRuleList *rules)
+{
+	TSLexeme *res = NULL;
+
+	if (ld->cfg->lenmap <= token->type || rules == NULL)
+	{
+		res = NULL;
+	}
+	else
+	{
+		int i;
+		for (i = 0; i < rules->count; i++)
+		{
+			if (rules->data[i].dictionary != InvalidOid)
+			{
+				res = LexizeExecDictionary(ld, token, rules->data[i].dictionary);
+				if (res)
+					break;
+			}
+			else if (LexizeExecExpressionBool(ld, token, rules->data[i].condition.expression))
+			{
+				if (rules->data[i].command.is_expression)
+					res = LexizeExecExpressionSet(ld, token, rules->data[i].command.expression);
+				else
+					res = LexizeExecCase(ld, token, rules);
+				break;
+			}
+		}
+	}
+
+	return res;
 }
 
 static TSLexeme *
 LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
-	ListDictionary			   *map;
-	ListDictionaryOperators	   *operators;
-	TSLexeme				   *res = NULL;
-	ParsedLex				   *curVal;
+	ParsedLex *token;
+	TSMapRuleList *rules;
+	TSLexeme *res = NULL;
 
-	if (ld->towork.head == NULL)
+	token = ld->towork.head;
+	if (token == NULL)
 	{
 		setCorrLex(ld, correspondLexem);
 		return NULL;
 	}
+	rules = ld->cfg->map[token->type];
+	res = LexizeExecCase(ld, token, rules);
 
-	curVal = ld->towork.head;
-	map = ld->cfg->map + curVal->type;
-	operators = ld->cfg->operators + curVal->type;
-
-	if (curVal->type != 0 && (curVal->type >= ld->cfg->lenmap || map->len == 0 || operators->len == 0))
-	{
-		/* skip this type of lexeme */
-		RemoveHead(ld);
-		setCorrLex(ld, correspondLexem);
-		return NULL;
-	}
-
-	if (CleanToworkQueue(ld, correspondLexem))
-		return NULL;
-
-	if (curVal->type == 0)
-	{
-		RemoveHead(ld);
-		setCorrLex(ld, correspondLexem);
-		return NULL;
-	}
-
-	ld->curDictId = InvalidOid;
-	if (map->len == 1) // There are no operators, just single dictionary
-	{
-		res = LexizeExecDictionary(ld, correspondLexem, 0);
-	}
-	else // There is a dictionary pipe expression tree, start from top operator
-	{
-		Assert(operators->len != 0);
-		res = LexizeExecOperator(ld->cfg, curVal, operators->operators[0], ld, correspondLexem);
-	}
-	if (!((map->len > 1 && IsProcessingComplete(ld->cfg, curVal, operators->operators[0]))
-			|| (map->len == 1 && ((curVal->accepted[0] && !curVal->notFinished[0]) || curVal->rejected[0]))))
-	{
-		// Reset accept and notFinished flags
-		ParsedLex *ptr = curVal;
-		while (ptr)
-		{
-			int dictIndex = 0;
-			ListDictionary *ptr_map = ld->cfg->map + ptr->type;
-			for (dictIndex = 0; dictIndex < ptr_map->len; dictIndex++)
-			{
-				if (!ptr->holdAccepted[dictIndex])
-					ptr->accepted[dictIndex] = false;
-				ptr->notFinished[dictIndex] = false;
-			}
-			ptr = ptr->next;
-		}
-		if (res)
-			pfree(res);
-		return NULL;
-	}
-
-	res = TSLexemeRemoveDuplications(res);
-	CleanToworkQueue(ld, correspondLexem);
+	RemoveHead(ld);
 	setCorrLex(ld, correspondLexem);
+	LexemesBufferClear(&ld->buffer);
+
 	return res;
 }
 
