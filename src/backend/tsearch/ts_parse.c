@@ -257,7 +257,7 @@ DictStateListRemove(DictStateList *list, Oid dictId)
 
 	if (i != list->listLength)
 	{
-		memcpy(list->states + i, list->states + i + 1, sizeof(DictState) * (list->listLength - 1));
+		memcpy(list->states + i, list->states + i + 1, sizeof(DictState) * (list->listLength - i - 1));
 		list->listLength--;
 		if (list->listLength == 0)
 			list->states = NULL;
@@ -289,6 +289,18 @@ DictStateListClear(DictStateList *list)
 	if (list->states)
 		pfree(list->states);
 	list->states = NULL;
+}
+
+static bool
+LexemesBufferContains(LexemesBuffer *buffer, Oid dictId, ParsedLex *token)
+{
+	int i;
+
+	for (i = 0; i < buffer->size; i++)
+		if (buffer->data[i].dictId == dictId && buffer->data[i].token == token)
+			return true;
+
+	return false;
 }
 
 static TSLexeme *
@@ -374,18 +386,27 @@ TSLexemeUnion(TSLexeme *left, TSLexeme *right)
 	int i;
 
 	// TODO: TLS_ADDPOS flag ordering
+	if (left == NULL && right == NULL)
+	{
+		result = NULL;
+	}
+	else
+	{
 
-	result = palloc0(sizeof(TSLexeme) * (left_size + right_size + 1));
+		result = palloc0(sizeof(TSLexeme) * (left_size + right_size + 1));
 
-	for (i = 0; i < left_size; i++)
-		if (left[i].nvariant > left_max_nvariant)
-			left_max_nvariant = left[i].nvariant;
+		for (i = 0; i < left_size; i++)
+			if (left[i].nvariant > left_max_nvariant)
+				left_max_nvariant = left[i].nvariant;
 
-	memcpy(result, left, sizeof(TSLexeme) * left_size);
-	memcpy(result + left_size, right, sizeof(TSLexeme) * right_size);
+		if (left_size > 0)
+			memcpy(result, left, sizeof(TSLexeme) * left_size);
+		if (right_size > 0)
+			memcpy(result + left_size, right, sizeof(TSLexeme) * right_size);
 
-	for (i = left_size; i < left_size + right_size; i++)
-		result[i].nvariant += left_max_nvariant;
+		for (i = left_size; i < left_size + right_size; i++)
+			result[i].nvariant += left_max_nvariant;
+	}
 
 	return result;
 }
@@ -449,8 +470,11 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 	TSDictionaryCacheEntry *dict;
 	DictSubState subState;
 
-	res = LexemesBufferGet(&ld->buffer, dictId, token);
-	if (!res)
+	if (LexemesBufferContains(&ld->buffer, dictId, token))
+	{
+		res = LexemesBufferGet(&ld->buffer, dictId, token);
+	}
+	else
 	{
 		char	   *curValLemm = token->lemm;
 		int			curValLenLemm = token->lenlemm;
@@ -477,7 +501,6 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 										  PointerGetDatum(&subState)
 														 ));
 
-		LexemesBufferAdd(&ld->buffer, dictId, token, res);
 
 		if (subState.getnext)
 		{
@@ -490,6 +513,9 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 				state = palloc0(sizeof(DictState));
 				state->processed = true;
 				state->relatedDictionary = dictId;
+				state->intermediateTokens = NULL;
+				state->acceptedTokens = NULL;
+				state->tmpResult = NULL;
 				/*
 				 * Add state to the list and update pointer in order to work with
 				 * copy from the list
@@ -515,6 +541,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 				if (state->tmpResult)
 					pfree(state->tmpResult);
 				state->tmpResult = res;
+				res = NULL;
 			}
 		}
 		else if (state != NULL)
@@ -523,9 +550,15 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 				DictStateListRemove(&ld->dslist, dictId);
 			else
 			{
-				// TODO: Rollback 
+				/*
+				 * Trigger post-processing in order to check tmpResult and
+				 * restart processing (see LexizeExec function)
+				 */
+				state->processed = false;
+				// TODO: Return token to processing queue
 			}
 		}
+		LexemesBufferAdd(&ld->buffer, dictId, token, res);
 	}
 
 	return res;
@@ -728,7 +761,7 @@ LexizeExecCase(LexizeData *ld, ParsedLex *token, TSMapRuleList *rules)
 			if (rules->data[i].dictionary != InvalidOid)
 			{
 				res = LexizeExecDictionary(ld, token, rules->data[i].dictionary);
-				if (res)
+				if (!LexizeExecIsNull(ld, token, rules->data[i].dictionary))
 					break;
 			}
 			else if (LexizeExecExpressionBool(ld, token, rules->data[i].condition.expression))
@@ -746,11 +779,54 @@ LexizeExecCase(LexizeData *ld, ParsedLex *token, TSMapRuleList *rules)
 }
 
 static TSLexeme *
+LexizeExecFinishProcessing(LexizeData *ld)
+{
+	int i;
+	TSLexeme *res = NULL;
+	for (i = 0; i < ld->dslist.listLength; i++)
+	{
+		TSLexeme *last_res = res;
+		res = TSLexemeUnion(res, ld->dslist.states[i].tmpResult);
+		if (last_res)
+			pfree(last_res);
+	}
+	DictStateListClear(&ld->dslist);
+
+	return res;
+}
+
+static TSLexeme *
+LexizeExecGetPreviousResults(LexizeData *ld)
+{
+	int i;
+	TSLexeme *res = NULL;
+	for (i = 0; i < ld->dslist.listLength; i++)
+	{
+		if (!ld->dslist.states[i].processed)
+		{
+			TSLexeme *last_res = res;
+			res = TSLexemeUnion(res, ld->dslist.states[i].tmpResult);
+			if (last_res)
+				pfree(last_res);
+			DictStateListRemove(&ld->dslist, ld->dslist.states[i].relatedDictionary);
+			i = 0;
+		}
+	}
+
+	return res;
+}
+
+static TSLexeme *
 LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
 	ParsedLex *token;
 	TSMapRuleList *rules;
 	TSLexeme *res = NULL;
+	bool removeHead = false;
+	int i;
+
+	for (i = 0; i < ld->dslist.listLength; i++)
+		ld->dslist.states[i].processed = false;
 
 	token = ld->towork.head;
 	if (token == NULL)
@@ -758,13 +834,36 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		setCorrLex(ld, correspondLexem);
 		return NULL;
 	}
-	rules = ld->cfg->map[token->type];
-	res = LexizeExecCase(ld, token, rules);
+	else if (token->type == 0)
+	{
+		res = LexizeExecFinishProcessing(ld);
+		removeHead = true;
+	}
+	else
+	{
+		TSLexeme *prevIterationResult = NULL;
 
-	RemoveHead(ld);
+		rules = ld->cfg->map[token->type];
+		res = LexizeExecCase(ld, token, rules);
+
+		if (rules != NULL)
+		{
+			prevIterationResult = LexizeExecGetPreviousResults(ld);
+			removeHead = prevIterationResult == NULL;
+			if (prevIterationResult)
+				res = prevIterationResult;
+		}
+		else
+		{
+			removeHead = true;
+		}
+	}
+
+	if (removeHead)
+		RemoveHead(ld);
+
 	setCorrLex(ld, correspondLexem);
 	LexemesBufferClear(&ld->buffer);
-
 	return res;
 }
 
