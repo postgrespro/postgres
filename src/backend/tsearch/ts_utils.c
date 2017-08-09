@@ -230,7 +230,28 @@ TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 		return NULL;
 	if (expression->dictionary != InvalidOid)
 	{
-		return TSIntToJsonbValue(expression->dictionary);
+		JsonbValue		key;
+		JsonbValue	   *value = NULL;
+
+		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("options");
+		key.val.string.val = "options";
+		value = TSIntToJsonbValue(expression->options);
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		key.type = jbvString;
+		key.val.string.len = strlen("dictionary");
+		key.val.string.val = "dictionary";
+		value = TSIntToJsonbValue(expression->dictionary);
+
+		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
+		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+
+		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 	}
 	else if (expression->is_true)
 	{
@@ -489,6 +510,8 @@ JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
 						result->expression_val->operator = nested_result->num_val;
 					else if (strcmp(key, "options") == 0)
 						result->expression_val->options = nested_result->num_val;
+					else if (strcmp(key, "dictionary") == 0)
+						result->expression_val->dictionary = nested_result->num_val;
 				}
 
 				break;

@@ -377,6 +377,92 @@ TSLexemeGetSize(TSLexeme *lex)
 }
 
 static TSLexeme *
+TSLexemeRemoveDuplications(TSLexeme *lexeme)
+{
+	TSLexeme	   *res;
+	int				curLexIndex;
+	int				i;
+	int				lexemeSize = TSLexemeGetSize(lexeme);
+	int				shouldCopyCount = lexemeSize;
+	bool		   *shouldCopy;
+
+	if (lexeme == NULL)
+		return NULL;
+
+	shouldCopy = palloc(sizeof(bool) * lexemeSize);
+	memset(shouldCopy, true, sizeof(bool) * lexemeSize);
+
+	for (curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
+	{
+		for (i = curLexIndex + 1; i < lexemeSize; i++)
+		{
+			if (!shouldCopy[i])
+				continue;
+
+			if (strcmp(lexeme[curLexIndex].lexeme, lexeme[i].lexeme) == 0)
+			{
+				if (lexeme[curLexIndex].nvariant == lexeme[i].nvariant)
+				{
+					shouldCopy[i] = false;
+					shouldCopyCount--;
+					continue;
+				}
+				else
+				{
+					/*
+					 * Check for same set of lexemes in another nvariant series
+					 */
+					int		nvariantCountL = 0;
+					int		nvariantCountR = 0;
+					int		nvariantOverlap = 1;
+					int		j;
+
+					for (j = 0; j < lexemeSize; j++)
+						if (lexeme[curLexIndex].nvariant == lexeme[j].nvariant)
+							nvariantCountL++;
+					for (j = 0; j < lexemeSize; j++)
+						if (lexeme[i].nvariant == lexeme[j].nvariant)
+							nvariantCountR++;
+
+					if (nvariantCountL != nvariantCountR)
+						continue;
+
+					for (j = 1; j < nvariantCountR; j++)
+					{
+						if (strcmp(lexeme[curLexIndex + j].lexeme, lexeme[i + j].lexeme) == 0
+								&& lexeme[curLexIndex + j].nvariant == lexeme[i + j].nvariant)
+							nvariantOverlap++;
+					}
+
+					if (nvariantOverlap != nvariantCountR)
+						continue;
+
+					for (j = 0; j < nvariantCountR; j++)
+					{
+						shouldCopy[i + j] = false;
+					}
+				}
+			}
+		}
+	}
+
+	res = palloc0(sizeof(TSLexeme) * (shouldCopyCount + 1));
+
+	for (i = 0, curLexIndex = 0; curLexIndex < lexemeSize; curLexIndex++)
+	{
+		if (shouldCopy[curLexIndex])
+		{
+			memcpy(res + i, lexeme + curLexIndex, sizeof(TSLexeme));
+			i++;
+		}
+	}
+
+	pfree(shouldCopy);
+	pfree(lexeme);
+	return res;
+}
+
+static TSLexeme *
 TSLexemeUnion(TSLexeme *left, TSLexeme *right)
 {
 	TSLexeme *result;
@@ -596,12 +682,10 @@ LexizeExecExpressionBool(LexizeData *ld, ParsedLex *token, TSMapExpression *expr
 {
 	bool result;
 	if (expression == NULL)
-		return false;
-
-	if (expression->is_true)
+		result = false;
+	else if (expression->is_true)
 		result = true;
-
-	if (expression->dictionary != InvalidOid)
+	else if (expression->dictionary != InvalidOid)
 	{
 		bool is_null = LexizeExecIsNull(ld, token, expression->dictionary);
 		bool is_stop = LexizeExecIsStop(ld, token, expression->dictionary);
@@ -615,7 +699,6 @@ LexizeExecExpressionBool(LexizeData *ld, ParsedLex *token, TSMapExpression *expr
 	}
 	else
 	{
-
 		if (expression->operator == DICTMAP_OP_MAPBY)
 		{
 			TSLexeme *mapby_result = LexizeExecMapBy(ld, token, expression->left, expression->right);
@@ -703,42 +786,30 @@ LexizeExecExpressionSet(LexizeData *ld, ParsedLex *token, TSMapExpression *expre
 static TSLexeme *
 LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right)
 {
-	TSLexeme *left_res = LexizeExecExpressionSet(ld, token, left);
+	TSLexeme *right_res = LexizeExecExpressionSet(ld, token, right);
 	TSLexeme *result;
-	int left_size = TSLexemeGetSize(left_res);
+	int right_size = TSLexemeGetSize(right_res);
 	int i;
 	int result_size;
 
 	result = NULL;
 	result_size = 0;
-	for (i = 0; i < left_size; i++)
+	for (i = 0; i < right_size; i++)
 	{
 		TSLexeme *tmp_res;
+		TSLexeme *prev_res;
 		ParsedLex tmp_token;
 
-		tmp_token.lemm = left_res[i].lexeme;
-		tmp_token.lenlemm = strlen(left_res[i].lexeme);
+		tmp_token.lemm = right_res[i].lexeme;
+		tmp_token.lenlemm = strlen(right_res[i].lexeme);
 		tmp_token.type = token->type;
 		tmp_token.next = NULL;
 
-		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, right);
-		if (tmp_res)
-		{
-			int tmp_res_size = TSLexemeGetSize(tmp_res);
-			int result_size_prev = result_size;
-
-			if (tmp_res_size == 0 && result != NULL)
-				continue;
-
-			result_size += tmp_res_size;
-			if (result)
-				result = repalloc(result, sizeof(TSLexeme) * (result_size + 1));
-			else
-				result = palloc0(sizeof(TSLexeme) * (result_size + 1));
-
-			memcpy(result + result_size_prev, tmp_res, sizeof(TSLexeme) * tmp_res_size);
-			memset(result + result_size, 0, sizeof(TSLexeme));
-		}
+		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, left);
+		prev_res = result;
+		result = TSLexemeUnion(prev_res, tmp_res);
+		if (prev_res)
+			pfree(prev_res);
 	}
 
 	return result;
@@ -816,6 +887,7 @@ LexizeExecGetPreviousResults(LexizeData *ld)
 	return res;
 }
 
+
 static TSLexeme *
 LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
@@ -864,6 +936,8 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 
 	setCorrLex(ld, correspondLexem);
 	LexemesBufferClear(&ld->buffer);
+	if (res)
+		res = TSLexemeRemoveDuplications(res);
 	return res;
 }
 

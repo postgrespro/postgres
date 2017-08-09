@@ -1296,6 +1296,7 @@ ParseTSMapExpression(DictMapExprElem *head)
 		result->left = ParseTSMapExpression(head->left);
 		result->right = ParseTSMapExpression(head->right);
 		result->operator = head->oper;
+		result->options = head->options;
 	}
 	else if (head->kind == DICT_MAP_CONST_TRUE)
 	{
