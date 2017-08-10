@@ -47,8 +47,8 @@ typedef struct DictState
 {
 	Oid				relatedDictionary;
 	DictSubState	subState;
-	ListParsedLex  *acceptedTokens;
-	ListParsedLex  *intermediateTokens;
+	ListParsedLex	acceptedTokens;
+	ListParsedLex	intermediateTokens;
 	bool			storeToAccepted;
 	bool			processed;
 	TSLexeme	   *tmpResult;
@@ -84,6 +84,7 @@ typedef struct
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
 	LexemesBuffer buffer;
+	Oid			skipDictionary;
 
 	/*
 	 * field to store last variant to lexize (basically, thesaurus or similar
@@ -100,6 +101,7 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->cfg = cfg;
 	ld->curDictId = InvalidOid;
 	ld->posDict = 0;
+	ld->skipDictionary = InvalidOid;
 	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
 	ld->tmpRes = NULL;
@@ -120,6 +122,24 @@ LPLAddTail(ListParsedLex *list, ParsedLex *newpl)
 	else
 		list->head = list->tail = newpl;
 	newpl->next = NULL;
+}
+
+static void
+LPLAddTailCopy(ListParsedLex *list, ParsedLex *newpl)
+{
+	ParsedLex *copy = palloc0(sizeof(ParsedLex));
+	copy->lenlemm = newpl->lenlemm;
+	copy->type = newpl->type;
+	copy->lemm = newpl->lemm;
+	copy->next = NULL;
+
+	if (list->tail)
+	{
+		list->tail->next = copy;
+		list->tail = copy;
+	}
+	else
+		list->head = list->tail = copy;
 }
 
 static ParsedLex *
@@ -556,6 +576,9 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 	TSDictionaryCacheEntry *dict;
 	DictSubState subState;
 
+	if (ld->skipDictionary == dictId)
+		return NULL;
+
 	if (LexemesBufferContains(&ld->buffer, dictId, token))
 	{
 		res = LexemesBufferGet(&ld->buffer, dictId, token);
@@ -599,8 +622,8 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 				state = palloc0(sizeof(DictState));
 				state->processed = true;
 				state->relatedDictionary = dictId;
-				state->intermediateTokens = NULL;
-				state->acceptedTokens = NULL;
+				state->intermediateTokens.head = state->intermediateTokens.tail = NULL;
+				state->acceptedTokens.head = state->acceptedTokens.tail = NULL;
 				state->tmpResult = NULL;
 				/*
 				 * Add state to the list and update pointer in order to work with
@@ -614,14 +637,15 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 
 			if (res)
 			{
-				if (state->intermediateTokens != NULL)
+				if (state->intermediateTokens.head != NULL)
 				{
-					ParsedLex *ptr = state->intermediateTokens->head;
+					ParsedLex *ptr = state->intermediateTokens.head;
 					while (ptr)
 					{
-						LPLAddTail(state->acceptedTokens, ptr);
+						LPLAddTailCopy(&state->acceptedTokens, ptr);
 						ptr = ptr->next;
 					}
+					state->intermediateTokens.head = state->intermediateTokens.tail = NULL;
 				}
 
 				if (state->tmpResult)
@@ -641,7 +665,6 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 				 * restart processing (see LexizeExec function)
 				 */
 				state->processed = false;
-				// TODO: Return token to processing queue
 			}
 		}
 		LexemesBufferAdd(&ld->buffer, dictId, token, res);
@@ -651,7 +674,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 }
 
 static bool
-LexizeExecDictionaryWaitNext(LexizeData *ld, ParsedLex *token, Oid dictId)
+LexizeExecDictionaryWaitNext(LexizeData *ld, Oid dictId)
 {
 	DictState *state = DictStateListGet(&ld->dslist, dictId);
 	if (state)
@@ -667,7 +690,7 @@ LexizeExecIsNull(LexizeData *ld, ParsedLex *token, Oid dictId)
 	if (lexemes)
 		return false;
 	else
-		return !LexizeExecDictionaryWaitNext(ld, token, dictId);
+		return !LexizeExecDictionaryWaitNext(ld, dictId);
 }
 
 static bool
@@ -705,6 +728,8 @@ LexizeExecExpressionBool(LexizeData *ld, ParsedLex *token, TSMapExpression *expr
 			bool is_null = mapby_result == NULL;
 			bool is_stop = mapby_result != NULL && mapby_result[0].lexeme == NULL;
 			bool invert = (expression->options & DICTMAP_OPT_NOT) != 0;
+			if (expression->left->dictionary != InvalidOid && LexizeExecDictionaryWaitNext(ld, expression->left->dictionary))
+				is_null = false;
 
 			result = true;
 			if ((expression->options & DICTMAP_OPT_IS_NULL) != 0)
@@ -861,7 +886,6 @@ LexizeExecFinishProcessing(LexizeData *ld)
 		if (last_res)
 			pfree(last_res);
 	}
-	DictStateListClear(&ld->dslist);
 
 	return res;
 }
@@ -879,12 +903,24 @@ LexizeExecGetPreviousResults(LexizeData *ld)
 			res = TSLexemeUnion(res, ld->dslist.states[i].tmpResult);
 			if (last_res)
 				pfree(last_res);
-			DictStateListRemove(&ld->dslist, ld->dslist.states[i].relatedDictionary);
-			i = 0;
 		}
 	}
 
 	return res;
+}
+
+static void
+LexizeExecClearDictStates(LexizeData *ld)
+{
+	int i;
+	for (i = 0; i < ld->dslist.listLength; i++)
+	{
+		if (!ld->dslist.states[i].processed)
+		{
+			DictStateListRemove(&ld->dslist, ld->dslist.states[i].relatedDictionary);
+			i = 0;
+		}
+	}
 }
 
 
@@ -895,10 +931,14 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	TSMapRuleList *rules;
 	TSLexeme *res = NULL;
 	bool removeHead = false;
+	bool resetSkipDictionary = false;
 	int i;
 
 	for (i = 0; i < ld->dslist.listLength; i++)
 		ld->dslist.states[i].processed = false;
+	if (ld->skipDictionary != InvalidOid)
+		resetSkipDictionary = true;
+
 
 	token = ld->towork.head;
 	if (token == NULL)
@@ -910,6 +950,31 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	{
 		res = LexizeExecFinishProcessing(ld);
 		removeHead = true;
+		if (res == NULL)
+		{
+			int i;
+			ListParsedLex *intermediateTokens = NULL;
+
+			for (i = 0; i < ld->dslist.listLength; i++)
+			{
+				if (!ld->dslist.states[i].processed)
+				{
+					intermediateTokens = &ld->dslist.states[i].intermediateTokens;
+					ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
+				}
+			}
+
+			if (intermediateTokens && intermediateTokens->head)
+			{
+				ParsedLex *head = ld->towork.head;
+				ld->towork.head = intermediateTokens->head;
+				intermediateTokens->tail->next = head;
+				head->next = NULL;
+				ld->towork.tail = head;
+				removeHead = false;
+			}
+		}
+		DictStateListClear(&ld->dslist);
 	}
 	else
 	{
@@ -922,8 +987,47 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		{
 			prevIterationResult = LexizeExecGetPreviousResults(ld);
 			removeHead = prevIterationResult == NULL;
+			if (res == NULL)
+			{
+				int i;
+				ListParsedLex *intermediateTokens = NULL;
+
+				for (i = 0; i < ld->dslist.listLength; i++)
+				{
+					if (!ld->dslist.states[i].processed)
+					{
+						intermediateTokens = &ld->dslist.states[i].intermediateTokens;
+						if (!prevIterationResult)
+							ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
+					}
+				}
+
+				if (intermediateTokens && intermediateTokens->head)
+				{
+					ParsedLex *head = ld->towork.head;
+					ld->towork.head = intermediateTokens->head;
+					intermediateTokens->tail->next = head;
+					head->next = NULL;
+					ld->towork.tail = head;
+				}
+			}
+
 			if (prevIterationResult)
+			{
 				res = prevIterationResult;
+			}
+			else
+			{
+				int i;
+				for (i = 0; i < ld->dslist.listLength; i++)
+				{
+					if (ld->dslist.states[i].storeToAccepted)
+						LPLAddTailCopy(&ld->dslist.states[i].acceptedTokens, token);
+					else
+						LPLAddTailCopy(&ld->dslist.states[i].intermediateTokens, token);
+				}
+			}
+			LexizeExecClearDictStates(ld);
 		}
 		else
 		{
@@ -938,6 +1042,10 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	LexemesBufferClear(&ld->buffer);
 	if (res)
 		res = TSLexemeRemoveDuplications(res);
+
+	if (resetSkipDictionary)
+		ld->skipDictionary = InvalidOid;
+
 	return res;
 }
 
@@ -967,9 +1075,10 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 
 	LexizeInit(&ldata, cfg);
 
+	type = 1;
 	do
 	{
-		if (type != 0)
+		if (type > 0)
 		{
 			type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
 											   PointerGetDatum(prsdata),
@@ -1025,7 +1134,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 			}
 			pfree(norms);
 		}
-	} while (type != 0 || ldata.towork.head);
+	} while (type > 0 || ldata.towork.head);
 
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
