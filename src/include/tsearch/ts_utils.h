@@ -16,8 +16,6 @@
 #include "tsearch/ts_public.h"
 #include "tsearch/ts_type.h"
 #include "tsearch/ts_cache.h"
-#include "utils/jsonb.h"
-#include "catalog/pg_ts_config_map.h"
 
 /*
  * Common parse definitions for tsvector and tsquery
@@ -91,19 +89,6 @@ typedef struct
 } ParsedText;
 
 extern void parsetext(Oid cfgId, ParsedText *prs, char *buf, int32 buflen);
-
-/*
- * Configuration storage functions
- * Provide interface to convert ts_configuration into JSONB and vice versa
- */
-
-extern Jsonb *TSMapToJsonb(TSMapRuleList *rules);
-extern TSMapRuleList *JsonbToTSMap(Jsonb *json);
-extern void TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDict);
-extern Oid *TSMapGetDictionariesList(TSMapRuleList *rules);
-extern ListDictionary *TSMapGetListDictionary(TSMapRuleList *rules);
-extern TSMapRuleList *TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context);
-extern void TSMapFree(TSMapRuleList *rules);
 
 /*
  * headline framework, flow in common to generate:

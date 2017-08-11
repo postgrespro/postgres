@@ -40,6 +40,7 @@
 #include "commands/defrem.h"
 #include "tsearch/ts_cache.h"
 #include "tsearch/ts_utils.h"
+#include "tsearch/ts_configmap.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
