@@ -155,7 +155,7 @@ TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 	{
 		for (i = 0; i < depth; i++)
 			appendStringInfoChar(result, '\t');
-		appendStringInfoString(result, "ELSE\n");
+		appendStringInfoString(result, "ELSE ");
 	}
 	else
 	{
@@ -164,13 +164,13 @@ TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 		appendStringInfoString(result, "WHEN ");
 		TSMapExpressionPrint(rule->condition.expression, result);
 		appendStringInfoString(result, " THEN\n");
+		for (i = 0; i < depth + 1; i++)
+			appendStringInfoString(result, "\t");
 	}
 
 
 	if (rule->command.is_expression)
 	{
-		for (i = 0; i < depth + 1; i++)
-			appendStringInfoString(result, "\t");
 		TSMapExpressionPrint(rule->command.expression, result);
 	}
 	else
