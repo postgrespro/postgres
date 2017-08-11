@@ -16,6 +16,11 @@
 
 #include <ctype.h>
 
+#include "access/heapam.h"
+#include "access/genam.h"
+#include "access/htup_details.h"
+#include "access/sysattr.h"
+#include "catalog/indexing.h"
 #include "catalog/pg_ts_dict.h"
 #include "tsearch/ts_cache.h"
 #include "tsearch/ts_configmap.h"
@@ -59,15 +64,184 @@ typedef struct TSMapParseNode {
 	};
 } TSMapParseNode;
 
-static JsonbValue *
-TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state);
-static TSMapParseNode *
-JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state);
+static JsonbValue *TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state);
+static TSMapParseNode *JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state);
+static void TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth);
+
+static void
+TSMapPrintDictName(Oid dictId, StringInfo result)
+{
+	Relation		maprel;
+	Relation		mapidx;
+	ScanKeyData		mapskey;
+	SysScanDesc		mapscan;
+	HeapTuple		maptup;
+	Form_pg_ts_dict	dict;
+
+	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
+	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
+
+	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
+			BTEqualStrategyNumber, F_OIDEQ,
+			ObjectIdGetDatum(dictId));
+	mapscan = systable_beginscan_ordered(maprel, mapidx,
+									 NULL, 1, &mapskey);
+
+	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
+	dict = (Form_pg_ts_dict) GETSTRUCT(maptup);
+	appendStringInfoString(result, dict->dictname.data);
+
+	systable_endscan_ordered(mapscan);
+	index_close(mapidx, AccessShareLock);
+	heap_close(maprel, AccessShareLock);
+}
+
+static void
+TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
+{
+	if (expression->left)
+		TSMapExpressionPrint(expression->left, result);
+
+	switch (expression->operator)
+	{
+		case DICTMAP_OP_OR:
+			appendStringInfoString(result, " OR ");
+			break;
+		case DICTMAP_OP_AND:
+			appendStringInfoString(result, " AND ");
+			break;
+		case DICTMAP_OP_NOT:
+			appendStringInfoString(result, " NOT ");
+			break;
+		case DICTMAP_OP_UNION:
+			appendStringInfoString(result, " UNION ");
+			break;
+		case DICTMAP_OP_EXCEPT:
+			appendStringInfoString(result, " EXCEPT ");
+			break;
+		case DICTMAP_OP_INTERSECT:
+			appendStringInfoString(result, " INTERSECT ");
+			break;
+		case DICTMAP_OP_MAPBY:
+			appendStringInfoString(result, " MAP BY ");
+			break;
+	}
+
+	if (expression->right)
+		TSMapExpressionPrint(expression->right, result);
+
+	if (expression->dictionary != InvalidOid)
+	{
+		TSMapPrintDictName(expression->dictionary, result);
+		if (expression->options != (DICTMAP_OPT_NOT | DICTMAP_OPT_IS_NULL | DICTMAP_OPT_IS_STOP))
+		{
+			if (expression->options != 0)
+				appendStringInfoString(result, " IS ");
+			if (expression->options & DICTMAP_OPT_NOT)
+				appendStringInfoString(result, "NOT ");
+			if (expression->options & DICTMAP_OPT_IS_NULL)
+				appendStringInfoString(result, "NULL ");
+			if (expression->options & DICTMAP_OPT_IS_STOP)
+				appendStringInfoString(result, "STOP ");
+		}
+	}
+}
+
+static void
+TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
+{
+	int i;
+	if (rule->condition.expression->is_true)
+	{
+		for (i = 0; i < depth; i++)
+			appendStringInfoChar(result, '\t');
+		appendStringInfoString(result, "ELSE\n");
+	}
+	else
+	{
+		for (i = 0; i < depth; i++)
+			appendStringInfoChar(result, '\t');
+		appendStringInfoString(result, "WHEN ");
+		TSMapExpressionPrint(rule->condition.expression, result);
+		appendStringInfoString(result, " THEN\n");
+	}
+
+
+	if (rule->command.is_expression)
+	{
+		for (i = 0; i < depth + 1; i++)
+			appendStringInfoString(result, "\t");
+		TSMapExpressionPrint(rule->command.expression, result);
+	}
+	else
+	{
+		TSMapPrintRuleList(rule->command.ruleList, result, depth + 1);
+	}
+}
+
+static void
+TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
+{
+	int i;
+
+	for (i = 0; i < rules->count; i++)
+	{
+		if (rules->data[i].dictionary != InvalidOid) /* Comma-separated configuration syntax */
+		{
+			if (i > 0)
+				appendStringInfoString(result, ", ");
+			TSMapPrintDictName(rules->data[i].dictionary, result);
+		}
+		else
+		{
+			if (i == 0)
+			{
+				int j;
+				for (j = 0; j < depth; j++)
+					appendStringInfoChar(result, '\t');
+				appendStringInfoString(result, "CASE\n");
+			}
+			else
+				appendStringInfoChar(result, '\n');
+			TSMapPrintRule(&rules->data[i], result, depth + 1);
+		}
+	}
+
+	if (rules->data[0].dictionary == InvalidOid)
+	{
+		appendStringInfoChar(result, '\n');
+		for (i = 0; i < depth; i++)
+			appendStringInfoChar(result, '\t');
+		appendStringInfoString(result, "END");
+	}
+}
 
 Datum
-dictionary_pipe_to_text(PG_FUNCTION_ARGS)
+dictionary_map_to_text(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_NULL();
+	Oid					cfgOid = PG_GETARG_OID(0);
+	int32				tokentype = PG_GETARG_INT32(1);
+	StringInfo			rawResult;
+	text			   *result = NULL;
+	TSConfigCacheEntry *cacheEntry;
+
+	cacheEntry = lookup_ts_config_cache(cfgOid);
+	rawResult = makeStringInfo();
+	initStringInfo(rawResult);
+
+	if (cacheEntry->lenmap > tokentype && cacheEntry->map[tokentype]->count > 0)
+	{
+		TSMapRuleList *rules = cacheEntry->map[tokentype];
+		TSMapPrintRuleList(rules, rawResult, 0);
+	}
+
+	if (rawResult)
+	{
+		result = cstring_to_text(rawResult->data);
+		pfree(rawResult);
+	}
+
+	PG_RETURN_TEXT_P(result);
 }
 
 static JsonbValue *

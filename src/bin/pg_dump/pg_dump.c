@@ -14186,7 +14186,7 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 					  "SELECT\n"
 					  "  ( SELECT alias FROM pg_catalog.ts_token_type('%u'::pg_catalog.oid) AS t\n"
 					  "    WHERE t.tokid = m.maptokentype ) AS tokenname,\n"
-					  "  dictionary_pipe_to_text(m.mapcfg, m.maptokentype) AS dictname\n"
+					  "  dictionary_map_to_text(m.mapcfg, m.maptokentype) AS dictname\n"
 					  "FROM pg_catalog.pg_ts_config_map AS m\n"
 					  "WHERE m.mapcfg = '%u'\n"
 					  "GROUP BY m.mapcfg, m.maptokentype\n"
@@ -14210,7 +14210,7 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 		appendPQExpBuffer(q, "\nALTER TEXT SEARCH CONFIGURATION %s\n",
 						  fmtId(cfginfo->dobj.name));
 		/* tokenname needs quoting, dictname does NOT */
-		appendPQExpBuffer(q, "    ADD MAPPING FOR %s WITH %s",
+		appendPQExpBuffer(q, "    ADD MAPPING FOR %s WITH \n%s",
 						  fmtId(tokenname), dictname);
 	}
 
