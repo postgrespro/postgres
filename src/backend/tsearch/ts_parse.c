@@ -853,10 +853,8 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 	TSLexeme *result;
 	int right_size = TSLexemeGetSize(right_res);
 	int i;
-	int result_size;
 
 	result = NULL;
-	result_size = 0;
 	for (i = 0; i < right_size; i++)
 	{
 		TSLexeme *tmp_res;
@@ -977,7 +975,6 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	if (ld->skipDictionary != InvalidOid)
 		resetSkipDictionary = true;
 
-
 	token = ld->towork.head;
 	if (token == NULL)
 	{
@@ -1042,6 +1039,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 
 				if (intermediateTokens && intermediateTokens->head)
 				{
+					removeHead = false;
 					ParsedLex *head = ld->towork.head;
 					ld->towork.head = intermediateTokens->head;
 					intermediateTokens->tail->next = head;
@@ -1093,7 +1091,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		if (ld->delayedResults.lexemes != NULL)
 		{
 			TSLexeme *oldRes = res;
-			res = TSLexemeUnion(ld->delayedResults.lexemes, res);
+			res = TSLexemeUnionOpt(ld->delayedResults.lexemes, res, true);
 			if (oldRes)
 				pfree(oldRes);
 			ResultStorageClear(&ld->delayedResults);
