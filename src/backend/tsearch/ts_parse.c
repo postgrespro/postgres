@@ -73,6 +73,12 @@ typedef struct LexemesBuffer
 	LexemesBufferEntry *data;
 } LexemesBuffer;
 
+typedef struct ResultStorage
+{
+	ListParsedLex	tokens;
+	TSLexeme	   *lexemes;
+} ResultStorage;
+
 typedef struct
 {
 	TSConfigCacheEntry *cfg;
@@ -84,6 +90,7 @@ typedef struct
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
 	LexemesBuffer buffer;
+	ResultStorage delayedResults;
 	Oid			skipDictionary;
 
 	/*
@@ -109,6 +116,9 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->dslist.states = NULL;
 	ld->buffer.size = 0;
 	ld->buffer.data = NULL;
+	ld->delayedResults.tokens.head = NULL;
+	ld->delayedResults.tokens.tail = NULL;
+	ld->delayedResults.lexemes = NULL;
 }
 
 static void
@@ -483,7 +493,7 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 }
 
 static TSLexeme *
-TSLexemeUnion(TSLexeme *left, TSLexeme *right)
+TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool addposFlag)
 {
 	TSLexeme *result;
 	int left_size = TSLexemeGetSize(left);
@@ -509,12 +519,20 @@ TSLexemeUnion(TSLexeme *left, TSLexeme *right)
 			memcpy(result, left, sizeof(TSLexeme) * left_size);
 		if (right_size > 0)
 			memcpy(result + left_size, right, sizeof(TSLexeme) * right_size);
+		if (addposFlag && left_size > 0 && right_size > 0)
+			result[left_size].flags |= TSL_ADDPOS;
 
 		for (i = left_size; i < left_size + right_size; i++)
 			result[i].nvariant += left_max_nvariant;
 	}
 
 	return result;
+}
+
+static TSLexeme *
+TSLexemeUnion(TSLexeme *left, TSLexeme *right)
+{
+	return TSLexemeUnionOpt(left, right, false);
 }
 
 static TSLexeme *
@@ -567,6 +585,26 @@ TSLexemeIntersect(TSLexeme *left, TSLexeme *right)
 	}
 
 	return result;
+}
+
+static void
+ResultStorageAdd(ResultStorage *storage, ParsedLex *token, TSLexeme *lexs)
+{
+	TSLexeme *oldLexs = storage->lexemes;
+	LPLAddTailCopy(&storage->tokens, token);
+	storage->lexemes = TSLexemeUnionOpt(storage->lexemes, lexs, true);
+	if (oldLexs)
+		pfree(oldLexs);
+}
+
+static void
+ResultStorageClear(ResultStorage *storage)
+{
+	while (storage->tokens.head)
+		LPLRemoveHead(&storage->tokens);
+	if (storage->lexemes)
+		pfree(storage->lexemes);
+	storage->lexemes = NULL;
 }
 
 static TSLexeme *
@@ -1009,6 +1047,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 					intermediateTokens->tail->next = head;
 					head->next = NULL;
 					ld->towork.tail = head;
+					ResultStorageClear(&ld->delayedResults);
 				}
 			}
 
@@ -1038,14 +1077,33 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	if (removeHead)
 		RemoveHead(ld);
 
-	setCorrLex(ld, correspondLexem);
 	LexemesBufferClear(&ld->buffer);
 	if (res)
 		res = TSLexemeRemoveDuplications(res);
 
+	if (ld->dslist.listLength > 0)
+	{
+		ResultStorageAdd(&ld->delayedResults, token, res);
+		if (res)
+			pfree(res);
+		res = NULL;
+	}
+	else
+	{
+		if (ld->delayedResults.lexemes != NULL)
+		{
+			TSLexeme *oldRes = res;
+			res = TSLexemeUnion(ld->delayedResults.lexemes, res);
+			if (oldRes)
+				pfree(oldRes);
+			ResultStorageClear(&ld->delayedResults);
+		}
+	}
+
 	if (resetSkipDictionary)
 		ld->skipDictionary = InvalidOid;
 
+	setCorrLex(ld, correspondLexem);
 	return res;
 }
 
