@@ -75,8 +75,8 @@ typedef struct LexemesBuffer
 
 typedef struct ResultStorage
 {
-	ListParsedLex	tokens;
 	TSLexeme	   *lexemes;
+	TSLexeme	   *accepted;
 } ResultStorage;
 
 typedef struct
@@ -116,9 +116,8 @@ LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 	ld->dslist.states = NULL;
 	ld->buffer.size = 0;
 	ld->buffer.data = NULL;
-	ld->delayedResults.tokens.head = NULL;
-	ld->delayedResults.tokens.tail = NULL;
 	ld->delayedResults.lexemes = NULL;
+	ld->delayedResults.accepted = NULL;
 }
 
 static void
@@ -591,20 +590,46 @@ static void
 ResultStorageAdd(ResultStorage *storage, ParsedLex *token, TSLexeme *lexs)
 {
 	TSLexeme *oldLexs = storage->lexemes;
-	LPLAddTailCopy(&storage->tokens, token);
 	storage->lexemes = TSLexemeUnionOpt(storage->lexemes, lexs, true);
 	if (oldLexs)
 		pfree(oldLexs);
 }
 
 static void
-ResultStorageClear(ResultStorage *storage)
+ResultStorageMoveToAccepted(ResultStorage *storage)
 {
-	while (storage->tokens.head)
-		LPLRemoveHead(&storage->tokens);
+	if (storage->accepted)
+	{
+		TSLexeme *prevAccepted = storage->accepted;
+		storage->accepted = TSLexemeUnionOpt(storage->accepted, storage->lexemes, true);
+		if (prevAccepted)
+			pfree(prevAccepted);
+		if (storage->lexemes)
+			pfree(storage->lexemes);
+	}
+	else
+	{
+		storage->accepted = storage->lexemes;
+	}
+	storage->lexemes = NULL;
+}
+
+static void
+ResultStorageClearLexemes(ResultStorage *storage)
+{
 	if (storage->lexemes)
 		pfree(storage->lexemes);
 	storage->lexemes = NULL;
+}
+
+static void
+ResultStorageClear(ResultStorage *storage)
+{
+	ResultStorageClearLexemes(storage);
+
+	if (storage->accepted)
+		pfree(storage->accepted);
+	storage->accepted = NULL;
 }
 
 static TSLexeme *
@@ -959,6 +984,17 @@ LexizeExecClearDictStates(LexizeData *ld)
 	}
 }
 
+static bool
+LexizeExecNotProcessedDictStates(LexizeData *ld)
+{
+	int i;
+
+	for (i = 0; i < ld->dslist.listLength; i++)
+		if (!ld->dslist.states[i].processed)
+			return true;
+
+	return false;
+}
 
 static TSLexeme *
 LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
@@ -968,6 +1004,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	TSLexeme *res = NULL;
 	bool removeHead = false;
 	bool resetSkipDictionary = false;
+	bool accepted = false;
 	int i;
 
 	for (i = 0; i < ld->dslist.listLength; i++)
@@ -981,11 +1018,11 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		setCorrLex(ld, correspondLexem);
 		return NULL;
 	}
-	else if (token->type == 0)
+	else if (token->type == 0) /* Processing of EOF-like token */
 	{
 		res = LexizeExecFinishProcessing(ld);
 		removeHead = true;
-		if (res == NULL)
+		if (LexizeExecNotProcessedDictStates(ld))
 		{
 			int i;
 			ListParsedLex *intermediateTokens = NULL;
@@ -996,6 +1033,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 				{
 					intermediateTokens = &ld->dslist.states[i].intermediateTokens;
 					ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
+					break;
 				}
 			}
 
@@ -1008,6 +1046,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 				ld->towork.tail = head;
 				removeHead = false;
 			}
+			ResultStorageClear(&ld->delayedResults);
 		}
 		DictStateListClear(&ld->dslist);
 	}
@@ -1022,7 +1061,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		{
 			prevIterationResult = LexizeExecGetPreviousResults(ld);
 			removeHead = prevIterationResult == NULL;
-			if (res == NULL)
+			if (LexizeExecNotProcessedDictStates(ld)) /* Rollback processing */
 			{
 				int i;
 				ListParsedLex *intermediateTokens = NULL;
@@ -1039,14 +1078,16 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 
 				if (intermediateTokens && intermediateTokens->head)
 				{
-					removeHead = false;
 					ParsedLex *head = ld->towork.head;
 					ld->towork.head = intermediateTokens->head;
 					intermediateTokens->tail->next = head;
 					head->next = NULL;
 					ld->towork.tail = head;
-					ResultStorageClear(&ld->delayedResults);
+					removeHead = false;
 				}
+				// TODO: Clear only intermediate reulsts, keep accepted ones
+				ResultStorageClearLexemes(&ld->delayedResults);
+				res = NULL;
 			}
 
 			if (prevIterationResult)
@@ -1058,10 +1099,18 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 				int i;
 				for (i = 0; i < ld->dslist.listLength; i++)
 				{
+					if (!ld->dslist.states[i].processed)
+						continue;
+
 					if (ld->dslist.states[i].storeToAccepted)
+					{
 						LPLAddTailCopy(&ld->dslist.states[i].acceptedTokens, token);
+						accepted = true;
+					}
 					else
+					{
 						LPLAddTailCopy(&ld->dslist.states[i].intermediateTokens, token);
+					}
 				}
 			}
 			LexizeExecClearDictStates(ld);
@@ -1075,23 +1124,21 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	if (removeHead)
 		RemoveHead(ld);
 
-	LexemesBufferClear(&ld->buffer);
-	if (res)
-		res = TSLexemeRemoveDuplications(res);
-
 	if (ld->dslist.listLength > 0)
 	{
 		ResultStorageAdd(&ld->delayedResults, token, res);
+		if (accepted)
+			ResultStorageMoveToAccepted(&ld->delayedResults);
 		if (res)
 			pfree(res);
 		res = NULL;
 	}
 	else
 	{
-		if (ld->delayedResults.lexemes != NULL)
+		if (ld->delayedResults.accepted != NULL)
 		{
 			TSLexeme *oldRes = res;
-			res = TSLexemeUnionOpt(ld->delayedResults.lexemes, res, true);
+			res = TSLexemeUnionOpt(ld->delayedResults.accepted, res, true);
 			if (oldRes)
 				pfree(oldRes);
 			ResultStorageClear(&ld->delayedResults);
@@ -1100,6 +1147,10 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 
 	if (resetSkipDictionary)
 		ld->skipDictionary = InvalidOid;
+
+	LexemesBufferClear(&ld->buffer);
+	if (res)
+		res = TSLexemeRemoveDuplications(res);
 
 	setCorrLex(ld, correspondLexem);
 	return res;
