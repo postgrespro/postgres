@@ -1002,6 +1002,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	ParsedLex *token;
 	TSMapRuleList *rules;
 	TSLexeme *res = NULL;
+	TSLexeme *prevIterationResult = NULL;
 	bool removeHead = false;
 	bool resetSkipDictionary = false;
 	bool accepted = false;
@@ -1052,8 +1053,6 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	}
 	else
 	{
-		TSLexeme *prevIterationResult = NULL;
-
 		rules = ld->cfg->map[token->type];
 		res = LexizeExecCase(ld, token, rules);
 
@@ -1138,7 +1137,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		if (ld->delayedResults.accepted != NULL)
 		{
 			TSLexeme *oldRes = res;
-			res = TSLexemeUnionOpt(ld->delayedResults.accepted, res, true);
+			res = TSLexemeUnionOpt(ld->delayedResults.accepted, res, prevIterationResult == NULL);
 			if (oldRes)
 				pfree(oldRes);
 			ResultStorageClear(&ld->delayedResults);
