@@ -166,6 +166,22 @@ LPLRemoveHead(ListParsedLex *list)
 }
 
 static void
+LPLClear(ListParsedLex *list)
+{
+	ParsedLex  *tmp,
+			   *ptr = list->head;
+
+	while (ptr)
+	{
+		tmp = ptr->next;
+		pfree(ptr);
+		ptr = tmp;
+	}
+
+	list->head = list->tail = NULL;
+}
+
+static void
 LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 {
 	ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
@@ -210,15 +226,7 @@ setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 	}
 	else
 	{
-		ParsedLex  *tmp,
-				   *ptr = ld->waste.head;
-
-		while (ptr)
-		{
-			tmp = ptr->next;
-			pfree(ptr);
-			ptr = tmp;
-		}
+		LPLClear(&ld->waste);
 	}
 	ld->waste.head = ld->waste.tail = NULL;
 }
@@ -500,7 +508,6 @@ TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool addposFlag)
 	int left_max_nvariant = 0;
 	int i;
 
-	// TODO: TLS_ADDPOS flag ordering
 	if (left == NULL && right == NULL)
 	{
 		result = NULL;
@@ -1064,12 +1071,14 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 			{
 				int i;
 				ListParsedLex *intermediateTokens = NULL;
+				ListParsedLex *acceptedTokens = NULL;
 
 				for (i = 0; i < ld->dslist.listLength; i++)
 				{
 					if (!ld->dslist.states[i].processed)
 					{
 						intermediateTokens = &ld->dslist.states[i].intermediateTokens;
+						acceptedTokens = &ld->dslist.states[i].acceptedTokens;
 						if (!prevIterationResult)
 							ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
 					}
@@ -1083,40 +1092,42 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 					head->next = NULL;
 					ld->towork.tail = head;
 					removeHead = false;
+					LPLClear(&ld->waste);
+					if (acceptedTokens && acceptedTokens->head)
+					{
+						ld->waste.head = acceptedTokens->head;
+						ld->waste.tail = acceptedTokens->tail;
+					}
 				}
-				// TODO: Clear only intermediate reulsts, keep accepted ones
 				ResultStorageClearLexemes(&ld->delayedResults);
 				res = NULL;
-			}
-
-			if (prevIterationResult)
-			{
-				res = prevIterationResult;
-			}
-			else
-			{
-				int i;
-				for (i = 0; i < ld->dslist.listLength; i++)
-				{
-					if (!ld->dslist.states[i].processed)
-						continue;
-
-					if (ld->dslist.states[i].storeToAccepted)
-					{
-						LPLAddTailCopy(&ld->dslist.states[i].acceptedTokens, token);
-						accepted = true;
-					}
-					else
-					{
-						LPLAddTailCopy(&ld->dslist.states[i].intermediateTokens, token);
-					}
-				}
 			}
 			LexizeExecClearDictStates(ld);
 		}
 		else
 		{
 			removeHead = true;
+		}
+	}
+
+	if (prevIterationResult)
+	{
+		res = prevIterationResult;
+	}
+	else
+	{
+		int i;
+		for (i = 0; i < ld->dslist.listLength; i++)
+		{
+			if (ld->dslist.states[i].storeToAccepted)
+			{
+				LPLAddTailCopy(&ld->dslist.states[i].acceptedTokens, token);
+				accepted = true;
+			}
+			else
+			{
+				LPLAddTailCopy(&ld->dslist.states[i].intermediateTokens, token);
+			}
 		}
 	}
 
@@ -1134,6 +1145,14 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	}
 	else
 	{
+		if (ld->towork.head == NULL)
+		{
+			TSLexeme *oldAccepted = ld->delayedResults.accepted;
+			ld->delayedResults.accepted = TSLexemeUnionOpt(ld->delayedResults.accepted, ld->delayedResults.lexemes, true);
+			if (oldAccepted)
+				pfree(oldAccepted);
+		}
+
 		if (ld->delayedResults.accepted != NULL)
 		{
 			TSLexeme *oldRes = res;
@@ -1142,6 +1161,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 				pfree(oldRes);
 			ResultStorageClear(&ld->delayedResults);
 		}
+		setCorrLex(ld, correspondLexem);
 	}
 
 	if (resetSkipDictionary)
@@ -1151,7 +1171,6 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	if (res)
 		res = TSLexemeRemoveDuplications(res);
 
-	setCorrLex(ld, correspondLexem);
 	return res;
 }
 
@@ -1348,7 +1367,7 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 	char	   *lemm = NULL;
 	LexizeData	ldata;
 	TSLexeme   *norms;
-	ParsedLex  *lexs;
+	ParsedLex  *lexs = NULL;
 	TSConfigCacheEntry *cfg;
 	TSParserCacheEntry *prsobj;
 	void	   *prsdata;
@@ -1362,9 +1381,10 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 
 	LexizeInit(&ldata, cfg);
 
+	type = 1;
 	do
 	{
-		if (type != 0)
+		if (type > 0)
 		{
 			type = DatumGetInt32(FunctionCall3(&(prsobj->prstoken),
 											   PointerGetDatum(prsdata),
@@ -1401,9 +1421,10 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 			}
 			else
 				addHLParsedLex(prs, query, lexs, NULL);
+			lexs = NULL;
 		} while (norms);
 
-	} while (type != 0 || ldata.towork.head);
+	} while (type > 0 || ldata.towork.head);
 
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
