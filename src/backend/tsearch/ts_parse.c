@@ -514,7 +514,6 @@ TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool addposFlag)
 	}
 	else
 	{
-
 		result = palloc0(sizeof(TSLexeme) * (left_size + right_size + 1));
 
 		for (i = 0; i < left_size; i++)
@@ -889,7 +888,7 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 	result = NULL;
 	for (i = 0; i < right_size; i++)
 	{
-		TSLexeme *tmp_res;
+		TSLexeme *tmp_res = NULL;
 		TSLexeme *prev_res;
 		ParsedLex tmp_token;
 
@@ -901,8 +900,6 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, left);
 		prev_res = result;
 		result = TSLexemeUnion(prev_res, tmp_res);
-		if (tmp_res)
-			pfree(tmp_res);
 		if (prev_res)
 			pfree(prev_res);
 	}
@@ -931,7 +928,7 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules)
 				res = LexizeExecDictionary(ld, &token, rules->data[i].dictionary);
 				if (!LexizeExecIsNull(ld, &token, rules->data[i].dictionary))
 				{
-					if (res[0].flags & TSL_FILTER)
+					if (res && (res[0].flags & TSL_FILTER))
 					{
 						token.lemm = res[0].lexeme;
 						token.lenlemm = strlen(res[0].lexeme);
@@ -1040,22 +1037,39 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		setCorrLex(ld, correspondLexem);
 		return NULL;
 	}
-	else if (token->type == 0) /* Processing of EOF-like token */
+	else
 	{
-		res = LexizeExecFinishProcessing(ld);
-		removeHead = true;
-		if (LexizeExecNotProcessedDictStates(ld))
+		rules = ld->cfg->map[token->type];
+		if (rules != NULL)
+		{
+			res = LexizeExecCase(ld, token, rules);
+			prevIterationResult = LexizeExecGetPreviousResults(ld);
+			removeHead = prevIterationResult == NULL;
+		}
+		else
+		{
+			removeHead = true;
+			if (token->type == 0) /* Processing EOF-like token */
+			{
+				res = LexizeExecFinishProcessing(ld);
+				prevIterationResult = NULL;
+			}
+		}
+
+		if (LexizeExecNotProcessedDictStates(ld) && (token->type == 0 || rules != NULL)) /* Rollback processing */
 		{
 			int i;
 			ListParsedLex *intermediateTokens = NULL;
+			ListParsedLex *acceptedTokens = NULL;
 
 			for (i = 0; i < ld->dslist.listLength; i++)
 			{
 				if (!ld->dslist.states[i].processed)
 				{
 					intermediateTokens = &ld->dslist.states[i].intermediateTokens;
-					ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
-					break;
+					acceptedTokens = &ld->dslist.states[i].acceptedTokens;
+					if (prevIterationResult == NULL)
+						ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
 				}
 			}
 
@@ -1067,61 +1081,22 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 				head->next = NULL;
 				ld->towork.tail = head;
 				removeHead = false;
+				LPLClear(&ld->waste);
+				if (acceptedTokens && acceptedTokens->head)
+				{
+					ld->waste.head = acceptedTokens->head;
+					ld->waste.tail = acceptedTokens->tail;
+				}
 			}
-			ResultStorageClear(&ld->delayedResults);
+			ResultStorageClearLexemes(&ld->delayedResults);
+			if (rules != NULL)
+				res = NULL;
 		}
-		DictStateListClear(&ld->dslist);
-	}
-	else
-	{
-		rules = ld->cfg->map[token->type];
-		res = LexizeExecCase(ld, token, rules);
 
 		if (rules != NULL)
-		{
-			prevIterationResult = LexizeExecGetPreviousResults(ld);
-			removeHead = prevIterationResult == NULL;
-			if (LexizeExecNotProcessedDictStates(ld)) /* Rollback processing */
-			{
-				int i;
-				ListParsedLex *intermediateTokens = NULL;
-				ListParsedLex *acceptedTokens = NULL;
-
-				for (i = 0; i < ld->dslist.listLength; i++)
-				{
-					if (!ld->dslist.states[i].processed)
-					{
-						intermediateTokens = &ld->dslist.states[i].intermediateTokens;
-						acceptedTokens = &ld->dslist.states[i].acceptedTokens;
-						if (!prevIterationResult)
-							ld->skipDictionary = ld->dslist.states[i].relatedDictionary;
-					}
-				}
-
-				if (intermediateTokens && intermediateTokens->head)
-				{
-					ParsedLex *head = ld->towork.head;
-					ld->towork.head = intermediateTokens->head;
-					intermediateTokens->tail->next = head;
-					head->next = NULL;
-					ld->towork.tail = head;
-					removeHead = false;
-					LPLClear(&ld->waste);
-					if (acceptedTokens && acceptedTokens->head)
-					{
-						ld->waste.head = acceptedTokens->head;
-						ld->waste.tail = acceptedTokens->tail;
-					}
-				}
-				ResultStorageClearLexemes(&ld->delayedResults);
-				res = NULL;
-			}
 			LexizeExecClearDictStates(ld);
-		}
-		else
-		{
-			removeHead = true;
-		}
+		else if (token->type == 0)
+			DictStateListClear(&ld->dslist);
 	}
 
 	if (prevIterationResult)
