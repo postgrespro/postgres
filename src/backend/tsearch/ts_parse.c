@@ -901,6 +901,8 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, left);
 		prev_res = result;
 		result = TSLexemeUnion(prev_res, tmp_res);
+		if (tmp_res)
+			pfree(tmp_res);
 		if (prev_res)
 			pfree(prev_res);
 	}
@@ -909,11 +911,12 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 }
 
 static TSLexeme *
-LexizeExecCase(LexizeData *ld, ParsedLex *token, TSMapRuleList *rules)
+LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules)
 {
 	TSLexeme *res = NULL;
+	ParsedLex token = *originalToken;
 
-	if (ld->cfg->lenmap <= token->type || rules == NULL)
+	if (ld->cfg->lenmap <= token.type || rules == NULL)
 	{
 		res = NULL;
 	}
@@ -924,16 +927,27 @@ LexizeExecCase(LexizeData *ld, ParsedLex *token, TSMapRuleList *rules)
 		{
 			if (rules->data[i].dictionary != InvalidOid)
 			{
-				res = LexizeExecDictionary(ld, token, rules->data[i].dictionary);
-				if (!LexizeExecIsNull(ld, token, rules->data[i].dictionary))
-					break;
+				/* Comma-separated syntax configuration */
+				res = LexizeExecDictionary(ld, &token, rules->data[i].dictionary);
+				if (!LexizeExecIsNull(ld, &token, rules->data[i].dictionary))
+				{
+					if (res[0].flags & TSL_FILTER)
+					{
+						token.lemm = res[0].lexeme;
+						token.lenlemm = strlen(res[0].lexeme);
+					}
+					else
+					{
+						break;
+					}
+				}
 			}
-			else if (LexizeExecExpressionBool(ld, token, rules->data[i].condition.expression))
+			else if (LexizeExecExpressionBool(ld, &token, rules->data[i].condition.expression))
 			{
 				if (rules->data[i].command.is_expression)
-					res = LexizeExecExpressionSet(ld, token, rules->data[i].command.expression);
+					res = LexizeExecExpressionSet(ld, &token, rules->data[i].command.expression);
 				else
-					res = LexizeExecCase(ld, token, rules);
+					res = LexizeExecCase(ld, &token, rules);
 				break;
 			}
 		}
