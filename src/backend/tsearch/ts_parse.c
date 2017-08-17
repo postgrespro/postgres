@@ -881,11 +881,13 @@ static TSLexeme *
 LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right)
 {
 	TSLexeme *right_res = LexizeExecExpressionSet(ld, token, right);
-	TSLexeme *result;
+	TSLexeme *result = NULL;
 	int right_size = TSLexemeGetSize(right_res);
 	int i;
 
-	result = NULL;
+	if (right_res == NULL)
+		return LexizeExecExpressionSet(ld, token, left);
+
 	for (i = 0; i < right_size; i++)
 	{
 		TSLexeme *tmp_res = NULL;
