@@ -1218,6 +1218,84 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
 
+static void
+ts_debug_init(Oid cfgId, text *inputText, FunctionCallInfo fcinfo)
+{
+	TupleDesc	tupdesc;
+	char	   *buf;
+	int			buflen;
+	FuncCallContext *funcctx;
+	MemoryContext oldcontext;
+	TSDebugContext *context;
+
+	funcctx = SRF_FIRSTCALL_INIT();
+	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+	buf = text_to_cstring(inputText);
+	buflen = strlen(buf);
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("function returning record called in context "
+						   "that cannot accept type record")));
+
+	funcctx->user_fctx = palloc0(sizeof(TSDebugContext));
+	funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
+
+	context = funcctx->user_fctx;
+	context->cfg = lookup_ts_config_cache(cfgId);
+	context->prsobj = lookup_ts_parser_cache(context->cfg->prsId);
+
+	context->tokenTypes = (LexDescr *) DatumGetPointer(OidFunctionCall1(context->prsobj->lextypeOid,
+														 (Datum) 0));
+
+	context->prsdata = (void *) DatumGetPointer(FunctionCall2(&context->prsobj->prsstart,
+													 PointerGetDatum(buf),
+													 Int32GetDatum(buflen)));
+	LexizeInit(&context->ldata, context->cfg);
+	context->tokentype = 1;
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
+static void
+ts_debug_get_token(FuncCallContext *funcctx)
+{
+	TSDebugContext *context;
+	MemoryContext oldcontext;
+	int			lenlemm;
+	char	   *lemm = NULL;
+
+	context = funcctx->user_fctx;
+
+	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+	context->tokentype = DatumGetInt32(FunctionCall3(&(context->prsobj->prstoken),
+									   PointerGetDatum(context->prsdata),
+									   PointerGetDatum(&lemm),
+									   PointerGetDatum(&lenlemm)));
+
+	if (context->tokentype > 0 && lenlemm >= MAXSTRLEN)
+	{
+#ifdef IGNORE_LONGLEXEME
+		ereport(NOTICE,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("word is too long to be indexed"),
+				 errdetail("Words longer than %d characters are ignored.",
+						   MAXSTRLEN)));
+#else
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("word is too long to be indexed"),
+				 errdetail("Words longer than %d characters are ignored.",
+						   MAXSTRLEN)));
+#endif
+	}
+
+	LexizeAddLemm(&context->ldata, context->tokentype, lemm, lenlemm);
+	MemoryContextSwitchTo(oldcontext);
+}
+
 /*
  * ts_debug function implementation
  */
@@ -1226,94 +1304,39 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 {
 	FuncCallContext *funcctx;
 	TSDebugContext *context;
-	TupleDesc	tupdesc;
 
-	Datum		result;
-	char	  **values;
-	HeapTuple	tuple;
-	StringInfo  str = NULL;
-	int			lenlemm;
-	char	   *lemm = NULL;
 	ParsedLex  *lexs = NULL;
 	TSLexeme   *norms;
-	TSLexeme   *ptr;
 	TSMapRule  *rule;
-	AttInMetadata *attinmeta;
-	Oid			cfgId = PG_GETARG_OID(0);
-	text	   *inputText = PG_GETARG_TEXT_P(1);
-	char	   *buf = text_to_cstring(inputText);
-	int			buflen = strlen(buf);
-	MemoryContext oldcontext;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("function returning record called in context "
-							"that cannot accept type record")));
-		funcctx->user_fctx = palloc0(sizeof(TSDebugContext));
-		attinmeta = TupleDescGetAttInMetadata(tupdesc);
-		funcctx->attinmeta = attinmeta;
+		Oid		cfgId = PG_GETARG_OID(0);
+		text   *inputText = PG_GETARG_TEXT_P(1);
 
-		context = funcctx->user_fctx;
-		context->cfg = lookup_ts_config_cache(cfgId);
-		context->prsobj = lookup_ts_parser_cache(context->cfg->prsId);
-
-		context->tokenTypes = (LexDescr *) DatumGetPointer(OidFunctionCall1(context->prsobj->lextypeOid,
-															 (Datum) 0));
-
-		context->prsdata = (void *) DatumGetPointer(FunctionCall2(&context->prsobj->prsstart,
-														 PointerGetDatum(buf),
-														 Int32GetDatum(buflen)));
-		LexizeInit(&context->ldata, context->cfg);
-		context->tokentype = 1;
-
-		MemoryContextSwitchTo(oldcontext);
+		ts_debug_init(cfgId, inputText, fcinfo);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
 	context = funcctx->user_fctx;
-	attinmeta = funcctx->attinmeta;
-	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 	if (context->tokentype > 0)
-	{
-		context->tokentype = DatumGetInt32(FunctionCall3(&(context->prsobj->prstoken),
-										   PointerGetDatum(context->prsdata),
-										   PointerGetDatum(&lemm),
-										   PointerGetDatum(&lenlemm)));
-
-		if (context->tokentype > 0 && lenlemm >= MAXSTRLEN)
-		{
-#ifdef IGNORE_LONGLEXEME
-			ereport(NOTICE,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
-#else
-			ereport(ERROR,
-					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					 errmsg("word is too long to be indexed"),
-					 errdetail("Words longer than %d characters are ignored.",
-							   MAXSTRLEN)));
-#endif
-		}
-
-		LexizeAddLemm(&context->ldata, context->tokentype, lemm, lenlemm);
-	}
-	MemoryContextSwitchTo(oldcontext);
+		ts_debug_get_token(funcctx);
 
 	rule = NULL;
 	norms = LexizeExec(&context->ldata, &lexs, &rule);
 	if (lexs)
 	{
-		ParsedLex *lex = lexs;
+		HeapTuple	tuple;
+		Datum		result;
+		char	  **values;
+		ParsedLex  *lex = lexs;
+		StringInfo	str = NULL;
+
 		while (lex && lex->type > 0)
 		{
+			TSLexeme   *ptr;
+
 			values = palloc0(sizeof(char *) * 6);
 			str = makeStringInfo();
 			initStringInfo(str);
@@ -1353,7 +1376,7 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 			if (norms)
 				pfree(norms);
 
-			tuple = BuildTupleFromCStrings(attinmeta, values);
+			tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
 			result = HeapTupleGetDatum(tuple);
 			if (lex->next != NULL)
 			{
@@ -1363,7 +1386,6 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 			}
 
 			lex = lex->next;
-
 			SRF_RETURN_NEXT(funcctx, result);
 		}
 	}
