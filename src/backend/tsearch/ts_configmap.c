@@ -66,7 +66,6 @@ typedef struct TSMapParseNode {
 
 static JsonbValue *TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state);
 static TSMapParseNode *JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state);
-static void TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth);
 
 static void
 TSMapPrintDictName(Oid dictId, StringInfo result)
@@ -147,11 +146,15 @@ TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 	}
 }
 
-static void
+void
 TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 {
 	int i;
-	if (rule->condition.expression->is_true)
+	if (rule->dictionary != InvalidOid)
+	{
+		TSMapPrintDictName(rule->dictionary, result);
+	}
+	else if (rule->condition.expression->is_true)
 	{
 		for (i = 0; i < depth; i++)
 			appendStringInfoChar(result, '\t');
@@ -168,18 +171,17 @@ TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 			appendStringInfoString(result, "\t");
 	}
 
-
 	if (rule->command.is_expression)
 	{
 		TSMapExpressionPrint(rule->command.expression, result);
 	}
-	else
+	else if (rule->dictionary == InvalidOid)
 	{
 		TSMapPrintRuleList(rule->command.ruleList, result, depth + 1);
 	}
 }
 
-static void
+void
 TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
 {
 	int i;

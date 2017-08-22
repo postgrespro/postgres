@@ -27,5 +27,7 @@ extern Oid *TSMapGetDictionariesList(TSMapRuleList *rules);
 extern ListDictionary *TSMapGetListDictionary(TSMapRuleList *rules);
 extern TSMapRuleList *TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context);
 extern void TSMapFree(TSMapRuleList *rules);
+extern void TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth);
+extern void TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth);
 
 #endif   /* _PG_TS_CONFIGMAP_H_ */

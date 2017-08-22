@@ -16,7 +16,10 @@
 
 #include "tsearch/ts_cache.h"
 #include "tsearch/ts_utils.h"
-#include "catalog/pg_ts_config_map.h"
+#include "tsearch/ts_configmap.h"
+#include "utils/builtins.h"
+
+#include "funcapi.h"
 
 #define IGNORE_LONGLEXEME	1
 
@@ -79,26 +82,27 @@ typedef struct ResultStorage
 	TSLexeme	   *accepted;
 } ResultStorage;
 
-typedef struct
+typedef struct LexizeData
 {
 	TSConfigCacheEntry *cfg;
-	Oid			curDictId;
-	int			posDict;
 	DictSubState dictState;
-	ParsedLex  *curSub;
 	DictStateList dslist;
 	ListParsedLex towork;		/* current list to work */
 	ListParsedLex waste;		/* list of lexemes that already lexized */
 	LexemesBuffer buffer;
 	ResultStorage delayedResults;
 	Oid			skipDictionary;
-
-	/*
-	 * field to store last variant to lexize (basically, thesaurus or similar
-	 * to, which wants	several lexemes
-	 */
-	TSLexeme   *tmpRes;
 } LexizeData;
+
+typedef struct TSDebugContext
+{
+	TSConfigCacheEntry *cfg;
+	TSParserCacheEntry *prsobj;
+	LexDescr		   *tokenTypes;
+	void			   *prsdata;
+	LexizeData			ldata;
+	int					tokentype;
+} TSDebugContext;
 
 static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
 
@@ -106,12 +110,9 @@ static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 {
 	ld->cfg = cfg;
-	ld->curDictId = InvalidOid;
-	ld->posDict = 0;
 	ld->skipDictionary = InvalidOid;
-	ld->towork.head = ld->towork.tail = ld->curSub = NULL;
+	ld->towork.head = ld->towork.tail = NULL;
 	ld->waste.head = ld->waste.tail = NULL;
-	ld->tmpRes = NULL;
 	ld->dslist.listLength = 0;
 	ld->dslist.states = NULL;
 	ld->buffer.size = 0;
@@ -206,15 +207,12 @@ LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 	newpl->notFinished = palloc0(sizeof(bool) * len);
 	newpl->holdAccepted = palloc0(sizeof(bool) * len);
 	LPLAddTail(&ld->towork, newpl);
-	ld->curSub = ld->towork.tail;
 }
 
 static void
 RemoveHead(LexizeData *ld)
 {
 	LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
-
-	ld->posDict = 0;
 }
 
 static void
@@ -229,45 +227,6 @@ setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 		LPLClear(&ld->waste);
 	}
 	ld->waste.head = ld->waste.tail = NULL;
-}
-
-static int
-TSLexemeGetSize(TSLexeme *lexeme)
-{
-	int res = 0;
-	while (lexeme != NULL && lexeme->lexeme)
-	{
-		res++;
-		lexeme++;
-	}
-	return res;
-}
-
-static void
-setNewTmpRes(LexizeData *ld, TSLexeme *res)
-{
-	int i;
-	if (ld->tmpRes)
-	{
-		TSLexeme   *ptr;
-
-		for (ptr = ld->tmpRes; ptr->lexeme; ptr++)
-			pfree(ptr->lexeme);
-		pfree(ld->tmpRes);
-	}
-	if (res == NULL)
-	{
-		ld->tmpRes = NULL;
-		return;
-	}
-	ld->tmpRes = palloc0(sizeof(TSLexeme) * (TSLexemeGetSize(res) + 1));
-	for (i = 0; i < TSLexemeGetSize(res); i++)
-	{
-		ld->tmpRes[i].flags = res[i].flags;
-		ld->tmpRes[i].nvariant = res[i].nvariant;
-		ld->tmpRes[i].lexeme = palloc0(sizeof(char) * (strlen(res[i].lexeme) + 1));
-		memcpy(ld->tmpRes[i].lexeme, res[i].lexeme, sizeof(char) * strlen(res[i].lexeme));
-	}
 }
 
 static DictState *
@@ -910,7 +869,7 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 }
 
 static TSLexeme *
-LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules)
+LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules, TSMapRule **selectedRule)
 {
 	TSLexeme *res = NULL;
 	ParsedLex token = *originalToken;
@@ -930,6 +889,8 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules)
 				res = LexizeExecDictionary(ld, &token, rules->data[i].dictionary);
 				if (!LexizeExecIsNull(ld, &token, rules->data[i].dictionary))
 				{
+					if (selectedRule)
+						*selectedRule = rules->data + i;
 					if (res && (res[0].flags & TSL_FILTER))
 					{
 						token.lemm = res[0].lexeme;
@@ -943,10 +904,12 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules)
 			}
 			else if (LexizeExecExpressionBool(ld, &token, rules->data[i].condition.expression))
 			{
+				if (selectedRule)
+					*selectedRule = rules->data + i;
 				if (rules->data[i].command.is_expression)
 					res = LexizeExecExpressionSet(ld, &token, rules->data[i].command.expression);
 				else
-					res = LexizeExecCase(ld, &token, rules);
+					res = LexizeExecCase(ld, &token, rules, selectedRule);
 				break;
 			}
 		}
@@ -1017,7 +980,7 @@ LexizeExecNotProcessedDictStates(LexizeData *ld)
 }
 
 static TSLexeme *
-LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
+LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule)
 {
 	ParsedLex *token;
 	TSMapRuleList *rules;
@@ -1044,7 +1007,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		rules = ld->cfg->map[token->type];
 		if (rules != NULL)
 		{
-			res = LexizeExecCase(ld, token, rules);
+			res = LexizeExecCase(ld, token, rules, selectedRule);
 			prevIterationResult = LexizeExecGetPreviousResults(ld);
 			removeHead = prevIterationResult == NULL;
 		}
@@ -1222,7 +1185,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 			LexizeAddLemm(&ldata, type, lemm, lenlemm);
 		}
 
-		while ((norms = LexizeExec(&ldata, NULL)) != NULL)
+		while ((norms = LexizeExec(&ldata, NULL, NULL)) != NULL)
 		{
 			TSLexeme   *ptr;
 			ptr = norms;
@@ -1253,6 +1216,160 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	} while (type > 0 || ldata.towork.head);
 
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
+}
+
+/*
+ * ts_debug function implementation
+ */
+Datum
+ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
+{
+	FuncCallContext *funcctx;
+	TSDebugContext *context;
+	TupleDesc	tupdesc;
+
+	Datum		result;
+	char	  **values;
+	HeapTuple	tuple;
+	StringInfo  str = NULL;
+	int			lenlemm;
+	char	   *lemm = NULL;
+	ParsedLex  *lexs = NULL;
+	TSLexeme   *norms;
+	TSLexeme   *ptr;
+	TSMapRule  *rule;
+	AttInMetadata *attinmeta;
+	Oid			cfgId = PG_GETARG_OID(0);
+	text	   *inputText = PG_GETARG_TEXT_P(1);
+	char	   *buf = text_to_cstring(inputText);
+	int			buflen = strlen(buf);
+	MemoryContext oldcontext;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		funcctx = SRF_FIRSTCALL_INIT();
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("function returning record called in context "
+							"that cannot accept type record")));
+		funcctx->user_fctx = palloc0(sizeof(TSDebugContext));
+		attinmeta = TupleDescGetAttInMetadata(tupdesc);
+		funcctx->attinmeta = attinmeta;
+
+		context = funcctx->user_fctx;
+		context->cfg = lookup_ts_config_cache(cfgId);
+		context->prsobj = lookup_ts_parser_cache(context->cfg->prsId);
+
+		context->tokenTypes = (LexDescr *) DatumGetPointer(OidFunctionCall1(context->prsobj->lextypeOid,
+															 (Datum) 0));
+
+		context->prsdata = (void *) DatumGetPointer(FunctionCall2(&context->prsobj->prsstart,
+														 PointerGetDatum(buf),
+														 Int32GetDatum(buflen)));
+		LexizeInit(&context->ldata, context->cfg);
+		context->tokentype = 1;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	context = funcctx->user_fctx;
+	attinmeta = funcctx->attinmeta;
+	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+	if (context->tokentype > 0)
+	{
+		context->tokentype = DatumGetInt32(FunctionCall3(&(context->prsobj->prstoken),
+										   PointerGetDatum(context->prsdata),
+										   PointerGetDatum(&lemm),
+										   PointerGetDatum(&lenlemm)));
+
+		if (context->tokentype > 0 && lenlemm >= MAXSTRLEN)
+		{
+#ifdef IGNORE_LONGLEXEME
+			ereport(NOTICE,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("word is too long to be indexed"),
+					 errdetail("Words longer than %d characters are ignored.",
+							   MAXSTRLEN)));
+#else
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("word is too long to be indexed"),
+					 errdetail("Words longer than %d characters are ignored.",
+							   MAXSTRLEN)));
+#endif
+		}
+
+		LexizeAddLemm(&context->ldata, context->tokentype, lemm, lenlemm);
+	}
+	MemoryContextSwitchTo(oldcontext);
+
+	rule = NULL;
+	norms = LexizeExec(&context->ldata, &lexs, &rule);
+	if (lexs)
+	{
+		ParsedLex *lex = lexs;
+		while (lex && lex->type > 0)
+		{
+			values = palloc0(sizeof(char *) * 6);
+			str = makeStringInfo();
+			initStringInfo(str);
+
+			values[0] = context->tokenTypes[lex->type - 1].alias;
+			values[1] = context->tokenTypes[lex->type - 1].descr;
+
+			values[2] = palloc0(sizeof(char) * (lex->lenlemm + 1));
+			memcpy(values[2], lex->lemm, sizeof(char) * lex->lenlemm);
+
+			if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
+			{
+				TSMapPrintRuleList(context->ldata.cfg->map[lex->type], str, 0);
+				values[3] = str->data;
+				str = makeStringInfo();
+				initStringInfo(str);
+			}
+
+			if (rule)
+			{
+				TSMapPrintRule(rule, str, 0);
+				values[4] = str->data;
+				str = makeStringInfo();
+				initStringInfo(str);
+			}
+
+			ptr = norms;
+			while (ptr && ptr->lexeme)
+			{
+				if (ptr != norms)
+					appendStringInfoString(str, ", ");
+				appendStringInfoString(str, ptr->lexeme);
+				ptr++;
+			}
+			values[5] = str->data;
+
+			if (norms)
+				pfree(norms);
+
+			tuple = BuildTupleFromCStrings(attinmeta, values);
+			result = HeapTupleGetDatum(tuple);
+			if (lex->next != NULL)
+			{
+				ereport(NOTICE,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("There are more lexes to process")));
+			}
+
+			lex = lex->next;
+
+			SRF_RETURN_NEXT(funcctx, result);
+		}
+	}
+
+	FunctionCall1(&(context->prsobj->prsend), PointerGetDatum(context->prsdata));
+	SRF_RETURN_DONE(funcctx);
 }
 
 /*
@@ -1405,7 +1522,7 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 
 		do
 		{
-			if ((norms = LexizeExec(&ldata, &lexs)) != NULL)
+			if ((norms = LexizeExec(&ldata, &lexs, NULL)) != NULL)
 			{
 				prs->vectorpos++;
 				addHLParsedLex(prs, query, lexs, norms);
