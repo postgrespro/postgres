@@ -102,6 +102,9 @@ typedef struct TSDebugContext
 	void			   *prsdata;
 	LexizeData			ldata;
 	int					tokentype;
+	TSLexeme		   *savedLexemes;
+	ParsedLex		   *leftTokens;
+	TSMapRule		   *rule;
 } TSDebugContext;
 
 static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
@@ -1304,10 +1307,7 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 {
 	FuncCallContext *funcctx;
 	TSDebugContext *context;
-
-	ParsedLex  *lexs = NULL;
-	TSLexeme   *norms;
-	TSMapRule  *rule;
+	MemoryContext oldcontext;
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -1320,17 +1320,26 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 	funcctx = SRF_PERCALL_SETUP();
 	context = funcctx->user_fctx;
 
-	if (context->tokentype > 0)
+	while (context->tokentype > 0 && context->leftTokens == NULL)
+	{
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 		ts_debug_get_token(funcctx);
 
-	rule = NULL;
-	norms = LexizeExec(&context->ldata, &lexs, &rule);
-	if (lexs)
+		context->rule = NULL;
+		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	while (context->leftTokens == NULL && context->ldata.towork.head != NULL)
+		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
+
+	if (context->leftTokens)
 	{
 		HeapTuple	tuple;
 		Datum		result;
 		char	  **values;
-		ParsedLex  *lex = lexs;
+		ParsedLex  *lex = context->leftTokens;
 		StringInfo	str = NULL;
 
 		while (lex && lex->type > 0)
@@ -1353,39 +1362,34 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 				values[3] = str->data;
 				str = makeStringInfo();
 				initStringInfo(str);
+
+				if (context->rule)
+				{
+					TSMapPrintRule(context->rule, str, 0);
+					values[4] = str->data;
+					str = makeStringInfo();
+					initStringInfo(str);
+				}
 			}
 
-			if (rule)
-			{
-				TSMapPrintRule(rule, str, 0);
-				values[4] = str->data;
-				str = makeStringInfo();
-				initStringInfo(str);
-			}
-
-			ptr = norms;
+			ptr = context->savedLexemes;
 			while (ptr && ptr->lexeme)
 			{
-				if (ptr != norms)
+				if (ptr != context->savedLexemes)
 					appendStringInfoString(str, ", ");
 				appendStringInfoString(str, ptr->lexeme);
 				ptr++;
 			}
 			values[5] = str->data;
 
-			if (norms)
-				pfree(norms);
-
 			tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
 			result = HeapTupleGetDatum(tuple);
-			if (lex->next != NULL)
-			{
-				ereport(NOTICE,
-						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-						 errmsg("There are more lexes to process")));
-			}
 
-			lex = lex->next;
+			context->leftTokens = lex->next;
+			pfree(lex);
+			if (context->leftTokens == NULL && context->savedLexemes)
+				pfree(context->savedLexemes);
+
 			SRF_RETURN_NEXT(funcctx, result);
 		}
 	}
