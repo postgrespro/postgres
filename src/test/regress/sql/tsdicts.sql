@@ -130,7 +130,8 @@ CREATE TEXT SEARCH CONFIGURATION english_multi(
 
 ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
 	asciiword
-	WITH english_stem AND simple;
+	WITH CASE
+	WHEN english_stem OR simple THEN english_stem UNION simple END;
 
 SELECT to_tsvector('english_multi', 'book');
 SELECT to_tsvector('english_multi', 'books');
@@ -146,7 +147,10 @@ SELECT to_tsvector('english_multi', 'booking');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
 	asciiword
-	WITH ispell THEN english_stem;
+	WITH CASE
+	WHEN ispell THEN english_stem MAP BY ispell
+	ELSE english_stem
+END;
 
 SELECT to_tsvector('english_multi', 'book');
 SELECT to_tsvector('english_multi', 'books');
@@ -227,28 +231,44 @@ CREATE TEXT SEARCH CONFIGURATION english_multi2(
 					COPY=english_multi
 );
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH english_stem AND simple;
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN english_stem OR simple THEN english_stem UNION simple
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus OR english_stem;
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN thesaurus THEN thesaurus ELSE english_stem
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus AND english_stem;
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN thesaurus IS NOT NULL OR english_stem IS NOT NULL THEN thesaurus UNION english_stem
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus(accept) THEN english_stem;
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN (thesaurus MAP BY english_stem) IS NOT NULL THEN thesaurus MAP BY english_stem
+	ELSE english_stem
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH thesaurus THEN english_stem;
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN thesaurus THEN simple UNION thesaurus
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH simple AND (thesaurus OR english_stem);
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN thesaurus THEN thesaurus UNION simple
+	ELSE english_stem UNION simple
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND simple;
-SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
-
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH (thesaurus OR english_stem) AND (german_stem OR simple);
+ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
+	WHEN thesaurus AND german_stem THEN thesaurus UNION german_stem
+	WHEN thesaurus AND NOT german_stem THEN thesaurus UNION simple
+	WHEN NOT thesaurus AND german_stem THEN english_stem UNION german_stem
+	ELSE english_stem UNION simple
+END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
 CREATE TEXT SEARCH CONFIGURATION thesaurus_chain(
@@ -260,12 +280,18 @@ CREATE TEXT SEARCH CONFIGURATION thesaurus_second_chain(
 );
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR 
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus(accept) THEN thesaurus_second(accept) THEN english_stem;
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
+	WHEN thesaurus AND thesaurus_second THEN (english_stem MAP BY thesaurus_second) MAP BY thesaurus
+	WHEN thesaurus THEN english_stem MAP BY thesaurus
+	WHEN thesaurus_second THEN english_stem MAP BY thesaurus_second
+	ELSE english_stem
+END;
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR 
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus(accept) THEN english_stem;
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
+	WHEN thesaurus THEN english_stem MAP BY thesaurus
+	ELSE english_stem
+END;
 
 SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chain', 'ski');
 SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');
@@ -273,12 +299,17 @@ SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_sec
 SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus AND thesaurus_second;
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
+	WHEN thesaurus AND thesaurus_second THEN thesaurus UNION thesaurus_second
+	WHEN thesaurus THEN thesaurus
+	ELSE thesaurus_second
+END;
 
 ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word
-	WITH thesaurus OR thesaurus_second;
+	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
+	WHEN thesaurus THEN thesaurus
+	ELSE thesaurus_second
+END;
 
 SELECT to_tsvector('thesaurus_chain', 'one two'), to_tsvector('thesaurus_second_chain', 'one two');
 SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesaurus_second_chain', 'one two three four');
