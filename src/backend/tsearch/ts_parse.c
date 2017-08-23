@@ -38,6 +38,7 @@ typedef struct ParsedLex
 	bool	   *notFinished;
 	bool	   *holdAccepted;
 	struct ParsedLex *next;
+	TSMapRule  *relatedRule;
 } ParsedLex;
 
 typedef struct ListParsedLex
@@ -53,58 +54,58 @@ typedef struct DictState
 	ListParsedLex	acceptedTokens;
 	ListParsedLex	intermediateTokens;
 	bool			storeToAccepted;
-	bool			processed;
-	TSLexeme	   *tmpResult;
+bool			processed;
+TSLexeme	   *tmpResult;
 } DictState;
 
 typedef struct DictStateList
 {
-	int			listLength;
-	DictState  *states;
+int			listLength;
+DictState  *states;
 } DictStateList;
 
 typedef struct LexemesBufferEntry
 {
-	Oid			dictId;
-	ParsedLex  *token;
-	TSLexeme   *data;
+Oid			dictId;
+ParsedLex  *token;
+TSLexeme   *data;
 } LexemesBufferEntry;
 
 typedef struct LexemesBuffer
 {
-	int					size;
-	LexemesBufferEntry *data;
+int					size;
+LexemesBufferEntry *data;
 } LexemesBuffer;
 
 typedef struct ResultStorage
 {
-	TSLexeme	   *lexemes;
-	TSLexeme	   *accepted;
+TSLexeme	   *lexemes;
+TSLexeme	   *accepted;
 } ResultStorage;
 
 typedef struct LexizeData
 {
-	TSConfigCacheEntry *cfg;
-	DictSubState dictState;
-	DictStateList dslist;
-	ListParsedLex towork;		/* current list to work */
-	ListParsedLex waste;		/* list of lexemes that already lexized */
-	LexemesBuffer buffer;
-	ResultStorage delayedResults;
-	Oid			skipDictionary;
+TSConfigCacheEntry *cfg;
+DictSubState dictState;
+DictStateList dslist;
+ListParsedLex towork;		/* current list to work */
+ListParsedLex waste;		/* list of lexemes that already lexized */
+LexemesBuffer buffer;
+ResultStorage delayedResults;
+Oid			skipDictionary;
 } LexizeData;
 
 typedef struct TSDebugContext
 {
-	TSConfigCacheEntry *cfg;
-	TSParserCacheEntry *prsobj;
-	LexDescr		   *tokenTypes;
-	void			   *prsdata;
-	LexizeData			ldata;
-	int					tokentype;
-	TSLexeme		   *savedLexemes;
-	ParsedLex		   *leftTokens;
-	TSMapRule		   *rule;
+TSConfigCacheEntry *cfg;
+TSParserCacheEntry *prsobj;
+LexDescr		   *tokenTypes;
+void			   *prsdata;
+LexizeData			ldata;
+int					tokentype;
+TSLexeme		   *savedLexemes;
+ParsedLex		   *leftTokens;
+TSMapRule		   *rule;
 } TSDebugContext;
 
 static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
@@ -112,117 +113,114 @@ static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpressi
 static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
 {
-	ld->cfg = cfg;
-	ld->skipDictionary = InvalidOid;
-	ld->towork.head = ld->towork.tail = NULL;
-	ld->waste.head = ld->waste.tail = NULL;
-	ld->dslist.listLength = 0;
-	ld->dslist.states = NULL;
-	ld->buffer.size = 0;
-	ld->buffer.data = NULL;
-	ld->delayedResults.lexemes = NULL;
-	ld->delayedResults.accepted = NULL;
+ld->cfg = cfg;
+ld->skipDictionary = InvalidOid;
+ld->towork.head = ld->towork.tail = NULL;
+ld->waste.head = ld->waste.tail = NULL;
+ld->dslist.listLength = 0;
+ld->dslist.states = NULL;
+ld->buffer.size = 0;
+ld->buffer.data = NULL;
+ld->delayedResults.lexemes = NULL;
+ld->delayedResults.accepted = NULL;
 }
 
 static void
 LPLAddTail(ListParsedLex *list, ParsedLex *newpl)
 {
-	if (list->tail)
-	{
-		list->tail->next = newpl;
-		list->tail = newpl;
-	}
-	else
-		list->head = list->tail = newpl;
-	newpl->next = NULL;
+if (list->tail)
+{
+	list->tail->next = newpl;
+	list->tail = newpl;
+}
+else
+	list->head = list->tail = newpl;
+newpl->next = NULL;
 }
 
 static void
 LPLAddTailCopy(ListParsedLex *list, ParsedLex *newpl)
 {
-	ParsedLex *copy = palloc0(sizeof(ParsedLex));
-	copy->lenlemm = newpl->lenlemm;
-	copy->type = newpl->type;
-	copy->lemm = newpl->lemm;
-	copy->next = NULL;
+ParsedLex *copy = palloc0(sizeof(ParsedLex));
+copy->lenlemm = newpl->lenlemm;
+copy->type = newpl->type;
+copy->lemm = newpl->lemm;
+copy->relatedRule = newpl->relatedRule;
+copy->next = NULL;
 
-	if (list->tail)
-	{
-		list->tail->next = copy;
-		list->tail = copy;
-	}
-	else
-		list->head = list->tail = copy;
+if (list->tail)
+{
+	list->tail->next = copy;
+	list->tail = copy;
+}
+else
+	list->head = list->tail = copy;
 }
 
 static ParsedLex *
 LPLRemoveHead(ListParsedLex *list)
 {
-	ParsedLex  *res = list->head;
+ParsedLex  *res = list->head;
 
-	if (list->head)
-		list->head = list->head->next;
+if (list->head)
+	list->head = list->head->next;
 
-	if (list->head == NULL)
-		list->tail = NULL;
+if (list->head == NULL)
+	list->tail = NULL;
 
-	return res;
+return res;
 }
 
 static void
 LPLClear(ListParsedLex *list)
 {
-	ParsedLex  *tmp,
-			   *ptr = list->head;
+ParsedLex  *tmp,
+		   *ptr = list->head;
 
-	while (ptr)
-	{
-		tmp = ptr->next;
-		pfree(ptr);
-		ptr = tmp;
-	}
+while (ptr)
+{
+	tmp = ptr->next;
+	pfree(ptr);
+	ptr = tmp;
+}
 
-	list->head = list->tail = NULL;
+list->head = list->tail = NULL;
 }
 
 static void
 LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 {
-	ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
-	int len;
+ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
+int len;
 
-	if (type != 0 && (type >= ld->cfg->lenmap))
-	{
-		len = 1;
-	}
-	else
-	{
-		ListDictionary	   *map = ld->cfg->map + type;
-		len = map->len;
-	}
+if (type != 0 && (type >= ld->cfg->lenmap))
+{
+	len = 1;
+}
+else
+{
+	ListDictionary	   *map = ld->cfg->map + type;
+	len = map->len;
+}
 
-	newpl->type = type;
-	newpl->lemm = lemm;
-	newpl->lenlemm = lenlemm;
-	newpl->maplen = len;
-	newpl->accepted = palloc0(sizeof(bool) * len);
-	newpl->rejected = palloc0(sizeof(bool) * len);
-	newpl->notFinished = palloc0(sizeof(bool) * len);
-	newpl->holdAccepted = palloc0(sizeof(bool) * len);
-	LPLAddTail(&ld->towork, newpl);
+newpl->type = type;
+newpl->lemm = lemm;
+newpl->lenlemm = lenlemm;
+newpl->relatedRule = NULL;
+LPLAddTail(&ld->towork, newpl);
 }
 
 static void
 RemoveHead(LexizeData *ld)
 {
-	LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
+LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
 }
 
 static void
 setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 {
-	if (correspondLexem)
-	{
+if (correspondLexem)
+{
 		*correspondLexem = ld->waste.head;
 	}
 	else
@@ -894,6 +892,8 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules, T
 				{
 					if (selectedRule)
 						*selectedRule = rules->data + i;
+					originalToken->relatedRule = rules->data + i;
+
 					if (res && (res[0].flags & TSL_FILTER))
 					{
 						token.lemm = res[0].lexeme;
@@ -909,6 +909,7 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules, T
 			{
 				if (selectedRule)
 					*selectedRule = rules->data + i;
+				originalToken->relatedRule = rules->data + i;
 
 				if (rules->data[i].command.is_expression)
 					res = LexizeExecExpressionSet(ld, &token, rules->data[i].command.expression);
@@ -1321,9 +1322,10 @@ ts_debug_get_token(FuncCallContext *funcctx)
 /*
  * Parse text and print debug information for each token, such as
  * token type, dictionary map configuration, selected command and lexemes.
+ * Arguments: regconfiguration(Oid) cfgId, text *inputText
  */
 Datum
-ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
+ts_debug(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
 	TSDebugContext *context;
@@ -1345,7 +1347,6 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 		ts_debug_get_token(funcctx);
 
-		context->rule = NULL;
 		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
 
 		MemoryContextSwitchTo(oldcontext);
@@ -1380,9 +1381,9 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 			str = makeStringInfo();
 			initStringInfo(str);
 
-			if (context->rule)
+			if (lex->relatedRule)
 			{
-				TSMapPrintRule(context->rule, str, 0);
+				TSMapPrintRule(lex->relatedRule, str, 0);
 				values[4] = str->data;
 				str = makeStringInfo();
 				initStringInfo(str);
