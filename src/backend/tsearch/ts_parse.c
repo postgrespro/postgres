@@ -1081,6 +1081,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 			{
 				LPLAddTailCopy(&ld->dslist.states[i].acceptedTokens, token);
 				accepted = true;
+				ld->dslist.states[i].storeToAccepted = false;
 			}
 			else
 			{
