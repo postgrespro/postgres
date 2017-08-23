@@ -1095,6 +1095,11 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 
 	if (ld->dslist.listLength > 0)
 	{
+		/*
+		 * There is at least one thesaurus dictionary in the middle of
+		 * processing. Delay return of the result to avoid wrong lexemes in case
+		 * of thesaurus phrase rejection.
+		 */
 		ResultStorageAdd(&ld->delayedResults, token, res);
 		if (accepted)
 			ResultStorageMoveToAccepted(&ld->delayedResults);
@@ -1112,6 +1117,12 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 				pfree(oldAccepted);
 		}
 
+		/*
+		 * Add accepted delayed results to the output of the parsing.
+		 * All lexemes returned during thesaurus pharse processing
+		 * should be returned simultaniously, since all phrase tokens are
+		 * processed as one.
+		 */
 		if (ld->delayedResults.accepted != NULL)
 		{
 			TSLexeme *oldRes = res;
@@ -1223,6 +1234,9 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
 
+/*
+ * Initialize SRF context and text parser for ts_debug execution.
+ */
 static void
 ts_debug_init(Oid cfgId, text *inputText, FunctionCallInfo fcinfo)
 {
@@ -1264,6 +1278,9 @@ ts_debug_init(Oid cfgId, text *inputText, FunctionCallInfo fcinfo)
 	MemoryContextSwitchTo(oldcontext);
 }
 
+/*
+ * Get one token from input text and add it to towork queue.
+ */
 static void
 ts_debug_get_token(FuncCallContext *funcctx)
 {
@@ -1302,7 +1319,8 @@ ts_debug_get_token(FuncCallContext *funcctx)
 }
 
 /*
- * ts_debug function implementation
+ * Parse text and print debug information for each token, such as
+ * token type, dictionary map configuration, selected command and lexemes.
  */
 Datum
 ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
@@ -1336,64 +1354,60 @@ ts_debug(PG_FUNCTION_ARGS) /* Oid cfgId, char *buf, int buflen */
 	while (context->leftTokens == NULL && context->ldata.towork.head != NULL)
 		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
 
-	if (context->leftTokens)
+	if (context->leftTokens && context->leftTokens && context->leftTokens->type > 0)
 	{
 		HeapTuple	tuple;
 		Datum		result;
 		char	  **values;
 		ParsedLex  *lex = context->leftTokens;
 		StringInfo	str = NULL;
+		TSLexeme   *ptr;
 
-		while (lex && lex->type > 0)
+		values = palloc0(sizeof(char *) * 6);
+		str = makeStringInfo();
+		initStringInfo(str);
+
+		values[0] = context->tokenTypes[lex->type - 1].alias;
+		values[1] = context->tokenTypes[lex->type - 1].descr;
+
+		values[2] = palloc0(sizeof(char) * (lex->lenlemm + 1));
+		memcpy(values[2], lex->lemm, sizeof(char) * lex->lenlemm);
+
+		if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
 		{
-			TSLexeme   *ptr;
-
-			values = palloc0(sizeof(char *) * 6);
+			TSMapPrintRuleList(context->ldata.cfg->map[lex->type], str, 0);
+			values[3] = str->data;
 			str = makeStringInfo();
 			initStringInfo(str);
 
-			values[0] = context->tokenTypes[lex->type - 1].alias;
-			values[1] = context->tokenTypes[lex->type - 1].descr;
-
-			values[2] = palloc0(sizeof(char) * (lex->lenlemm + 1));
-			memcpy(values[2], lex->lemm, sizeof(char) * lex->lenlemm);
-
-			if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
+			if (context->rule)
 			{
-				TSMapPrintRuleList(context->ldata.cfg->map[lex->type], str, 0);
-				values[3] = str->data;
+				TSMapPrintRule(context->rule, str, 0);
+				values[4] = str->data;
 				str = makeStringInfo();
 				initStringInfo(str);
-
-				if (context->rule)
-				{
-					TSMapPrintRule(context->rule, str, 0);
-					values[4] = str->data;
-					str = makeStringInfo();
-					initStringInfo(str);
-				}
 			}
-
-			ptr = context->savedLexemes;
-			while (ptr && ptr->lexeme)
-			{
-				if (ptr != context->savedLexemes)
-					appendStringInfoString(str, ", ");
-				appendStringInfoString(str, ptr->lexeme);
-				ptr++;
-			}
-			values[5] = str->data;
-
-			tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
-			result = HeapTupleGetDatum(tuple);
-
-			context->leftTokens = lex->next;
-			pfree(lex);
-			if (context->leftTokens == NULL && context->savedLexemes)
-				pfree(context->savedLexemes);
-
-			SRF_RETURN_NEXT(funcctx, result);
 		}
+
+		ptr = context->savedLexemes;
+		while (ptr && ptr->lexeme)
+		{
+			if (ptr != context->savedLexemes)
+				appendStringInfoString(str, ", ");
+			appendStringInfoString(str, ptr->lexeme);
+			ptr++;
+		}
+		values[5] = str->data;
+
+		tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
+		result = HeapTupleGetDatum(tuple);
+
+		context->leftTokens = lex->next;
+		pfree(lex);
+		if (context->leftTokens == NULL && context->savedLexemes)
+			pfree(context->savedLexemes);
+
+		SRF_RETURN_NEXT(funcctx, result);
 	}
 
 	FunctionCall1(&(context->prsobj->prsend), PointerGetDatum(context->prsdata));
