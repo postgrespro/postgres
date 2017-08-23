@@ -909,10 +909,11 @@ LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules, T
 			{
 				if (selectedRule)
 					*selectedRule = rules->data + i;
+
 				if (rules->data[i].command.is_expression)
 					res = LexizeExecExpressionSet(ld, &token, rules->data[i].command.expression);
 				else
-					res = LexizeExecCase(ld, &token, rules, selectedRule);
+					res = LexizeExecCase(ld, &token, rules->data[i].command.ruleList, selectedRule);
 				break;
 			}
 		}
