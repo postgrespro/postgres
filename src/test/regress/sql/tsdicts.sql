@@ -139,6 +139,24 @@ SELECT to_tsvector('english_multi', 'booking');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
 	asciiword
+	WITH CASE
+	WHEN english_stem OR simple THEN english_stem INTERSECT simple END;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
+	WITH CASE
+	WHEN english_stem OR simple THEN simple EXCEPT english_stem END;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
 	WITH ispell;
 
 SELECT to_tsvector('english_multi', 'book');
@@ -148,7 +166,7 @@ SELECT to_tsvector('english_multi', 'booking');
 ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
 	asciiword
 	WITH CASE
-	WHEN ispell THEN english_stem MAP BY ispell
+	WHEN ispell THEN ispell
 	ELSE english_stem
 END;
 
@@ -247,12 +265,6 @@ END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
-	WHEN (thesaurus MAP BY english_stem) IS NOT NULL THEN thesaurus MAP BY english_stem
-	ELSE english_stem
-END;
-SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
-
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
 	WHEN thesaurus THEN simple UNION thesaurus
 END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
@@ -263,55 +275,3 @@ ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH 
 END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
-ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
-	WHEN thesaurus AND german_stem THEN thesaurus UNION german_stem
-	WHEN thesaurus AND NOT german_stem THEN thesaurus UNION simple
-	WHEN NOT thesaurus AND german_stem THEN english_stem UNION german_stem
-	ELSE english_stem UNION simple
-END;
-SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
-
-CREATE TEXT SEARCH CONFIGURATION thesaurus_chain(
-					COPY=english
-);
-
-CREATE TEXT SEARCH CONFIGURATION thesaurus_second_chain(
-					COPY=english
-);
-
-ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR 
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
-	WHEN thesaurus AND thesaurus_second THEN (english_stem MAP BY thesaurus_second) MAP BY thesaurus
-	WHEN thesaurus THEN english_stem MAP BY thesaurus
-	WHEN thesaurus_second THEN english_stem MAP BY thesaurus_second
-	ELSE english_stem
-END;
-
-ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR 
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
-	WHEN thesaurus THEN english_stem MAP BY thesaurus
-	ELSE english_stem
-END;
-
-SELECT to_tsvector('thesaurus_chain', 'ski'), to_tsvector('thesaurus_second_chain', 'ski');
-SELECT to_tsvector('thesaurus_chain', 'ski competition'), to_tsvector('thesaurus_second_chain', 'ski competition');
-SELECT to_tsvector('thesaurus_chain', 'ski jumping'), to_tsvector('thesaurus_second_chain', 'ski jumping');
-SELECT to_tsvector('thesaurus_chain', 'ski jumping competition'), to_tsvector('thesaurus_second_chain', 'ski jumping competition');
-
-ALTER TEXT SEARCH CONFIGURATION thesaurus_chain ALTER MAPPING FOR
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
-	WHEN thesaurus AND thesaurus_second THEN thesaurus UNION thesaurus_second
-	WHEN thesaurus THEN thesaurus
-	ELSE thesaurus_second
-END;
-
-ALTER TEXT SEARCH CONFIGURATION thesaurus_second_chain ALTER MAPPING FOR
-	asciihword, asciiword, hword, hword_asciipart, hword_part, word WITH CASE
-	WHEN thesaurus THEN thesaurus
-	ELSE thesaurus_second
-END;
-
-SELECT to_tsvector('thesaurus_chain', 'one two'), to_tsvector('thesaurus_second_chain', 'one two');
-SELECT to_tsvector('thesaurus_chain', 'one two three four'), to_tsvector('thesaurus_second_chain', 'one two three four');
-SELECT to_tsvector('thesaurus_chain', 'three four five'), to_tsvector('thesaurus_second_chain', 'three four five');
-SELECT to_tsvector('thesaurus_chain', 'three four'), to_tsvector('thesaurus_second_chain', 'three four');
