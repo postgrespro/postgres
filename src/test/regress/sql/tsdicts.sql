@@ -174,6 +174,17 @@ SELECT to_tsvector('english_multi', 'book');
 SELECT to_tsvector('english_multi', 'books');
 SELECT to_tsvector('english_multi', 'booking');
 
+ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
+	asciiword
+	WITH CASE
+	WHEN hunspell THEN english_stem MAP BY hunspell
+	ELSE english_stem
+END;
+
+SELECT to_tsvector('english_multi', 'book');
+SELECT to_tsvector('english_multi', 'books');
+SELECT to_tsvector('english_multi', 'booking');
+
 -- Test ispell dictionary in configuration
 CREATE TEXT SEARCH CONFIGURATION ispell_tst (
 						COPY=english
