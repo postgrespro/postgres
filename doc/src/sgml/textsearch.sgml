@@ -732,11 +732,11 @@ SELECT to_tsvector('english', 'a fat  cat sat on a mat - it ate a fat rats');
     The <function>to_tsvector</function> function internally calls a parser
     which breaks the document text into tokens and assigns a type to
     each token.  For each token, a list of
-    dictionaries (<xref linkend="textsearch-dictionaries">) is consulted,
-    where the list can vary depending on the token type.  The first or a set of
-    dictionaries (depends on configuration) that <firstterm>recognize</> 
-    the token emits one or more normalized <firstterm>lexemes</firstterm>
-    to represent the token.  For example,
+    condition/command pairs is consulted, where the list can vary depending
+    on the token type, condition and command are logical and set expressions
+    on dictionaries(<xref linkend="textsearch-dictionaries">) respectively.
+    The first pair with true-resulted condition emits one or more normalized
+    <firstterm>lexemes</firstterm> to represent the token based on command.  For example,
     <literal>rats</literal> became <literal>rat</literal> because one of the
     dictionaries recognized that the word <literal>rats</literal> is a plural
     form of <literal>rat</literal>.  Some words are recognized as
@@ -744,7 +744,7 @@ SELECT to_tsvector('english', 'a fat  cat sat on a mat - it ate a fat rats');
     causes them to be ignored since they occur too frequently to be useful in
     searching.  In our example these are
     <literal>a</literal>, <literal>on</literal>, and <literal>it</literal>.
-    If no dictionary in the list recognizes the token then it is also ignored.
+    If none of conditions is <literal>true</literal> the token then is also ignored.
     In this example that happened to the punctuation sign <literal>-</literal>
     because there are in fact no dictionaries assigned for its token type
     (<literal>Space symbols</literal>), meaning space tokens will never be
@@ -2233,7 +2233,8 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
       a single lexeme with the <literal>TSL_FILTER</literal> flag set, to replace
       the original token with a new token to be passed to subsequent
       dictionaries (a dictionary that does this is called a
-      <firstterm>filtering dictionary</firstterm>)
+      <firstterm>filtering dictionary</firstterm>). This behavior is applicable only
+      with comma-separated configuration (TODO: see ALTER TSC)
      </para>
     </listitem>
     <listitem>
@@ -2265,38 +2266,45 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
    type that the parser can return, a separate list of dictionaries is
    specified by the configuration.  When a token of that type is found
    by the parser, each dictionary in the list is consulted in turn,
-   until some dictionary recognizes it as a known word.  If it is identified
-   as a stop word, or if no dictionary recognizes the token, it will be
-   discarded and not indexed or searched for.
+   until command is not selected based on it's condition. If none of cases is
+   selected it will be discarded and not indexed or searched for.
   </para>
 
   <para>
-   A set of dictionaries that determines the result is depends on
-   configuration and operators that connects dictionaries between each others.
-   Operator <literal>AND</literal> combines output of both left and right
-   dictionaries and can be used in order to create multi-language text search
-   configuration. Operator <literal>OR</literal> returns first non-<literal>NULL</literal>
-   output. Operator <literal>THEN</literal> passes a left side output to subsequent
-   dictionary if the output is not <literal>NULL</literal> (behavior can be changed
-   via dictionary options, see <xref linkend="SQL-ALTERTSCONFIG"> for
-   details) and can be used to filter
-   some words before processing by another dictionary.
-   Additionaly, you can use a comma-separated list of dictionaries.
-   In this case, the first dictionary that returns a non-<literal>NULL</literal>
-   output determines the result, and any remaining dictionaries are not
-   consulted; but a filtering dictionary can replace the given word
-   with a modified word, which is then passed to subsequent dictionaries.
+   A list of cases is described as condition/command pair. Each condition is
+   evaluated in order to select appropriate command to generate resulted set
+   of lexems.
   </para>
 
   <para>
-   The general rule for configuring a list of dictionaries connected by
-   <literal>OR</literal> operators
+   A condition is a boolean expression with dictionaries used as operands and
+   basic logic operators <literal>AND</literal>, <literal>OR</literal>, <literal>NOT</literal> and
+   special operator <literal>MAP BY</literal>. In addition to operators, each operand
+   could contain <literal>IS [NOT] NULL</literal> or <literal>IS [NOT] STOP</literal> option
+   to mark way to interpret lexemes as boolean value. If no options are mentioned
+   it is interpret as <literal>dictionary IS NOT NULL AND dictionary IS NOT STOP</literal>.
+
+   Special operator <literal>MAP BY</literal> is used to use output of right-hand
+   subexpression as input for left-hand one. In condition left and right
+   subexpressions can be either another <literal>MAP BY</literal> expression or
+   dictionary expression. Result of <literal>MAP BY</literal> should be explicitly
+   makred for boolean interpretation.
+  </para>
+
+  <para>
+   A command is a set expression with dictionaries used as operands and basic
+   set operators <literal>UNION</literal>, <literal>EXCEPT</literal>, <literal>INTERSECT</literal>
+   and special operator <literal>MAP BY</literal>. The behavior of <literal>MAP BY</literal>
+   operator is similar to one in condition but without restrictions on content
+   of subexpressions since all operators operates on sets.
+  </para>
+
+  <para>
+   The general rule for configuring a list of condition/command rules
    is to place first the most narrow, most specific dictionary, then the more
-   general dictionaries, finishing with a very general dictionary, like
-   a <application>Snowball</application> stemmer or <literal>simple</literal>, which
-   recognizes everything.  In case of multi-language configuration
-   lists of dictionaries for each language should be conncted by
-   <literal>AND</literal> operator. For example, for an astronomy-specific search
+   general dictionaries, finishing with a very general dictionaries, like
+   a <application>Snowball</> stemmer or <literal>simple</>, which
+   recognizes everything. For example, for an astronomy-specific search
    (<literal>astro_en</literal> configuration) one could bind token type
    <type>asciiword</type> (ASCII word) to a synonym dictionary of astronomical
    terms, a general English dictionary and a <application>Snowball</literal> English
@@ -2312,7 +2320,17 @@ ALTER TEXT SEARCH CONFIGURATION astro_en
 
 <programlisting>
 ALTER TEXT SEARCH CONFIGURATION multi_en_de
-    ADD MAPPING FOR asciiword, word WITH (english_ispell OR english_stem) AND (german_ispell OR german_stem);
+    ADD MAPPING FOR asciiword, word WITH
+        CASE
+            WHEN english_ispell AND german_ispell THEN
+                 english_ispell UNION german_ispell
+            WHEN english_ispell THEN
+                 english_ispell UNION german_stem
+            WHEN german_ispell THEN
+                 german_ispell UNION english_stem
+            ELSE
+                 english_stem UNION german_stem
+        END;
 </programlisting>
 
   </para>
