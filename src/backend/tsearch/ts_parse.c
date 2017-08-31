@@ -1391,6 +1391,9 @@ ts_debug(PG_FUNCTION_ARGS)
 		}
 
 		ptr = context->savedLexemes;
+		if (context->savedLexemes)
+			appendStringInfoChar(str, '{');
+
 		while (ptr && ptr->lexeme)
 		{
 			if (ptr != context->savedLexemes)
@@ -1398,7 +1401,12 @@ ts_debug(PG_FUNCTION_ARGS)
 			appendStringInfoString(str, ptr->lexeme);
 			ptr++;
 		}
-		values[5] = str->data;
+		if (context->savedLexemes)
+			appendStringInfoChar(str, '}');
+		if (context->savedLexemes)
+			values[5] = str->data;
+		else
+			values[5] = NULL;
 
 		tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
 		result = HeapTupleGetDatum(tuple);
