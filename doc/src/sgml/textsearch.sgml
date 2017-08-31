@@ -2234,7 +2234,8 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
       the original token with a new token to be passed to subsequent
       dictionaries (a dictionary that does this is called a
       <firstterm>filtering dictionary</firstterm>). This behavior is applicable only
-      with comma-separated configuration (TODO: see ALTER TSC)
+      with comma-separated configuration
+      (see <xref linkend="SQL-ALTERTSCONFIG"> for more information)
      </para>
     </listitem>
     <listitem>
@@ -3151,6 +3152,20 @@ CREATE TEXT SEARCH DICTIONARY english_ispell (
 
     Now we can set up the mappings for words in configuration
     <literal>pg</literal>:
+
+<programlisting>
+ALTER TEXT SEARCH CONFIGURATION pg
+    ALTER MAPPING FOR asciiword, asciihword, hword_asciipart,
+                      word, hword, hword_part
+    WITH 
+      CASE
+        WHEN pg_dict IS NOT NULL THEN pg_dict
+        WHEN english_ispell THEN english_ispell
+        ELSE english_stem
+      END;
+</programlisting>
+
+    Or use alternative comma-separated syntax:
 
 <programlisting>
 ALTER TEXT SEARCH CONFIGURATION pg
