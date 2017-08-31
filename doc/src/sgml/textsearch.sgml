@@ -2271,7 +2271,7 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
   </para>
 
   <para>
-   A list of cases is described as condition/command pair. Each condition is
+   A list of cases is described as condition/command pairs. Each condition is
    evaluated in order to select appropriate command to generate resulted set
    of lexems.
   </para>
@@ -2300,7 +2300,7 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
   </para>
 
   <para>
-   The general rule for configuring a list of condition/command rules
+   The general rule for configuring a list of condition/command pairs
    is to place first the most narrow, most specific dictionary, then the more
    general dictionaries, finishing with a very general dictionaries, like
    a <application>Snowball</> stemmer or <literal>simple</>, which
@@ -2342,11 +2342,9 @@ ALTER TEXT SEARCH CONFIGURATION multi_en_de
    normalize words to simplify the task of later dictionaries.  For example,
    a filtering dictionary could be used to remove accents from accented
    letters, as is done by the <xref linkend="unaccent"> module.
-   In case of operator-separated list of dictionries, the filter dictionry
-   should be placed before <literal>THEN</> operator. If the dictionary
-   returns <literal>NULL</> for unknown words additional option
-   <literal>accept</> should be added to the filter dictionary in order to
-   pass initial token in case of <literal>NULL</>-output.
+   Otherwise filter dictionary should be placed at righthand of <literal>MAP BY</>
+   operator. If filter dictionary returns <literal>NULL</> it pass initial token
+   further in processing chain.
   </para>
 
   <sect2 id="textsearch-stopwords">
@@ -2513,9 +2511,9 @@ SELECT ts_lexize('public.simple_dict','The');
 
 <screen>
 SELECT * FROM ts_debug('english', 'Paris');
-   alias   |   description   | token |  dictionaries  |  dictionary  | lexemes 
------------+-----------------+-------+----------------+--------------+---------
- asciiword | Word, all ASCII | Paris | {english_stem} | english_stem | {pari}
+   alias   |   description   | token | dictionaries |   command    | lexemes 
+-----------+-----------------+-------+--------------+--------------+---------
+ asciiword | Word, all ASCII | Paris | english_stem | english_stem | {pari}
 
 CREATE TEXT SEARCH DICTIONARY my_synonym (
     TEMPLATE = synonym,
@@ -2527,9 +2525,9 @@ ALTER TEXT SEARCH CONFIGURATION english
     WITH my_synonym, english_stem;
 
 SELECT * FROM ts_debug('english', 'Paris');
-   alias   |   description   | token |       dictionaries        | dictionary | lexemes 
------------+-----------------+-------+---------------------------+------------+---------
- asciiword | Word, all ASCII | Paris | {my_synonym,english_stem} | my_synonym | {paris}
+   alias   |   description   | token |      dictionaries       |  command   | lexemes 
+-----------+-----------------+-------+-------------------------+------------+---------
+ asciiword | Word, all ASCII | Paris | my_synonym,english_stem | my_synonym | {paris}
 </screen>
    </para>
 
@@ -2682,17 +2680,6 @@ more sample word(s) : more indexed word(s)
     definition like <literal>one 7</literal> will not work since token type
     <literal>uint</literal> is not assigned to the thesaurus dictionary.
    </para>
-
-   <caution>
-    <para>
-     If a thesaurus dictionary is following filtering dictionary (both
-     dictionary with <literal>TSL_FILTER</> flagged output in comma-separated
-     variant or <literal>THEN</> operator) the preceding dictionary will
-     process only one token in a phrase recognizable by thesaurus.
-     Rest of the tokens in the pharse would not be processed by
-     preceding dictionary.
-    </para>
-   </caution>
 
    <caution>
     <para>
@@ -3239,13 +3226,13 @@ SHOW default_text_search_config;
   </indexterm>
 
 <synopsis>
-ts_debug(<optional> <replaceable class="parameter">config</replaceable> <type>regconfig</type>, </optional> <replaceable class="parameter">document</replaceable> <type>text</type>,
-         OUT <replaceable class="parameter">alias</replaceable> <type>text</type>,
-         OUT <replaceable class="parameter">description</replaceable> <type>text</type>,
-         OUT <replaceable class="parameter">token</replaceable> <type>text</type>,
-         OUT <replaceable class="parameter">dictionaries</replaceable> <type>regdictionary[]</type>,
-         OUT <replaceable class="parameter">dictionary</replaceable> <type>regdictionary</type>,
-         OUT <replaceable class="parameter">lexemes</replaceable> <type>text[]</type>)
+ts_debug(<optional> <replaceable class="PARAMETER">config</replaceable> <type>regconfig</type>, </optional> <replaceable class="PARAMETER">document</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">alias</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">description</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">token</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">dictionaries</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">command</replaceable> <type>text</type>,
+         OUT <replaceable class="PARAMETER">lexemes</replaceable> <type>text[]</type>)
          returns setof record
 </synopsis>
 
@@ -3282,20 +3269,20 @@ ts_debug(<optional> <replaceable class="parameter">config</replaceable> <type>re
      </listitem>
      <listitem>
       <para>
-       <replaceable>dictionaries</replaceable> <type>regdictionary[]</type> &mdash; the
-       dictionaries selected by the configuration for this token type
+       <replaceable>dictionaries</replaceable> <type>text</type> &mdash; the
+       dictionaries defined by the configuration for this token type
       </para>
      </listitem>
      <listitem>
       <para>
-       <replaceable>dictionary</replaceable> <type>regdictionary</type> &mdash; the dictionary
-       that recognized the token, or <literal>NULL</literal> if none did
+       <replaceable>command</replaceable> <type>text</type> &mdash; the command that describes
+       the way to generate output
       </para>
      </listitem>
      <listitem>
       <para>
        <replaceable>lexemes</replaceable> <type>text[]</type> &mdash; the lexeme(s) produced
-       by the dictionary that recognized the token, or <literal>NULL</literal> if
+       by the command selected acording conditions, or <literal>NULL</literal> if
        none did; an empty array (<literal>{}</literal>) means it was recognized as a
        stop word
       </para>
@@ -3308,32 +3295,32 @@ ts_debug(<optional> <replaceable class="parameter">config</replaceable> <type>re
 
 <screen>
 SELECT * FROM ts_debug('english','a fat  cat sat on a mat - it ate a fat rats');
-   alias   |   description   | token |  dictionaries  |  dictionary  | lexemes 
------------+-----------------+-------+----------------+--------------+---------
- asciiword | Word, all ASCII | a     | {english_stem} | english_stem | {}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | fat   | {english_stem} | english_stem | {fat}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | cat   | {english_stem} | english_stem | {cat}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | sat   | {english_stem} | english_stem | {sat}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | on    | {english_stem} | english_stem | {}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | a     | {english_stem} | english_stem | {}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | mat   | {english_stem} | english_stem | {mat}
- blank     | Space symbols   |       | {}             |              | 
- blank     | Space symbols   | -     | {}             |              | 
- asciiword | Word, all ASCII | it    | {english_stem} | english_stem | {}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | ate   | {english_stem} | english_stem | {ate}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | a     | {english_stem} | english_stem | {}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | fat   | {english_stem} | english_stem | {fat}
- blank     | Space symbols   |       | {}             |              | 
- asciiword | Word, all ASCII | rats  | {english_stem} | english_stem | {rat}
+   alias   |   description   | token | dictionaries |   command    | lexemes 
+-----------+-----------------+-------+--------------+--------------+---------
+ asciiword | Word, all ASCII | a     | english_stem | english_stem | {}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | fat   | english_stem | english_stem | {fat}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | cat   | english_stem | english_stem | {cat}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | sat   | english_stem | english_stem | {sat}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | on    | english_stem | english_stem | {}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | a     | english_stem | english_stem | {}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | mat   | english_stem | english_stem | {mat}
+ blank     | Space symbols   |       |              |              | 
+ blank     | Space symbols   | -     |              |              | 
+ asciiword | Word, all ASCII | it    | english_stem | english_stem | {}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | ate   | english_stem | english_stem | {ate}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | a     | english_stem | english_stem | {}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | fat   | english_stem | english_stem | {fat}
+ blank     | Space symbols   |       |              |              | 
+ asciiword | Word, all ASCII | rats  | english_stem | english_stem | {rat}
 </screen>
   </para>
 
@@ -3359,13 +3346,13 @@ ALTER TEXT SEARCH CONFIGURATION public.english
 
 <screen>
 SELECT * FROM ts_debug('public.english','The Brightest supernovaes');
-   alias   |   description   |    token    |         dictionaries          |   dictionary   |   lexemes   
------------+-----------------+-------------+-------------------------------+----------------+-------------
- asciiword | Word, all ASCII | The         | {english_ispell,english_stem} | english_ispell | {}
- blank     | Space symbols   |             | {}                            |                | 
- asciiword | Word, all ASCII | Brightest   | {english_ispell,english_stem} | english_ispell | {bright}
- blank     | Space symbols   |             | {}                            |                | 
- asciiword | Word, all ASCII | supernovaes | {english_ispell,english_stem} | english_stem   | {supernova}
+   alias   |   description   |    token    |        dictionaries         |    command     |   lexemes   
+-----------+-----------------+-------------+-----------------------------+----------------+-------------
+ asciiword | Word, all ASCII | The         | english_ispell,english_stem | english_ispell | {}
+ blank     | Space symbols   |             |                             |                | 
+ asciiword | Word, all ASCII | Brightest   | english_ispell,english_stem | english_ispell | {bright}
+ blank     | Space symbols   |             |                             |                | 
+ asciiword | Word, all ASCII | supernovaes | english_ispell,english_stem | english_stem   | {supernova}
 </screen>
 
   <para>
