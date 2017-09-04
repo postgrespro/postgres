@@ -24,7 +24,11 @@ PostgreSQL documentation
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
     ADD MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_expression</replaceable>
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
+    ADD MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_name</replaceable> [, ... ]
+ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
     ALTER MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_expression</replaceable>
+ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
+    ALTER MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_name</replaceable> [, ... ]
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
     ALTER MAPPING REPLACE <replaceable class="parameter">old_dictionary</replaceable> WITH <replaceable class="parameter">new_dictionary</replaceable>
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
@@ -93,8 +97,7 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
     <listitem>
      <para>
       The expression of dictionaries tree. The dctionary expression
-      is a list of dictionaries with operators which affects the
-      processing of the text.
+      is a list of condition/command pairs that define way to process text.
      </para>
     </listitem>
    </varlistentry>
@@ -171,84 +174,55 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
   <refsect2>
    <title>Format</title>
    <programlisting>
-    <replaceable class="parameter">dictionary_expression</replaceable> := <replaceable class="parameter">dictionary_expression operator dcitionary_expression</replaceable>
-    <replaceable class="parameter">dictionary_expression</replaceable> := (<replaceable class="parameter">dictionary_expression</replaceable>)
-    <replaceable class="parameter">dictionary_expression</replaceable> := <replaceable class="parameter">dictionary_name</replaceable> [ (<replaceable class="parameter">option</replaceable> [, ... ] ) ]
-    <replaceable class="parameter">dictionary_expression</replaceable> := <replaceable class="parameter">dictionary_name</replaceable> [, ... ]
+    CASE
+      WHEN <replaceable class="parameter">condition</replaceable> THEN <replaceable class="parameter">command</replaceable>
+      [ WHEN <replaceable class="parameter">condition</replaceable> THEN <replaceable class="parameter">command</replaceable> ]
+      [ ELSE <replaceable class="parameter">command</replaceable> ]
+    END
    </programlisting>
-     <warning>
-     <para>
-      Mix of both comma-separated and operator-separated syntax is not available.
-      Options for dictionaries can be used only with operator-separated syntax.
-      Dictionary <literal>TSL_FILTER</literal> flag is supported only with
-      configurations defined via comma-separated syntax. For
-      <literal>TSL_FILTER</literal> behavior in operator-separated syntax see
-      <xref linkend="ts-config-map-dict-options">.
-     </para>
-    </warning>
+   <para>
+    A condition is
+   </para>
+
+   <programlisting>
+    dictionary_name [IS [NOT] {NULL|STOP}] [ {AND|OR} ... ]
+    or
+    (dictionary_name MAP BY dictionary_name) IS [NOT] {NULL|STOP} [ {AND|OR} ... ]
+   </programlisting>
+
+   <para>
+    And command is:
+   </para>
+
+   <programlisting>
+    dictionary_name [ {UNION|INTERSECT|EXCEPT|MAP BY} ... ]
+   </programlisting>
   </refsect2>
 
   <refsect2>
-   <title>Operators</title>
+   <title>Condition</title>
    <para>
-    Operators defines how dictionaries are connected to each other and the flow
-    of data between it. Operators are presented in priority decreasing order.
-    Paranthesis can be used in order to explistly change the priority of
-    subexpression.
+    Condition used to determine a command for token processing. A condition is
+    boolean expression. A dictionary can be tested for <literal>NULL</>-output
+    or stop-word output via options <literal>IS [NOT] {NULL|STOP}</>. If none
+    of test options is mentied (<literal>dictionary_name</> without additional
+    options) it is tested for both not <literal>NULL</> and not stop word output.
    </para>
-   <variablelist>
-    <varlistentry>
-     <term><replaceable class="parameter">THEN</replaceable></term>
-     <listitem>
-      <para>
-       Passes the output of left-side subexpression to the right one if output
-       is not <literal>NULL</literal>.
-      </para>
-     </listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term><replaceable class="parameter">AND</replaceable></term>
-     <listitem>
-      <para>
-       Combines output of both left-side and right-side subexpressions result.
-      </para>
-     </listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term><replaceable class="parameter">OR</replaceable></term>
-      <listitem>
-       <para>
-        Returns left-side subexpression output if it is not
-        <literal>NULL</literal>, otherwise returns right-side
-        subexpression result;
-       </para>
-      </listitem>
-    </varlistentry>
-   </variablelist>
   </refsect2>
 
-  <refsect2 id="ts-config-map-dict-options">
-   <title>Options</title>
+  <refsect2>
+   <title>Command</title>
    <para>
-    There are operators which affect the behavior of operators during
-    processing the result of makred dictionary.
+    A command describes how <productname>PostgreSQL</productname> should build
+    a result set for current token. Output of each dictionary is set of lexemes.
+    Result of dictionaries can be combined with help of operators
+    <literal>UNION</>, <literal>EXCEPT</>, <literal>INTERSECT</> and a special
+    operator <literal> MAP BY</>. <literal>MAP BY</> operator uses output of
+    right subexpression as an input for left subexpression. If right subexpression
+    output is <literal>NULL</>, initial token is used instead. If the output contains
+    multiple lexemes, each lexeme used as token for left subexpression
+    independently and final results is combined.
    </para>
-   <variablelist>
-    <varlistentry>
-    <term><replaceable class="parameter">accept</replaceable></term>
-     <listitem>
-      <para>
-       Used on left-side dictionary in <literal>THEN</literal> expression.
-       Change the behavior of <literal>THEN</literal> operator in order to
-       process initial token in case of left-side subexpression
-       <literal>NULL</literal>-result. Can be used to simulate
-       <literal>TSL_FILTER</literal> flag behavior (the flag is not required).
-      </para>
-     </listitem>
-    </varlistentry>
-   </variablelist>
   </refsect2>
  </refsect1>
 
