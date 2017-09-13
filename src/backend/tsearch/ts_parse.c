@@ -460,7 +460,98 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 }
 
 static TSLexeme *
-TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool addposFlag)
+TSLexemeMergePositions(TSLexeme *left, TSLexeme *right)
+{
+	TSLexeme *result;
+	int left_size = TSLexemeGetSize(left);
+	int right_size = TSLexemeGetSize(right);
+	int left_i = 0;
+	int right_i = 0;
+	int left_max_nvariant = 0;
+	int i;
+
+	if (left == NULL && right == NULL)
+	{
+		result = NULL;
+	}
+	else
+	{
+		result = palloc0(sizeof(TSLexeme) * (left_size + right_size + 1));
+
+		for (i = 0; i < left_size; i++)
+			if (left[i].nvariant > left_max_nvariant)
+				left_max_nvariant = left[i].nvariant;
+
+		for (i = 0; i < right_size; i++)
+			right[i].nvariant += left_max_nvariant;
+		if (right && right[0].flags & TSL_ADDPOS)
+			right[0].flags &= ~TSL_ADDPOS;
+
+		i = 0;
+		while (i < left_size + right_size)
+		{
+			if (left_i < left_size)
+			{
+				do
+				{
+					result[i++] = left[left_i++];
+				} while (left && left[left_i].lexeme && (left[left_i].flags & TSL_ADDPOS) == 0);
+			}
+			if (right_i < right_size)
+			{
+				do
+				{
+					result[i++] = right[right_i++];
+				} while (right && right[right_i].lexeme && (right[right_i].flags & TSL_ADDPOS) == 0);
+			}
+		}
+	}
+	return result;
+}
+
+static TSLexeme *
+TSLexemeFilterMulti(TSLexeme *lexemes)
+{
+	TSLexeme *result;
+	TSLexeme *ptr = lexemes;
+	int multi_lexemes = 0;
+
+	while (ptr && ptr->lexeme)
+	{
+		if (ptr->flags & TSL_MULTI)
+			multi_lexemes++;
+		ptr++;
+	}
+
+	if (multi_lexemes > 0)
+	{
+		TSLexeme *lexemes_multi = palloc0(sizeof(TSLexeme) * (multi_lexemes + 1));
+		TSLexeme *lexemes_rest = palloc0(sizeof(TSLexeme) * (TSLexemeGetSize(lexemes) - multi_lexemes + 1));
+		int rest_i = 0;
+		int multi_i = 0;
+
+		ptr = lexemes;
+		while (ptr && ptr->lexeme)
+		{
+			if (ptr->flags & TSL_MULTI)
+				lexemes_multi[multi_i++] = *ptr;
+			else
+				lexemes_rest[rest_i++] = *ptr;
+
+			ptr++;
+		}
+		result = TSLexemeMergePositions(lexemes_rest, lexemes_multi);
+	}
+	else
+	{
+		result = TSLexemeMergePositions(lexemes, NULL);
+	}
+
+	return result;
+}
+
+static TSLexeme *
+TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool append)
 {
 	TSLexeme *result;
 	int left_size = TSLexemeGetSize(left);
@@ -484,7 +575,7 @@ TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool addposFlag)
 			memcpy(result, left, sizeof(TSLexeme) * left_size);
 		if (right_size > 0)
 			memcpy(result + left_size, right, sizeof(TSLexeme) * right_size);
-		if (addposFlag && left_size > 0 && right_size > 0)
+		if (append && left_size > 0 && right_size > 0)
 			result[left_size].flags |= TSL_ADDPOS;
 
 		for (i = left_size; i < left_size + right_size; i++)
@@ -598,6 +689,28 @@ ResultStorageClear(ResultStorage *storage)
 	storage->accepted = NULL;
 }
 
+static void
+TSLexemeMarkMulti(TSLexeme *lexemes)
+{
+	TSLexeme *ptr = lexemes;
+	while (ptr && ptr->lexeme)
+	{
+		ptr->flags |= TSL_MULTI;
+		ptr++;
+	}
+}
+
+static void
+TSLexemeUnmarkMulti(TSLexeme *lexemes)
+{
+	TSLexeme *ptr = lexemes;
+	while (ptr && ptr->lexeme)
+	{
+		ptr->flags &= ~TSL_MULTI;
+		ptr++;
+	}
+}
+
 static TSLexeme *
 LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 {
@@ -679,6 +792,7 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 
 				if (state->tmpResult)
 					pfree(state->tmpResult);
+				TSLexemeMarkMulti(res);
 				state->tmpResult = res;
 				res = NULL;
 			}
@@ -686,7 +800,11 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, Oid dictId)
 		else if (state != NULL)
 		{
 			if (res)
+			{
+				if (state)
+					TSLexemeMarkMulti(res);
 				DictStateListRemove(&ld->dslist, dictId);
+			}
 			else
 			{
 				/*
@@ -1139,6 +1257,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 		ld->skipDictionary = InvalidOid;
 
 	LexemesBufferClear(&ld->buffer);
+	res = TSLexemeFilterMulti(res);
 	if (res)
 		res = TSLexemeRemoveDuplications(res);
 

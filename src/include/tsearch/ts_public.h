@@ -116,6 +116,7 @@ typedef struct
 #define TSL_ADDPOS		0x01
 #define TSL_PREFIX		0x02
 #define TSL_FILTER		0x04
+#define TSL_MULTI		0x08
 
 /*
  * Struct for supporting complex dictionaries like thesaurus.
