@@ -273,6 +273,8 @@ ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH 
 	WHEN thesaurus THEN simple UNION thesaurus
 END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
+SELECT to_tsvector('english_multi2', 'one two');
+SELECT to_tsvector('english_multi2', 'one two three');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
 	WHEN thesaurus THEN thesaurus UNION simple

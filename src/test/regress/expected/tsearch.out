@@ -570,52 +570,52 @@ SELECT * from ts_debug('english', '<myns:foo-bar_baz.blurfl>abc&nm1;def&#xa9;ghi
    alias   |   description   |           token            | dictionaries |   command    | lexemes 
 -----------+-----------------+----------------------------+--------------+--------------+---------
  tag       | XML tag         | <myns:foo-bar_baz.blurfl>  |              |              | 
- asciiword | Word, all ASCII | abc                        | english_stem | english_stem | abc
+ asciiword | Word, all ASCII | abc                        | english_stem | english_stem | {abc}
  entity    | XML entity      | &nm1;                      |              |              | 
- asciiword | Word, all ASCII | def                        | english_stem | english_stem | def
+ asciiword | Word, all ASCII | def                        | english_stem | english_stem | {def}
  entity    | XML entity      | &#xa9;                     |              |              | 
- asciiword | Word, all ASCII | ghi                        | english_stem | english_stem | ghi
+ asciiword | Word, all ASCII | ghi                        | english_stem | english_stem | {ghi}
  entity    | XML entity      | &#245;                     |              |              | 
- asciiword | Word, all ASCII | jkl                        | english_stem | english_stem | jkl
+ asciiword | Word, all ASCII | jkl                        | english_stem | english_stem | {jkl}
  tag       | XML tag         | </myns:foo-bar_baz.blurfl> |              |              | 
 (9 rows)
 
 -- check parsing of URLs
 SELECT * from ts_debug('english', 'http://www.harewoodsolutions.co.uk/press.aspx</span>');
-  alias   |  description  |                 token                  | dictionaries | command |                lexemes                 
-----------+---------------+----------------------------------------+--------------+---------+----------------------------------------
+  alias   |  description  |                 token                  | dictionaries | command |                 lexemes                  
+----------+---------------+----------------------------------------+--------------+---------+------------------------------------------
  protocol | Protocol head | http://                                |              |         | 
- url      | URL           | www.harewoodsolutions.co.uk/press.aspx | simple       | simple  | www.harewoodsolutions.co.uk/press.aspx
- host     | Host          | www.harewoodsolutions.co.uk            | simple       | simple  | www.harewoodsolutions.co.uk
- url_path | URL path      | /press.aspx                            | simple       | simple  | /press.aspx
+ url      | URL           | www.harewoodsolutions.co.uk/press.aspx | simple       | simple  | {www.harewoodsolutions.co.uk/press.aspx}
+ host     | Host          | www.harewoodsolutions.co.uk            | simple       | simple  | {www.harewoodsolutions.co.uk}
+ url_path | URL path      | /press.aspx                            | simple       | simple  | {/press.aspx}
  tag      | XML tag       | </span>                                |              |         | 
 (5 rows)
 
 SELECT * from ts_debug('english', 'http://aew.wer0c.ewr/id?ad=qwe&dw<span>');
-  alias   |  description  |           token            | dictionaries | command |          lexemes           
-----------+---------------+----------------------------+--------------+---------+----------------------------
+  alias   |  description  |           token            | dictionaries | command |           lexemes            
+----------+---------------+----------------------------+--------------+---------+------------------------------
  protocol | Protocol head | http://                    |              |         | 
- url      | URL           | aew.wer0c.ewr/id?ad=qwe&dw | simple       | simple  | aew.wer0c.ewr/id?ad=qwe&dw
- host     | Host          | aew.wer0c.ewr              | simple       | simple  | aew.wer0c.ewr
- url_path | URL path      | /id?ad=qwe&dw              | simple       | simple  | /id?ad=qwe&dw
+ url      | URL           | aew.wer0c.ewr/id?ad=qwe&dw | simple       | simple  | {aew.wer0c.ewr/id?ad=qwe&dw}
+ host     | Host          | aew.wer0c.ewr              | simple       | simple  | {aew.wer0c.ewr}
+ url_path | URL path      | /id?ad=qwe&dw              | simple       | simple  | {/id?ad=qwe&dw}
  tag      | XML tag       | <span>                     |              |         | 
 (5 rows)
 
 SELECT * from ts_debug('english', 'http://5aew.werc.ewr:8100/?');
-  alias   |  description  |        token         | dictionaries | command |       lexemes        
-----------+---------------+----------------------+--------------+---------+----------------------
+  alias   |  description  |        token         | dictionaries | command |        lexemes         
+----------+---------------+----------------------+--------------+---------+------------------------
  protocol | Protocol head | http://              |              |         | 
- url      | URL           | 5aew.werc.ewr:8100/? | simple       | simple  | 5aew.werc.ewr:8100/?
- host     | Host          | 5aew.werc.ewr:8100   | simple       | simple  | 5aew.werc.ewr:8100
- url_path | URL path      | /?                   | simple       | simple  | /?
+ url      | URL           | 5aew.werc.ewr:8100/? | simple       | simple  | {5aew.werc.ewr:8100/?}
+ host     | Host          | 5aew.werc.ewr:8100   | simple       | simple  | {5aew.werc.ewr:8100}
+ url_path | URL path      | /?                   | simple       | simple  | {/?}
 (4 rows)
 
 SELECT * from ts_debug('english', '5aew.werc.ewr:8100/?xx');
-  alias   | description |         token          | dictionaries | command |        lexemes         
-----------+-------------+------------------------+--------------+---------+------------------------
- url      | URL         | 5aew.werc.ewr:8100/?xx | simple       | simple  | 5aew.werc.ewr:8100/?xx
- host     | Host        | 5aew.werc.ewr:8100     | simple       | simple  | 5aew.werc.ewr:8100
- url_path | URL path    | /?xx                   | simple       | simple  | /?xx
+  alias   | description |         token          | dictionaries | command |         lexemes          
+----------+-------------+------------------------+--------------+---------+--------------------------
+ url      | URL         | 5aew.werc.ewr:8100/?xx | simple       | simple  | {5aew.werc.ewr:8100/?xx}
+ host     | Host        | 5aew.werc.ewr:8100     | simple       | simple  | {5aew.werc.ewr:8100}
+ url_path | URL path    | /?xx                   | simple       | simple  | {/?xx}
 (3 rows)
 
 SELECT token, alias,

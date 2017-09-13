@@ -758,6 +758,18 @@ SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
  '1987a':2 'sn':1 'supernova':1
 (1 row)
 
+SELECT to_tsvector('english_multi2', 'one two');
+      to_tsvector       
+------------------------
+ '12':1 'one':1 'two':2
+(1 row)
+
+SELECT to_tsvector('english_multi2', 'one two three');
+            to_tsvector            
+-----------------------------------
+ '123':1 'one':1 'three':3 'two':2
+(1 row)
+
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
 	WHEN thesaurus THEN thesaurus UNION simple
 	ELSE english_stem UNION simple
