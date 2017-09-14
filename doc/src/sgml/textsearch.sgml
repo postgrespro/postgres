@@ -2281,9 +2281,9 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
    A condition is a boolean expression with dictionaries used as operands and
    basic logic operators <literal>AND</literal>, <literal>OR</literal>, <literal>NOT</literal> and
    special operator <literal>MAP BY</literal>. In addition to operators, each operand
-   could contain <literal>IS [NOT] NULL</literal> or <literal>IS [NOT] STOP</literal> option
+   could contain <literal>IS [NOT] NULL</literal> or <literal>IS [NOT] STOPWORD</literal> option
    to mark way to interpret lexemes as boolean value. If no options are mentioned
-   it is interpret as <literal>dictionary IS NOT NULL AND dictionary IS NOT STOP</literal>.
+   it is interpret as <literal>dictionary IS NOT NULL AND dictionary IS NOT STOPWORD</literal>.
 
    Special operator <literal>MAP BY</literal> is used to use output of right-hand
    subexpression as input for left-hand one. In condition left and right

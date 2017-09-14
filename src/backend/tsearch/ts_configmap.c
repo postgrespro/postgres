@@ -141,7 +141,7 @@ TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 			if (expression->options & DICTMAP_OPT_IS_NULL)
 				appendStringInfoString(result, "NULL ");
 			if (expression->options & DICTMAP_OPT_IS_STOP)
-				appendStringInfoString(result, "STOP ");
+				appendStringInfoString(result, "STOPWORD ");
 		}
 	}
 }

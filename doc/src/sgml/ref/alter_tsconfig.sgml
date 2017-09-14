@@ -185,9 +185,9 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
    </para>
 
    <programlisting>
-    dictionary_name [IS [NOT] {NULL|STOP}] [ {AND|OR} ... ]
+    dictionary_name [IS [NOT] {NULL|STOPWORD}] [ {AND|OR} ... ]
     or
-    (dictionary_name MAP BY dictionary_name) IS [NOT] {NULL|STOP} [ {AND|OR} ... ]
+    (dictionary_name MAP BY dictionary_name) IS [NOT] {NULL|STOPWORD} [ {AND|OR} ... ]
    </programlisting>
 
    <para>
@@ -204,7 +204,7 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
    <para>
     Condition used to determine a command for token processing. A condition is
     boolean expression. A dictionary can be tested for <literal>NULL</>-output
-    or stop-word output via options <literal>IS [NOT] {NULL|STOP}</>. If none
+    or stop-word output via options <literal>IS [NOT] {NULL|STOPWORD}</>. If none
     of test options is mentied (<literal>dictionary_name</> without additional
     options) it is tested for both not <literal>NULL</> and not stop word output.
    </para>
