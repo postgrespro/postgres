@@ -98,8 +98,19 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 static void
 TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 {
+	if (expression->dictionary == InvalidOid && expression->options != 0)
+		appendStringInfoChar(result, '(');
+
 	if (expression->left)
+	{
+		if (expression->left->operator != 0 && expression->left->operator < expression->operator)
+			appendStringInfoChar(result, '(');
+
 		TSMapExpressionPrint(expression->left, result);
+
+		if (expression->left->operator != 0 && expression->left->operator < expression->operator)
+			appendStringInfoChar(result, ')');
+	}
 
 	switch (expression->operator)
 	{
@@ -127,11 +138,23 @@ TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 	}
 
 	if (expression->right)
+	{
+		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
+			appendStringInfoChar(result, '(');
+		
 		TSMapExpressionPrint(expression->right, result);
 
-	if (expression->dictionary != InvalidOid)
+		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
+			appendStringInfoChar(result, ')');
+	}
+
+	if (expression->dictionary == InvalidOid && expression->options != 0)
+		appendStringInfoChar(result, ')');
+
+	if (expression->dictionary != InvalidOid || expression->options != 0)
 	{
-		TSMapPrintDictName(expression->dictionary, result);
+		if (expression->dictionary != InvalidOid)
+			TSMapPrintDictName(expression->dictionary, result);
 		if (expression->options != (DICTMAP_OPT_NOT | DICTMAP_OPT_IS_NULL | DICTMAP_OPT_IS_STOP))
 		{
 			if (expression->options != 0)
