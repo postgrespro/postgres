@@ -44,19 +44,19 @@ typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
 
 typedef struct TSMapExpression
 {
-	int		operator;
-	Oid		dictionary;
-	int		options;
-	bool	is_true;
+	int			operator;
+	Oid			dictionary;
+	int			options;
+	bool		is_true;
 	struct TSMapExpression *left;
 	struct TSMapExpression *right;
 } TSMapExpression;
 
 typedef struct TSMapCommand
 {
-	bool				is_expression;
-	void			   *ruleList; /* this is a TSMapRuleList object */
-	TSMapExpression	   *expression;
+	bool		is_expression;
+	void	   *ruleList;		/* this is a TSMapRuleList object */
+	TSMapExpression *expression;
 } TSMapCommand;
 
 typedef struct TSMapCondition
@@ -66,15 +66,15 @@ typedef struct TSMapCondition
 
 typedef struct TSMapRule
 {
-	Oid				dictionary;
-	TSMapCondition	condition;
-	TSMapCommand	command;
+	Oid			dictionary;
+	TSMapCondition condition;
+	TSMapCommand command;
 } TSMapRule;
 
 typedef struct TSMapRuleList
 {
-	TSMapRule *data;
-	int count;
+	TSMapRule  *data;
+	int			count;
 } TSMapRuleList;
 
 /* ----------------

@@ -4375,6 +4375,7 @@ static DictMapExprElem *
 _copyDictMapExprElem(const DictMapExprElem *from)
 {
 	DictMapExprElem *newnode = makeNode(DictMapExprElem);
+
 	COPY_NODE_FIELD(dictname);
 	COPY_NODE_FIELD(left);
 	COPY_NODE_FIELD(right);
@@ -4389,6 +4390,7 @@ static DictMapElem *
 _copyDictMapElem(const DictMapElem *from)
 {
 	DictMapElem *newnode = makeNode(DictMapElem);
+
 	COPY_NODE_FIELD(condition);
 	COPY_NODE_FIELD(command);
 

@@ -939,8 +939,8 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
 			TSMapRuleList *mapdicts = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
-			Oid *dictionaryOids = TSMapGetDictionariesList(mapdicts);
-			Oid *currentOid = dictionaryOids;
+			Oid		   *dictionaryOids = TSMapGetDictionariesList(mapdicts);
+			Oid		   *currentOid = dictionaryOids;
 
 			while (*currentOid != InvalidOid)
 			{
@@ -1287,6 +1287,7 @@ static TSMapExpression *
 ParseTSMapExpression(DictMapExprElem *head)
 {
 	TSMapExpression *result;
+
 	if (head == NULL)
 		return NULL;
 
@@ -1305,7 +1306,7 @@ ParseTSMapExpression(DictMapExprElem *head)
 		result->is_true = true;
 		result->options = result->operator = 0;
 	}
-	else /* head->kind == DICT_MAP_OPERAND */
+	else						/* head->kind == DICT_MAP_OPERAND */
 	{
 		result->dictionary = get_ts_dict_oid(head->dictname, false);
 		result->options = head->options;
@@ -1317,7 +1318,8 @@ ParseTSMapExpression(DictMapExprElem *head)
 static TSMapRule
 ParseTSMapRule(DictMapElem *elem)
 {
-	TSMapRule result;
+	TSMapRule	result;
+
 	memset(&result, 0, sizeof(result));
 
 	result.condition.expression = ParseTSMapExpression(elem->condition);
@@ -1340,11 +1342,11 @@ ParseTSMapRule(DictMapElem *elem)
 static TSMapRuleList *
 ParseTSMapList(List *dictMapList)
 {
-	int				i;
-	TSMapRuleList  *result;
-	ListCell	   *c;
+	int			i;
+	TSMapRuleList *result;
+	ListCell   *c;
 
-	if (list_length(dictMapList) == 1 && ((DictMapElem*)lfirst(dictMapList->head))->dictnames)
+	if (list_length(dictMapList) == 1 && ((DictMapElem *) lfirst(dictMapList->head))->dictnames)
 	{
 		DictMapElem *elem = (DictMapElem *) lfirst(dictMapList->head);
 
@@ -1353,9 +1355,10 @@ ParseTSMapList(List *dictMapList)
 		result->data = palloc0(sizeof(TSMapRule) * result->count);
 
 		i = 0;
-		foreach (c, elem->dictnames)
+		foreach(c, elem->dictnames)
 		{
-			List *names = (List *) lfirst(c);
+			List	   *names = (List *) lfirst(c);
+
 			result->data[i].dictionary = get_ts_dict_oid(names, false);
 			i++;
 		}
@@ -1367,10 +1370,11 @@ ParseTSMapList(List *dictMapList)
 		result->data = palloc0(sizeof(TSMapRule) * result->count);
 
 		i = 0;
-		foreach (c, dictMapList)
+		foreach(c, dictMapList)
 		{
-			List *l = (List*)lfirst(c);
-			result->data[i] = ParseTSMapRule((DictMapElem *)l);
+			List	   *l = (List *) lfirst(c);
+
+			result->data[i] = ParseTSMapRule((DictMapElem *) l);
 			i++;
 		}
 	}

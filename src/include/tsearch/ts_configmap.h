@@ -30,4 +30,4 @@ extern void TSMapFree(TSMapRuleList *rules);
 extern void TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth);
 extern void TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth);
 
-#endif   /* _PG_TS_CONFIGMAP_H_ */
+#endif							/* _PG_TS_CONFIGMAP_H_ */

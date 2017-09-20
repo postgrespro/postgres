@@ -3379,21 +3379,21 @@ typedef enum DictPipeElemType
 typedef struct DictMapExprElem
 {
 	NodeTag		type;
-	int8		kind;				/* See DictMapExprElemType */
-	List	   *dictname;			/* Used in DICT_MAP_EXPR_OPERAND */
-	struct DictMapExprElem *left;		/* Used in DICT_MAP_EXPR_OPERATOR */
-	struct DictMapExprElem *right;		/* Used in DICT_MAP_EXPR_OPERATOR */
-	int8		oper;				/* Used in DICT_MAP_EXPR_OPERATOR */
-	int8		options;			/* Can be used in the future */
+	int8		kind;			/* See DictMapExprElemType */
+	List	   *dictname;		/* Used in DICT_MAP_EXPR_OPERAND */
+	struct DictMapExprElem *left;	/* Used in DICT_MAP_EXPR_OPERATOR */
+	struct DictMapExprElem *right;	/* Used in DICT_MAP_EXPR_OPERATOR */
+	int8		oper;			/* Used in DICT_MAP_EXPR_OPERATOR */
+	int8		options;		/* Can be used in the future */
 } DictMapExprElem;
 
 typedef struct DictMapElem
 {
-	NodeTag				type;
-	DictMapExprElem    *condition;
-	DictMapExprElem    *command;
-	List			   *commandmaps;
-	List			   *dictnames;
+	NodeTag		type;
+	DictMapExprElem *condition;
+	DictMapExprElem *command;
+	List	   *commandmaps;
+	List	   *dictnames;
 } DictMapElem;
 
 typedef struct AlterTSConfigurationStmt

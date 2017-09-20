@@ -31,7 +31,8 @@
  * Used during the parsing of TSMapRuleList from JSONB into internal
  * datastructures.
  */
-typedef enum TSMapRuleParseState {
+typedef enum TSMapRuleParseState
+{
 	TSMRPS_BEGINING,
 	TSMRPS_IN_CASES_ARRAY,
 	TSMRPS_IN_CASE,
@@ -40,7 +41,8 @@ typedef enum TSMapRuleParseState {
 	TSMRPS_IN_EXPRESSION
 } TSMapRuleParseState;
 
-typedef enum TSMapRuleParseNodeType {
+typedef enum TSMapRuleParseNodeType
+{
 	TSMRPT_UNKNOWN,
 	TSMRPT_NUMERIC,
 	TSMRPT_EXPRESSION,
@@ -51,16 +53,18 @@ typedef enum TSMapRuleParseNodeType {
 	TSMRPT_BOOL
 } TSMapRuleParseNodeType;
 
-typedef struct TSMapParseNode {
+typedef struct TSMapParseNode
+{
 	TSMapRuleParseNodeType type;
-	union {
-		int					num_val;
-		TSMapExpression	   *expression_val;
-		TSMapRuleList	   *rule_list_val;
-		TSMapRule		   *rule_val;
-		TSMapCommand	   *command_val;
-		TSMapCondition	   *condition_val;
-		bool				bool_val;
+	union
+	{
+		int			num_val;
+		bool		bool_val;
+		TSMapRule  *rule_val;
+		TSMapCommand *command_val;
+		TSMapRuleList *rule_list_val;
+		TSMapCondition *condition_val;
+		TSMapExpression *expression_val;
 	};
 } TSMapParseNode;
 
@@ -70,21 +74,21 @@ static TSMapParseNode *JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseSta
 static void
 TSMapPrintDictName(Oid dictId, StringInfo result)
 {
-	Relation		maprel;
-	Relation		mapidx;
-	ScanKeyData		mapskey;
-	SysScanDesc		mapscan;
-	HeapTuple		maptup;
-	Form_pg_ts_dict	dict;
+	Relation	maprel;
+	Relation	mapidx;
+	ScanKeyData mapskey;
+	SysScanDesc mapscan;
+	HeapTuple	maptup;
+	Form_pg_ts_dict dict;
 
 	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
 	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
 
 	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
-			BTEqualStrategyNumber, F_OIDEQ,
-			ObjectIdGetDatum(dictId));
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(dictId));
 	mapscan = systable_beginscan_ordered(maprel, mapidx,
-									 NULL, 1, &mapskey);
+										 NULL, 1, &mapskey);
 
 	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
 	dict = (Form_pg_ts_dict) GETSTRUCT(maptup);
@@ -141,7 +145,7 @@ TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 	{
 		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
 			appendStringInfoChar(result, '(');
-		
+
 		TSMapExpressionPrint(expression->right, result);
 
 		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
@@ -172,7 +176,8 @@ TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
 void
 TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 {
-	int i;
+	int			i;
+
 	if (rule->dictionary != InvalidOid)
 	{
 		TSMapPrintDictName(rule->dictionary, result);
@@ -207,11 +212,12 @@ TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
 void
 TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
 {
-	int i;
+	int			i;
 
 	for (i = 0; i < rules->count; i++)
 	{
-		if (rules->data[i].dictionary != InvalidOid) /* Comma-separated configuration syntax */
+		if (rules->data[i].dictionary != InvalidOid)	/* Comma-separated
+														 * configuration syntax */
 		{
 			if (i > 0)
 				appendStringInfoString(result, ", ");
@@ -221,7 +227,8 @@ TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
 		{
 			if (i == 0)
 			{
-				int j;
+				int			j;
+
 				for (j = 0; j < depth; j++)
 					appendStringInfoChar(result, '\t');
 				appendStringInfoString(result, "CASE\n");
@@ -244,10 +251,10 @@ TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
 Datum
 dictionary_map_to_text(PG_FUNCTION_ARGS)
 {
-	Oid					cfgOid = PG_GETARG_OID(0);
-	int32				tokentype = PG_GETARG_INT32(1);
-	StringInfo			rawResult;
-	text			   *result = NULL;
+	Oid			cfgOid = PG_GETARG_OID(0);
+	int32		tokentype = PG_GETARG_INT32(1);
+	StringInfo	rawResult;
+	text	   *result = NULL;
 	TSConfigCacheEntry *cacheEntry;
 
 	cacheEntry = lookup_ts_config_cache(cfgOid);
@@ -257,6 +264,7 @@ dictionary_map_to_text(PG_FUNCTION_ARGS)
 	if (cacheEntry->lenmap > tokentype && cacheEntry->map[tokentype]->count > 0)
 	{
 		TSMapRuleList *rules = cacheEntry->map[tokentype];
+
 		TSMapPrintRuleList(rules, rawResult, 0);
 	}
 
@@ -272,19 +280,19 @@ dictionary_map_to_text(PG_FUNCTION_ARGS)
 static JsonbValue *
 TSIntToJsonbValue(int int_value)
 {
-	char			buffer[16];
-	JsonbValue	   *value = palloc0(sizeof(JsonbValue));
+	char		buffer[16];
+	JsonbValue *value = palloc0(sizeof(JsonbValue));
 
 	memset(buffer, 0, sizeof(char) * 16);
 
 	pg_ltoa(int_value, buffer);
 	value->type = jbvNumeric;
 	value->val.numeric = DatumGetNumeric(DirectFunctionCall3(
-														  numeric_in,
-														  CStringGetDatum(buffer),
-														  ObjectIdGetDatum(InvalidOid),
-														  Int32GetDatum(-1)
-														  ));
+															 numeric_in,
+															 CStringGetDatum(buffer),
+															 ObjectIdGetDatum(InvalidOid),
+															 Int32GetDatum(-1)
+															 ));
 	return value;
 
 }
@@ -296,8 +304,8 @@ TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 		return NULL;
 	if (expression->dictionary != InvalidOid)
 	{
-		JsonbValue		key;
-		JsonbValue	   *value = NULL;
+		JsonbValue	key;
+		JsonbValue *value = NULL;
 
 		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
@@ -322,14 +330,15 @@ TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
 	else if (expression->is_true)
 	{
 		JsonbValue *value = palloc0(sizeof(JsonbValue));
+
 		value->type = jbvBool;
 		value->val.boolean = true;
 		return value;
 	}
 	else
 	{
-		JsonbValue		key;
-		JsonbValue	   *value = NULL;
+		JsonbValue	key;
+		JsonbValue *value = NULL;
 
 		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
@@ -380,8 +389,8 @@ TSRuleToJsonbValue(TSMapRule *rule, JsonbParseState *jsonb_state)
 	}
 	else
 	{
-		JsonbValue		key;
-		JsonbValue	   *value = NULL;
+		JsonbValue	key;
+		JsonbValue *value = NULL;
 
 		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
@@ -415,13 +424,14 @@ TSRuleToJsonbValue(TSMapRule *rule, JsonbParseState *jsonb_state)
 static JsonbValue *
 TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state)
 {
-	JsonbValue	   *out;
-	int				i;
+	JsonbValue *out;
+	int			i;
 
 	pushJsonbValue(&jsonb_state, WJB_BEGIN_ARRAY, NULL);
 	for (i = 0; i < rules->count; i++)
 	{
 		JsonbValue *value = TSRuleToJsonbValue(&rules->data[i], jsonb_state);
+
 		if (IsAJsonbScalar(value))
 			pushJsonbValue(&jsonb_state, WJB_ELEM, value);
 	}
@@ -433,8 +443,8 @@ Jsonb *
 TSMapToJsonb(TSMapRuleList *rules)
 {
 	JsonbParseState *jsonb_state = NULL;
-	JsonbValue	   *out;
-	Jsonb		   *result;
+	JsonbValue *out;
+	Jsonb	   *result;
 
 	out = TSMapToJsonbValue(rules, jsonb_state);
 
@@ -446,6 +456,7 @@ static inline TSMapExpression *
 JsonbToTSMapGetExpression(TSMapParseNode *node)
 {
 	TSMapExpression *result;
+
 	if (node->type == TSMRPT_NUMERIC)
 	{
 		result = palloc0(sizeof(TSMapExpression));
@@ -467,14 +478,15 @@ JsonbToTSMapGetExpression(TSMapParseNode *node)
 static TSMapParseNode *
 JsonbToTSMapParseObject(JsonbValue *value, TSMapRuleParseState *parse_state)
 {
-	TSMapParseNode	   *result = palloc0(sizeof(TSMapParseNode));
-	char			   *str;
+	TSMapParseNode *result = palloc0(sizeof(TSMapParseNode));
+	char	   *str;
+
 	switch (value->type)
 	{
 		case jbvNumeric:
 			result->type = TSMRPT_NUMERIC;
 			str = DatumGetCString(
-					DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
+								  DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
 			result->num_val = pg_atoi(str, sizeof(result->num_val), 0);
 			break;
 		case jbvArray:
@@ -498,12 +510,12 @@ static TSMapParseNode *
 JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
 {
 	JsonbIteratorToken r;
-	JsonbValue		val;
-	JsonbIterator  *it;
+	JsonbValue	val;
+	JsonbIterator *it;
 	TSMapParseNode *result;
 	TSMapParseNode *nested_result;
-	char		   *key;
-	TSMapRuleList  *rule_list = NULL;
+	char	   *key;
+	TSMapRuleList *rule_list = NULL;
 
 	it = JsonbIteratorInit(root);
 	result = palloc0(sizeof(TSMapParseNode));
@@ -539,7 +551,7 @@ JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
 					if (strcmp(key, "command") == 0)
 					{
 						result->rule_val->command.is_expression = nested_result->type == TSMRPT_EXPRESSION ||
-															nested_result->type == TSMRPT_NUMERIC;
+							nested_result->type == TSMRPT_NUMERIC;
 
 						if (result->rule_val->command.is_expression)
 							result->rule_val->command.expression = JsonbToTSMapGetExpression(nested_result);
@@ -628,7 +640,10 @@ JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
 				{
 					if (*parse_state == TSMRPS_IN_CASES_ARRAY)
 					{
-						/* Add dictionary Oid into array (comma-separated configuration) */
+						/*
+						 * Add dictionary Oid into array (comma-separated
+						 * configuration)
+						 */
 						rule_list->count++;
 						if (rule_list->data)
 							rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
@@ -666,7 +681,7 @@ TSMapRuleList *
 JsonbToTSMap(Jsonb *json)
 {
 	JsonbContainer *root = &json->root;
-	TSMapRuleList  *result = palloc0(sizeof(TSMapRuleList));
+	TSMapRuleList *result = palloc0(sizeof(TSMapRuleList));
 	TSMapRuleParseState parse_state = TSMRPS_BEGINING;
 	TSMapParseNode *parsing_result;
 
@@ -696,7 +711,8 @@ TSMapReplaceDictionaryParseMap(TSMapRule *rule, Oid oldDict, Oid newDict)
 {
 	if (rule->dictionary != InvalidOid)
 	{
-		Oid *result;
+		Oid		   *result;
+
 		result = palloc0(sizeof(Oid) * 2);
 		result[0] = rule->dictionary;
 		result[1] = InvalidOid;
@@ -715,7 +731,7 @@ TSMapReplaceDictionaryParseMap(TSMapRule *rule, Oid oldDict, Oid newDict)
 void
 TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDict)
 {
-	int i;
+	int			i;
 
 	for (i = 0; i < rules->count; i++)
 		TSMapReplaceDictionaryParseMap(&rules->data[i], oldDict, newDict);
@@ -724,25 +740,25 @@ TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDict)
 static Oid *
 TSMapGetDictionariesParseExpression(TSMapExpression *expr)
 {
-	Oid *left_res;
-	Oid *right_res;
-	Oid *result;
+	Oid		   *left_res;
+	Oid		   *right_res;
+	Oid		   *result;
 
 	left_res = right_res = NULL;
 
 	if (expr->left && expr->right)
 	{
-		Oid *ptr;
-		int count_l;
-		int count_r;
+		Oid		   *ptr;
+		int			count_l;
+		int			count_r;
 
 		left_res = TSMapGetDictionariesParseExpression(expr->left);
 		right_res = TSMapGetDictionariesParseExpression(expr->right);
 
-		for (ptr = left_res, count_l = 0; *ptr != InvalidOid; count_l++, ptr++)
-			/* EMPTY */ ;
-		for (ptr = right_res, count_r = 0; *ptr != InvalidOid; count_r++, ptr++)
-			/* EMPTY */ ;
+		for (ptr = left_res, count_l = 0; *ptr != InvalidOid; ptr++)
+			 count_l++;
+		for (ptr = right_res, count_r = 0; *ptr != InvalidOid; ptr++)
+			 count_r++;
 
 		result = palloc0(sizeof(Oid) * (count_l + count_r + 1));
 		memcpy(result, left_res, sizeof(Oid) * count_l);
@@ -765,7 +781,7 @@ TSMapGetDictionariesParseExpression(TSMapExpression *expr)
 static Oid *
 TSMapGetDictionariesParseRule(TSMapRule *rule)
 {
-	Oid *result;
+	Oid		   *result;
 
 	if (rule->dictionary)
 	{
@@ -786,25 +802,25 @@ TSMapGetDictionariesParseRule(TSMapRule *rule)
 Oid *
 TSMapGetDictionariesList(TSMapRuleList *rules)
 {
-	int		i;
-	Oid	  **results_arr;
-	int	   *sizes;
-	Oid	   *result;
-	int		size;
-	int		offset;
+	int			i;
+	Oid		  **results_arr;
+	int		   *sizes;
+	Oid		   *result;
+	int			size;
+	int			offset;
 
-	results_arr = palloc0(sizeof(Oid*) * rules->count);
+	results_arr = palloc0(sizeof(Oid *) * rules->count);
 	sizes = palloc0(sizeof(int) * rules->count);
 	size = 0;
 	for (i = 0; i < rules->count; i++)
 	{
-		int count;
-		Oid *ptr;
+		int			count;
+		Oid		   *ptr;
 
 		results_arr[i] = TSMapGetDictionariesParseRule(&rules->data[i]);
 
-		for (count = 0, ptr = results_arr[i]; *ptr != InvalidOid; count++, ptr++)
-			/* EMPTY */ ;
+		for (count = 0, ptr = results_arr[i]; *ptr != InvalidOid; ptr++)
+			 count++;
 
 		sizes[i] = count;
 		size += count;
@@ -830,10 +846,10 @@ ListDictionary *
 TSMapGetListDictionary(TSMapRuleList *rules)
 {
 	ListDictionary *result = palloc0(sizeof(ListDictionary));
-	Oid			   *oids = TSMapGetDictionariesList(rules);
-	int				i;
-	int				count;
-	Oid			   *ptr;
+	Oid		   *oids = TSMapGetDictionariesList(rules);
+	int			i;
+	int			count;
+	Oid		   *ptr;
 
 	ptr = oids;
 	count = 0;
@@ -857,6 +873,7 @@ static TSMapExpression *
 TSMapExpressionMoveToMemoryContext(TSMapExpression *expr, MemoryContext context)
 {
 	TSMapExpression *result;
+
 	if (expr == NULL)
 		return NULL;
 	result = MemoryContextAlloc(context, sizeof(TSMapExpression));
@@ -884,7 +901,8 @@ TSMapExpressionMoveToMemoryContext(TSMapExpression *expr, MemoryContext context)
 static TSMapRule
 TSMapRuleMoveToMemoryContext(TSMapRule *rule, MemoryContext context)
 {
-	TSMapRule result;
+	TSMapRule	result;
+
 	memset(&result, 0, sizeof(TSMapRule));
 
 	if (rule->dictionary)
@@ -908,8 +926,8 @@ TSMapRuleMoveToMemoryContext(TSMapRule *rule, MemoryContext context)
 TSMapRuleList *
 TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context)
 {
-	int				i;
-	TSMapRuleList  *result = MemoryContextAlloc(context, sizeof(TSMapRuleList));
+	int			i;
+	TSMapRuleList *result = MemoryContextAlloc(context, sizeof(TSMapRuleList));
 
 	memset(result, 0, sizeof(TSMapRuleList));
 
@@ -947,12 +965,12 @@ TSMapRuleFree(TSMapRule rule)
 }
 
 void
-TSMapFree(TSMapRuleList *rules)
+TSMapFree(TSMapRuleList * rules)
 {
-	int i;
+	int			i;
+
 	for (i = 0; i < rules->count; i++)
 		TSMapRuleFree(rules->data[i]);
 	pfree(rules->data);
 	pfree(rules);
 }
-

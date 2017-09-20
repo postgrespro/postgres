@@ -409,17 +409,17 @@ lookup_ts_config_cache(Oid cfgId)
 		 * If we didn't find one, we want to make one. But first look up the
 		 * object to be sure the OID is real.
 		 */
-		HeapTuple							tp;
-		Form_pg_ts_config					cfg;
-		Relation							maprel;
-		Relation							mapidx;
-		ScanKeyData							mapskey;
-		SysScanDesc							mapscan;
-		HeapTuple							maptup;
-		TSMapRuleList					   *mapruleslist[MAXTOKENTYPE + 1];
-		int									maxtokentype;
-		int									i;
-		TSMapRuleList					   *rules_tmp;
+		HeapTuple	tp;
+		Form_pg_ts_config cfg;
+		Relation	maprel;
+		Relation	mapidx;
+		ScanKeyData mapskey;
+		SysScanDesc mapscan;
+		HeapTuple	maptup;
+		TSMapRuleList *mapruleslist[MAXTOKENTYPE + 1];
+		int			maxtokentype;
+		int			i;
+		TSMapRuleList *rules_tmp;
 
 		tp = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgId));
 		if (!HeapTupleIsValid(tp))
@@ -467,9 +467,9 @@ lookup_ts_config_cache(Oid cfgId)
 		/*
 		 * Scan pg_ts_config_map to gather dictionary list for each token type
 		 *
-		 * Because the index is on (mapcfg, maptokentype), we will
-		 * see the entries in maptokentype order
-		 * even though we didn't explicitly ask for that.
+		 * Because the index is on (mapcfg, maptokentype), we will see the
+		 * entries in maptokentype order even though we didn't explicitly ask
+		 * for that.
 		 */
 		maxtokentype = 0;
 
@@ -509,7 +509,7 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the overall map */
 			entry->lenmap = maxtokentype + 1;
-			entry->map = (TSMapRuleList **)
+			entry->map = (TSMapRuleList * *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(TSMapRuleList *) * entry->lenmap);
 			memcpy(entry->map, mapruleslist,
