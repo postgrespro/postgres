@@ -49,38 +49,38 @@ typedef struct ListParsedLex
 
 typedef struct DictState
 {
-	Oid				relatedDictionary;
-	DictSubState	subState;
-	ListParsedLex	acceptedTokens;
-	ListParsedLex	intermediateTokens;
-	bool			storeToAccepted;
-bool			processed;
-TSLexeme	   *tmpResult;
+	Oid			relatedDictionary;
+	DictSubState subState;
+	ListParsedLex acceptedTokens; /* Tokens which are processed and accepted, used in last returned result by the dictionary */
+	ListParsedLex intermediateTokens; /* Tokens which are not accepted, but were processed by thesaurus-like dictionry */
+	bool		storeToAccepted; /* Should current token be appended to accepted or intermediate tokens */
+	bool		processed; /* Is the dictionary take control during current token processing */
+	TSLexeme   *tmpResult; /* Last result retued by thesaurus-like dictionary, if dictionary still waiting for more lexemes */
 } DictState;
 
 typedef struct DictStateList
 {
-int			listLength;
-DictState  *states;
+	int			listLength;
+	DictState  *states;
 } DictStateList;
 
 typedef struct LexemesBufferEntry
 {
-Oid			dictId;
-ParsedLex  *token;
-TSLexeme   *data;
+	Oid			dictId;
+	ParsedLex  *token;
+	TSLexeme   *data;
 } LexemesBufferEntry;
 
 typedef struct LexemesBuffer
 {
-int					size;
-LexemesBufferEntry *data;
+	int			size;
+	LexemesBufferEntry *data;
 } LexemesBuffer;
 
 typedef struct ResultStorage
 {
-TSLexeme	   *lexemes;
-TSLexeme	   *accepted;
+	TSLexeme   *lexemes; /* Processed lexemes, which is not yet accepted */
+	TSLexeme   *accepted;
 } ResultStorage;
 
 typedef struct LexizeData
@@ -97,18 +97,18 @@ Oid			skipDictionary;
 
 typedef struct TSDebugContext
 {
-TSConfigCacheEntry *cfg;
-TSParserCacheEntry *prsobj;
-LexDescr		   *tokenTypes;
-void			   *prsdata;
-LexizeData			ldata;
-int					tokentype;
-TSLexeme		   *savedLexemes;
-ParsedLex		   *leftTokens;
-TSMapRule		   *rule;
+	TSConfigCacheEntry *cfg;
+	TSParserCacheEntry *prsobj;
+	LexDescr   *tokenTypes;
+	void	   *prsdata;
+	LexizeData	ldata;
+	int			tokentype; /* Last token tokentype */
+	TSLexeme   *savedLexemes; /* Last token lexemes stored for ts_debug output */
+	ParsedLex  *leftTokens; /* Corresponded ParsedLex */
+	TSMapRule  *rule; /* Rule which produced output */
 } TSDebugContext;
 
-static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
+static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression * left, TSMapExpression *right);
 
 static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
