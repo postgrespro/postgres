@@ -756,9 +756,9 @@ TSMapGetDictionariesParseExpression(TSMapExpression *expr)
 		right_res = TSMapGetDictionariesParseExpression(expr->right);
 
 		for (ptr = left_res, count_l = 0; *ptr != InvalidOid; ptr++)
-			 count_l++;
+			count_l++;
 		for (ptr = right_res, count_r = 0; *ptr != InvalidOid; ptr++)
-			 count_r++;
+			count_r++;
 
 		result = palloc0(sizeof(Oid) * (count_l + count_r + 1));
 		memcpy(result, left_res, sizeof(Oid) * count_l);
@@ -820,7 +820,7 @@ TSMapGetDictionariesList(TSMapRuleList *rules)
 		results_arr[i] = TSMapGetDictionariesParseRule(&rules->data[i]);
 
 		for (count = 0, ptr = results_arr[i]; *ptr != InvalidOid; ptr++)
-			 count++;
+			count++;
 
 		sizes[i] = count;
 		size += count;
