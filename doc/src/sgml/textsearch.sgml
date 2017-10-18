@@ -2304,7 +2304,7 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
    The general rule for configuring a list of condition/command pairs
    is to place first the most narrow, most specific dictionary, then the more
    general dictionaries, finishing with a very general dictionaries, like
-   a <application>Snowball</> stemmer or <literal>simple</>, which
+   a <application>Snowball</application> stemmer or <literal>simple</literal>, which
    recognizes everything. For example, for an astronomy-specific search
    (<literal>astro_en</literal> configuration) one could bind token type
    <type>asciiword</type> (ASCII word) to a synonym dictionary of astronomical
@@ -2343,8 +2343,8 @@ ALTER TEXT SEARCH CONFIGURATION multi_en_de
    normalize words to simplify the task of later dictionaries.  For example,
    a filtering dictionary could be used to remove accents from accented
    letters, as is done by the <xref linkend="unaccent"> module.
-   Otherwise filter dictionary should be placed at righthand of <literal>MAP BY</>
-   operator. If filter dictionary returns <literal>NULL</> it pass initial token
+   Otherwise filter dictionary should be placed at righthand of <literal>MAP BY</literal>
+   operator. If filter dictionary returns <literal>NULL</literal> it pass initial token
    further in processing chain.
   </para>
 
