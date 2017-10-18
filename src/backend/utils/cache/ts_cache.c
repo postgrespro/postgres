@@ -54,13 +54,12 @@
 
 
 /*
- * MAXTOKENTYPE/MAXDICTSPERTT are arbitrary limits on the workspace size
+ * MAXTOKENTYPE is arbitrary limits on the workspace size
  * used in lookup_ts_config_cache().  We could avoid hardwiring a limit
  * by making the workspace dynamically enlargeable, but it seems unlikely
  * to be worth the trouble.
  */
 #define MAXTOKENTYPE		256
-#define MAXDICTSPERTT		100
 
 
 static HTAB *TSParserCacheHash = NULL;

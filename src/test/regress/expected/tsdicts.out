@@ -664,7 +664,7 @@ SELECT to_tsquery('hunspell_tst', 'footballyklubber:b & rebookings:A & sky');
 
 -- Test synonym dictionary in configuration
 CREATE TEXT SEARCH CONFIGURATION synonym_tst (
-					COPY=english
+						COPY=english
 );
 ALTER TEXT SEARCH CONFIGURATION synonym_tst ALTER MAPPING FOR
 	asciiword, hword_asciipart, asciihword

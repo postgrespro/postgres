@@ -15,7 +15,6 @@
 #include "nodes/pg_list.h"
 #include "tsearch/ts_public.h"
 #include "tsearch/ts_type.h"
-#include "tsearch/ts_cache.h"
 
 /*
  * Common parse definitions for tsvector and tsquery
