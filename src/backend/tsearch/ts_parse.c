@@ -202,19 +202,6 @@ static void
 LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 {
 	ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
-	int			len;
-
-	if (type != 0 && (type >= ld->cfg->lenmap))
-	{
-		len = 1;
-	}
-	else
-	{
-		ListDictionary *map = ld->cfg->map + type;
-
-		len = map->len;
-	}
-
 	newpl->type = type;
 	newpl->lemm = lemm;
 	newpl->lenlemm = lenlemm;

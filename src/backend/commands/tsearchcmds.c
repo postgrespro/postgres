@@ -44,6 +44,7 @@
 #include "tsearch/ts_configmap.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -938,7 +939,7 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 		while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
-			TSMapRuleList *mapdicts = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			TSMapRuleList *mapdicts = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
 			Oid		   *dictionaryOids = TSMapGetDictionariesList(mapdicts);
 			Oid		   *currentOid = dictionaryOids;
 
@@ -1104,7 +1105,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 
 			mapvalues[Anum_pg_ts_config_map_mapcfg - 1] = cfgOid;
 			mapvalues[Anum_pg_ts_config_map_maptokentype - 1] = cfgmap->maptokentype;
-			mapvalues[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(&cfgmap->mapdicts);
+			mapvalues[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(&cfgmap->mapdicts);
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
 
@@ -1502,14 +1503,14 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			/*
 			 * replace dictionary if match
 			 */
-			mapRules = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			mapRules = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
 			TSMapReplaceDictionary(mapRules, dictOld, dictNew);
 
 			memset(repl_val, 0, sizeof(repl_val));
 			memset(repl_null, false, sizeof(repl_null));
 			memset(repl_repl, false, sizeof(repl_repl));
 
-			repl_val[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(TSMapToJsonb(mapRules));
+			repl_val[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(mapRules));
 			repl_repl[Anum_pg_ts_config_map_mapdicts - 1] = true;
 
 			newtup = heap_modify_tuple(maptup,
@@ -1535,7 +1536,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			memset(nulls, false, sizeof(nulls));
 			values[Anum_pg_ts_config_map_mapcfg - 1] = ObjectIdGetDatum(cfgId);
 			values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
-			values[Anum_pg_ts_config_map_mapdicts - 1] = JsonbGetDatum(TSMapToJsonb(mapRules));
+			values[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(mapRules));
 
 			tup = heap_form_tuple(relMap->rd_att, values, nulls);
 			CatalogTupleInsert(relMap, tup);

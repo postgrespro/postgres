@@ -45,6 +45,7 @@
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/regproc.h"
@@ -495,7 +496,7 @@ lookup_ts_config_cache(Oid cfgId)
 				elog(ERROR, "maptokentype entries are out of order");
 
 			maxtokentype = toktype;
-			rules_tmp = JsonbToTSMap(DatumGetJsonb(&cfgmap->mapdicts));
+			rules_tmp = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
 			mapruleslist[maxtokentype] = TSMapMoveToMemoryContext(rules_tmp, CacheMemoryContext);
 			TSMapFree(rules_tmp);
 			rules_tmp = NULL;
