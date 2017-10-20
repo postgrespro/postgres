@@ -2308,7 +2308,7 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
    recognizes everything. For example, for an astronomy-specific search
    (<literal>astro_en</literal> configuration) one could bind token type
    <type>asciiword</type> (ASCII word) to a synonym dictionary of astronomical
-   terms, a general English dictionary and a <application>Snowball</literal> English
+   terms, a general English dictionary and a <application>Snowball</application> English
    stemmer via comma-separated variant of mapping:
 
 <programlisting>

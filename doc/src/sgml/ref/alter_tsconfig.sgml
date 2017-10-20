@@ -203,10 +203,10 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
    <title>Condition</title>
    <para>
     Condition used to determine a command for token processing. A condition is
-    boolean expression. A dictionary can be tested for <literal>NULL</>-output
-    or stop-word output via options <literal>IS [NOT] {NULL|STOPWORD}</>. If none
-    of test options is mentied (<literal>dictionary_name</> without additional
-    options) it is tested for both not <literal>NULL</> and not stop word output.
+    boolean expression. A dictionary can be tested for <literal>NULL</literal>-output
+    or stop-word output via options <literal>IS [NOT] {NULL|STOPWORD}</literal>. If none
+    of test options is mentied (<literal>dictionary_name</literal> without additional
+    options) it is tested for both not <literal>NULL</literal> and not stop word output.
    </para>
   </refsect2>
 
@@ -216,10 +216,10 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
     A command describes how <productname>PostgreSQL</productname> should build
     a result set for current token. Output of each dictionary is set of lexemes.
     Result of dictionaries can be combined with help of operators
-    <literal>UNION</>, <literal>EXCEPT</>, <literal>INTERSECT</> and a special
-    operator <literal> MAP BY</>. <literal>MAP BY</> operator uses output of
+    <literal>UNION</literal>, <literal>EXCEPT</literal>, <literal>INTERSECT</literal> and a special
+    operator <literal> MAP BY</literal>. <literal>MAP BY</literal> operator uses output of
     right subexpression as an input for left subexpression. If right subexpression
-    output is <literal>NULL</>, initial token is used instead. If the output contains
+    output is <literal>NULL</literal>, initial token is used instead. If the output contains
     multiple lexemes, each lexeme used as token for left subexpression
     independently and final results is combined.
    </para>
