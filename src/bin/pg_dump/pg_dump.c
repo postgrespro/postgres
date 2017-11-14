@@ -14210,7 +14210,7 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 		appendPQExpBuffer(q, "\nALTER TEXT SEARCH CONFIGURATION %s\n",
 						  fmtId(cfginfo->dobj.name));
 		/* tokenname needs quoting, dictname does NOT */
-		appendPQExpBuffer(q, "    ADD MAPPING FOR %s WITH \n%s",
+		appendPQExpBuffer(q, "    ADD MAPPING FOR %s WITH %s",
 						  fmtId(tokenname), dictname);
 	}
 
