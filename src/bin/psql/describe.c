@@ -4580,7 +4580,7 @@ describeOneTSConfig(const char *oid, const char *nspname, const char *cfgname,
 					  "  ( SELECT t.alias FROM\n"
 					  "    pg_catalog.ts_token_type(c.cfgparser) AS t\n"
 					  "    WHERE t.tokid = m.maptokentype ) AS \"%s\",\n"
-					  " dictionary_map_to_text(m.mapcfg, m.maptokentype) AS \"%s\"\n"
+					  " dictionary_mapping_to_text(m.mapcfg, m.maptokentype) AS \"%s\"\n"
 					  "FROM pg_catalog.pg_ts_config AS c, pg_catalog.pg_ts_config_map AS m\n"
 					  "WHERE c.oid = '%s' AND m.mapcfg = c.oid\n"
 					  "GROUP BY m.mapcfg, m.maptokentype, c.cfgparser\n"

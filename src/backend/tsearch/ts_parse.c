@@ -38,7 +38,7 @@ typedef struct ParsedLex
 	bool	   *notFinished;
 	bool	   *holdAccepted;
 	struct ParsedLex *next;
-	TSMapRule  *relatedRule;
+	TSMapElement  *relatedRule;
 } ParsedLex;
 
 typedef struct ListParsedLex
@@ -115,10 +115,10 @@ typedef struct TSDebugContext
 	TSLexeme   *savedLexemes;	/* Last token lexemes stored for ts_debug
 								 * output */
 	ParsedLex  *leftTokens;		/* Corresponded ParsedLex */
-	TSMapRule  *rule;			/* Rule which produced output */
 } TSDebugContext;
 
-static TSLexeme *LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right);
+static TSLexeme *TSLexemeMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *expression);
+static TSLexeme *LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config);
 
 static void
 LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
@@ -865,158 +865,50 @@ LexizeExecDictionaryWaitNext(LexizeData *ld, Oid dictId)
 }
 
 static bool
-LexizeExecIsNull(LexizeData *ld, ParsedLex *token, Oid dictId)
+LexizeExecIsNull(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 {
-	TSLexeme   *lexemes = LexizeExecDictionary(ld, token, dictId);
-
-	if (lexemes)
-		return false;
-	else
-		return !LexizeExecDictionaryWaitNext(ld, dictId);
-}
-
-static bool
-LexizeExecIsStop(LexizeData *ld, ParsedLex *token, Oid dictId)
-{
-	TSLexeme   *lex = LexizeExecDictionary(ld, token, dictId);
-
-	return lex != NULL && lex[0].lexeme == NULL;
-}
-
-static bool
-LexizeExecExpressionBool(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
-{
-	bool		result;
-
-	if (expression == NULL)
-		result = false;
-	else if (expression->is_true)
-		result = true;
-	else if (expression->dictionary != InvalidOid)
+	bool result = false;
+	if (config->type == TSMAP_EXPRESSION)
 	{
-		bool		is_null = LexizeExecIsNull(ld, token, expression->dictionary);
-		bool		is_stop = LexizeExecIsStop(ld, token, expression->dictionary);
-		bool		invert = (expression->options & DICTMAP_OPT_NOT) != 0;
-
-		result = true;
-		if ((expression->options & DICTMAP_OPT_IS_NULL) != 0)
-			result = result && (invert ? !is_null : is_null);
-		if ((expression->options & DICTMAP_OPT_IS_STOP) != 0)
-			result = result && (invert ? !is_stop : is_stop);
+		TSMapExpression *expression = config->object;
+		return LexizeExecIsNull(ld, token, expression->left) || LexizeExecIsNull(ld, token, expression->right);
 	}
-	else
+	else if (config->type == TSMAP_DICTIONARY)
 	{
-		if (expression->operator == DICTMAP_OP_MAPBY)
-		{
-			TSLexeme   *mapby_result = LexizeExecMapBy(ld, token, expression->left, expression->right);
-			bool		is_null = mapby_result == NULL;
-			bool		is_stop = mapby_result != NULL && mapby_result[0].lexeme == NULL;
-			bool		invert = (expression->options & DICTMAP_OPT_NOT) != 0;
+		Oid dictOid = *(Oid*)config->object;
+		TSLexeme   *lexemes = LexizeExecDictionary(ld, token, dictOid);
 
-			if (expression->left->dictionary != InvalidOid && LexizeExecDictionaryWaitNext(ld, expression->left->dictionary))
-				is_null = false;
-
-			result = true;
-			if ((expression->options & DICTMAP_OPT_IS_NULL) != 0)
-				result = result && (invert ? !is_null : is_null);
-			if ((expression->options & DICTMAP_OPT_IS_STOP) != 0)
-				result = result && (invert ? !is_stop : is_stop);
-		}
+		if (lexemes)
+			result = false;
 		else
-		{
-			bool		res_left = LexizeExecExpressionBool(ld, token, expression->left);
-			bool		res_right = LexizeExecExpressionBool(ld, token, expression->right);
-
-			switch (expression->operator)
-			{
-				case DICTMAP_OP_NOT:
-					result = !res_right;
-					break;
-				case DICTMAP_OP_OR:
-					result = res_left || res_right;
-					break;
-				case DICTMAP_OP_AND:
-					result = res_left && res_right;
-					break;
-				default:
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("invalid text search configuration boolean expression")));
-					break;
-			}
-		}
+			result =!LexizeExecDictionaryWaitNext(ld, dictOid);
 	}
-
 	return result;
 }
 
 static TSLexeme *
-LexizeExecExpressionSet(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
+TSLexemeMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 {
-	TSLexeme   *result;
-
-	if (expression->dictionary != InvalidOid)
-	{
-		result = LexizeExecDictionary(ld, token, expression->dictionary);
-	}
-	else
-	{
-		if (expression->operator == DICTMAP_OP_MAPBY)
-		{
-			result = LexizeExecMapBy(ld, token, expression->left, expression->right);
-		}
-		else
-		{
-			TSLexeme   *res_left = LexizeExecExpressionSet(ld, token, expression->left);
-			TSLexeme   *res_right = LexizeExecExpressionSet(ld, token, expression->right);
-
-			switch (expression->operator)
-			{
-				case DICTMAP_OP_UNION:
-					result = TSLexemeUnion(res_left, res_right);
-					break;
-				case DICTMAP_OP_EXCEPT:
-					result = TSLexemeExcept(res_left, res_right);
-					break;
-				case DICTMAP_OP_INTERSECT:
-					result = TSLexemeIntersect(res_left, res_right);
-					break;
-				default:
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("invalid text search configuration result set expression")));
-					result = NULL;
-					break;
-			}
-		}
-	}
-
-	return result;
-}
-
-static TSLexeme *
-LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapExpression *right)
-{
-	TSLexeme   *right_res = LexizeExecExpressionSet(ld, token, right);
+	TSLexeme   *left_res = LexizeExecTSElement(ld, token, expression->left);
 	TSLexeme   *result = NULL;
-	int			right_size = TSLexemeGetSize(right_res);
+	int			left_size = TSLexemeGetSize(left_res);
 	int			i;
 
-	if (right_res == NULL)
-		return LexizeExecExpressionSet(ld, token, left);
+	if (left_res == NULL)
+		return LexizeExecTSElement(ld, token, expression->right);
 
-	for (i = 0; i < right_size; i++)
+	for (i = 0; i < left_size; i++)
 	{
 		TSLexeme   *tmp_res = NULL;
 		TSLexeme   *prev_res;
 		ParsedLex	tmp_token;
 
-		tmp_token.lemm = right_res[i].lexeme;
-		tmp_token.lenlemm = strlen(right_res[i].lexeme);
+		tmp_token.lemm = left_res[i].lexeme;
+		tmp_token.lenlemm = strlen(left_res[i].lexeme);
 		tmp_token.type = token->type;
 		tmp_token.next = NULL;
 
-		tmp_res = LexizeExecExpressionSet(ld, &tmp_token, left);
+		tmp_res = LexizeExecTSElement(ld, &tmp_token, expression->right);
 		prev_res = result;
 		result = TSLexemeUnion(prev_res, tmp_res);
 		if (prev_res)
@@ -1027,58 +919,68 @@ LexizeExecMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *left, TSMapEx
 }
 
 static TSLexeme *
-LexizeExecCase(LexizeData *ld, ParsedLex *originalToken, TSMapRuleList *rules, TSMapRule **selectedRule)
+LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 {
-	TSLexeme   *res = NULL;
-	ParsedLex	token = *originalToken;
-
-	if (ld->cfg->lenmap <= token.type || rules == NULL)
+	TSLexeme *result = NULL;
+	if (config->type == TSMAP_DICTIONARY)
 	{
-		res = NULL;
+		token->relatedRule = config;
+		result = LexizeExecDictionary(ld, token, *(Oid*)config->object);
 	}
-	else
+	else if (config->type == TSMAP_CASE)
 	{
-		int			i;
-
-		for (i = 0; i < rules->count; i++)
+		TSMapCase *caseObject = config->object;
+		if ((!LexizeExecIsNull(ld, token, caseObject->condition) && caseObject->match) || (LexizeExecIsNull(ld, token, caseObject->condition) && !caseObject->match))
 		{
-			if (rules->data[i].dictionary != InvalidOid)
-			{
-				/* Comma-separated syntax configuration */
-				res = LexizeExecDictionary(ld, &token, rules->data[i].dictionary);
-				if (!LexizeExecIsNull(ld, &token, rules->data[i].dictionary))
-				{
-					if (selectedRule)
-						*selectedRule = rules->data + i;
-					originalToken->relatedRule = rules->data + i;
-
-					if (res && (res[0].flags & TSL_FILTER))
-					{
-						token.lemm = res[0].lexeme;
-						token.lenlemm = strlen(res[0].lexeme);
-					}
-					else
-					{
-						break;
-					}
-				}
-			}
-			else if (LexizeExecExpressionBool(ld, &token, rules->data[i].condition.expression))
-			{
-				if (selectedRule)
-					*selectedRule = rules->data + i;
-				originalToken->relatedRule = rules->data + i;
-
-				if (rules->data[i].command.is_expression)
-					res = LexizeExecExpressionSet(ld, &token, rules->data[i].command.expression);
-				else
-					res = LexizeExecCase(ld, &token, rules->data[i].command.ruleList, selectedRule);
-				break;
-			}
+			token->relatedRule = config;
+			if (caseObject->command->type == TSMAP_KEEP)
+				result = LexizeExecTSElement(ld, token, caseObject->condition);
+			else
+				result = LexizeExecTSElement(ld, token, caseObject->command);
 		}
+		else if (caseObject->elsebranch)
+			result = LexizeExecTSElement(ld, token, caseObject->elsebranch);
+	}
+	else if (config->type == TSMAP_EXPRESSION)
+	{
+		TSLexeme *resLeft = NULL;
+		TSLexeme *resRight = NULL;
+		TSMapExpression *expression = config->object;
+
+		if (expression->operator != TSMAP_OP_MAPBY)
+		{
+			resLeft = LexizeExecTSElement(ld, token, expression->left);
+			resRight = LexizeExecTSElement(ld, token, expression->right);
+		}
+
+		switch(expression->operator)
+		{
+			case TSMAP_OP_UNION:
+				result = TSLexemeUnion(resLeft, resRight);
+				break;
+			case TSMAP_OP_EXCEPT:
+				result = TSLexemeExcept(resLeft, resRight);
+				break;
+			case TSMAP_OP_INTERSECT:
+				result = TSLexemeIntersect(resLeft, resRight);
+				break;
+			case TSMAP_OP_MAPBY:
+				result = TSLexemeMapBy(ld, token, expression);
+				break;
+			default:
+				// TODO: Error
+				Assert(false);
+				break;
+		}
+		/*
+		if (resLeft)
+			pfree(resLeft);
+		if (resRight)
+			pfree(resRight);
+		*/
 	}
 
-	return res;
+	return result;
 }
 
 /*
@@ -1152,10 +1054,10 @@ LexizeExecNotProcessedDictStates(LexizeData *ld)
 }
 
 static TSLexeme *
-LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule)
+LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
 	ParsedLex  *token;
-	TSMapRuleList *rules;
+	TSMapElement *config;
 	TSLexeme   *res = NULL;
 	TSLexeme   *prevIterationResult = NULL;
 	bool		removeHead = false;
@@ -1174,12 +1076,17 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 		setCorrLex(ld, correspondLexem);
 		return NULL;
 	}
+
+	if (token->type >= ld->cfg->lenmap)
+	{
+		removeHead = true;
+	}
 	else
 	{
-		rules = ld->cfg->map[token->type];
-		if (rules != NULL)
+		config = ld->cfg->map[token->type];
+		if (config != NULL)
 		{
-			res = LexizeExecCase(ld, token, rules, selectedRule);
+			res = LexizeExecTSElement(ld, token, config);
 			prevIterationResult = LexizeExecGetPreviousResults(ld);
 			removeHead = prevIterationResult == NULL;
 		}
@@ -1193,7 +1100,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 			}
 		}
 
-		if (LexizeExecNotProcessedDictStates(ld) && (token->type == 0 || rules != NULL))	/* Rollback processing */
+		if (LexizeExecNotProcessedDictStates(ld) && (token->type == 0 || config != NULL))	/* Rollback processing */
 		{
 			int			i;
 			ListParsedLex *intermediateTokens = NULL;
@@ -1227,11 +1134,11 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem, TSMapRule **selectedRule
 				}
 			}
 			ResultStorageClearLexemes(&ld->delayedResults);
-			if (rules != NULL)
+			if (config != NULL)
 				res = NULL;
 		}
 
-		if (rules != NULL)
+		if (config != NULL)
 			LexizeExecClearDictStates(ld);
 		else if (token->type == 0)
 			DictStateListClear(&ld->dslist);
@@ -1378,7 +1285,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 			LexizeAddLemm(&ldata, type, lemm, lenlemm);
 		}
 
-		while ((norms = LexizeExec(&ldata, NULL, NULL)) != NULL)
+		while ((norms = LexizeExec(&ldata, NULL)) != NULL)
 		{
 			TSLexeme   *ptr;
 
@@ -1524,13 +1431,13 @@ ts_debug(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 		ts_debug_get_token(funcctx);
 
-		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
+		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens));
 
 		MemoryContextSwitchTo(oldcontext);
 	}
 
 	while (context->leftTokens == NULL && context->ldata.towork.head != NULL)
-		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens), &(context->rule));
+		context->savedLexemes = LexizeExec(&context->ldata, &(context->leftTokens));
 
 	if (context->leftTokens && context->leftTokens && context->leftTokens->type > 0)
 	{
@@ -1553,14 +1460,14 @@ ts_debug(PG_FUNCTION_ARGS)
 
 		if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
 		{
-			TSMapPrintRuleList(context->ldata.cfg->map[lex->type], str, 0);
+			TSMapPrintElement(context->ldata.cfg->map[lex->type], str);
 			values[3] = str->data;
 			str = makeStringInfo();
 			initStringInfo(str);
 
 			if (lex->relatedRule)
 			{
-				TSMapPrintRule(lex->relatedRule, str, 0);
+				TSMapPrintElement(lex->relatedRule, str);
 				values[4] = str->data;
 				str = makeStringInfo();
 				initStringInfo(str);
@@ -1750,7 +1657,7 @@ hlparsetext(Oid cfgId, HeadlineParsedText *prs, TSQuery query, char *buf, int bu
 
 		do
 		{
-			if ((norms = LexizeExec(&ldata, &lexs, NULL)) != NULL)
+			if ((norms = LexizeExec(&ldata, &lexs)) != NULL)
 			{
 				prs->vectorpos++;
 				addHLParsedLex(prs, query, lexs, norms);

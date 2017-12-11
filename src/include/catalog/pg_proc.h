@@ -4925,7 +4925,7 @@ DESCR("transform jsonb to tsvector");
 DATA(insert OID = 4212 (  to_tsvector		PGNSP PGUID 12 100 0 0 0 f f f f t f i s 2 0 3614 "3734 114" _null_ _null_ _null_ _null_ _null_ json_to_tsvector_byid _null_ _null_ _null_ ));
 DESCR("transform json to tsvector");
 
-DATA(insert OID = 8891 (  dictionary_map_to_text	PGNSP PGUID 12 100 0 0 0 f f f f t f s s 2 0 25 "26 23" _null_ _null_ _null_ _null_ _null_ dictionary_map_to_text _null_ _null_ _null_ ));
+DATA(insert OID = 8891 (  dictionary_mapping_to_text	PGNSP PGUID 12 100 0 0 0 f f f f t f s s 2 0 25 "26 23" _null_ _null_ _null_ _null_ _null_ dictionary_mapping_to_text _null_ _null_ _null_ ));
 DESCR("returns text representation of dictionary configurationconfiguration  map");
 
 DATA(insert OID = 8892 (  ts_debug			PGNSP PGUID 12 100 1 0 0 f f f f t t s s 2 0 2249 "3734 25" "{3734,25,25,25,25,25,25,1009}" "{i,i,o,o,o,o,o,o}" "{cfgId,inputText,alias,description,token,dictionaries,command,lexemes}" _null_ _null_ ts_debug _null_ _null_ _null_));

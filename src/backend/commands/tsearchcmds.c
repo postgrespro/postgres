@@ -55,7 +55,6 @@ static void MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 						 HeapTuple tup, Relation relMap);
 static void DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 						 HeapTuple tup, Relation relMap);
-static TSMapRuleList *ParseTSMapList(List *dictMapList);
 
 
 /* --------------------- TS Parser commands ------------------------ */
@@ -939,8 +938,8 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 		while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
-			TSMapRuleList *mapdicts = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
-			Oid		   *dictionaryOids = TSMapGetDictionariesList(mapdicts);
+			TSMapElement *mapdicts = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
+			Oid		   *dictionaryOids = TSMapGetDictionaries(mapdicts);
 			Oid		   *currentOid = dictionaryOids;
 
 			while (*currentOid != InvalidOid)
@@ -952,8 +951,9 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 
 				currentOid++;
 			}
+
 			pfree(dictionaryOids);
-			pfree(mapdicts);
+			TSMapElementFree(mapdicts);
 		}
 
 		systable_endscan(scan);
@@ -1284,102 +1284,114 @@ getTokenTypes(Oid prsId, List *tokennames)
 	return res;
 }
 
-static TSMapExpression *
-ParseTSMapExpression(DictMapExprElem *head)
+static TSMapElement *
+CreateCaseForSingleDictionary(Oid dictOid)
 {
-	TSMapExpression *result;
+	TSMapElement *result = palloc0(sizeof(TSMapElement));
+	TSMapElement *keepElement = palloc0(sizeof(TSMapElement));
+	TSMapCase *caseObject = palloc0(sizeof(TSMapCase));
+	TSMapElement *condition = palloc0(sizeof(TSMapElement));
 
-	if (head == NULL)
-		return NULL;
+	keepElement->type = TSMAP_KEEP;
+	keepElement->parent = result;
+	caseObject->command = keepElement;
+	caseObject->match = true;
 
-	result = palloc0(sizeof(TSMapExpression));
+	condition->type = TSMAP_DICTIONARY;
+	condition->parent = result;
+	condition->object = palloc0(sizeof(Oid));
+	*(Oid*)condition->object = dictOid;
+	caseObject->condition = condition;
 
-	if (head->kind == DICT_MAP_OPERATOR)
-	{
-		result->left = ParseTSMapExpression(head->left);
-		result->right = ParseTSMapExpression(head->right);
-		result->operator = head->oper;
-		result->options = head->options;
-	}
-	else if (head->kind == DICT_MAP_CONST_TRUE)
-	{
-		result->left = result->right = NULL;
-		result->is_true = true;
-		result->options = result->operator = 0;
-	}
-	else						/* head->kind == DICT_MAP_OPERAND */
-	{
-		result->dictionary = get_ts_dict_oid(head->dictname, false);
-		result->options = head->options;
-	}
+	result->object = caseObject;
+	result->type = TSMAP_CASE;
 
 	return result;
 }
 
-static TSMapRule
-ParseTSMapRule(DictMapElem *elem)
+static TSMapElement *
+ParseTSMapConfig(DictMapElem *elem)
 {
-	TSMapRule	result;
+	TSMapElement *result = palloc0(sizeof(TSMapElement));
 
-	memset(&result, 0, sizeof(result));
-
-	result.condition.expression = ParseTSMapExpression(elem->condition);
-	if (elem->commandmaps)
+	if (elem->kind == DICT_MAP_CASE)
 	{
-		result.command.ruleList = ParseTSMapList(elem->commandmaps);
-		result.command.is_expression = false;
-		result.command.expression = NULL;
+		TSMapCase *caseObject = palloc0(sizeof(TSMapCase));
+		DictMapCase *caseASTObject = elem->data;
+
+		caseObject->condition = ParseTSMapConfig(caseASTObject->condition);
+		caseObject->command = ParseTSMapConfig(caseASTObject->command);
+
+		if (caseASTObject->elsebranch)
+			caseObject->elsebranch = ParseTSMapConfig(caseASTObject->elsebranch);
+
+		caseObject->match = caseASTObject->match;
+
+		caseObject->condition->parent = result;
+		caseObject->command->parent = result;
+
+		result->type = TSMAP_CASE;
+		result->object = caseObject;
 	}
-	else
+	else if (elem->kind == DICT_MAP_EXPRESSION)
 	{
-		result.command.ruleList = NULL;
-		result.command.is_expression = true;
-		result.command.expression = ParseTSMapExpression(elem->command);
+		TSMapExpression *expression = palloc0(sizeof(TSMapExpression));
+		DictMapExprElem *expressionAST = elem->data;
+
+		expression->left = ParseTSMapConfig(expressionAST->left);
+		expression->right = ParseTSMapConfig(expressionAST->right);
+		expression->operator = expressionAST->oper;
+
+		result->type = TSMAP_EXPRESSION;
+		result->object = expression;
 	}
-
-	return result;
-}
-
-static TSMapRuleList *
-ParseTSMapList(List *dictMapList)
-{
-	int			i;
-	TSMapRuleList *result;
-	ListCell   *c;
-
-	if (list_length(dictMapList) == 1 && ((DictMapElem *) lfirst(dictMapList->head))->dictnames)
+	else if (elem->kind == DICT_MAP_KEEP)
 	{
-		DictMapElem *elem = (DictMapElem *) lfirst(dictMapList->head);
-
-		result = palloc0(sizeof(TSMapRuleList));
-		result->count = list_length(elem->dictnames);
-		result->data = palloc0(sizeof(TSMapRule) * result->count);
-
-		i = 0;
-		foreach(c, elem->dictnames)
+		result->object = NULL;
+		result->type = TSMAP_KEEP;
+	}
+	else if (elem->kind == DICT_MAP_DICTIONARY)
+	{
+		Oid *oid = palloc0(sizeof(Oid));
+		*oid = get_ts_dict_oid(elem->data, false);
+		result->object = oid;
+		result->type = TSMAP_DICTIONARY;
+	}
+	else if (elem->kind == DICT_MAP_DICTIONARY_LIST)
+	{
+		// TODO: Transform dictionary list into list of cases
+		/*
+		Oid *oid = palloc0(sizeof(Oid));
+		*oid = get_ts_dict_oid(elem->data, false);
+		result->object = oid;
+		result->type = TSMAP_DICTIONARY;
+		*/
+		int i = 0;
+		ListCell   *c;
+		TSMapElement *root = NULL;
+		TSMapElement *currentNode = NULL;
+		foreach(c, (List*)elem->data)
 		{
+			TSMapElement *prevNode = currentNode;
 			List	   *names = (List *) lfirst(c);
+			Oid oid = get_ts_dict_oid(names, false);
 
-			result->data[i].dictionary = get_ts_dict_oid(names, false);
+			currentNode = CreateCaseForSingleDictionary(oid);
+
+			if (root == NULL)
+				root = currentNode;
+			else
+			{
+				((TSMapCase*)prevNode->object)->elsebranch = currentNode;
+				currentNode->parent = prevNode;
+			}
+
+			prevNode = currentNode;
+
 			i++;
 		}
+		result = root;
 	}
-	else
-	{
-		result = palloc0(sizeof(TSMapRuleList));
-		result->count = list_length(dictMapList);
-		result->data = palloc0(sizeof(TSMapRule) * result->count);
-
-		i = 0;
-		foreach(c, dictMapList)
-		{
-			List	   *l = (List *) lfirst(c);
-
-			result->data[i] = ParseTSMapRule((DictMapElem *) l);
-			i++;
-		}
-	}
-
 	return result;
 }
 
@@ -1401,7 +1413,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				ntoken;
 	Oid		   *dictIds = NULL;
 	int			ndict = 0;
-	TSMapRuleList *mapRules = NULL;
+	TSMapElement *config = NULL;
 	ListCell   *c;
 
 	prsId = ((Form_pg_ts_config) GETSTRUCT(tup))->cfgparser;
@@ -1454,9 +1466,6 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 		}
 	}
 
-	if (stmt->dict_map)
-		mapRules = ParseTSMapList(stmt->dict_map);
-
 	if (stmt->replace)
 	{
 		/*
@@ -1503,21 +1512,21 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			/*
 			 * replace dictionary if match
 			 */
-			mapRules = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
-			TSMapReplaceDictionary(mapRules, dictOld, dictNew);
+			config = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
+			TSMapReplaceDictionary(config, dictOld, dictNew);
 
 			memset(repl_val, 0, sizeof(repl_val));
 			memset(repl_null, false, sizeof(repl_null));
 			memset(repl_repl, false, sizeof(repl_repl));
 
-			repl_val[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(mapRules));
+			repl_val[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(config));
 			repl_repl[Anum_pg_ts_config_map_mapdicts - 1] = true;
 
 			newtup = heap_modify_tuple(maptup,
 									   RelationGetDescr(relMap),
 									   repl_val, repl_null, repl_repl);
 			CatalogTupleUpdate(relMap, &newtup->t_self, newtup);
-			pfree(mapRules);
+			pfree(config);
 		}
 
 		systable_endscan(scan);
@@ -1527,6 +1536,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 		/*
 		 * Insertion of new entries
 		 */
+		config = ParseTSMapConfig(stmt->dict_map);
 
 		for (i = 0; i < ntoken; i++)
 		{
@@ -1536,7 +1546,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			memset(nulls, false, sizeof(nulls));
 			values[Anum_pg_ts_config_map_mapcfg - 1] = ObjectIdGetDatum(cfgId);
 			values[Anum_pg_ts_config_map_maptokentype - 1] = Int32GetDatum(tokens[i]);
-			values[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(mapRules));
+			values[Anum_pg_ts_config_map_mapdicts - 1] = JsonbPGetDatum(TSMapToJsonb(config));
 
 			tup = heap_form_tuple(relMap->rd_att, values, nulls);
 			CatalogTupleInsert(relMap, tup);

@@ -79,7 +79,7 @@ typedef struct
 	Oid			prsId;
 
 	int			lenmap;
-	TSMapRuleList **map;
+	TSMapElement **map;
 } TSConfigCacheEntry;
 
 

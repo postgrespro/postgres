@@ -42,43 +42,27 @@ CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
 
-typedef struct TSMapExpression
-{
+typedef struct TSMapElement {
+	int			type;
+	void	   *object;
+	struct TSMapElement *parent;
+} TSMapElement;
+
+typedef struct TSMapExpression {
 	int			operator;
-	Oid			dictionary;
-	int			options;
-	bool		is_true;
-	struct TSMapExpression *left;
-	struct TSMapExpression *right;
+	TSMapElement *left;
+	TSMapElement *right;
 } TSMapExpression;
 
-typedef struct TSMapCommand
-{
-	bool		is_expression;
-	void	   *ruleList;		/* this is a TSMapRuleList object */
-	TSMapExpression *expression;
-} TSMapCommand;
-
-typedef struct TSMapCondition
-{
-	TSMapExpression *expression;
-} TSMapCondition;
-
-typedef struct TSMapRule
-{
-	Oid			dictionary;
-	TSMapCondition condition;
-	TSMapCommand command;
-} TSMapRule;
-
-typedef struct TSMapRuleList
-{
-	TSMapRule  *data;
-	int			count;
-} TSMapRuleList;
+typedef struct TSMapCase {
+	TSMapElement *condition;
+	TSMapElement *command;
+	TSMapElement *elsebranch;
+	bool		match; // If false, NO MATCH is used
+} TSMapCase;
 
 /* ----------------
- *		compiler constants for pg_ts_config_map
+ *		Compiler constants for pg_ts_config_map
  * ----------------
  */
 #define Natts_pg_ts_config_map				3
@@ -90,23 +74,26 @@ typedef struct TSMapRuleList
  *		Dictionary map operators
  * ----------------
  */
-#define DICTMAP_OP_OR			1
-#define DICTMAP_OP_AND			2
-#define DICTMAP_OP_THEN			3
-#define DICTMAP_OP_MAPBY		4
-#define DICTMAP_OP_UNION		5
-#define DICTMAP_OP_EXCEPT		6
-#define DICTMAP_OP_INTERSECT	7
-#define DICTMAP_OP_NOT			8
+#define TSMAP_OP_OR				1
+#define TSMAP_OP_AND			2
+#define TSMAP_OP_THEN			3
+#define TSMAP_OP_MAP			4
+#define TSMAP_OP_UNION			5
+#define TSMAP_OP_EXCEPT			6
+#define TSMAP_OP_INTERSECT		7
+#define TSMAP_OP_NOT			8
+#define TSMAP_OP_MAPBY			9
+#define TSMAP_OP_IS_NULL		10
+#define TSMAP_OP_IS_STOP		11
 
 /* ----------------
- *		Dictionary map operant options (bit mask)
+ *		TSMapElement object types
  * ----------------
  */
-
-#define DICTMAP_OPT_NOT			1
-#define DICTMAP_OPT_IS_NULL		2
-#define DICTMAP_OPT_IS_STOP		4
+#define TSMAP_EXPRESSION	1
+#define TSMAP_CASE			2
+#define TSMAP_DICTIONARY	3
+#define TSMAP_KEEP			4
 
 /* ----------------
  *		initial contents of pg_ts_config_map

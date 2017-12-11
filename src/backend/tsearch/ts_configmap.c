@@ -27,49 +27,37 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 
+/* Size selected based on assumption that 1024 frames of stack is enouth for parsing of any configuration */
+#define JSONB_PARSE_STATE_STACK_SIZE 1024
+
 /*
- * Used during the parsing of TSMapRuleList from JSONB into internal
+ * Used during the parsing of TSMapElement from JSONB into internal
  * datastructures.
  */
-typedef enum TSMapRuleParseState
-{
-	TSMRPS_BEGINING,
-	TSMRPS_IN_CASES_ARRAY,
-	TSMRPS_IN_CASE,
-	TSMRPS_IN_CONDITION,
-	TSMRPS_IN_COMMAND,
-	TSMRPS_IN_EXPRESSION
-} TSMapRuleParseState;
+typedef enum TSMapParseState {
+	TSMPS_WAIT_ELEMENT,
+	TSMPS_READ_DICT_OID,
+	TSMPS_READ_COMPLEX_OBJ,
+	TSMPS_READ_EXPRESSION,
+	TSMPS_READ_CASE,
+	TSMPS_READ_OPERATOR,
+	TSMPS_READ_COMMAND,
+	TSMPS_READ_CONDITION,
+	TSMPS_READ_ELSEBRANCH,
+	TSMPS_READ_MATCH,
+	TSMPS_READ_KEEP,
+	TSMPS_READ_LEFT,
+	TSMPS_READ_RIGHT
+} TSMapParseState;
 
-typedef enum TSMapRuleParseNodeType
-{
-	TSMRPT_UNKNOWN,
-	TSMRPT_NUMERIC,
-	TSMRPT_EXPRESSION,
-	TSMRPT_RULE_LIST,
-	TSMRPT_RULE,
-	TSMRPT_COMMAND,
-	TSMRPT_CONDITION,
-	TSMRPT_BOOL
-} TSMapRuleParseNodeType;
+typedef struct TSMapJsonbParseData {
+	TSMapParseState states[JSONB_PARSE_STATE_STACK_SIZE];
+	int statesIndex;
+	TSMapElement *element;
+} TSMapJsonbParseData;
 
-typedef struct TSMapParseNode
-{
-	TSMapRuleParseNodeType type;
-	union
-	{
-		int			num_val;
-		bool		bool_val;
-		TSMapRule  *rule_val;
-		TSMapCommand *command_val;
-		TSMapRuleList *rule_list_val;
-		TSMapCondition *condition_val;
-		TSMapExpression *expression_val;
-	};
-} TSMapParseNode;
-
-static JsonbValue *TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state);
-static TSMapParseNode *JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state);
+static JsonbValue *TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState);
+static TSMapElement *JsonbToTSMapElement(JsonbContainer *root);
 
 static void
 TSMapPrintDictName(Oid dictId, StringInfo result)
@@ -100,156 +88,82 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 }
 
 static void
-TSMapExpressionPrint(TSMapExpression *expression, StringInfo result)
+TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 {
-	if (expression->dictionary == InvalidOid && expression->options != 0)
-		appendStringInfoChar(result, '(');
 
 	if (expression->left)
-	{
-		if (expression->left->operator != 0 && expression->left->operator < expression->operator)
-			appendStringInfoChar(result, '(');
-
-		TSMapExpressionPrint(expression->left, result);
-
-		if (expression->left->operator != 0 && expression->left->operator < expression->operator)
-			appendStringInfoChar(result, ')');
-	}
+		TSMapPrintElement(expression->left, result);
 
 	switch (expression->operator)
 	{
-		case DICTMAP_OP_OR:
-			appendStringInfoString(result, " OR ");
-			break;
-		case DICTMAP_OP_AND:
-			appendStringInfoString(result, " AND ");
-			break;
-		case DICTMAP_OP_NOT:
-			appendStringInfoString(result, " NOT ");
-			break;
-		case DICTMAP_OP_UNION:
+		case TSMAP_OP_UNION:
 			appendStringInfoString(result, " UNION ");
 			break;
-		case DICTMAP_OP_EXCEPT:
+		case TSMAP_OP_EXCEPT:
 			appendStringInfoString(result, " EXCEPT ");
 			break;
-		case DICTMAP_OP_INTERSECT:
+		case TSMAP_OP_INTERSECT:
 			appendStringInfoString(result, " INTERSECT ");
 			break;
-		case DICTMAP_OP_MAPBY:
-			appendStringInfoString(result, " MAP BY ");
+		case TSMAP_OP_MAP:
+			appendStringInfoString(result, " MAP ");
+			break;
+		case TSMAP_OP_MAPBY:
+			appendStringInfoString(result, " MAP ");
+			break;
+		default:
+			appendStringInfo(result, " %d ", expression->operator);
 			break;
 	}
 
 	if (expression->right)
+		TSMapPrintElement(expression->right, result);
+}
+
+static void
+TSMapPrintCase(TSMapCase *caseObject, StringInfo result)
+{
+	appendStringInfoString(result, " CASE ");
+
+	TSMapPrintElement(caseObject->condition, result);
+
+	appendStringInfoString(result, "\nWHEN ");
+	if (!caseObject->match)
+		appendStringInfoString(result, "NO ");
+	appendStringInfoString(result, "MATCH THEN ");
+
+	TSMapPrintElement(caseObject->command, result);
+
+	if (caseObject->elsebranch != NULL)
 	{
-		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
-			appendStringInfoChar(result, '(');
-
-		TSMapExpressionPrint(expression->right, result);
-
-		if (expression->right->operator != 0 && expression->right->operator < expression->operator)
-			appendStringInfoChar(result, ')');
+		appendStringInfoString(result, "\nELSE ");
+		TSMapPrintElement(caseObject->elsebranch, result);
 	}
-
-	if (expression->dictionary == InvalidOid && expression->options != 0)
-		appendStringInfoChar(result, ')');
-
-	if (expression->dictionary != InvalidOid || expression->options != 0)
-	{
-		if (expression->dictionary != InvalidOid)
-			TSMapPrintDictName(expression->dictionary, result);
-		if (expression->options != (DICTMAP_OPT_NOT | DICTMAP_OPT_IS_NULL | DICTMAP_OPT_IS_STOP))
-		{
-			if (expression->options != 0)
-				appendStringInfoString(result, " IS ");
-			if (expression->options & DICTMAP_OPT_NOT)
-				appendStringInfoString(result, "NOT ");
-			if (expression->options & DICTMAP_OPT_IS_NULL)
-				appendStringInfoString(result, "NULL ");
-			if (expression->options & DICTMAP_OPT_IS_STOP)
-				appendStringInfoString(result, "STOPWORD ");
-		}
-	}
+	appendStringInfoString(result, " END");
 }
 
 void
-TSMapPrintRule(TSMapRule *rule, StringInfo result, int depth)
+TSMapPrintElement(TSMapElement *element, StringInfo result)
 {
-	int			i;
-
-	if (rule->dictionary != InvalidOid)
+	switch (element->type)
 	{
-		TSMapPrintDictName(rule->dictionary, result);
-	}
-	else if (rule->condition.expression->is_true)
-	{
-		for (i = 0; i < depth; i++)
-			appendStringInfoChar(result, '\t');
-		appendStringInfoString(result, "ELSE ");
-	}
-	else
-	{
-		for (i = 0; i < depth; i++)
-			appendStringInfoChar(result, '\t');
-		appendStringInfoString(result, "WHEN ");
-		TSMapExpressionPrint(rule->condition.expression, result);
-		appendStringInfoString(result, " THEN\n");
-		for (i = 0; i < depth + 1; i++)
-			appendStringInfoString(result, "\t");
-	}
-
-	if (rule->command.is_expression)
-	{
-		TSMapExpressionPrint(rule->command.expression, result);
-	}
-	else if (rule->dictionary == InvalidOid)
-	{
-		TSMapPrintRuleList(rule->command.ruleList, result, depth + 1);
-	}
-}
-
-void
-TSMapPrintRuleList(TSMapRuleList *rules, StringInfo result, int depth)
-{
-	int			i;
-
-	for (i = 0; i < rules->count; i++)
-	{
-		if (rules->data[i].dictionary != InvalidOid)	/* Comma-separated
-														 * configuration syntax */
-		{
-			if (i > 0)
-				appendStringInfoString(result, ", ");
-			TSMapPrintDictName(rules->data[i].dictionary, result);
-		}
-		else
-		{
-			if (i == 0)
-			{
-				int			j;
-
-				for (j = 0; j < depth; j++)
-					appendStringInfoChar(result, '\t');
-				appendStringInfoString(result, "CASE\n");
-			}
-			else
-				appendStringInfoChar(result, '\n');
-			TSMapPrintRule(&rules->data[i], result, depth + 1);
-		}
-	}
-
-	if (rules->data[0].dictionary == InvalidOid)
-	{
-		appendStringInfoChar(result, '\n');
-		for (i = 0; i < depth; i++)
-			appendStringInfoChar(result, '\t');
-		appendStringInfoString(result, "END");
+		case TSMAP_EXPRESSION:
+			TSMapPrintExpression((TSMapExpression *)element->object, result);
+			break;
+		case TSMAP_DICTIONARY:
+			TSMapPrintDictName(*(Oid *)element->object, result);
+			break;
+		case TSMAP_CASE:
+			TSMapPrintCase((TSMapCase *)element->object, result);
+			break;
+		case TSMAP_KEEP:
+			appendStringInfoString(result, " SELECT ");
+			break;
 	}
 }
 
 Datum
-dictionary_map_to_text(PG_FUNCTION_ARGS)
+dictionary_mapping_to_text(PG_FUNCTION_ARGS)
 {
 	Oid			cfgOid = PG_GETARG_OID(0);
 	int32		tokentype = PG_GETARG_INT32(1);
@@ -261,31 +175,26 @@ dictionary_map_to_text(PG_FUNCTION_ARGS)
 	rawResult = makeStringInfo();
 	initStringInfo(rawResult);
 
-	if (cacheEntry->lenmap > tokentype && cacheEntry->map[tokentype]->count > 0)
+	if (cacheEntry->lenmap > tokentype && cacheEntry->map[tokentype] != NULL)
 	{
-		TSMapRuleList *rules = cacheEntry->map[tokentype];
-
-		TSMapPrintRuleList(rules, rawResult, 0);
+		TSMapElement *element = cacheEntry->map[tokentype];
+		TSMapPrintElement(element, rawResult);
 	}
 
-	if (rawResult)
-	{
-		result = cstring_to_text(rawResult->data);
-		pfree(rawResult);
-	}
-
+	result = cstring_to_text(rawResult->data);
+	pfree(rawResult);
 	PG_RETURN_TEXT_P(result);
 }
 
 static JsonbValue *
-TSIntToJsonbValue(int int_value)
+IntToJsonbValue(int intValue)
 {
 	char		buffer[16];
 	JsonbValue *value = palloc0(sizeof(JsonbValue));
 
 	memset(buffer, 0, sizeof(char) * 16);
 
-	pg_ltoa(int_value, buffer);
+	pg_ltoa(intValue, buffer);
 	value->type = jbvNumeric;
 	value->val.numeric = DatumGetNumeric(DirectFunctionCall3(
 															 numeric_in,
@@ -294,648 +203,583 @@ TSIntToJsonbValue(int int_value)
 															 Int32GetDatum(-1)
 															 ));
 	return value;
-
 }
 
 static JsonbValue *
-TSExpressionToJsonb(TSMapExpression *expression, JsonbParseState *jsonb_state)
+TSMapExpressionToJsonbValue(TSMapExpression *expression, JsonbParseState *jsonbState)
 {
+	JsonbValue	key;
+	JsonbValue *value = NULL;
+
 	if (expression == NULL)
 		return NULL;
-	if (expression->dictionary != InvalidOid)
-	{
-		JsonbValue	key;
-		JsonbValue *value = NULL;
 
-		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+	pushJsonbValue(&jsonbState, WJB_BEGIN_OBJECT, NULL);
 
-		key.type = jbvString;
-		key.val.string.len = strlen("options");
-		key.val.string.val = "options";
-		value = TSIntToJsonbValue(expression->options);
+	key.type = jbvString;
+	key.val.string.len = strlen("operator");
+	key.val.string.val = "operator";
+	value = IntToJsonbValue(expression->operator);
 
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	pushJsonbValue(&jsonbState, WJB_VALUE, value);
 
-		key.type = jbvString;
-		key.val.string.len = strlen("dictionary");
-		key.val.string.val = "dictionary";
-		value = TSIntToJsonbValue(expression->dictionary);
+	key.type = jbvString;
+	key.val.string.len = strlen("left");
+	key.val.string.val = "left";
 
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	value = TSMapElementToJsonbValue(expression->left, jsonbState);
+	if (value && IsAJsonbScalar(value))
+		pushJsonbValue(&jsonbState, WJB_VALUE, value);
 
-		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
-	}
-	else if (expression->is_true)
-	{
-		JsonbValue *value = palloc0(sizeof(JsonbValue));
+	key.type = jbvString;
+	key.val.string.len = strlen("right");
+	key.val.string.val = "right";
 
-		value->type = jbvBool;
-		value->val.boolean = true;
-		return value;
-	}
-	else
-	{
-		JsonbValue	key;
-		JsonbValue *value = NULL;
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	value = TSMapElementToJsonbValue(expression->right, jsonbState);
+	if (value && IsAJsonbScalar(value))
+		pushJsonbValue(&jsonbState, WJB_VALUE, value);
 
-		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
-
-		key.type = jbvString;
-		key.val.string.len = strlen("operator");
-		key.val.string.val = "operator";
-		value = TSIntToJsonbValue(expression->operator);
-
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		key.type = jbvString;
-		key.val.string.len = strlen("options");
-		key.val.string.val = "options";
-		value = TSIntToJsonbValue(expression->options);
-
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		key.type = jbvString;
-		key.val.string.len = strlen("left");
-		key.val.string.val = "left";
-
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		value = TSExpressionToJsonb(expression->left, jsonb_state);
-		if (value && IsAJsonbScalar(value))
-			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		key.type = jbvString;
-		key.val.string.len = strlen("right");
-		key.val.string.val = "right";
-
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		value = TSExpressionToJsonb(expression->right, jsonb_state);
-		if (value && IsAJsonbScalar(value))
-			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
-	}
+	return pushJsonbValue(&jsonbState, WJB_END_OBJECT, NULL);
 }
 
 static JsonbValue *
-TSRuleToJsonbValue(TSMapRule *rule, JsonbParseState *jsonb_state)
+TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 {
-	if (rule->dictionary != InvalidOid)
-	{
-		return TSIntToJsonbValue(rule->dictionary);
-	}
-	else
-	{
-		JsonbValue	key;
-		JsonbValue *value = NULL;
+	JsonbValue	key;
+	JsonbValue *value = NULL;
 
-		pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+	pushJsonbValue(&jsonbState, WJB_BEGIN_OBJECT, NULL);
 
+	key.type = jbvString;
+	key.val.string.len = strlen("condition");
+	key.val.string.val = "condition";
+
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	value = TSMapElementToJsonbValue(caseObject->condition, jsonbState);
+
+	if (IsAJsonbScalar(value))
+		pushJsonbValue(&jsonbState, WJB_VALUE, value);
+
+	key.type = jbvString;
+	key.val.string.len = strlen("command");
+	key.val.string.val = "command";
+
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	value = TSMapElementToJsonbValue(caseObject->command, jsonbState);
+
+	if (IsAJsonbScalar(value))
+		pushJsonbValue(&jsonbState, WJB_VALUE, value);
+
+	if (caseObject->elsebranch != NULL)
+	{
 		key.type = jbvString;
-		key.val.string.len = strlen("condition");
-		key.val.string.val = "condition";
+		key.val.string.len = strlen("elsebranch");
+		key.val.string.val = "elsebranch";
 
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		value = TSExpressionToJsonb(rule->condition.expression, jsonb_state);
+		pushJsonbValue(&jsonbState, WJB_KEY, &key);
+		value = TSMapElementToJsonbValue(caseObject->elsebranch, jsonbState);
 
 		if (IsAJsonbScalar(value))
-			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		key.type = jbvString;
-		key.val.string.len = strlen("command");
-		key.val.string.val = "command";
-
-		pushJsonbValue(&jsonb_state, WJB_KEY, &key);
-		if (rule->command.is_expression)
-			value = TSExpressionToJsonb(rule->command.expression, jsonb_state);
-		else
-			value = TSMapToJsonbValue(rule->command.ruleList, jsonb_state);
-
-		if (IsAJsonbScalar(value))
-			pushJsonbValue(&jsonb_state, WJB_VALUE, value);
-
-		return pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			pushJsonbValue(&jsonbState, WJB_VALUE, value);
 	}
+
+	key.type = jbvString;
+	key.val.string.len = strlen("match");
+	key.val.string.val = "match";
+
+	value = IntToJsonbValue(caseObject->match ? 1 : 0);
+
+	pushJsonbValue(&jsonbState, WJB_KEY, &key);
+	pushJsonbValue(&jsonbState, WJB_VALUE, value);
+
+	return pushJsonbValue(&jsonbState, WJB_END_OBJECT, NULL);
 }
 
 static JsonbValue *
-TSMapToJsonbValue(TSMapRuleList *rules, JsonbParseState *jsonb_state)
+TSMapKeepToJsonbValue(JsonbParseState *jsonbState)
 {
-	JsonbValue *out;
-	int			i;
+	JsonbValue *value = palloc0(sizeof(JsonbValue));
 
-	pushJsonbValue(&jsonb_state, WJB_BEGIN_ARRAY, NULL);
-	for (i = 0; i < rules->count; i++)
+	value->type = jbvString;
+	value->val.string.len = strlen("keep");
+	value->val.string.val = "keep";
+
+	return pushJsonbValue(&jsonbState, WJB_VALUE, value);
+}
+
+JsonbValue *
+TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
+{
+	JsonbValue *result = NULL;
+	if (element != NULL)
 	{
-		JsonbValue *value = TSRuleToJsonbValue(&rules->data[i], jsonb_state);
-
-		if (IsAJsonbScalar(value))
-			pushJsonbValue(&jsonb_state, WJB_ELEM, value);
+		switch (element->type)
+		{
+			case TSMAP_EXPRESSION:
+				result = TSMapExpressionToJsonbValue((TSMapExpression *)element->object, jsonbState);
+				break;
+			case TSMAP_DICTIONARY:
+				result = IntToJsonbValue(*(Oid *)element->object);
+				break;
+			case TSMAP_CASE:
+				result = TSMapCaseToJsonbValue((TSMapCase *)element->object, jsonbState);
+				break;
+			case TSMAP_KEEP:
+				Assert(element->parent->type == TSMAP_CASE);
+				result = TSMapElementToJsonbValue(((TSMapCase*)element->parent->object)->condition, jsonbState);
+				// result = TSMapKeepToJsonbValue(jsonbState);
+				break;
+		}
 	}
-	out = pushJsonbValue(&jsonb_state, WJB_END_ARRAY, NULL);
-	return out;
+	return result;
 }
 
 Jsonb *
-TSMapToJsonb(TSMapRuleList *rules)
+TSMapToJsonb(TSMapElement *element)
 {
-	JsonbParseState *jsonb_state = NULL;
+	JsonbParseState *jsonbState = NULL;
 	JsonbValue *out;
 	Jsonb	   *result;
 
-	out = TSMapToJsonbValue(rules, jsonb_state);
+	out = TSMapElementToJsonbValue(element, jsonbState);
 
 	result = JsonbValueToJsonb(out);
 	return result;
 }
 
-static inline TSMapExpression *
-JsonbToTSMapGetExpression(TSMapParseNode *node)
-{
-	TSMapExpression *result;
+/* -------------------------------------------------------------------------- */
 
-	if (node->type == TSMRPT_NUMERIC)
+static bool
+JsonbValueIsTSMapCaseKey(JsonbValue *value)
+{
+	/*
+	 * JsonbValue string may be not null-terminated.
+	 * Convert it for apropriate behavior of strcmp function.
+	 */
+	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+	key[value->val.string.len] = '\0';
+	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
+	// parseData->statesIndex++;
+	if (strcmp(key, "match") == 0 || strcmp(key, "condition") == 0 || strcmp(key, "command") == 0 || strcmp(key, "elsebranch") == 0)
+		return true;
+	return false;
+}
+
+static bool
+JsonbValueIsTSMapExpressionKey(JsonbValue *value)
+{
+	/*
+	 * JsonbValue string may be not null-terminated.
+	 * Convert it for apropriate behavior of strcmp function.
+	 */
+	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+	key[value->val.string.len] = '\0';
+	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
+	// parseData->statesIndex++;
+	if (strcmp(key, "operator") == 0 || strcmp(key, "left") == 0 || strcmp(key, "right") == 0)
+		return true;
+	return false;
+}
+
+/*
+ * Configure parseData->element according to value (key)
+ */
+static void
+JsonbBeginObjectKey(JsonbValue value, TSMapJsonbParseData *parseData)
+{
+	TSMapElement *parentElement = parseData->element;
+	parseData->element = palloc0(sizeof(TSMapElement));
+	parseData->element->parent = parentElement;
+
+	/* Overwrite object-type state based on key */
+	if (JsonbValueIsTSMapExpressionKey(&value))
 	{
-		result = palloc0(sizeof(TSMapExpression));
-		result->dictionary = node->num_val;
+		parseData->states[parseData->statesIndex] = TSMPS_READ_EXPRESSION;
+		parseData->element->type = TSMAP_EXPRESSION;
+		parseData->element->object = palloc0(sizeof(TSMapExpression));
 	}
-	else if (node->type == TSMRPT_BOOL)
+	else if (JsonbValueIsTSMapCaseKey(&value))
 	{
-		result = palloc0(sizeof(TSMapExpression));
-		result->is_true = node->bool_val;
+		parseData->states[parseData->statesIndex] = TSMPS_READ_CASE;
+		parseData->element->type = TSMAP_CASE;
+		parseData->element->object = palloc0(sizeof(TSMapCase));
 	}
+}
+
+static void
+JsonbKeyExpressionProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
+{
+	/*
+	 * JsonbValue string may be not null-terminated.
+	 * Convert it for apropriate behavior of strcmp function.
+	 */
+	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
+	parseData->statesIndex++;
+	if (strcmp(key, "operator") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_OPERATOR;
+	else if (strcmp(key, "left") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_LEFT;
+	else if (strcmp(key, "right") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_RIGHT;
 	else
-		result = node->expression_val;
-
-	pfree(node);
-
-	return result;
+		// TODO: Error
+		Assert(false);
 }
 
-static TSMapParseNode *
-JsonbToTSMapParseObject(JsonbValue *value, TSMapRuleParseState *parse_state)
+static void
+JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 {
-	TSMapParseNode *result = palloc0(sizeof(TSMapParseNode));
-	char	   *str;
+	/*
+	 * JsonbValue string may be not null-terminated.
+	 * Convert it for apropriate behavior of strcmp function.
+	 */
+	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
+	parseData->statesIndex++;
+	if (strcmp(key, "condition") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_CONDITION;
+	else if (strcmp(key, "command") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_COMMAND;
+	else if (strcmp(key, "elsebranch") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_ELSEBRANCH;
+	else if (strcmp(key, "match") == 0)
+		parseData->states[parseData->statesIndex] = TSMPS_READ_MATCH;
+	else
+		// TODO: Error
+		Assert(false);
+}
 
-	switch (value->type)
+static int
+JsonbValueToInt(JsonbValue *value)
+{
+	char *str;
+	str = DatumGetCString(DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
+	return pg_atoi(str, sizeof(int), 0);
+}
+
+static TSMapElement *
+JsonbReadOid(JsonbValue *value, TSMapElement *parent)
+{
+	TSMapElement *element = palloc0(sizeof(TSMapElement));
+	element->parent = parent;
+	element->type = TSMAP_DICTIONARY;
+	element->object = palloc0(sizeof(Oid));
+	*((Oid*)element->object) = JsonbValueToInt(value);
+	return element;
+}
+
+static TSMapElement *
+JsonbReadString(JsonbValue *value, TSMapElement *parent)
+{
+	char *str;
+	TSMapElement *element = palloc0(sizeof(TSMapElement));
+	element->parent = parent;
+	str = palloc0(sizeof(char) * (value->val.string.len + 1));
+	memcpy(str, value->val.string.val, sizeof(char) * value->val.string.len);
+	if (strcmp(str, "KEEP") == 0)
 	{
-		case jbvNumeric:
-			result->type = TSMRPT_NUMERIC;
-			str = DatumGetCString(
-								  DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
-			result->num_val = pg_atoi(str, sizeof(result->num_val), 0);
+		element->type = TSMAP_KEEP;
+	}
+	pfree(str);
+	return element;
+}
+
+static void
+JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData *parseData)
+{
+	TSMapElement *element;
+	switch (r)
+	{
+		case WJB_KEY:
+			if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMPLEX_OBJ)
+				JsonbBeginObjectKey(value, parseData);
+
+			if (parseData->states[parseData->statesIndex] == TSMPS_READ_EXPRESSION)
+				JsonbKeyExpressionProcessing(value, parseData);
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_CASE)
+				JsonbKeyCaseProcessing(value, parseData);
+
 			break;
-		case jbvArray:
-			Assert(*parse_state == TSMRPS_IN_COMMAND);
-		case jbvBinary:
-			result = JsonbToTSMapParse(value->val.binary.data, parse_state);
+		case WJB_BEGIN_OBJECT:
+			parseData->statesIndex++;
+			parseData->states[parseData->statesIndex] = TSMPS_READ_COMPLEX_OBJ;
 			break;
-		case jbvBool:
-			result->type = TSMRPT_BOOL;
-			result->bool_val = value->val.boolean;
+		case WJB_END_OBJECT:
+			if (parseData->states[parseData->statesIndex] == TSMPS_READ_LEFT)
+				((TSMapExpression*)parseData->element->parent->object)->left = parseData->element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_RIGHT)
+				((TSMapExpression*)parseData->element->parent->object)->right = parseData->element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_CONDITION)
+				((TSMapCase*)parseData->element->parent->object)->condition = parseData->element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMMAND)
+				((TSMapCase*)parseData->element->parent->object)->command = parseData->element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_ELSEBRANCH)
+				((TSMapCase*)parseData->element->parent->object)->elsebranch = parseData->element;
+
+			parseData->statesIndex--;
+			Assert(parseData->statesIndex >= 0);
+			if (parseData->element->parent != NULL)
+				parseData->element = parseData->element->parent;
 			break;
-		case jbvObject:
-		case jbvNull:
-		case jbvString:
+		case WJB_VALUE:
+			if (value.type == jbvBinary)
+				element = JsonbToTSMapElement(value.val.binary.data);
+			else if (value.type == jbvString)
+				element = JsonbReadString(&value, parseData->element);
+			else if (value.type == jbvNumeric)
+				element = JsonbReadOid(&value, parseData->element);
+
+			if (parseData->states[parseData->statesIndex] == TSMPS_READ_CONDITION)
+				((TSMapCase*)parseData->element->object)->condition = element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMMAND)
+				((TSMapCase*)parseData->element->object)->command = element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_ELSEBRANCH)
+				((TSMapCase*)parseData->element->object)->elsebranch = element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_MATCH)
+				((TSMapCase*)parseData->element->object)->match = JsonbValueToInt(&value) == 1 ? true : false;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_OPERATOR)
+				((TSMapExpression*)parseData->element->object)->operator = JsonbValueToInt(&value);
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_LEFT)
+				((TSMapExpression*)parseData->element->object)->left = element;
+			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_RIGHT)
+				((TSMapExpression*)parseData->element->object)->right = element;
+
+			parseData->statesIndex--;
+			Assert(parseData->statesIndex >= 0);
+			if (parseData->element->parent != NULL)
+				parseData->element = parseData->element->parent;
+			break;
+		case WJB_ELEM:
+			if (parseData->states[parseData->statesIndex] == TSMPS_WAIT_ELEMENT)
+			{
+				if (parseData->element != NULL)
+					parseData->element = JsonbReadOid(&value, parseData->element->parent);
+				else
+					parseData->element = JsonbReadOid(&value, NULL);
+			}
+			break;
+		case WJB_BEGIN_ARRAY:
+		case WJB_END_ARRAY:
+		default:
 			break;
 	}
-	return result;
 }
 
-static TSMapParseNode *
-JsonbToTSMapParse(JsonbContainer *root, TSMapRuleParseState *parse_state)
+static TSMapElement *
+JsonbToTSMapElement(JsonbContainer *root)
 {
+	TSMapJsonbParseData parseData;
 	JsonbIteratorToken r;
-	JsonbValue	val;
 	JsonbIterator *it;
-	TSMapParseNode *result;
-	TSMapParseNode *nested_result;
-	char	   *key;
-	TSMapRuleList *rule_list = NULL;
+	JsonbValue	val;
+
+	parseData.statesIndex = 0;
+	parseData.states[parseData.statesIndex] = TSMPS_WAIT_ELEMENT;
+	parseData.element = NULL;
 
 	it = JsonbIteratorInit(root);
-	result = palloc0(sizeof(TSMapParseNode));
-	result->type = TSMRPT_UNKNOWN;
 	while ((r = JsonbIteratorNext(&it, &val, true)) != WJB_DONE)
 	{
-		switch (r)
-		{
-			case WJB_BEGIN_ARRAY:
-				if (*parse_state == TSMRPS_BEGINING || *parse_state == TSMRPS_IN_EXPRESSION)
-				{
-					*parse_state = TSMRPS_IN_CASES_ARRAY;
-					rule_list = palloc0(sizeof(TSMapRuleList));
-				}
-				break;
-			case WJB_KEY:
-				key = palloc0(sizeof(char) * (val.val.string.len + 1));
-				memcpy(key, val.val.string.val, sizeof(char) * val.val.string.len);
-
-				r = JsonbIteratorNext(&it, &val, true);
-				if (*parse_state == TSMRPS_IN_CASE)
-				{
-					if (strcmp(key, "command") == 0)
-						*parse_state = TSMRPS_IN_EXPRESSION;
-					else if (strcmp(key, "condition") == 0)
-						*parse_state = TSMRPS_IN_EXPRESSION;
-				}
-
-				nested_result = JsonbToTSMapParseObject(&val, parse_state);
-
-				if (result->type == TSMRPT_RULE)
-				{
-					if (strcmp(key, "command") == 0)
-					{
-						result->rule_val->command.is_expression = nested_result->type == TSMRPT_EXPRESSION ||
-							nested_result->type == TSMRPT_NUMERIC;
-
-						if (result->rule_val->command.is_expression)
-							result->rule_val->command.expression = JsonbToTSMapGetExpression(nested_result);
-						else
-							result->rule_val->command.ruleList = nested_result->rule_list_val;
-					}
-					else if (strcmp(key, "condition") == 0)
-					{
-						result->rule_val->condition.expression = JsonbToTSMapGetExpression(nested_result);
-					}
-					*parse_state = TSMRPS_IN_CASE;
-				}
-				else if (result->type == TSMRPT_COMMAND)
-				{
-					result->command_val->is_expression = nested_result->type == TSMRPT_EXPRESSION;
-					if (result->command_val->is_expression)
-						result->command_val->expression = JsonbToTSMapGetExpression(nested_result);
-					else
-						result->command_val->ruleList = nested_result->rule_list_val;
-					*parse_state = TSMRPS_IN_COMMAND;
-				}
-				else if (result->type == TSMRPT_CONDITION)
-				{
-					result->condition_val->expression = JsonbToTSMapGetExpression(nested_result);
-					*parse_state = TSMRPS_IN_COMMAND;
-				}
-				else if (result->type == TSMRPT_EXPRESSION)
-				{
-					if (strcmp(key, "left") == 0)
-						result->expression_val->left = JsonbToTSMapGetExpression(nested_result);
-					else if (strcmp(key, "right") == 0)
-						result->expression_val->right = JsonbToTSMapGetExpression(nested_result);
-					else if (strcmp(key, "operator") == 0)
-						result->expression_val->operator = nested_result->num_val;
-					else if (strcmp(key, "options") == 0)
-						result->expression_val->options = nested_result->num_val;
-					else if (strcmp(key, "dictionary") == 0)
-						result->expression_val->dictionary = nested_result->num_val;
-				}
-
-				break;
-			case WJB_BEGIN_OBJECT:
-				if (*parse_state == TSMRPS_IN_CASES_ARRAY)
-				{
-					*parse_state = TSMRPS_IN_CASE;
-					result->type = TSMRPT_RULE;
-					result->rule_val = palloc0(sizeof(TSMapRule));
-				}
-				else if (*parse_state == TSMRPS_IN_COMMAND)
-				{
-					result->type = TSMRPT_COMMAND;
-					result->command_val = palloc0(sizeof(TSMapCommand));
-				}
-				else if (*parse_state == TSMRPS_IN_CONDITION)
-				{
-					result->type = TSMRPT_CONDITION;
-					result->condition_val = palloc0(sizeof(TSMapCondition));
-				}
-				else if (*parse_state == TSMRPS_IN_EXPRESSION)
-				{
-					result->type = TSMRPT_EXPRESSION;
-					result->expression_val = palloc0(sizeof(TSMapExpression));
-				}
-				break;
-			case WJB_END_OBJECT:
-				if (*parse_state == TSMRPS_IN_CASE)
-					*parse_state = TSMRPS_IN_CASES_ARRAY;
-				else if (*parse_state == TSMRPS_IN_CONDITION || *parse_state == TSMRPS_IN_COMMAND)
-					*parse_state = TSMRPS_IN_CASE;
-				if (rule_list && result->type == TSMRPT_RULE)
-				{
-					rule_list->count++;
-					if (rule_list->data)
-						rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
-					else
-						rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
-					memcpy(rule_list->data + rule_list->count - 1, result->rule_val, sizeof(TSMapRule));
-				}
-				else
-					return result;
-			case WJB_END_ARRAY:
-				break;
-			default:
-				nested_result = JsonbToTSMapParseObject(&val, parse_state);
-				if (nested_result->type == TSMRPT_NUMERIC)
-				{
-					if (*parse_state == TSMRPS_IN_CASES_ARRAY)
-					{
-						/*
-						 * Add dictionary Oid into array (comma-separated
-						 * configuration)
-						 */
-						rule_list->count++;
-						if (rule_list->data)
-							rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
-						else
-							rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
-						memset(rule_list->data + rule_list->count - 1, 0, sizeof(TSMapRule));
-						rule_list->data[rule_list->count - 1].dictionary = nested_result->num_val;
-					}
-					else if (result->type == TSMRPT_UNKNOWN && *parse_state == TSMRPS_IN_EXPRESSION)
-					{
-						result->type = TSMRPT_EXPRESSION;
-						result->expression_val = palloc0(sizeof(TSMapExpression));
-					}
-					if (result->type == TSMRPT_EXPRESSION)
-						result->expression_val->dictionary = nested_result->num_val;
-				}
-				else if (nested_result->type == TSMRPT_RULE && rule_list)
-				{
-					rule_list->count++;
-					if (rule_list->data)
-						rule_list->data = repalloc(rule_list->data, sizeof(TSMapRule) * rule_list->count);
-					else
-						rule_list->data = palloc0(sizeof(TSMapRule) * rule_list->count);
-					memcpy(rule_list->data + rule_list->count - 1, nested_result->rule_val, sizeof(TSMapRule));
-				}
-				break;
-		}
+		JsonbProcessElement(r, val, &parseData);
 	}
-	result->type = TSMRPT_RULE_LIST;
-	result->rule_list_val = rule_list;
-	return result;
+
+	return parseData.element;
 }
 
-TSMapRuleList *
+TSMapElement *
 JsonbToTSMap(Jsonb *json)
 {
 	JsonbContainer *root = &json->root;
-	TSMapRuleList *result = palloc0(sizeof(TSMapRuleList));
-	TSMapRuleParseState parse_state = TSMRPS_BEGINING;
-	TSMapParseNode *parsing_result;
+	return JsonbToTSMapElement(root);
+}
 
-	parsing_result = JsonbToTSMapParse(root, &parse_state);
+/*
+ * Text Search Configuration Map Utils
+ */
 
-	Assert(parsing_result->type == TSMRPT_RULE_LIST);
-	result = parsing_result->rule_list_val;
-	pfree(parsing_result);
+typedef struct OidList {
+	Oid* data;
+	int size; /* Size of data array. Uninitialized elemenets in data filled with InvalidOid */
+} OidList;
 
+static OidList *
+OidListInit()
+{
+	OidList *result = palloc0(sizeof(OidList));
+	result->size = 1;
+	result->data = palloc0(result->size * sizeof(Oid));
+	result->data[0] = InvalidOid;
 	return result;
 }
 
 static void
-TSMapReplaceDictionaryParseExpression(TSMapExpression *expr, Oid oldDict, Oid newDict)
+OidListAdd(OidList *list, Oid oid)
 {
-	if (expr->left)
-		TSMapReplaceDictionaryParseExpression(expr->left, oldDict, newDict);
-	if (expr->right)
-		TSMapReplaceDictionaryParseExpression(expr->right, oldDict, newDict);
+	int i;
+	for (i = 0; list->data[i] != InvalidOid; i++)
+		if (list->data[i] == oid)
+			return;
 
-	if (expr->dictionary == oldDict)
-		expr->dictionary = newDict;
+	i++;
+	if (i == list->size)
+	{
+		int j;
+		list->size = list->size * 2;
+		list->data = repalloc(list->data, sizeof(Oid) * list->size);
+
+		for (j = i; j < list->size; j++)
+			list->data[j] = InvalidOid;
+	}
+	list->data[i] = oid;
 }
 
 static void
-TSMapReplaceDictionaryParseMap(TSMapRule *rule, Oid oldDict, Oid newDict)
+TSMapGetDictionariesInternal(TSMapElement *config, OidList *list)
 {
-	if (rule->dictionary != InvalidOid)
+	if (config != NULL)
 	{
-		Oid		   *result;
-
-		result = palloc0(sizeof(Oid) * 2);
-		result[0] = rule->dictionary;
-		result[1] = InvalidOid;
+		switch (config->type)
+		{
+			case TSMAP_EXPRESSION:
+				TSMapGetDictionariesInternal(((TSMapExpression*)config->object)->left, list);
+				TSMapGetDictionariesInternal(((TSMapExpression*)config->object)->right, list);
+				break;
+			case TSMAP_CASE:
+				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->command, list);
+				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->condition, list);
+				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->elsebranch, list);
+				break;
+			case TSMAP_DICTIONARY:
+				OidListAdd(list, *(Oid*)config->object);
+				break;
+		}
 	}
-	else
-	{
-		TSMapReplaceDictionaryParseExpression(rule->condition.expression, oldDict, newDict);
-
-		if (rule->command.is_expression)
-			TSMapReplaceDictionaryParseExpression(rule->command.expression, oldDict, newDict);
-		else
-			TSMapReplaceDictionary(rule->command.ruleList, oldDict, newDict);
-	}
-}
-
-void
-TSMapReplaceDictionary(TSMapRuleList *rules, Oid oldDict, Oid newDict)
-{
-	int			i;
-
-	for (i = 0; i < rules->count; i++)
-		TSMapReplaceDictionaryParseMap(&rules->data[i], oldDict, newDict);
-}
-
-static Oid *
-TSMapGetDictionariesParseExpression(TSMapExpression *expr)
-{
-	Oid		   *left_res;
-	Oid		   *right_res;
-	Oid		   *result;
-
-	left_res = right_res = NULL;
-
-	if (expr->left && expr->right)
-	{
-		Oid		   *ptr;
-		int			count_l;
-		int			count_r;
-
-		left_res = TSMapGetDictionariesParseExpression(expr->left);
-		right_res = TSMapGetDictionariesParseExpression(expr->right);
-
-		for (ptr = left_res, count_l = 0; *ptr != InvalidOid; ptr++)
-			count_l++;
-		for (ptr = right_res, count_r = 0; *ptr != InvalidOid; ptr++)
-			count_r++;
-
-		result = palloc0(sizeof(Oid) * (count_l + count_r + 1));
-		memcpy(result, left_res, sizeof(Oid) * count_l);
-		memcpy(result + count_l, right_res, sizeof(Oid) * count_r);
-		result[count_l + count_r] = InvalidOid;
-
-		pfree(left_res);
-		pfree(right_res);
-	}
-	else
-	{
-		result = palloc0(sizeof(Oid) * 2);
-		result[0] = expr->dictionary;
-		result[1] = InvalidOid;
-	}
-
-	return result;
-}
-
-static Oid *
-TSMapGetDictionariesParseRule(TSMapRule *rule)
-{
-	Oid		   *result;
-
-	if (rule->dictionary)
-	{
-		result = palloc0(sizeof(Oid) * 2);
-		result[0] = rule->dictionary;
-		result[1] = InvalidOid;
-	}
-	else
-	{
-		if (rule->command.is_expression)
-			result = TSMapGetDictionariesParseExpression(rule->command.expression);
-		else
-			result = TSMapGetDictionariesList(rule->command.ruleList);
-	}
-	return result;
 }
 
 Oid *
-TSMapGetDictionariesList(TSMapRuleList *rules)
+TSMapGetDictionaries(TSMapElement *config)
 {
-	int			i;
-	Oid		  **results_arr;
-	int		   *sizes;
-	Oid		   *result;
-	int			size;
-	int			offset;
+	Oid *result;
+	OidList *list = OidListInit();
 
-	results_arr = palloc0(sizeof(Oid *) * rules->count);
-	sizes = palloc0(sizeof(int) * rules->count);
-	size = 0;
-	for (i = 0; i < rules->count; i++)
-	{
-		int			count;
-		Oid		   *ptr;
+	TSMapGetDictionariesInternal(config, list);
 
-		results_arr[i] = TSMapGetDictionariesParseRule(&rules->data[i]);
-
-		for (count = 0, ptr = results_arr[i]; *ptr != InvalidOid; ptr++)
-			count++;
-
-		sizes[i] = count;
-		size += count;
-	}
-
-	result = palloc(sizeof(Oid) * (size + 1));
-	offset = 0;
-	for (i = 0; i < rules->count; i++)
-	{
-		memcpy(result + offset, results_arr[i], sizeof(Oid) * sizes[i]);
-		offset += sizes[i];
-		pfree(results_arr[i]);
-	}
-	result[offset] = InvalidOid;
-
-	pfree(results_arr);
-	pfree(sizes);
+	result = list->data;
+	pfree(list);
 
 	return result;
 }
 
-ListDictionary *
-TSMapGetListDictionary(TSMapRuleList *rules)
+void
+TSMapReplaceDictionary(TSMapElement *config, Oid oldDict, Oid newDict)
 {
-	ListDictionary *result = palloc0(sizeof(ListDictionary));
-	Oid		   *oids = TSMapGetDictionariesList(rules);
-	int			i;
-	int			count;
-	Oid		   *ptr;
-
-	ptr = oids;
-	count = 0;
-	while (*ptr != InvalidOid)
+	if (config != NULL)
 	{
-		count++;
-		ptr++;
+		switch (config->type)
+		{
+			case TSMAP_EXPRESSION:
+				TSMapReplaceDictionary(((TSMapExpression*)config->object)->left, oldDict, newDict);
+				TSMapReplaceDictionary(((TSMapExpression*)config->object)->right, oldDict, newDict);
+				break;
+			case TSMAP_CASE:
+				TSMapReplaceDictionary(((TSMapCase*)config->object)->command, oldDict, newDict);
+				TSMapReplaceDictionary(((TSMapCase*)config->object)->condition, oldDict, newDict);
+				TSMapReplaceDictionary(((TSMapCase*)config->object)->elsebranch, oldDict, newDict);
+				break;
+			case TSMAP_DICTIONARY:
+				if (*(Oid*)config->object == oldDict)
+					*(Oid*)config->object = newDict;
+				break;
+		}
 	}
-
-	result->len = count;
-	result->dictIds = palloc0(sizeof(Oid) * result->len);
-	ptr = oids;
-	i = 0;
-	while (*ptr != InvalidOid)
-		result->dictIds[i++] = *(ptr++);
-
-	return result;
 }
 
-static TSMapExpression *
-TSMapExpressionMoveToMemoryContext(TSMapExpression *expr, MemoryContext context)
+/*
+ * Text Search Configuration Map Memory Management
+ */
+
+static TSMapElement *
+TSMapExpressionMoveToMemoryContext(TSMapExpression *expression, MemoryContext context)
 {
-	TSMapExpression *result;
+	TSMapElement *result = MemoryContextAlloc(context, sizeof(TSMapElement));
+	TSMapExpression *resultExpression = MemoryContextAlloc(context, sizeof(TSMapExpression));
 
-	if (expr == NULL)
-		return NULL;
-	result = MemoryContextAlloc(context, sizeof(TSMapExpression));
-	memset(result, 0, sizeof(TSMapExpression));
-	if (expr->dictionary != InvalidOid || expr->is_true)
+	memset(resultExpression, 0, sizeof(TSMapExpression));
+	result->object = resultExpression;
+	result->type = TSMAP_EXPRESSION;
+
+	resultExpression->operator = expression->operator;
+
+	if (expression->left)
 	{
-		result->dictionary = expr->dictionary;
-		result->is_true = expr->is_true;
-		result->options = expr->options;
-		result->left = result->right = NULL;
-		result->operator = 0;
+		resultExpression->left = TSMapMoveToMemoryContext(expression->left, context);
+		resultExpression->left->parent = result;
 	}
-	else
+
+	if (expression->right)
 	{
-		result->left = TSMapExpressionMoveToMemoryContext(expr->left, context);
-		result->right = TSMapExpressionMoveToMemoryContext(expr->right, context);
-		result->operator = expr->operator;
-		result->options = expr->options;
-		result->dictionary = InvalidOid;
-		result->is_true = false;
-	}
-	return result;
-}
-
-static TSMapRule
-TSMapRuleMoveToMemoryContext(TSMapRule *rule, MemoryContext context)
-{
-	TSMapRule	result;
-
-	memset(&result, 0, sizeof(TSMapRule));
-
-	if (rule->dictionary)
-	{
-		result.dictionary = rule->dictionary;
-	}
-	else
-	{
-		result.condition.expression = TSMapExpressionMoveToMemoryContext(rule->condition.expression, context);
-
-		result.command.is_expression = rule->command.is_expression;
-		if (rule->command.is_expression)
-			result.command.expression = TSMapExpressionMoveToMemoryContext(rule->command.expression, context);
-		else
-			result.command.ruleList = TSMapMoveToMemoryContext(rule->command.ruleList, context);
+		resultExpression->right = TSMapMoveToMemoryContext(expression->right, context);
+		resultExpression->right->parent = result;
 	}
 
 	return result;
 }
 
-TSMapRuleList *
-TSMapMoveToMemoryContext(TSMapRuleList *rules, MemoryContext context)
+static TSMapElement *
+TSMapCaseMoveToMemoryContext(TSMapCase *caseObject, MemoryContext context)
 {
-	int			i;
-	TSMapRuleList *result = MemoryContextAlloc(context, sizeof(TSMapRuleList));
+	TSMapElement *result = MemoryContextAlloc(context, sizeof(TSMapElement));
+	TSMapCase *resultCaseObject = MemoryContextAlloc(context, sizeof(TSMapCase));
 
-	memset(result, 0, sizeof(TSMapRuleList));
+	memset(resultCaseObject, 0, sizeof(TSMapCase));
+	result->object = resultCaseObject;
+	result->type = TSMAP_CASE;
 
-	result->count = rules->count;
-	result->data = MemoryContextAlloc(context, sizeof(TSMapRule) * result->count);
+	resultCaseObject->match = caseObject->match;
 
-	for (i = 0; i < result->count; i++)
-		result->data[i] = TSMapRuleMoveToMemoryContext(&rules->data[i], context);
+	if (caseObject->command)
+	{
+		resultCaseObject->command = TSMapMoveToMemoryContext(caseObject->command, context);
+		resultCaseObject->command->parent = result;
+	}
+	if (caseObject->condition)
+	{
+		resultCaseObject->condition = TSMapMoveToMemoryContext(caseObject->condition, context);
+		resultCaseObject->condition->parent = result;
+	}
+	if (caseObject->elsebranch)
+	{
+		resultCaseObject->elsebranch = TSMapMoveToMemoryContext(caseObject->elsebranch, context);
+		resultCaseObject->elsebranch->parent = result;
+	}
+
+	return result;
+}
+
+TSMapElement *
+TSMapMoveToMemoryContext(TSMapElement *config, MemoryContext context)
+{
+	TSMapElement *result;
+
+	switch (config->type)
+	{
+		case TSMAP_EXPRESSION:
+			result = TSMapExpressionMoveToMemoryContext((TSMapExpression*)config->object, context);
+			break;
+		case TSMAP_CASE:
+			result = TSMapCaseMoveToMemoryContext((TSMapCase*)config->object, context);
+			break;
+		case TSMAP_DICTIONARY:
+			result = MemoryContextAlloc(context, sizeof(TSMapElement));
+			result->type = TSMAP_DICTIONARY;
+			result->object = MemoryContextAlloc(context, sizeof(Oid));
+			*(Oid*)result->object = *(Oid*)config->object;
+			break;
+	}
 
 	return result;
 }
@@ -944,33 +788,35 @@ static void
 TSMapExpressionFree(TSMapExpression *expression)
 {
 	if (expression->left)
-		TSMapExpressionFree(expression->left);
+		TSMapElementFree(expression->left);
 	if (expression->right)
-		TSMapExpressionFree(expression->right);
+		TSMapElementFree(expression->right);
 	pfree(expression);
 }
 
 static void
-TSMapRuleFree(TSMapRule rule)
+TSMapCaseFree(TSMapCase *caseObject)
 {
-	if (rule.dictionary == InvalidOid)
-	{
-		if (rule.command.is_expression)
-			TSMapExpressionFree(rule.command.expression);
-		else
-			TSMapFree(rule.command.ruleList);
-
-		TSMapExpressionFree(rule.condition.expression);
-	}
+	TSMapElementFree(caseObject->condition);
+	TSMapElementFree(caseObject->command);
+	TSMapElementFree(caseObject->elsebranch);
+	pfree(caseObject);
 }
 
 void
-TSMapFree(TSMapRuleList * rules)
+TSMapElementFree(TSMapElement *element)
 {
-	int			i;
-
-	for (i = 0; i < rules->count; i++)
-		TSMapRuleFree(rules->data[i]);
-	pfree(rules->data);
-	pfree(rules);
+	if (element != NULL)
+	{
+		switch (element->type)
+		{
+			case TSMAP_CASE:
+				TSMapCaseFree(element->object);
+				break;
+			case TSMAP_EXPRESSION:
+				TSMapExpressionFree(element->object);
+				break;
+		}
+		pfree(element);
+	}
 }

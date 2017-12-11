@@ -3369,32 +3369,38 @@ typedef enum AlterTSConfigType
 	ALTER_TSCONFIG_DROP_MAPPING
 } AlterTSConfigType;
 
-typedef enum DictPipeElemType
+typedef enum DictMapElemType
 {
-	DICT_MAP_OPERAND,
-	DICT_MAP_OPERATOR,
-	DICT_MAP_CONST_TRUE
-} DictPipeType;
-
-typedef struct DictMapExprElem
-{
-	NodeTag		type;
-	int8		kind;			/* See DictMapExprElemType */
-	List	   *dictname;		/* Used in DICT_MAP_EXPR_OPERAND */
-	struct DictMapExprElem *left;	/* Used in DICT_MAP_EXPR_OPERATOR */
-	struct DictMapExprElem *right;	/* Used in DICT_MAP_EXPR_OPERATOR */
-	int8		oper;			/* Used in DICT_MAP_EXPR_OPERATOR */
-	int8		options;		/* Can be used in the future */
-} DictMapExprElem;
+	DICT_MAP_CASE,
+	DICT_MAP_EXPRESSION,
+	DICT_MAP_KEEP,
+	DICT_MAP_DICTIONARY,
+	DICT_MAP_DICTIONARY_LIST
+} DictMapElemType;
 
 typedef struct DictMapElem
 {
 	NodeTag		type;
-	DictMapExprElem *condition;
-	DictMapExprElem *command;
-	List	   *commandmaps;
-	List	   *dictnames;
+	int8		kind; /* See DictMapElemType */
+	void*		data; /* Type should be detected by kind value */
 } DictMapElem;
+
+typedef struct DictMapExprElem
+{
+	NodeTag		type;
+	DictMapElem *left;
+	DictMapElem *right;
+	int8		oper;
+} DictMapExprElem;
+
+typedef struct DictMapCase
+{
+	NodeTag		type;
+	struct DictMapElem *condition;
+	struct DictMapElem *command;
+	struct DictMapElem *elsebranch;
+	bool		match;
+} DictMapCase;
 
 typedef struct AlterTSConfigurationStmt
 {
@@ -3408,7 +3414,7 @@ typedef struct AlterTSConfigurationStmt
 	 */
 	List	   *tokentype;		/* list of Value strings */
 	List	   *dicts;			/* list of list of Value strings */
-	List	   *dict_map;
+	DictMapElem *dict_map;
 	bool		override;		/* if true - remove old variant */
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */

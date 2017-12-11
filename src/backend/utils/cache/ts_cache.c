@@ -416,10 +416,10 @@ lookup_ts_config_cache(Oid cfgId)
 		ScanKeyData mapskey;
 		SysScanDesc mapscan;
 		HeapTuple	maptup;
-		TSMapRuleList *mapruleslist[MAXTOKENTYPE + 1];
+		TSMapElement *mapconfigs[MAXTOKENTYPE + 1];
 		int			maxtokentype;
 		int			i;
-		TSMapRuleList *rules_tmp;
+		TSMapElement *tmpConfig;
 
 		tp = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgId));
 		if (!HeapTupleIsValid(tp))
@@ -452,7 +452,7 @@ lookup_ts_config_cache(Oid cfgId)
 				for (i = 0; i < entry->lenmap; i++)
 				{
 					if (entry->map[i])
-						TSMapFree(entry->map[i]);
+						TSMapElementFree(entry->map[i]);
 				}
 				pfree(entry->map);
 			}
@@ -483,7 +483,7 @@ lookup_ts_config_cache(Oid cfgId)
 		mapscan = systable_beginscan_ordered(maprel, mapidx,
 											 NULL, 1, &mapskey);
 
-		memset(mapruleslist, 0, sizeof(mapruleslist));
+		memset(mapconfigs, 0, sizeof(mapconfigs));
 		while ((maptup = systable_getnext_ordered(mapscan, ForwardScanDirection)) != NULL)
 		{
 			Form_pg_ts_config_map cfgmap = (Form_pg_ts_config_map) GETSTRUCT(maptup);
@@ -495,10 +495,10 @@ lookup_ts_config_cache(Oid cfgId)
 				elog(ERROR, "maptokentype entries are out of order");
 
 			maxtokentype = toktype;
-			rules_tmp = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
-			mapruleslist[maxtokentype] = TSMapMoveToMemoryContext(rules_tmp, CacheMemoryContext);
-			TSMapFree(rules_tmp);
-			rules_tmp = NULL;
+			tmpConfig = JsonbToTSMap(DatumGetJsonbP(&cfgmap->mapdicts));
+			mapconfigs[maxtokentype] = TSMapMoveToMemoryContext(tmpConfig, CacheMemoryContext);
+			TSMapElementFree(tmpConfig);
+			tmpConfig = NULL;
 		}
 
 		systable_endscan_ordered(mapscan);
@@ -509,11 +509,11 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the overall map */
 			entry->lenmap = maxtokentype + 1;
-			entry->map = (TSMapRuleList * *)
+			entry->map = (TSMapElement **)
 				MemoryContextAlloc(CacheMemoryContext,
-								   sizeof(TSMapRuleList *) * entry->lenmap);
-			memcpy(entry->map, mapruleslist,
-				   sizeof(TSMapRuleList *) * entry->lenmap);
+								   sizeof(TSMapElement *) * entry->lenmap);
+			memcpy(entry->map, mapconfigs,
+				   sizeof(TSMapElement *) * entry->lenmap);
 		}
 
 		entry->isvalid = true;

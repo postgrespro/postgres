@@ -382,6 +382,7 @@ typedef enum NodeTag
 	T_AlterEnumStmt,
 	T_DictMapExprElem,
 	T_DictMapElem,
+	T_DictMapCase,
 	T_AlterTSDictionaryStmt,
 	T_AlterTSConfigurationStmt,
 	T_CreateFdwStmt,
