@@ -1299,11 +1299,10 @@ CreateCaseForSingleDictionary(Oid dictOid)
 
 	condition->type = TSMAP_DICTIONARY;
 	condition->parent = result;
-	condition->object = palloc0(sizeof(Oid));
-	*(Oid*)condition->object = dictOid;
+	condition->value.objectDictionary = dictOid;
 	caseObject->condition = condition;
 
-	result->object = caseObject;
+	result->value.objectCase = caseObject;
 	result->type = TSMAP_CASE;
 
 	return result;
@@ -1331,7 +1330,7 @@ ParseTSMapConfig(DictMapElem *elem)
 		caseObject->command->parent = result;
 
 		result->type = TSMAP_CASE;
-		result->object = caseObject;
+		result->value.objectCase = caseObject;
 	}
 	else if (elem->kind == DICT_MAP_EXPRESSION)
 	{
@@ -1343,29 +1342,20 @@ ParseTSMapConfig(DictMapElem *elem)
 		expression->operator = expressionAST->oper;
 
 		result->type = TSMAP_EXPRESSION;
-		result->object = expression;
+		result->value.objectExpression = expression;
 	}
 	else if (elem->kind == DICT_MAP_KEEP)
 	{
-		result->object = NULL;
+		result->value.objectExpression = NULL;
 		result->type = TSMAP_KEEP;
 	}
 	else if (elem->kind == DICT_MAP_DICTIONARY)
 	{
-		Oid *oid = palloc0(sizeof(Oid));
-		*oid = get_ts_dict_oid(elem->data, false);
-		result->object = oid;
+		result->value.objectDictionary = get_ts_dict_oid(elem->data, false);
 		result->type = TSMAP_DICTIONARY;
 	}
 	else if (elem->kind == DICT_MAP_DICTIONARY_LIST)
 	{
-		// TODO: Transform dictionary list into list of cases
-		/*
-		Oid *oid = palloc0(sizeof(Oid));
-		*oid = get_ts_dict_oid(elem->data, false);
-		result->object = oid;
-		result->type = TSMAP_DICTIONARY;
-		*/
 		int i = 0;
 		ListCell   *c;
 		TSMapElement *root = NULL;
@@ -1382,7 +1372,7 @@ ParseTSMapConfig(DictMapElem *elem)
 				root = currentNode;
 			else
 			{
-				((TSMapCase*)prevNode->object)->elsebranch = currentNode;
+				prevNode->value.objectCase->elsebranch = currentNode;
 				currentNode->parent = prevNode;
 			}
 

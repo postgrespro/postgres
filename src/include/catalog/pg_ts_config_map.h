@@ -44,7 +44,12 @@ typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
 
 typedef struct TSMapElement {
 	int			type;
-	void	   *object;
+	union {
+		struct TSMapExpression *objectExpression;
+		struct TSMapCase *objectCase;
+		Oid objectDictionary;
+		void *object;
+	} value;
 	struct TSMapElement *parent;
 } TSMapElement;
 
@@ -74,17 +79,10 @@ typedef struct TSMapCase {
  *		Dictionary map operators
  * ----------------
  */
-#define TSMAP_OP_OR				1
-#define TSMAP_OP_AND			2
-#define TSMAP_OP_THEN			3
-#define TSMAP_OP_MAP			4
-#define TSMAP_OP_UNION			5
-#define TSMAP_OP_EXCEPT			6
-#define TSMAP_OP_INTERSECT		7
-#define TSMAP_OP_NOT			8
-#define TSMAP_OP_MAPBY			9
-#define TSMAP_OP_IS_NULL		10
-#define TSMAP_OP_IS_STOP		11
+#define TSMAP_OP_MAP			1
+#define TSMAP_OP_UNION			2
+#define TSMAP_OP_EXCEPT			3
+#define TSMAP_OP_INTERSECT		4
 
 /* ----------------
  *		TSMapElement object types

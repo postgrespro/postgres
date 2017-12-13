@@ -156,7 +156,7 @@ SELECT to_tsvector('english_multi', 'booking');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi ALTER MAPPING FOR
 	asciiword
-	WITH CASE ispell WHEN MATCH THEN SELECT
+	WITH CASE ispell WHEN MATCH THEN KEEP
 		ELSE english_stem
 	END;
 
@@ -253,7 +253,7 @@ ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH 
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 
 ALTER TEXT SEARCH CONFIGURATION english_multi2 ALTER MAPPING FOR asciiword WITH CASE
-	thesaurus WHEN MATCH THEN SELECT ELSE english_stem
+	thesaurus WHEN MATCH THEN KEEP ELSE english_stem
 END;
 SELECT to_tsvector('english_multi2', 'The Mysterious Rings of Supernova 1987A');
 

@@ -39,4 +39,7 @@ extern void TSMapPrintElement(TSMapElement *config, StringInfo result);
 /* Return all dictionaries used in config */
 extern Oid *TSMapGetDictionaries(TSMapElement *config);
 
+/* Do a deep comparison of two TSMapElements. Doesn't check parents of elements */
+extern bool TSMapElementEquals(TSMapElement *a, TSMapElement *b);
+
 #endif							/* _PG_TS_CONFIGMAP_H_ */

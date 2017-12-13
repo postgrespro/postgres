@@ -27,7 +27,10 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 
-/* Size selected based on assumption that 1024 frames of stack is enouth for parsing of any configuration */
+/*
+ * Size selected arbitary, based on assumption that 1024 frames of stack
+ * is enouth for parsing of any configuration
+ */
 #define JSONB_PARSE_STATE_STACK_SIZE 1024
 
 /*
@@ -51,14 +54,17 @@ typedef enum TSMapParseState {
 } TSMapParseState;
 
 typedef struct TSMapJsonbParseData {
-	TSMapParseState states[JSONB_PARSE_STATE_STACK_SIZE];
-	int statesIndex;
-	TSMapElement *element;
+	TSMapParseState states[JSONB_PARSE_STATE_STACK_SIZE]; /* Stack of states of JSONB parsing automaton */
+	int statesIndex; /* Index of current stack frame */
+	TSMapElement *element; /* Element that is in cnstruction now */
 } TSMapJsonbParseData;
 
 static JsonbValue *TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState);
 static TSMapElement *JsonbToTSMapElement(JsonbContainer *root);
 
+/*
+ * Print name of the dictionary into StringInfo variable result
+ */
 static void
 TSMapPrintDictName(Oid dictId, StringInfo result)
 {
@@ -87,6 +93,9 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 	heap_close(maprel, AccessShareLock);
 }
 
+/*
+ * Print the expression into StringInfo variable result
+ */
 static void
 TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 {
@@ -108,11 +117,11 @@ TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 		case TSMAP_OP_MAP:
 			appendStringInfoString(result, " MAP ");
 			break;
-		case TSMAP_OP_MAPBY:
-			appendStringInfoString(result, " MAP ");
-			break;
 		default:
-			appendStringInfo(result, " %d ", expression->operator);
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("text search configuration is invalid"),
+					 errdetail("Text search configuration contains invalid expression operator.")));
 			break;
 	}
 
@@ -120,14 +129,17 @@ TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 		TSMapPrintElement(expression->right, result);
 }
 
+/*
+ * Print the case configuration construction into StringInfo variable result
+ */
 static void
 TSMapPrintCase(TSMapCase *caseObject, StringInfo result)
 {
-	appendStringInfoString(result, " CASE ");
+	appendStringInfoString(result, "CASE ");
 
 	TSMapPrintElement(caseObject->condition, result);
 
-	appendStringInfoString(result, "\nWHEN ");
+	appendStringInfoString(result, " WHEN ");
 	if (!caseObject->match)
 		appendStringInfoString(result, "NO ");
 	appendStringInfoString(result, "MATCH THEN ");
@@ -139,29 +151,42 @@ TSMapPrintCase(TSMapCase *caseObject, StringInfo result)
 		appendStringInfoString(result, "\nELSE ");
 		TSMapPrintElement(caseObject->elsebranch, result);
 	}
-	appendStringInfoString(result, " END");
+	appendStringInfoString(result, "\nEND");
 }
 
+/*
+ * Print the element into StringInfo result.
+ * Uses other function and serves for element type detection.
+ */
 void
 TSMapPrintElement(TSMapElement *element, StringInfo result)
 {
 	switch (element->type)
 	{
 		case TSMAP_EXPRESSION:
-			TSMapPrintExpression((TSMapExpression *)element->object, result);
+			TSMapPrintExpression(element->value.objectExpression, result);
 			break;
 		case TSMAP_DICTIONARY:
-			TSMapPrintDictName(*(Oid *)element->object, result);
+			TSMapPrintDictName(element->value.objectDictionary, result);
 			break;
 		case TSMAP_CASE:
-			TSMapPrintCase((TSMapCase *)element->object, result);
+			TSMapPrintCase(element->value.objectCase, result);
 			break;
 		case TSMAP_KEEP:
-			appendStringInfoString(result, " SELECT ");
+			appendStringInfoString(result, " KEEP ");
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("text search configuration is invalid"),
+					 errdetail("Text search configuration contains elements with invalid type.")));
 			break;
 	}
 }
 
+/*
+ * Print the text search configuration as a text.
+ */
 Datum
 dictionary_mapping_to_text(PG_FUNCTION_ARGS)
 {
@@ -186,18 +211,23 @@ dictionary_mapping_to_text(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(result);
 }
 
+/* ----------------
+ * Functions used to convert TSMap structure into Jsonb representation
+ * ----------------
+ */
+
 static JsonbValue *
 IntToJsonbValue(int intValue)
 {
 	char		buffer[16];
 	JsonbValue *value = palloc0(sizeof(JsonbValue));
 
-	memset(buffer, 0, sizeof(char) * 16);
+	 /* String size is based on limit of int capacity up to 12 chars with sign and NULL-character */
+	memset(buffer, 0, sizeof(char) * 12);
 
 	pg_ltoa(intValue, buffer);
 	value->type = jbvNumeric;
-	value->val.numeric = DatumGetNumeric(DirectFunctionCall3(
-															 numeric_in,
+	value->val.numeric = DatumGetNumeric(DirectFunctionCall3(numeric_in,
 															 CStringGetDatum(buffer),
 															 ObjectIdGetDatum(InvalidOid),
 															 Int32GetDatum(-1)
@@ -210,9 +240,6 @@ TSMapExpressionToJsonbValue(TSMapExpression *expression, JsonbParseState *jsonbS
 {
 	JsonbValue	key;
 	JsonbValue *value = NULL;
-
-	if (expression == NULL)
-		return NULL;
 
 	pushJsonbValue(&jsonbState, WJB_BEGIN_OBJECT, NULL);
 
@@ -260,7 +287,7 @@ TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 	pushJsonbValue(&jsonbState, WJB_KEY, &key);
 	value = TSMapElementToJsonbValue(caseObject->condition, jsonbState);
 
-	if (IsAJsonbScalar(value))
+	if (value && IsAJsonbScalar(value))
 		pushJsonbValue(&jsonbState, WJB_VALUE, value);
 
 	key.type = jbvString;
@@ -270,7 +297,7 @@ TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 	pushJsonbValue(&jsonbState, WJB_KEY, &key);
 	value = TSMapElementToJsonbValue(caseObject->command, jsonbState);
 
-	if (IsAJsonbScalar(value))
+	if (value && IsAJsonbScalar(value))
 		pushJsonbValue(&jsonbState, WJB_VALUE, value);
 
 	if (caseObject->elsebranch != NULL)
@@ -282,7 +309,7 @@ TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 		pushJsonbValue(&jsonbState, WJB_KEY, &key);
 		value = TSMapElementToJsonbValue(caseObject->elsebranch, jsonbState);
 
-		if (IsAJsonbScalar(value))
+		if (value && IsAJsonbScalar(value))
 			pushJsonbValue(&jsonbState, WJB_VALUE, value);
 	}
 
@@ -319,18 +346,25 @@ TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
 		switch (element->type)
 		{
 			case TSMAP_EXPRESSION:
-				result = TSMapExpressionToJsonbValue((TSMapExpression *)element->object, jsonbState);
+				result = TSMapExpressionToJsonbValue(element->value.objectExpression, jsonbState);
 				break;
 			case TSMAP_DICTIONARY:
-				result = IntToJsonbValue(*(Oid *)element->object);
+				result = IntToJsonbValue(element->value.objectDictionary);
 				break;
 			case TSMAP_CASE:
-				result = TSMapCaseToJsonbValue((TSMapCase *)element->object, jsonbState);
+				result = TSMapCaseToJsonbValue(element->value.objectCase, jsonbState);
 				break;
 			case TSMAP_KEEP:
-				Assert(element->parent->type == TSMAP_CASE);
-				result = TSMapElementToJsonbValue(((TSMapCase*)element->parent->object)->condition, jsonbState);
-				// result = TSMapKeepToJsonbValue(jsonbState);
+				// TODO: Store real keep comand
+				// Assert(element->parent->type == TSMAP_CASE);
+				// result = TSMapElementToJsonbValue(element->parent->value.objectCase->condition, jsonbState);
+				result = TSMapKeepToJsonbValue(jsonbState);
+				break;
+			default:
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg("text search configuration is invalid"),
+						 errdetail("Required text search configuration contains elements with invalid type.")));
 				break;
 		}
 	}
@@ -350,10 +384,13 @@ TSMapToJsonb(TSMapElement *element)
 	return result;
 }
 
-/* -------------------------------------------------------------------------- */
+/* ----------------
+ * Functions used to get TSMap structure from Jsonb representation
+ * ----------------
+ */
 
 static bool
-JsonbValueIsTSMapCaseKey(JsonbValue *value)
+IsTSMapCaseKey(JsonbValue *value)
 {
 	/*
 	 * JsonbValue string may be not null-terminated.
@@ -362,14 +399,11 @@ JsonbValueIsTSMapCaseKey(JsonbValue *value)
 	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
 	key[value->val.string.len] = '\0';
 	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
-	// parseData->statesIndex++;
-	if (strcmp(key, "match") == 0 || strcmp(key, "condition") == 0 || strcmp(key, "command") == 0 || strcmp(key, "elsebranch") == 0)
-		return true;
-	return false;
+	return strcmp(key, "match") == 0 || strcmp(key, "condition") == 0 || strcmp(key, "command") == 0 || strcmp(key, "elsebranch") == 0;
 }
 
 static bool
-JsonbValueIsTSMapExpressionKey(JsonbValue *value)
+IsTSMapExpressionKey(JsonbValue *value)
 {
 	/*
 	 * JsonbValue string may be not null-terminated.
@@ -378,10 +412,7 @@ JsonbValueIsTSMapExpressionKey(JsonbValue *value)
 	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
 	key[value->val.string.len] = '\0';
 	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
-	// parseData->statesIndex++;
-	if (strcmp(key, "operator") == 0 || strcmp(key, "left") == 0 || strcmp(key, "right") == 0)
-		return true;
-	return false;
+	return strcmp(key, "operator") == 0 || strcmp(key, "left") == 0 || strcmp(key, "right") == 0;
 }
 
 /*
@@ -395,17 +426,17 @@ JsonbBeginObjectKey(JsonbValue value, TSMapJsonbParseData *parseData)
 	parseData->element->parent = parentElement;
 
 	/* Overwrite object-type state based on key */
-	if (JsonbValueIsTSMapExpressionKey(&value))
+	if (IsTSMapExpressionKey(&value))
 	{
 		parseData->states[parseData->statesIndex] = TSMPS_READ_EXPRESSION;
 		parseData->element->type = TSMAP_EXPRESSION;
-		parseData->element->object = palloc0(sizeof(TSMapExpression));
+		parseData->element->value.objectExpression = palloc0(sizeof(TSMapExpression));
 	}
-	else if (JsonbValueIsTSMapCaseKey(&value))
+	else if (IsTSMapCaseKey(&value))
 	{
 		parseData->states[parseData->statesIndex] = TSMPS_READ_CASE;
 		parseData->element->type = TSMAP_CASE;
-		parseData->element->object = palloc0(sizeof(TSMapCase));
+		parseData->element->value.objectExpression = palloc0(sizeof(TSMapCase));
 	}
 }
 
@@ -419,15 +450,20 @@ JsonbKeyExpressionProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
 	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
 	parseData->statesIndex++;
+
+	if (parseData->statesIndex >= JSONB_PARSE_STATE_STACK_SIZE)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("configuration is too complex to be parsed"),
+				 errdetail("Configurations with more than %d nested objected are not supported.",
+						   JSONB_PARSE_STATE_STACK_SIZE)));
+
 	if (strcmp(key, "operator") == 0)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_OPERATOR;
 	else if (strcmp(key, "left") == 0)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_LEFT;
 	else if (strcmp(key, "right") == 0)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_RIGHT;
-	else
-		// TODO: Error
-		Assert(false);
 }
 
 static void
@@ -440,6 +476,14 @@ JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
 	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
 	parseData->statesIndex++;
+
+	if (parseData->statesIndex >= JSONB_PARSE_STATE_STACK_SIZE)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("configuration is too complex to be parsed"),
+				 errdetail("Configurations with more than %d nested objected are not supported.",
+						   JSONB_PARSE_STATE_STACK_SIZE)));
+
 	if (strcmp(key, "condition") == 0)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_CONDITION;
 	else if (strcmp(key, "command") == 0)
@@ -448,9 +492,6 @@ JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_ELSEBRANCH;
 	else if (strcmp(key, "match") == 0)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_MATCH;
-	else
-		// TODO: Error
-		Assert(false);
 }
 
 static int
@@ -462,29 +503,29 @@ JsonbValueToInt(JsonbValue *value)
 }
 
 static TSMapElement *
-JsonbReadOid(JsonbValue *value, TSMapElement *parent)
+JsonbValueToOidElement(JsonbValue *value, TSMapElement *parent)
 {
 	TSMapElement *element = palloc0(sizeof(TSMapElement));
 	element->parent = parent;
 	element->type = TSMAP_DICTIONARY;
-	element->object = palloc0(sizeof(Oid));
-	*((Oid*)element->object) = JsonbValueToInt(value);
+	element->value.objectDictionary = JsonbValueToInt(value);
 	return element;
 }
 
 static TSMapElement *
-JsonbReadString(JsonbValue *value, TSMapElement *parent)
+JsonbValueReadString(JsonbValue *value, TSMapElement *parent)
 {
 	char *str;
 	TSMapElement *element = palloc0(sizeof(TSMapElement));
 	element->parent = parent;
 	str = palloc0(sizeof(char) * (value->val.string.len + 1));
 	memcpy(str, value->val.string.val, sizeof(char) * value->val.string.len);
-	if (strcmp(str, "KEEP") == 0)
-	{
+
+	if (strcmp(str, "keep") == 0)
 		element->type = TSMAP_KEEP;
-	}
+
 	pfree(str);
+
 	return element;
 }
 
@@ -510,15 +551,16 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 			break;
 		case WJB_END_OBJECT:
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_LEFT)
-				((TSMapExpression*)parseData->element->parent->object)->left = parseData->element;
+				parseData->element->parent->value.objectExpression->left = parseData->element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_RIGHT)
-				((TSMapExpression*)parseData->element->parent->object)->right = parseData->element;
+				parseData->element->parent->value.objectExpression->right = parseData->element;
+
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_CONDITION)
-				((TSMapCase*)parseData->element->parent->object)->condition = parseData->element;
+				parseData->element->parent->value.objectCase->condition = parseData->element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMMAND)
-				((TSMapCase*)parseData->element->parent->object)->command = parseData->element;
+				parseData->element->parent->value.objectCase->command = parseData->element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_ELSEBRANCH)
-				((TSMapCase*)parseData->element->parent->object)->elsebranch = parseData->element;
+				parseData->element->parent->value.objectCase->elsebranch = parseData->element;
 
 			parseData->statesIndex--;
 			Assert(parseData->statesIndex >= 0);
@@ -529,24 +571,25 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 			if (value.type == jbvBinary)
 				element = JsonbToTSMapElement(value.val.binary.data);
 			else if (value.type == jbvString)
-				element = JsonbReadString(&value, parseData->element);
+				element = JsonbValueReadString(&value, parseData->element);
 			else if (value.type == jbvNumeric)
-				element = JsonbReadOid(&value, parseData->element);
+				element = JsonbValueToOidElement(&value, parseData->element);
 
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_CONDITION)
-				((TSMapCase*)parseData->element->object)->condition = element;
+				parseData->element->value.objectCase->condition = element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMMAND)
-				((TSMapCase*)parseData->element->object)->command = element;
+				parseData->element->value.objectCase->command = element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_ELSEBRANCH)
-				((TSMapCase*)parseData->element->object)->elsebranch = element;
+				parseData->element->value.objectCase->elsebranch = element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_MATCH)
-				((TSMapCase*)parseData->element->object)->match = JsonbValueToInt(&value) == 1 ? true : false;
+				parseData->element->value.objectCase->match = JsonbValueToInt(&value) == 1 ? true : false;
+
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_OPERATOR)
-				((TSMapExpression*)parseData->element->object)->operator = JsonbValueToInt(&value);
+				parseData->element->value.objectExpression->operator = JsonbValueToInt(&value);
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_LEFT)
-				((TSMapExpression*)parseData->element->object)->left = element;
+				parseData->element->value.objectExpression->left = element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_RIGHT)
-				((TSMapExpression*)parseData->element->object)->right = element;
+				parseData->element->value.objectExpression->right = element;
 
 			parseData->statesIndex--;
 			Assert(parseData->statesIndex >= 0);
@@ -557,14 +600,13 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 			if (parseData->states[parseData->statesIndex] == TSMPS_WAIT_ELEMENT)
 			{
 				if (parseData->element != NULL)
-					parseData->element = JsonbReadOid(&value, parseData->element->parent);
+					parseData->element = JsonbValueToOidElement(&value, parseData->element->parent);
 				else
-					parseData->element = JsonbReadOid(&value, NULL);
+					parseData->element = JsonbValueToOidElement(&value, NULL);
 			}
 			break;
-		case WJB_BEGIN_ARRAY:
-		case WJB_END_ARRAY:
 		default:
+			/* Ignore unused Jsonb tokens */
 			break;
 	}
 }
@@ -582,10 +624,9 @@ JsonbToTSMapElement(JsonbContainer *root)
 	parseData.element = NULL;
 
 	it = JsonbIteratorInit(root);
+
 	while ((r = JsonbIteratorNext(&it, &val, true)) != WJB_DONE)
-	{
 		JsonbProcessElement(r, val, &parseData);
-	}
 
 	return parseData.element;
 }
@@ -597,8 +638,9 @@ JsonbToTSMap(Jsonb *json)
 	return JsonbToTSMapElement(root);
 }
 
-/*
+/* ----------------
  * Text Search Configuration Map Utils
+ * ----------------
  */
 
 typedef struct OidList {
@@ -620,10 +662,13 @@ static void
 OidListAdd(OidList *list, Oid oid)
 {
 	int i;
+
+	/* Search for the Oid in the list */
 	for (i = 0; list->data[i] != InvalidOid; i++)
 		if (list->data[i] == oid)
 			return;
 
+	/* If not found, insert it in the end of the list */
 	i++;
 	if (i == list->size)
 	{
@@ -640,23 +685,21 @@ OidListAdd(OidList *list, Oid oid)
 static void
 TSMapGetDictionariesInternal(TSMapElement *config, OidList *list)
 {
-	if (config != NULL)
+	switch (config->type)
 	{
-		switch (config->type)
-		{
-			case TSMAP_EXPRESSION:
-				TSMapGetDictionariesInternal(((TSMapExpression*)config->object)->left, list);
-				TSMapGetDictionariesInternal(((TSMapExpression*)config->object)->right, list);
-				break;
-			case TSMAP_CASE:
-				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->command, list);
-				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->condition, list);
-				TSMapGetDictionariesInternal(((TSMapCase*)config->object)->elsebranch, list);
-				break;
-			case TSMAP_DICTIONARY:
-				OidListAdd(list, *(Oid*)config->object);
-				break;
-		}
+		case TSMAP_EXPRESSION:
+			TSMapGetDictionariesInternal(config->value.objectExpression->left, list);
+			TSMapGetDictionariesInternal(config->value.objectExpression->right, list);
+			break;
+		case TSMAP_CASE:
+			TSMapGetDictionariesInternal(config->value.objectCase->command, list);
+			TSMapGetDictionariesInternal(config->value.objectCase->condition, list);
+			if (config->value.objectCase->elsebranch != NULL)
+				TSMapGetDictionariesInternal(config->value.objectCase->elsebranch, list);
+			break;
+		case TSMAP_DICTIONARY:
+			OidListAdd(list, config->value.objectDictionary);
+			break;
 	}
 }
 
@@ -677,29 +720,28 @@ TSMapGetDictionaries(TSMapElement *config)
 void
 TSMapReplaceDictionary(TSMapElement *config, Oid oldDict, Oid newDict)
 {
-	if (config != NULL)
+	switch (config->type)
 	{
-		switch (config->type)
-		{
-			case TSMAP_EXPRESSION:
-				TSMapReplaceDictionary(((TSMapExpression*)config->object)->left, oldDict, newDict);
-				TSMapReplaceDictionary(((TSMapExpression*)config->object)->right, oldDict, newDict);
-				break;
-			case TSMAP_CASE:
-				TSMapReplaceDictionary(((TSMapCase*)config->object)->command, oldDict, newDict);
-				TSMapReplaceDictionary(((TSMapCase*)config->object)->condition, oldDict, newDict);
-				TSMapReplaceDictionary(((TSMapCase*)config->object)->elsebranch, oldDict, newDict);
-				break;
-			case TSMAP_DICTIONARY:
-				if (*(Oid*)config->object == oldDict)
-					*(Oid*)config->object = newDict;
-				break;
-		}
+		case TSMAP_EXPRESSION:
+			TSMapReplaceDictionary(config->value.objectExpression->left, oldDict, newDict);
+			TSMapReplaceDictionary(config->value.objectExpression->right, oldDict, newDict);
+			break;
+		case TSMAP_CASE:
+			TSMapReplaceDictionary(config->value.objectCase->command, oldDict, newDict);
+			TSMapReplaceDictionary(config->value.objectCase->condition, oldDict, newDict);
+			if (config->value.objectCase->elsebranch != NULL)
+				TSMapReplaceDictionary(config->value.objectCase->elsebranch, oldDict, newDict);
+			break;
+		case TSMAP_DICTIONARY:
+			if (config->value.objectDictionary == oldDict)
+				config->value.objectDictionary = newDict;
+			break;
 	}
 }
 
-/*
+/* ----------------
  * Text Search Configuration Map Memory Management
+ * ----------------
  */
 
 static TSMapElement *
@@ -709,22 +751,16 @@ TSMapExpressionMoveToMemoryContext(TSMapExpression *expression, MemoryContext co
 	TSMapExpression *resultExpression = MemoryContextAlloc(context, sizeof(TSMapExpression));
 
 	memset(resultExpression, 0, sizeof(TSMapExpression));
-	result->object = resultExpression;
+	result->value.objectExpression = resultExpression;
 	result->type = TSMAP_EXPRESSION;
 
 	resultExpression->operator = expression->operator;
 
-	if (expression->left)
-	{
-		resultExpression->left = TSMapMoveToMemoryContext(expression->left, context);
-		resultExpression->left->parent = result;
-	}
+	resultExpression->left = TSMapMoveToMemoryContext(expression->left, context);
+	resultExpression->left->parent = result;
 
-	if (expression->right)
-	{
-		resultExpression->right = TSMapMoveToMemoryContext(expression->right, context);
-		resultExpression->right->parent = result;
-	}
+	resultExpression->right = TSMapMoveToMemoryContext(expression->right, context);
+	resultExpression->right->parent = result;
 
 	return result;
 }
@@ -736,22 +772,18 @@ TSMapCaseMoveToMemoryContext(TSMapCase *caseObject, MemoryContext context)
 	TSMapCase *resultCaseObject = MemoryContextAlloc(context, sizeof(TSMapCase));
 
 	memset(resultCaseObject, 0, sizeof(TSMapCase));
-	result->object = resultCaseObject;
+	result->value.objectCase = resultCaseObject;
 	result->type = TSMAP_CASE;
 
 	resultCaseObject->match = caseObject->match;
 
-	if (caseObject->command)
-	{
-		resultCaseObject->command = TSMapMoveToMemoryContext(caseObject->command, context);
-		resultCaseObject->command->parent = result;
-	}
-	if (caseObject->condition)
-	{
-		resultCaseObject->condition = TSMapMoveToMemoryContext(caseObject->condition, context);
-		resultCaseObject->condition->parent = result;
-	}
-	if (caseObject->elsebranch)
+	resultCaseObject->command = TSMapMoveToMemoryContext(caseObject->command, context);
+	resultCaseObject->command->parent = result;
+
+	resultCaseObject->condition = TSMapMoveToMemoryContext(caseObject->condition, context);
+	resultCaseObject->condition->parent = result;
+
+	if (caseObject->elsebranch != NULL)
 	{
 		resultCaseObject->elsebranch = TSMapMoveToMemoryContext(caseObject->elsebranch, context);
 		resultCaseObject->elsebranch->parent = result;
@@ -763,21 +795,31 @@ TSMapCaseMoveToMemoryContext(TSMapCase *caseObject, MemoryContext context)
 TSMapElement *
 TSMapMoveToMemoryContext(TSMapElement *config, MemoryContext context)
 {
-	TSMapElement *result;
+	TSMapElement *result = NULL;
 
 	switch (config->type)
 	{
 		case TSMAP_EXPRESSION:
-			result = TSMapExpressionMoveToMemoryContext((TSMapExpression*)config->object, context);
+			result = TSMapExpressionMoveToMemoryContext(config->value.objectExpression, context);
 			break;
 		case TSMAP_CASE:
-			result = TSMapCaseMoveToMemoryContext((TSMapCase*)config->object, context);
+			result = TSMapCaseMoveToMemoryContext(config->value.objectCase, context);
 			break;
 		case TSMAP_DICTIONARY:
 			result = MemoryContextAlloc(context, sizeof(TSMapElement));
 			result->type = TSMAP_DICTIONARY;
-			result->object = MemoryContextAlloc(context, sizeof(Oid));
-			*(Oid*)result->object = *(Oid*)config->object;
+			result->value.objectDictionary = config->value.objectDictionary;
+			break;
+		case TSMAP_KEEP:
+			result = MemoryContextAlloc(context, sizeof(TSMapElement));
+			result->type = TSMAP_KEEP;
+			result->value.object = NULL;
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("text search configuration is invalid"),
+					 errdetail("Text search configuration contains object with invalid type.")));
 			break;
 	}
 
@@ -811,12 +853,58 @@ TSMapElementFree(TSMapElement *element)
 		switch (element->type)
 		{
 			case TSMAP_CASE:
-				TSMapCaseFree(element->object);
+				TSMapCaseFree(element->value.objectCase);
 				break;
 			case TSMAP_EXPRESSION:
-				TSMapExpressionFree(element->object);
+				TSMapExpressionFree(element->value.objectExpression);
 				break;
 		}
 		pfree(element);
 	}
+}
+
+bool TSMapElementEquals(TSMapElement *a, TSMapElement *b)
+{
+	bool result = true;
+	
+	if (a->type == b->type)
+	{
+		switch (a->type)
+		{
+			case TSMAP_CASE:
+				if (!TSMapElementEquals(a->value.objectCase->condition, b->value.objectCase->condition))
+						result = false;
+				if (!TSMapElementEquals(a->value.objectCase->command, b->value.objectCase->command))
+						result = false;
+
+				if (a->value.objectCase->elsebranch != NULL && b->value.objectCase->elsebranch != NULL)
+				{
+					if (!TSMapElementEquals(a->value.objectCase->elsebranch, b->value.objectCase->elsebranch))
+							result = false;
+				}
+				else if (a->value.objectCase->elsebranch != NULL || b->value.objectCase->elsebranch != NULL)
+					result = false;
+
+				if (a->value.objectCase->match != b->value.objectCase->match)
+						result = false;
+				break;
+			case TSMAP_EXPRESSION:
+				if (!TSMapElementEquals(a->value.objectExpression->left, b->value.objectExpression->left))
+						result = false;
+				if (!TSMapElementEquals(a->value.objectExpression->right, b->value.objectExpression->right))
+						result = false;
+				if (a->value.objectExpression->operator != b->value.objectExpression->operator)
+						result = false;
+				break;
+			case TSMAP_DICTIONARY:
+				result = a->value.objectDictionary == b->value.objectDictionary;
+				break;
+			case TSMAP_KEEP:
+				result = true;
+		}
+	}
+	else
+		result = false;
+
+	return result;
 }
