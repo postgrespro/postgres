@@ -173,7 +173,7 @@ TSMapPrintElement(TSMapElement *element, StringInfo result)
 			TSMapPrintCase(element->value.objectCase, result);
 			break;
 		case TSMAP_KEEP:
-			appendStringInfoString(result, " KEEP ");
+			appendStringInfoString(result, "KEEP");
 			break;
 		default:
 			ereport(ERROR,

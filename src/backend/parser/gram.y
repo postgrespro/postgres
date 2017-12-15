@@ -10148,6 +10148,19 @@ dictionary_map_set_expr_operator:
 
 dictionary_map_set_expr:
 			dictionary_map_command_expr_paren { $$ = $1; }
+			| dictionary_map_case dictionary_map_set_expr_operator dictionary_map_case
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				DictMapElem *r = makeNode(DictMapElem);
+
+				n->left = $1;
+				n->oper = $2;
+				n->right = $3;
+
+				r->kind = DICT_MAP_EXPRESSION;
+				r->data = n;
+				$$ = r;
+			}
 			| dictionary_map_command_expr_paren dictionary_map_set_expr_operator dictionary_map_command_expr_paren
 			{
 				DictMapExprElem *n = makeNode(DictMapExprElem);
