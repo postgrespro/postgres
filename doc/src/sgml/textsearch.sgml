@@ -2230,16 +2230,6 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
     </listitem>
     <listitem>
      <para>
-      a single lexeme with the <literal>TSL_FILTER</literal> flag set, to replace
-      the original token with a new token to be passed to subsequent
-      dictionaries (a dictionary that does this is called a
-      <firstterm>filtering dictionary</firstterm>). This behavior is applicable only
-      with comma-separated configuration
-      (see <xref linkend="SQL-ALTERTSCONFIG"> for more information)
-     </para>
-    </listitem>
-    <listitem>
-     <para>
       an empty array if the dictionary knows the token, but it is a stop word
      </para>
     </listitem>
@@ -2272,44 +2262,41 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
   </para>
 
   <para>
-   A list of cases is described as condition/command pairs. Each condition is
-   evaluated in order to select appropriate command to generate resulted set
-   of lexems.
+   A tree of cases is described as condition/command/elsebranch triples. Each
+   condition is evaluated in order to select appropriate command to generate
+   resulted set of lexems.
   </para>
 
   <para>
-   A condition is a boolean expression with dictionaries used as operands and
-   basic logic operators <literal>AND</literal>, <literal>OR</literal>, <literal>NOT</literal> and
-   special operator <literal>MAP BY</literal>. In addition to operators, each operand
-   could contain <literal>IS [NOT] NULL</literal> or <literal>IS [NOT] STOPWORD</literal> option
-   to mark way to interpret lexemes as boolean value. If no options are mentioned
-   it is interpret as <literal>dictionary IS NOT NULL AND dictionary IS NOT STOPWORD</literal>.
+   A condition is a dictionary expression with dictionaries used as operands and
+   basic set operators <literal>UNION</literal>, <literal>EXCEPT</literal>, <literal>INTERSECT</literal>
+   and special operator <literal>MAP</literal>.
 
-   Special operator <literal>MAP BY</literal> is used to use output of right-hand
-   subexpression as input for left-hand one. In condition left and right
-   subexpressions can be either another <literal>MAP BY</literal> expression or
-   dictionary expression. Result of <literal>MAP BY</literal> should be explicitly
-   makred for boolean interpretation.
+   Special operator <literal>MAP</literal> use output of left subexpression as
+   input for right subexpression.
   </para>
 
   <para>
-   A command is a set expression with dictionaries used as operands and basic
-   set operators <literal>UNION</literal>, <literal>EXCEPT</literal>, <literal>INTERSECT</literal>
-   and special operator <literal>MAP BY</literal>. The behavior of <literal>MAP BY</literal>
-   operator is similar to one in condition but without restrictions on content
-   of subexpressions since all operators operates on sets.
+    Rules to write command are same as for condition with additional keyword
+    <literal>KEEP</literal> to use result of condition as an output.
   </para>
 
   <para>
-   The general rule for configuring a list of condition/command pairs
-   is to place first the most narrow, most specific dictionary, then the more
+   A comma-separated list of dictionaries is a simplified veriant of text
+   search configuraion. Each dictionary consulted to process a token and first
+   non-<literal>NULL</literal> output is accepted as a procssing result.
+  </para>
+
+  <para>
+   The general rule for configuring tokens processing
+   is to place first case with the most narrow, most specific dictionary, then the more
    general dictionaries, finishing with a very general dictionaries, like
    a <application>Snowball</application> stemmer or <literal>simple</literal>, which
    recognizes everything. For example, for an astronomy-specific search
    (<literal>astro_en</literal> configuration) one could bind token type
    <type>asciiword</type> (ASCII word) to a synonym dictionary of astronomical
    terms, a general English dictionary and a <application>Snowball</application> English
-   stemmer via comma-separated variant of mapping:
+   stemmer in comma-separated variant of mapping:
 
 <programlisting>
 ALTER TEXT SEARCH CONFIGURATION astro_en
@@ -2323,14 +2310,13 @@ ALTER TEXT SEARCH CONFIGURATION astro_en
 ALTER TEXT SEARCH CONFIGURATION multi_en_de
     ADD MAPPING FOR asciiword, word WITH
         CASE
-            WHEN english_ispell AND german_ispell THEN
-                 english_ispell UNION german_ispell
-            WHEN english_ispell THEN
-                 english_ispell UNION german_stem
-            WHEN german_ispell THEN
-                 german_ispell UNION english_stem
-            ELSE
-                 english_stem UNION german_stem
+            english_ispell WHEN MATCH THEN KEEP
+            ELSE english_stem
+        END
+        UNION
+        CASE
+            german_ispell WHEN MATCH THEN KEEP
+            ELSE german_stem
         END;
 </programlisting>
 
@@ -2343,7 +2329,7 @@ ALTER TEXT SEARCH CONFIGURATION multi_en_de
    normalize words to simplify the task of later dictionaries.  For example,
    a filtering dictionary could be used to remove accents from accented
    letters, as is done by the <xref linkend="unaccent"> module.
-   Otherwise filter dictionary should be placed at righthand of <literal>MAP BY</literal>
+   Otherwise filter dictionary should be placed at left of <literal>MAP</literal>
    operator. If filter dictionary returns <literal>NULL</literal> it pass initial token
    further in processing chain.
   </para>
