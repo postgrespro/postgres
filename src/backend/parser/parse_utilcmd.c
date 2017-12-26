@@ -92,6 +92,7 @@ typedef struct
 	IndexStmt  *pkey;			/* PRIMARY KEY index, if any */
 	bool		ispartitioned;	/* true if table is partitioned */
 	PartitionBoundSpec *partbound;	/* transformed FOR VALUES */
+	bool		ofType;			/* true if statement contains OF typename */
 } CreateStmtContext;
 
 /* State shared by transformCreateSchemaStmt and its subroutines */
@@ -240,6 +241,8 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
 	cxt.ispartitioned = stmt->partspec != NULL;
+	cxt.partbound = stmt->partbound;
+	cxt.ofType = (stmt->ofTypename != NULL);
 
 	/*
 	 * Notice that we allow OIDs here only for plain tables, even though
@@ -628,7 +631,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 									column->colname, cxt->relation->relname),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
-				column->is_not_null = FALSE;
+				column->is_not_null = false;
 				saw_nullable = true;
 				break;
 
@@ -640,7 +643,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 									column->colname, cxt->relation->relname),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
-				column->is_not_null = TRUE;
+				column->is_not_null = true;
 				saw_nullable = true;
 				break;
 
@@ -662,6 +665,15 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 					Type		ctype;
 					Oid			typeOid;
 
+					if (cxt->ofType)
+						ereport(ERROR,
+									(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									 errmsg("identity colums are not supported on typed tables")));
+					if (cxt->partbound)
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("identity columns are not supported on partitions")));
+
 					ctype = typenameType(cxt->pstate, column->typeName, NULL);
 					typeOid = HeapTupleGetOid(ctype);
 					ReleaseSysCache(ctype);
@@ -680,7 +692,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 
 					column->identity = constraint->generated_when;
 					saw_identity = true;
-					column->is_not_null = TRUE;
+					column->is_not_null = true;
 					break;
 				}
 
@@ -2010,7 +2022,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		{
 			/* found column in the new table; force it to be NOT NULL */
 			if (constraint->contype == CONSTR_PRIMARY)
-				column->is_not_null = TRUE;
+				column->is_not_null = true;
 		}
 		else if (SystemAttributeByName(key, cxt->hasoids) != NULL)
 		{
@@ -2697,6 +2709,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	cxt.pkey = NULL;
 	cxt.ispartitioned = (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 	cxt.partbound = NULL;
+	cxt.ofType = false;
 
 	/*
 	 * The only subtypes that currently require parse transformation handling
@@ -3310,6 +3323,11 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 
 	if (spec->is_default)
 	{
+		if (strategy == PARTITION_STRATEGY_HASH)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("a hash-partitioned table may not have a default partition")));
+
 		/*
 		 * In case of the default partition, parser had no way to identify the
 		 * partition strategy. Assign the parent's strategy to the default
@@ -3320,7 +3338,27 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 		return result_spec;
 	}
 
-	if (strategy == PARTITION_STRATEGY_LIST)
+	if (strategy == PARTITION_STRATEGY_HASH)
+	{
+		if (spec->strategy != PARTITION_STRATEGY_HASH)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("invalid bound specification for a hash partition"),
+					 parser_errposition(pstate, exprLocation((Node *) spec))));
+
+		if (spec->modulus <= 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("modulus for hash partition must be a positive integer")));
+
+		Assert(spec->remainder >= 0);
+
+		if (spec->remainder >= spec->modulus)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("remainder for hash partition must be less than modulus")));
+	}
+	else if (strategy == PARTITION_STRATEGY_LIST)
 	{
 		ListCell   *cell;
 		char	   *colname;
@@ -3485,7 +3523,7 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 static void
 validateInfiniteBounds(ParseState *pstate, List *blist)
 {
-	ListCell *lc;
+	ListCell   *lc;
 	PartitionRangeDatumKind kind = PARTITION_RANGE_DATUM_VALUE;
 
 	foreach(lc, blist)

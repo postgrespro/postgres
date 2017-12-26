@@ -89,7 +89,7 @@ typedef struct PlannedStmt
 
 	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
 
-	int			nParamExec;		/* number of PARAM_EXEC Params used */
+	List	   *paramExecTypes; /* type OIDs for PARAM_EXEC Params */
 
 	Node	   *utilityStmt;	/* non-null if this is utility stmt */
 
@@ -248,6 +248,7 @@ typedef struct Append
 	/* RT indexes of non-leaf tables in a partition tree */
 	List	   *partitioned_rels;
 	List	   *appendplans;
+	int			first_partial_plan;
 } Append;
 
 /* ----------------
@@ -841,6 +842,8 @@ typedef struct Gather
 	int			rescan_param;	/* ID of Param that signals a rescan, or -1 */
 	bool		single_copy;	/* don't execute plan more than once */
 	bool		invisible;		/* suppress EXPLAIN display (for testing)? */
+	Bitmapset  *initParam;		/* param id's of initplans which are referred
+								 * at gather or one of it's child node */
 } Gather;
 
 /* ------------
@@ -858,6 +861,8 @@ typedef struct GatherMerge
 	Oid		   *sortOperators;	/* OIDs of operators to sort them by */
 	Oid		   *collations;		/* OIDs of collations */
 	bool	   *nullsFirst;		/* NULLS FIRST/LAST directions */
+	Bitmapset  *initParam;		/* param id's of initplans which are referred
+								 * at gather merge or one of it's child node */
 } GatherMerge;
 
 /* ----------------
@@ -875,6 +880,7 @@ typedef struct Hash
 	AttrNumber	skewColumn;		/* outer join key's column #, or zero */
 	bool		skewInherit;	/* is outer join rel an inheritance tree? */
 	/* all other info is in the parent HashJoin node */
+	double		rows_total;		/* estimate total rows if parallel_aware */
 } Hash;
 
 /* ----------------

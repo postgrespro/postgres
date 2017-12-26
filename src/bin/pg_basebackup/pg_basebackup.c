@@ -132,7 +132,7 @@ static PQExpBuffer recoveryconfcontents = NULL;
 
 /* Function headers */
 static void usage(void);
-static void disconnect_and_exit(int code);
+static void disconnect_and_exit(int code) pg_attribute_noreturn();
 static void verify_dir_is_empty_or_create(char *dirname, bool *created, bool *found);
 static void progress_report(int tablespacenum, const char *filename, bool force);
 
@@ -298,6 +298,11 @@ tablespace_list_append(const char *arg)
 		exit(1);
 	}
 
+	/*
+	 * Comparisons done with these values should involve similarly
+	 * canonicalized path values.  This is particularly sensitive on Windows
+	 * where path values may not necessarily use Unix slashes.
+	 */
 	canonicalize_path(cell->old_dir);
 	canonicalize_path(cell->new_dir);
 
@@ -806,7 +811,10 @@ progress_report(int tablespacenum, const char *filename, bool force)
 				totaldone_str, totalsize_str, percent,
 				tablespacenum, tablespacecount);
 
-	fprintf(stderr, "\r");
+	if (isatty(fileno(stderr)))
+		fprintf(stderr, "\r");
+	else
+		fprintf(stderr, "\n");
 }
 
 static int32
@@ -1303,9 +1311,14 @@ static const char *
 get_tablespace_mapping(const char *dir)
 {
 	TablespaceListCell *cell;
+	char		canon_dir[MAXPGPATH];
+
+	/* Canonicalize path for comparison consistency */
+	strlcpy(canon_dir, dir, sizeof(canon_dir));
+	canonicalize_path(canon_dir);
 
 	for (cell = tablespace_dirs.head; cell; cell = cell->next)
-		if (strcmp(dir, cell->old_dir) == 0)
+		if (strcmp(canon_dir, cell->old_dir) == 0)
 			return cell->new_dir;
 
 	return dir;
@@ -1786,7 +1799,13 @@ BaseBackup(void)
 				progname);
 
 	if (showprogress && !verbose)
-		fprintf(stderr, "waiting for checkpoint\r");
+	{
+		fprintf(stderr, "waiting for checkpoint");
+		if (isatty(fileno(stderr)))
+			fprintf(stderr, "\r");
+		else
+			fprintf(stderr, "\n");
+	}
 
 	basebkp =
 		psprintf("BASE_BACKUP LABEL '%s' %s %s %s %s %s %s",
@@ -1919,7 +1938,8 @@ BaseBackup(void)
 	if (showprogress)
 	{
 		progress_report(PQntuples(res), NULL, true);
-		fprintf(stderr, "\n");	/* Need to move to next line */
+		if (isatty(fileno(stderr)))
+			fprintf(stderr, "\n");	/* Need to move to next line */
 	}
 
 	PQclear(res);

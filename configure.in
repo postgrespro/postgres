@@ -1061,8 +1061,8 @@ if test "$with_openssl" = yes ; then
      AC_CHECK_LIB(crypto, CRYPTO_new_ex_data, [], [AC_MSG_ERROR([library 'crypto' is required for OpenSSL])])
      AC_CHECK_LIB(ssl,    SSL_new, [], [AC_MSG_ERROR([library 'ssl' is required for OpenSSL])])
   else
-     AC_SEARCH_LIBS(CRYPTO_new_ex_data, eay32 crypto, [], [AC_MSG_ERROR([library 'eay32' or 'crypto' is required for OpenSSL])])
-     AC_SEARCH_LIBS(SSL_new, ssleay32 ssl, [], [AC_MSG_ERROR([library 'ssleay32' or 'ssl' is required for OpenSSL])])
+     AC_SEARCH_LIBS(CRYPTO_new_ex_data, [eay32 crypto], [], [AC_MSG_ERROR([library 'eay32' or 'crypto' is required for OpenSSL])])
+     AC_SEARCH_LIBS(SSL_new, [ssleay32 ssl], [], [AC_MSG_ERROR([library 'ssleay32' or 'ssl' is required for OpenSSL])])
   fi
   AC_CHECK_FUNCS([SSL_get_current_compression])
   # Functions introduced in OpenSSL 1.1.0. We used to check for
@@ -1262,6 +1262,12 @@ fi
 
 if test "$with_bonjour" = yes ; then
   AC_CHECK_HEADER(dns_sd.h, [], [AC_MSG_ERROR([header file <dns_sd.h> is required for Bonjour])])
+dnl At some point we might add something like
+dnl AC_SEARCH_LIBS(DNSServiceRegister, dns_sd)
+dnl but right now, what that would mainly accomplish is to encourage
+dnl people to try to use the avahi implementation, which does not work.
+dnl If you want to use Apple's own Bonjour code on another platform,
+dnl just add -ldns_sd to LIBS manually.
 fi
 
 # for contrib/uuid-ossp
@@ -1764,6 +1770,10 @@ if test $pgac_need_repl_snprintf = yes; then
   AC_LIBOBJ(snprintf)
 fi
 
+# has to be down here, rather than with the other builtins, because
+# the test uses PG_INT64_TYPE.
+PGAC_C_BUILTIN_OP_OVERFLOW
+
 # Check size of void *, size_t (enables tweaks for > 32bit address space)
 AC_CHECK_SIZEOF([void *])
 AC_CHECK_SIZEOF([size_t])
@@ -1814,7 +1824,10 @@ AC_CHECK_ALIGNOF(double)
 
 # Compute maximum alignment of any basic type.
 # We assume long's alignment is at least as strong as char, short, or int;
-# but we must check long long (if it exists) and double.
+# but we must check long long (if it is being used for int64) and double.
+# Note that we intentionally do not consider any types wider than 64 bits,
+# as allowing MAXIMUM_ALIGNOF to exceed 8 would be too much of a penalty
+# for disk and memory space.
 
 MAX_ALIGNOF=$ac_cv_alignof_long
 if test $MAX_ALIGNOF -lt $ac_cv_alignof_double ; then
@@ -1831,7 +1844,7 @@ AC_DEFINE_UNQUOTED(MAXIMUM_ALIGNOF, $MAX_ALIGNOF, [Define as the maximum alignme
 AC_CHECK_TYPES([int8, uint8, int64, uint64], [], [],
 [#include <stdio.h>])
 
-# Check for extensions offering the integer scalar type __int128.
+# Some compilers offer a 128-bit integer scalar type.
 PGAC_TYPE_128BIT_INT
 
 # Check for various atomic operations now that we have checked how to declare
@@ -2082,12 +2095,10 @@ fi
 #
 # Check for DocBook and tools
 #
-PGAC_PROG_NSGMLS
+PGAC_PATH_XMLLINT
 PGAC_CHECK_DOCBOOK(4.2)
 PGAC_PATH_PROGS(DBTOEPUB, dbtoepub)
-PGAC_PATH_PROGS(XMLLINT, xmllint)
 PGAC_PATH_PROGS(XSLTPROC, xsltproc)
-PGAC_PATH_PROGS(OSX, [osx sgml2xml sx])
 PGAC_PATH_PROGS(FOP, fop)
 
 #
@@ -2181,7 +2192,7 @@ AC_DEFINE_UNQUOTED(PG_VERSION_STR,
 # awk -F is a regex on some platforms, and not on others, so make "." a tab
 [PG_VERSION_NUM="`echo "$PACKAGE_VERSION" | sed 's/[A-Za-z].*$//' |
 tr '.' '	' |
-$AWK '{printf "%d%02d%02d", $1, $2, (NF >= 3) ? $3 : 0}'`"]
+$AWK '{printf "%d%04d", $1, $2}'`"]
 AC_DEFINE_UNQUOTED(PG_VERSION_NUM, $PG_VERSION_NUM, [PostgreSQL version as a number])
 AC_SUBST(PG_VERSION_NUM)
 

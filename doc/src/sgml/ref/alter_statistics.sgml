@@ -3,7 +3,7 @@ doc/src/sgml/ref/alter_statistics.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-ALTERSTATISTICS">
+<refentry id="sql-alterstatistics">
  <indexterm zone="sql-alterstatistics">
   <primary>ALTER STATISTICS</primary>
  </indexterm>
@@ -109,8 +109,8 @@ ALTER STATISTICS <replaceable class="parameter">name</replaceable> SET SCHEMA <r
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-createstatistics"></member>
-   <member><xref linkend="sql-dropstatistics"></member>
+   <member><xref linkend="sql-createstatistics"/></member>
+   <member><xref linkend="sql-dropstatistics"/></member>
   </simplelist>
  </refsect1>
 

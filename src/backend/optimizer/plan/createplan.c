@@ -203,7 +203,8 @@ static NamedTuplestoreScan *make_namedtuplestorescan(List *qptlist, List *qpqual
 						 Index scanrelid, char *enrname);
 static WorkTableScan *make_worktablescan(List *qptlist, List *qpqual,
 				   Index scanrelid, int wtParam);
-static Append *make_append(List *appendplans, List *tlist, List *partitioned_rels);
+static Append *make_append(List *appendplans, int first_partial_plan,
+			List *tlist, List *partitioned_rels);
 static RecursiveUnion *make_recursive_union(List *tlist,
 					 Plan *lefttree,
 					 Plan *righttree,
@@ -808,6 +809,15 @@ use_physical_tlist(PlannerInfo *root, Path *path, int flags)
 		return false;
 
 	/*
+	 * If a bitmap scan's tlist is empty, keep it as-is.  This may allow the
+	 * executor to skip heap page fetches, and in any case, the benefit of
+	 * using a physical tlist instead would be minimal.
+	 */
+	if (IsA(path, BitmapHeapPath) &&
+		path->pathtarget->exprs == NIL)
+		return false;
+
+	/*
 	 * Can't do it if any system columns or whole-row Vars are requested.
 	 * (This could possibly be fixed but would take some fragile assumptions
 	 * in setrefs.c, I think.)
@@ -1050,7 +1060,8 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path)
 	 * parent-rel Vars it'll be asked to emit.
 	 */
 
-	plan = make_append(subplans, tlist, best_path->partitioned_rels);
+	plan = make_append(subplans, best_path->first_partial_path,
+					   tlist, best_path->partitioned_rels);
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -4181,6 +4192,17 @@ create_hashjoin_plan(PlannerInfo *root,
 	copy_plan_costsize(&hash_plan->plan, inner_plan);
 	hash_plan->plan.startup_cost = hash_plan->plan.total_cost;
 
+	/*
+	 * If parallel-aware, the executor will also need an estimate of the total
+	 * number of rows expected from all participants so that it can size the
+	 * shared hash table.
+	 */
+	if (best_path->jpath.path.parallel_aware)
+	{
+		hash_plan->plan.parallel_aware = true;
+		hash_plan->rows_total = best_path->inner_rows_total;
+	}
+
 	join_plan = make_hashjoin(tlist,
 							  joinclauses,
 							  otherclauses,
@@ -5285,7 +5307,8 @@ make_foreignscan(List *qptlist,
 }
 
 static Append *
-make_append(List *appendplans, List *tlist, List *partitioned_rels)
+make_append(List *appendplans, int first_partial_plan,
+			List *tlist, List *partitioned_rels)
 {
 	Append	   *node = makeNode(Append);
 	Plan	   *plan = &node->plan;
@@ -5296,6 +5319,7 @@ make_append(List *appendplans, List *tlist, List *partitioned_rels)
 	plan->righttree = NULL;
 	node->partitioned_rels = partitioned_rels;
 	node->appendplans = appendplans;
+	node->first_partial_plan = first_partial_plan;
 
 	return node;
 }
@@ -5528,7 +5552,7 @@ make_sort(Plan *lefttree, int numCols,
  *	  'pathkeys' is the list of pathkeys by which the result is to be sorted
  *	  'relids' identifies the child relation being sorted, if any
  *	  'reqColIdx' is NULL or an array of required sort key column numbers
- *	  'adjust_tlist_in_place' is TRUE if lefttree must be modified in-place
+ *	  'adjust_tlist_in_place' is true if lefttree must be modified in-place
  *
  * We must convert the pathkey information into arrays of sort key column
  * numbers, sort operator OIDs, collation OIDs, and nulls-first flags,
@@ -5549,7 +5573,7 @@ make_sort(Plan *lefttree, int numCols,
  * compute these expressions, since a Sort or MergeAppend node itself won't
  * do any such calculations.  If the input plan type isn't one that can do
  * projections, this means adding a Result node just to do the projection.
- * However, the caller can pass adjust_tlist_in_place = TRUE to force the
+ * However, the caller can pass adjust_tlist_in_place = true to force the
  * lefttree tlist to be modified in-place regardless of whether the node type
  * can project --- we use this for fixing the tlist of MergeAppend itself.
  *
@@ -6270,6 +6294,7 @@ make_gather(List *qptlist,
 	node->rescan_param = rescan_param;
 	node->single_copy = single_copy;
 	node->invisible = false;
+	node->initParam = NULL;
 
 	return node;
 }

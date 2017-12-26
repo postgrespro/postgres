@@ -146,9 +146,6 @@ extern void heap_get_latest_tid(Relation relation, Snapshot snapshot,
 					ItemPointer tid);
 extern void setLastTid(const ItemPointer tid);
 
-extern bool HeapTupleUpdateXmaxMatchesXmin(TransactionId xmax,
-							   HeapTupleHeader htup);
-
 extern BulkInsertState GetBulkInsertState(void);
 extern void FreeBulkInsertState(BulkInsertState);
 extern void ReleaseBulkInsertStatePin(BulkInsertState bistate);
@@ -171,8 +168,9 @@ extern HTSU_Result heap_lock_tuple(Relation relation, HeapTuple tuple,
 				bool follow_update,
 				Buffer *buffer, HeapUpdateFailureData *hufd);
 extern void heap_inplace_update(Relation relation, HeapTuple tuple);
-extern bool heap_freeze_tuple(HeapTupleHeader tuple, TransactionId cutoff_xid,
-				  TransactionId cutoff_multi);
+extern bool heap_freeze_tuple(HeapTupleHeader tuple,
+				  TransactionId relfrozenxid, TransactionId relminmxid,
+				  TransactionId cutoff_xid, TransactionId cutoff_multi);
 extern bool heap_tuple_needs_freeze(HeapTupleHeader tuple, TransactionId cutoff_xid,
 						MultiXactId cutoff_multi, Buffer buf);
 extern bool heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple);

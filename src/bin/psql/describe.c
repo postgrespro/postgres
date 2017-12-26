@@ -353,6 +353,7 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 						  " CASE\n"
 						  "  WHEN p.proisagg THEN '%s'\n"
 						  "  WHEN p.proiswindow THEN '%s'\n"
+						  "  WHEN p.prorettype = 0 THEN '%s'\n"
 						  "  WHEN p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype THEN '%s'\n"
 						  "  ELSE '%s'\n"
 						  " END as \"%s\"",
@@ -361,8 +362,9 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 		/* translator: "agg" is short for "aggregate" */
 						  gettext_noop("agg"),
 						  gettext_noop("window"),
+						  gettext_noop("proc"),
 						  gettext_noop("trigger"),
-						  gettext_noop("normal"),
+						  gettext_noop("func"),
 						  gettext_noop("Type"));
 	else if (pset.sversion >= 80100)
 		appendPQExpBuffer(&buf,
@@ -407,7 +409,7 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 		/* translator: "agg" is short for "aggregate" */
 						  gettext_noop("agg"),
 						  gettext_noop("trigger"),
-						  gettext_noop("normal"),
+						  gettext_noop("func"),
 						  gettext_noop("Type"));
 	else
 		appendPQExpBuffer(&buf,
@@ -424,7 +426,7 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 		/* translator: "agg" is short for "aggregate" */
 						  gettext_noop("agg"),
 						  gettext_noop("trigger"),
-						  gettext_noop("normal"),
+						  gettext_noop("func"),
 						  gettext_noop("Type"));
 
 	if (verbose)
@@ -1596,7 +1598,7 @@ describeOneTableDetails(const char *schemaname,
 		else
 		{
 			printfPQExpBuffer(&buf,
-							  "SELECT pg_catalog.format_type('bigint'::regtype, NULL) AS \"%s\",\n"
+							  "SELECT 'bigint' AS \"%s\",\n"
 							  "       start_value AS \"%s\",\n"
 							  "       min_value AS \"%s\",\n"
 							  "       max_value AS \"%s\",\n"
@@ -2423,8 +2425,8 @@ describeOneTableDetails(const char *schemaname,
 							  "   FROM pg_catalog.unnest(stxkeys) s(attnum)\n"
 							  "   JOIN pg_catalog.pg_attribute a ON (stxrelid = a.attrelid AND\n"
 							  "        a.attnum = s.attnum AND NOT attisdropped)) AS columns,\n"
-							  "  (stxkind @> '{d}') AS ndist_enabled,\n"
-							  "  (stxkind @> '{f}') AS deps_enabled\n"
+							  "  'd' = any(stxkind) AS ndist_enabled,\n"
+							  "  'f' = any(stxkind) AS deps_enabled\n"
 							  "FROM pg_catalog.pg_statistic_ext stat "
 							  "WHERE stxrelid = '%s'\n"
 							  "ORDER BY 1;",
@@ -2489,7 +2491,7 @@ describeOneTableDetails(const char *schemaname,
 			{
 				printfPQExpBuffer(&buf,
 								  "SELECT r.rulename, trim(trailing ';' from pg_catalog.pg_get_ruledef(r.oid, true)), "
-								  "'O'::char AS ev_enabled\n"
+								  "'O' AS ev_enabled\n"
 								  "FROM pg_catalog.pg_rewrite r\n"
 								  "WHERE r.ev_class = '%s' ORDER BY 1;",
 								  oid);
@@ -2870,10 +2872,13 @@ describeOneTableDetails(const char *schemaname,
 		/* print child tables (with additional info if partitions) */
 		if (pset.sversion >= 100000)
 			printfPQExpBuffer(&buf,
-							  "SELECT c.oid::pg_catalog.regclass, pg_catalog.pg_get_expr(c.relpartbound, c.oid)"
+							  "SELECT c.oid::pg_catalog.regclass,"
+							  "       pg_catalog.pg_get_expr(c.relpartbound, c.oid),"
+							  "       c.relkind"
 							  " FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i"
 							  " WHERE c.oid=i.inhrelid AND i.inhparent = '%s'"
-							  " ORDER BY c.oid::pg_catalog.regclass::pg_catalog.text;", oid);
+							  " ORDER BY pg_catalog.pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT',"
+							  "          c.oid::pg_catalog.regclass::pg_catalog.text;", oid);
 		else if (pset.sversion >= 80300)
 			printfPQExpBuffer(&buf,
 							  "SELECT c.oid::pg_catalog.regclass"
@@ -2893,7 +2898,18 @@ describeOneTableDetails(const char *schemaname,
 		else
 			tuples = PQntuples(result);
 
-		if (!verbose)
+		/*
+		 * For a partitioned table with no partitions, always print the number
+		 * of partitions as zero, even when verbose output is expected.
+		 * Otherwise, we will not print "Partitions" section for a partitioned
+		 * table without any partitions.
+		 */
+		if (tableinfo.relkind == RELKIND_PARTITIONED_TABLE && tuples == 0)
+		{
+			printfPQExpBuffer(&buf, _("Number of partitions: %d"), tuples);
+			printTableAddFooter(&cont, buf.data);
+		}
+		else if (!verbose)
 		{
 			/* print the number of child tables, if any */
 			if (tuples > 0)
@@ -2925,12 +2941,21 @@ describeOneTableDetails(const char *schemaname,
 				}
 				else
 				{
-					if (i == 0)
-						printfPQExpBuffer(&buf, "%s: %s %s",
-										  ct, PQgetvalue(result, i, 0), PQgetvalue(result, i, 1));
+					char	   *partitioned_note;
+
+					if (*PQgetvalue(result, i, 2) == RELKIND_PARTITIONED_TABLE)
+						partitioned_note = ", PARTITIONED";
 					else
-						printfPQExpBuffer(&buf, "%*s  %s %s",
-										  ctw, "", PQgetvalue(result, i, 0), PQgetvalue(result, i, 1));
+						partitioned_note = "";
+
+					if (i == 0)
+						printfPQExpBuffer(&buf, "%s: %s %s%s",
+										  ct, PQgetvalue(result, i, 0), PQgetvalue(result, i, 1),
+										  partitioned_note);
+					else
+						printfPQExpBuffer(&buf, "%*s  %s %s%s",
+										  ctw, "", PQgetvalue(result, i, 0), PQgetvalue(result, i, 1),
+										  partitioned_note);
 				}
 				if (i < tuples - 1)
 					appendPQExpBufferChar(&buf, ',');
@@ -5357,7 +5382,7 @@ describeSubscriptions(const char *pattern, bool verbose)
 						 "FROM pg_catalog.pg_subscription\n"
 						 "WHERE subdbid = (SELECT oid\n"
 						 "                 FROM pg_catalog.pg_database\n"
-						 "                 WHERE datname = current_database())");
+						 "                 WHERE datname = pg_catalog.current_database())");
 
 	processSQLNamePattern(pset.db, &buf, pattern, true, false,
 						  NULL, "subname", NULL,

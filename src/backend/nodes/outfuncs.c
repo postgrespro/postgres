@@ -282,7 +282,7 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(relationOids);
 	WRITE_NODE_FIELD(invalItems);
-	WRITE_INT_FIELD(nParamExec);
+	WRITE_NODE_FIELD(paramExecTypes);
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
@@ -399,6 +399,7 @@ _outAppend(StringInfo str, const Append *node)
 
 	WRITE_NODE_FIELD(partitioned_rels);
 	WRITE_NODE_FIELD(appendplans);
+	WRITE_INT_FIELD(first_partial_plan);
 }
 
 static void
@@ -487,6 +488,7 @@ _outGather(StringInfo str, const Gather *node)
 	WRITE_INT_FIELD(rescan_param);
 	WRITE_BOOL_FIELD(single_copy);
 	WRITE_BOOL_FIELD(invisible);
+	WRITE_BITMAPSET_FIELD(initParam);
 }
 
 static void
@@ -517,6 +519,8 @@ _outGatherMerge(StringInfo str, const GatherMerge *node)
 	appendStringInfoString(str, " :nullsFirst");
 	for (i = 0; i < node->numCols; i++)
 		appendStringInfo(str, " %s", booltostr(node->nullsFirst[i]));
+
+	WRITE_BITMAPSET_FIELD(initParam);
 }
 
 static void
@@ -923,6 +927,7 @@ _outHash(StringInfo str, const Hash *node)
 	WRITE_OID_FIELD(skewTable);
 	WRITE_INT_FIELD(skewColumn);
 	WRITE_BOOL_FIELD(skewInherit);
+	WRITE_FLOAT_FIELD(rows_total, "%.0f");
 }
 
 static void
@@ -2181,7 +2186,7 @@ _outPlannerGlobal(StringInfo str, const PlannerGlobal *node)
 	WRITE_NODE_FIELD(rootResultRelations);
 	WRITE_NODE_FIELD(relationOids);
 	WRITE_NODE_FIELD(invalItems);
-	WRITE_INT_FIELD(nParamExec);
+	WRITE_NODE_FIELD(paramExecTypes);
 	WRITE_UINT_FIELD(lastPHId);
 	WRITE_UINT_FIELD(lastRowMarkId);
 	WRITE_INT_FIELD(lastPlanNodeId);
@@ -3578,6 +3583,8 @@ _outPartitionBoundSpec(StringInfo str, const PartitionBoundSpec *node)
 
 	WRITE_CHAR_FIELD(strategy);
 	WRITE_BOOL_FIELD(is_default);
+	WRITE_INT_FIELD(modulus);
+	WRITE_INT_FIELD(remainder);
 	WRITE_NODE_FIELD(listdatums);
 	WRITE_NODE_FIELD(lowerdatums);
 	WRITE_NODE_FIELD(upperdatums);

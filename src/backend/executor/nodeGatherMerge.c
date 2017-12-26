@@ -23,6 +23,7 @@
 #include "executor/tqueue.h"
 #include "lib/binaryheap.h"
 #include "miscadmin.h"
+#include "optimizer/planmain.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -115,10 +116,19 @@ ExecInitGatherMerge(GatherMerge *node, EState *estate, int eflags)
 	outerPlanState(gm_state) = ExecInitNode(outerNode, estate, eflags);
 
 	/*
+	 * Store the tuple descriptor into gather merge state, so we can use it
+	 * while initializing the gather merge slots.
+	 */
+	if (!ExecContextForcesOids(outerPlanState(gm_state), &hasoid))
+		hasoid = false;
+	tupDesc = ExecTypeFromTL(outerNode->targetlist, hasoid);
+	gm_state->tupDesc = tupDesc;
+
+	/*
 	 * Initialize result tuple type and projection info.
 	 */
 	ExecAssignResultTypeFromTL(&gm_state->ps);
-	ExecAssignProjectionInfo(&gm_state->ps, NULL);
+	ExecConditionalAssignProjectionInfo(&gm_state->ps, tupDesc, OUTER_VAR);
 
 	/*
 	 * initialize sort-key information
@@ -149,15 +159,6 @@ ExecInitGatherMerge(GatherMerge *node, EState *estate, int eflags)
 			PrepareSortSupportFromOrderingOp(node->sortOperators[i], sortKey);
 		}
 	}
-
-	/*
-	 * Store the tuple descriptor into gather merge state, so we can use it
-	 * while initializing the gather merge slots.
-	 */
-	if (!ExecContextForcesOids(&gm_state->ps, &hasoid))
-		hasoid = false;
-	tupDesc = ExecTypeFromTL(outerNode->targetlist, hasoid);
-	gm_state->tupDesc = tupDesc;
 
 	/* Now allocate the workspace for gather merge */
 	gather_merge_setup(gm_state);
@@ -194,7 +195,7 @@ ExecGatherMerge(PlanState *pstate)
 		 * Sometimes we might have to run without parallelism; but if parallel
 		 * mode is active then we can try to fire up some workers.
 		 */
-		if (gm->num_workers > 0 && IsInParallelMode())
+		if (gm->num_workers > 0 && estate->es_use_parallel_mode)
 		{
 			ParallelContext *pcxt;
 
@@ -202,11 +203,13 @@ ExecGatherMerge(PlanState *pstate)
 			if (!node->pei)
 				node->pei = ExecInitParallelPlan(node->ps.lefttree,
 												 estate,
+												 gm->initParam,
 												 gm->num_workers,
 												 node->tuples_needed);
 			else
 				ExecParallelReinitialize(node->ps.lefttree,
-										 node->pei);
+										 node->pei,
+										 gm->initParam);
 
 			/* Try to launch workers. */
 			pcxt = node->pei->pcxt;
@@ -233,8 +236,9 @@ ExecGatherMerge(PlanState *pstate)
 			}
 		}
 
-		/* always allow leader to participate */
-		node->need_to_scan_locally = true;
+		/* allow leader to participate if enabled or no choice */
+		if (parallel_leader_participation || node->nreaders == 0)
+			node->need_to_scan_locally = true;
 		node->initialized = true;
 	}
 
@@ -252,6 +256,10 @@ ExecGatherMerge(PlanState *pstate)
 	slot = gather_merge_getnext(node);
 	if (TupIsNull(slot))
 		return NULL;
+
+	/* If no projection is required, we're done. */
+	if (node->ps.ps_ProjInfo == NULL)
+		return slot;
 
 	/*
 	 * Form the result tuple using ExecProject(), and return it.
@@ -601,7 +609,7 @@ load_tuple_array(GatherMergeState *gm_state, int reader)
 								  &tuple_buffer->done);
 		if (!HeapTupleIsValid(tuple))
 			break;
-		tuple_buffer->tuple[i] = heap_copytuple(tuple);
+		tuple_buffer->tuple[i] = tuple;
 		tuple_buffer->nTuples++;
 	}
 }
@@ -629,8 +637,12 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 		{
 			PlanState  *outerPlan = outerPlanState(gm_state);
 			TupleTableSlot *outerTupleSlot;
+			EState *estate = gm_state->ps.state;
 
+			/* Install our DSA area while executing the plan. */
+			estate->es_query_dsa = gm_state->pei ? gm_state->pei->area : NULL;
 			outerTupleSlot = ExecProcNode(outerPlan);
+			estate->es_query_dsa = NULL;
 
 			if (!TupIsNull(outerTupleSlot))
 			{
@@ -665,7 +677,6 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 								&tuple_buffer->done);
 		if (!HeapTupleIsValid(tup))
 			return false;
-		tup = heap_copytuple(tup);
 
 		/*
 		 * Attempt to read more tuples in nowait mode and store them in the
@@ -695,20 +706,13 @@ gm_readnext_tuple(GatherMergeState *gm_state, int nreader, bool nowait,
 {
 	TupleQueueReader *reader;
 	HeapTuple	tup;
-	MemoryContext oldContext;
-	MemoryContext tupleContext;
 
 	/* Check for async events, particularly messages from workers. */
 	CHECK_FOR_INTERRUPTS();
 
 	/* Attempt to read a tuple. */
 	reader = gm_state->reader[nreader - 1];
-
-	/* Run TupleQueueReaders in per-tuple context */
-	tupleContext = gm_state->ps.ps_ExprContext->ecxt_per_tuple_memory;
-	oldContext = MemoryContextSwitchTo(tupleContext);
 	tup = TupleQueueReaderNext(reader, nowait, done);
-	MemoryContextSwitchTo(oldContext);
 
 	return tup;
 }

@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/ref/create_conversion.sgml -->
 
-<refentry id="SQL-CREATECONVERSION">
+<refentry id="sql-createconversion">
  <indexterm zone="sql-createconversion">
   <primary>CREATE CONVERSION</primary>
  </indexterm>
@@ -161,9 +161,9 @@ CREATE CONVERSION myconv FOR 'UTF8' TO 'LATIN1' FROM myfunc;
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-alterconversion"></member>
-   <member><xref linkend="sql-createfunction"></member>
-   <member><xref linkend="sql-dropconversion"></member>
+   <member><xref linkend="sql-alterconversion"/></member>
+   <member><xref linkend="sql-createfunction"/></member>
+   <member><xref linkend="sql-dropconversion"/></member>
   </simplelist>
  </refsect1>
 

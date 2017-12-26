@@ -274,6 +274,7 @@ typedef enum NodeTag
 	T_MemoryContext,
 	T_AllocSetContext,
 	T_SlabContext,
+	T_GenerationContext,
 
 	/*
 	 * TAGS FOR VALUE NODES (value.h)
@@ -416,6 +417,7 @@ typedef enum NodeTag
 	T_DropSubscriptionStmt,
 	T_CreateStatsStmt,
 	T_AlterCollationStmt,
+	T_CallStmt,
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)

@@ -56,7 +56,7 @@ static void setRuleCheckAsUser_Query(Query *qry, Oid userid);
  *	  relation "pg_rewrite"
  */
 static Oid
-InsertRule(char *rulname,
+InsertRule(const char *rulname,
 		   int evtype,
 		   Oid eventrel_oid,
 		   bool evinstead,
@@ -225,7 +225,7 @@ DefineRule(RuleStmt *stmt, const char *queryString)
  * action and qual have already been passed through parse analysis.
  */
 ObjectAddress
-DefineQueryRewrite(char *rulename,
+DefineQueryRewrite(const char *rulename,
 				   Oid event_relid,
 				   Node *event_qual,
 				   CmdType event_type,
@@ -531,7 +531,7 @@ DefineQueryRewrite(char *rulename,
 							replace);
 
 		/*
-		 * Set pg_class 'relhasrules' field TRUE for event relation.
+		 * Set pg_class 'relhasrules' field true for event relation.
 		 *
 		 * Important side effect: an SI notice is broadcast to force all
 		 * backends (including me!) to update relcache entries with the new

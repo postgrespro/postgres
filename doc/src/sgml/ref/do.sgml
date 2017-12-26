@@ -3,7 +3,7 @@ doc/src/sgml/ref/do.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-DO">
+<refentry id="sql-do">
  <indexterm zone="sql-do">
   <primary>DO</primary>
  </indexterm>
@@ -122,7 +122,7 @@ END$$;
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-createlanguage"></member>
+   <member><xref linkend="sql-createlanguage"/></member>
   </simplelist>
  </refsect1>
 </refentry>

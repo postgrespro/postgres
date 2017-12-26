@@ -335,6 +335,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_BOOLTEST_IS_NOT_FALSE,
 		&&CASE_EEOP_PARAM_EXEC,
 		&&CASE_EEOP_PARAM_EXTERN,
+		&&CASE_EEOP_PARAM_CALLBACK,
 		&&CASE_EEOP_CASE_TESTVAL,
 		&&CASE_EEOP_MAKE_READONLY,
 		&&CASE_EEOP_IOCOERCE,
@@ -1044,6 +1045,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/* out of line implementation: too large */
 			ExecEvalParamExtern(state, op, econtext);
+			EEO_NEXT();
+		}
+
+		EEO_CASE(EEOP_PARAM_CALLBACK)
+		{
+			/* allow an extension module to supply a PARAM_EXTERN value */
+			op->d.cparam.paramfunc(state, op, econtext);
 			EEO_NEXT();
 		}
 
@@ -1927,6 +1935,33 @@ ExecEvalParamExec(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 }
 
 /*
+ * ExecEvalParamExecParams
+ *
+ * Execute the subplan stored in PARAM_EXEC initplans params, if not executed
+ * till now.
+ */
+void
+ExecEvalParamExecParams(Bitmapset *params, EState *estate)
+{
+	ParamExecData *prm;
+	int			paramid;
+
+	paramid = -1;
+	while ((paramid = bms_next_member(params, paramid)) >= 0)
+	{
+		prm = &(estate->es_param_exec_vals[paramid]);
+
+		if (prm->execPlan != NULL)
+		{
+			/* Parameter not evaluated yet, so go do it */
+			ExecSetParamPlan(prm->execPlan, GetPerTupleExprContext(estate));
+			/* ExecSetParamPlan should have processed this param... */
+			Assert(prm->execPlan == NULL);
+		}
+	}
+}
+
+/*
  * Evaluate a PARAM_EXTERN parameter.
  *
  * PARAM_EXTERN parameters must be sought in ecxt_param_list_info.
@@ -1940,11 +1975,14 @@ ExecEvalParamExtern(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	if (likely(paramInfo &&
 			   paramId > 0 && paramId <= paramInfo->numParams))
 	{
-		ParamExternData *prm = &paramInfo->params[paramId - 1];
+		ParamExternData *prm;
+		ParamExternData prmdata;
 
 		/* give hook a chance in case parameter is dynamic */
-		if (!OidIsValid(prm->ptype) && paramInfo->paramFetch != NULL)
-			paramInfo->paramFetch(paramInfo, paramId);
+		if (paramInfo->paramFetch != NULL)
+			prm = paramInfo->paramFetch(paramInfo, paramId, false, &prmdata);
+		else
+			prm = &paramInfo->params[paramId - 1];
 
 		if (likely(OidIsValid(prm->ptype)))
 		{
@@ -3469,8 +3507,12 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 			 * generates an INT4 NULL regardless of the dropped column type).
 			 * If we find a dropped column and cannot verify that case (1)
 			 * holds, we have to use the slow path to check (2) for each row.
+			 *
+			 * If vartype is a domain over composite, just look through that
+			 * to the base composite type.
 			 */
-			var_tupdesc = lookup_rowtype_tupdesc(variable->vartype, -1);
+			var_tupdesc = lookup_rowtype_tupdesc_domain(variable->vartype,
+														-1, false);
 
 			slot_tupdesc = slot->tts_tupleDescriptor;
 

@@ -2455,7 +2455,7 @@ getTableDataFKConstraints(void)
  *	In 8.4 and up we can rely on the conislocal field to decide which
  *	constraints must be dumped; much safer.
  *
- *	This function assumes all conislocal flags were initialized to TRUE.
+ *	This function assumes all conislocal flags were initialized to true.
  *	It clears the flag on anything that seems to be inherited.
  */
 static void
@@ -3475,12 +3475,15 @@ getPublications(Archive *fout)
 
 	resetPQExpBuffer(query);
 
+	/* Make sure we are in proper schema */
+	selectSourceSchema(fout, "pg_catalog");
+
 	/* Get the publications. */
 	appendPQExpBuffer(query,
 					  "SELECT p.tableoid, p.oid, p.pubname, "
 					  "(%s p.pubowner) AS rolname, "
 					  "p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete "
-					  "FROM pg_catalog.pg_publication p",
+					  "FROM pg_publication p",
 					  username_subquery);
 
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
@@ -3631,6 +3634,9 @@ getPublicationTables(Archive *fout, TableInfo tblinfo[], int numTables)
 
 	query = createPQExpBuffer();
 
+	/* Make sure we are in proper schema */
+	selectSourceSchema(fout, "pg_catalog");
+
 	for (i = 0; i < numTables; i++)
 	{
 		TableInfo  *tbinfo = &tblinfo[i];
@@ -3656,8 +3662,7 @@ getPublicationTables(Archive *fout, TableInfo tblinfo[], int numTables)
 		/* Get the publication membership for the table. */
 		appendPQExpBuffer(query,
 						  "SELECT pr.tableoid, pr.oid, p.pubname "
-						  "FROM pg_catalog.pg_publication_rel pr,"
-						  "     pg_catalog.pg_publication p "
+						  "FROM pg_publication_rel pr, pg_publication p "
 						  "WHERE pr.prrelid = '%u'"
 						  "  AND p.oid = pr.prpubid",
 						  tbinfo->dobj.catId.oid);
@@ -3783,13 +3788,16 @@ getSubscriptions(Archive *fout)
 	if (dopt->no_subscriptions || fout->remoteVersion < 100000)
 		return;
 
+	/* Make sure we are in proper schema */
+	selectSourceSchema(fout, "pg_catalog");
+
 	if (!is_superuser(fout))
 	{
 		int			n;
 
 		res = ExecuteSqlQuery(fout,
 							  "SELECT count(*) FROM pg_subscription "
-							  "WHERE subdbid = (SELECT oid FROM pg_catalog.pg_database"
+							  "WHERE subdbid = (SELECT oid FROM pg_database"
 							  "                 WHERE datname = current_database())",
 							  PGRES_TUPLES_OK);
 		n = atoi(PQgetvalue(res, 0, 0));
@@ -3809,8 +3817,8 @@ getSubscriptions(Archive *fout)
 					  "(%s s.subowner) AS rolname, "
 					  " s.subconninfo, s.subslotname, s.subsynccommit, "
 					  " s.subpublications "
-					  "FROM pg_catalog.pg_subscription s "
-					  "WHERE s.subdbid = (SELECT oid FROM pg_catalog.pg_database"
+					  "FROM pg_subscription s "
+					  "WHERE s.subdbid = (SELECT oid FROM pg_database"
 					  "                   WHERE datname = current_database())",
 					  username_subquery);
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
@@ -6830,7 +6838,7 @@ getExtendedStatistics(Archive *fout, TableInfo tblinfo[], int numTables)
 						  "oid, "
 						  "stxname, "
 						  "pg_catalog.pg_get_statisticsobjdef(oid) AS stxdef "
-						  "FROM pg_statistic_ext "
+						  "FROM pg_catalog.pg_statistic_ext "
 						  "WHERE stxrelid = '%u' "
 						  "ORDER BY stxname", tbinfo->dobj.catId.oid);
 
@@ -11341,6 +11349,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 	char	   *funcargs;
 	char	   *funciargs;
 	char	   *funcresult;
+	bool		is_procedure;
 	char	   *proallargtypes;
 	char	   *proargmodes;
 	char	   *proargnames;
@@ -11362,6 +11371,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 	char	  **argnames = NULL;
 	char	  **configitems = NULL;
 	int			nconfigitems = 0;
+	const char *keyword;
 	int			i;
 
 	/* Skip if not to be dumped */
@@ -11505,7 +11515,11 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 	{
 		funcargs = PQgetvalue(res, 0, PQfnumber(res, "funcargs"));
 		funciargs = PQgetvalue(res, 0, PQfnumber(res, "funciargs"));
-		funcresult = PQgetvalue(res, 0, PQfnumber(res, "funcresult"));
+		is_procedure = PQgetisnull(res, 0, PQfnumber(res, "funcresult"));
+		if (is_procedure)
+			funcresult = NULL;
+		else
+			funcresult = PQgetvalue(res, 0, PQfnumber(res, "funcresult"));
 		proallargtypes = proargmodes = proargnames = NULL;
 	}
 	else
@@ -11514,6 +11528,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 		proargmodes = PQgetvalue(res, 0, PQfnumber(res, "proargmodes"));
 		proargnames = PQgetvalue(res, 0, PQfnumber(res, "proargnames"));
 		funcargs = funciargs = funcresult = NULL;
+		is_procedure = false;
 	}
 	if (PQfnumber(res, "protrftypes") != -1)
 		protrftypes = PQgetvalue(res, 0, PQfnumber(res, "protrftypes"));
@@ -11645,22 +11660,29 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 
 	funcsig_tag = format_function_signature(fout, finfo, false);
 
+	keyword = is_procedure ? "PROCEDURE" : "FUNCTION";
+
 	/*
 	 * DROP must be fully qualified in case same name appears in pg_catalog
 	 */
-	appendPQExpBuffer(delqry, "DROP FUNCTION %s.%s;\n",
+	appendPQExpBuffer(delqry, "DROP %s %s.%s;\n",
+					  keyword,
 					  fmtId(finfo->dobj.namespace->dobj.name),
 					  funcsig);
 
-	appendPQExpBuffer(q, "CREATE FUNCTION %s ", funcfullsig ? funcfullsig :
+	appendPQExpBuffer(q, "CREATE %s %s",
+					  keyword,
+					  funcfullsig ? funcfullsig :
 					  funcsig);
-	if (funcresult)
-		appendPQExpBuffer(q, "RETURNS %s", funcresult);
+	if (is_procedure)
+		;
+	else if (funcresult)
+		appendPQExpBuffer(q, " RETURNS %s", funcresult);
 	else
 	{
 		rettypename = getFormattedTypeName(fout, finfo->prorettype,
 										   zeroAsOpaque);
-		appendPQExpBuffer(q, "RETURNS %s%s",
+		appendPQExpBuffer(q, " RETURNS %s%s",
 						  (proretset[0] == 't') ? "SETOF " : "",
 						  rettypename);
 		free(rettypename);
@@ -11767,7 +11789,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 
 	appendPQExpBuffer(q, "\n    %s;\n", asPart->data);
 
-	appendPQExpBuffer(labelq, "FUNCTION %s", funcsig);
+	appendPQExpBuffer(labelq, "%s %s", keyword, funcsig);
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &finfo->dobj, labelq->data);
@@ -11778,7 +11800,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 					 finfo->dobj.namespace->dobj.name,
 					 NULL,
 					 finfo->rolname, false,
-					 "FUNCTION", SECTION_PRE_DATA,
+					 keyword, SECTION_PRE_DATA,
 					 q->data, delqry->data, NULL,
 					 NULL, 0,
 					 NULL, NULL);
@@ -11795,7 +11817,7 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 					 finfo->dobj.catId, 0, finfo->dobj.dumpId);
 
 	if (finfo->dobj.dump & DUMP_COMPONENT_ACL)
-		dumpACL(fout, finfo->dobj.catId, finfo->dobj.dumpId, "FUNCTION",
+		dumpACL(fout, finfo->dobj.catId, finfo->dobj.dumpId, keyword,
 				funcsig, NULL, funcsig_tag,
 				finfo->dobj.namespace->dobj.name,
 				finfo->rolname, finfo->proacl, finfo->rproacl,
@@ -13160,7 +13182,7 @@ dumpCollation(Archive *fout, CollInfo *collinfo)
 						  collinfo->dobj.catId.oid);
 	else
 		appendPQExpBuffer(query, "SELECT "
-						  "'c'::char AS collprovider, "
+						  "'c' AS collprovider, "
 						  "collcollate, "
 						  "collctype, "
 						  "NULL AS collversion "
@@ -16544,13 +16566,16 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 		/*
 		 * Before PostgreSQL 10, sequence metadata is in the sequence itself,
 		 * so switch to the sequence's schema instead of pg_catalog.
+		 *
+		 * Note: it might seem that 'bigint' potentially needs to be
+		 * schema-qualified, but actually that's a keyword.
 		 */
 
 		/* Make sure we are in proper schema */
 		selectSourceSchema(fout, tbinfo->dobj.namespace->dobj.name);
 
 		appendPQExpBuffer(query,
-						  "SELECT 'bigint'::name AS sequence_type, "
+						  "SELECT 'bigint' AS sequence_type, "
 						  "start_value, increment_by, max_value, min_value, "
 						  "cache_value, is_cycled FROM %s",
 						  fmtId(tbinfo->dobj.name));
@@ -16561,7 +16586,7 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 		selectSourceSchema(fout, tbinfo->dobj.namespace->dobj.name);
 
 		appendPQExpBuffer(query,
-						  "SELECT 'bigint'::name AS sequence_type, "
+						  "SELECT 'bigint' AS sequence_type, "
 						  "0 AS start_value, increment_by, max_value, min_value, "
 						  "cache_value, is_cycled FROM %s",
 						  fmtId(tbinfo->dobj.name));

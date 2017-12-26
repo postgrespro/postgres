@@ -21,14 +21,23 @@
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
+#include "storage/spin.h"
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
 #include "utils/reltrigger.h"
+#include "utils/sharedtuplestore.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplestore.h"
 #include "utils/tuplesort.h"
 #include "nodes/tidbitmap.h"
 #include "storage/condition_variable.h"
+
+
+struct PlanState;				/* forward references in this file */
+struct ParallelHashJoinState;
+struct ExprState;
+struct ExprContext;
+struct ExprEvalStep;			/* avoid including execExpr.h everywhere */
 
 
 /* ----------------
@@ -38,10 +47,6 @@
  * It contains instructions (in ->steps) to evaluate the expression.
  * ----------------
  */
-struct ExprState;				/* forward references in this file */
-struct ExprContext;
-struct ExprEvalStep;			/* avoid including execExpr.h everywhere */
-
 typedef Datum (*ExprStateEvalFunc) (struct ExprState *expression,
 									struct ExprContext *econtext,
 									bool *isNull);
@@ -83,11 +88,15 @@ typedef struct ExprState
 	Expr	   *expr;
 
 	/*
-	 * XXX: following only needed during "compilation", could be thrown away.
+	 * XXX: following fields only needed during "compilation" (ExecInitExpr);
+	 * could be thrown away afterwards.
 	 */
 
 	int			steps_len;		/* number of steps currently */
 	int			steps_alloc;	/* allocated length of steps array */
+
+	struct PlanState *parent;	/* parent PlanState node, if any */
+	ParamListInfo ext_params;	/* for compiling PARAM_EXTERN nodes */
 
 	Datum	   *innermost_caseval;
 	bool	   *innermost_casenull;
@@ -507,6 +516,8 @@ typedef struct EState
 	bool	   *es_epqTupleSet; /* true if EPQ tuple is provided */
 	bool	   *es_epqScanDone; /* true if EPQ tuple has been fetched */
 
+	bool		es_use_parallel_mode;	/* can we use parallel workers? */
+
 	/* The per-query shared memory area to use for parallel execution. */
 	struct dsa_area *es_query_dsa;
 } EState;
@@ -766,8 +777,8 @@ typedef struct SubPlanState
 	ProjectionInfo *projRight;	/* for projecting subselect output */
 	TupleHashTable hashtable;	/* hash table for no-nulls subselect rows */
 	TupleHashTable hashnulls;	/* hash table for rows with null(s) */
-	bool		havehashrows;	/* TRUE if hashtable is not empty */
-	bool		havenullrows;	/* TRUE if hashnulls is not empty */
+	bool		havehashrows;	/* true if hashtable is not empty */
+	bool		havenullrows;	/* true if hashnulls is not empty */
 	MemoryContext hashtablecxt; /* memory context containing hash tables */
 	MemoryContext hashtempcxt;	/* temp memory context for hash tables */
 	ExprContext *innerecontext; /* econtext for computing inner tuples */
@@ -820,8 +831,6 @@ typedef struct DomainConstraintState
  * that describes the plan.
  * ----------------------------------------------------------------
  */
-
-struct PlanState;
 
 /* ----------------
  *	 ExecProcNodeMtd
@@ -998,13 +1007,22 @@ typedef struct ModifyTableState
  *		whichplan		which plan is being executed (0 .. n-1)
  * ----------------
  */
-typedef struct AppendState
+
+struct AppendState;
+typedef struct AppendState AppendState;
+struct ParallelAppendState;
+typedef struct ParallelAppendState ParallelAppendState;
+
+struct AppendState
 {
 	PlanState	ps;				/* its first field is NodeTag */
 	PlanState **appendplans;	/* array of PlanStates for my inputs */
 	int			as_nplans;
 	int			as_whichplan;
-} AppendState;
+	ParallelAppendState *as_pstate; /* parallel coordination info */
+	Size		pstate_len;		/* size of parallel coordination info */
+	bool		(*choose_next_subplan) (AppendState *);
+};
 
 /* ----------------
  *	 MergeAppendState information
@@ -1329,6 +1347,10 @@ typedef struct ParallelBitmapHeapState
  *		tbm				   bitmap obtained from child index scan(s)
  *		tbmiterator		   iterator for scanning current pages
  *		tbmres			   current-page data
+ *		can_skip_fetch	   can we potentially skip tuple fetches in this scan?
+ *		skip_fetch		   are we skipping tuple fetches on this page?
+ *		vmbuffer		   buffer for visibility-map lookups
+ *		pvmbuffer		   ditto, for prefetched pages
  *		exact_pages		   total number of exact pages retrieved
  *		lossy_pages		   total number of lossy pages retrieved
  *		prefetch_iterator  iterator for prefetching ahead of current page
@@ -1349,6 +1371,10 @@ typedef struct BitmapHeapScanState
 	TIDBitmap  *tbm;
 	TBMIterator *tbmiterator;
 	TBMIterateResult *tbmres;
+	bool		can_skip_fetch;
+	bool		skip_fetch;
+	Buffer		vmbuffer;
+	Buffer		pvmbuffer;
 	long		exact_pages;
 	long		lossy_pages;
 	TBMIterator *prefetch_iterator;
@@ -1971,6 +1997,29 @@ typedef struct GatherMergeState
 } GatherMergeState;
 
 /* ----------------
+ *	 Values displayed by EXPLAIN ANALYZE
+ * ----------------
+ */
+typedef struct HashInstrumentation
+{
+	int			nbuckets;		/* number of buckets at end of execution */
+	int			nbuckets_original;	/* planned number of buckets */
+	int			nbatch;			/* number of batches at end of execution */
+	int			nbatch_original;	/* planned number of batches */
+	size_t		space_peak;		/* speak memory usage in bytes */
+} HashInstrumentation;
+
+/* ----------------
+ *	 Shared memory container for per-worker hash information
+ * ----------------
+ */
+typedef struct SharedHashInfo
+{
+	int			num_workers;
+	HashInstrumentation hinstrument[FLEXIBLE_ARRAY_MEMBER];
+} SharedHashInfo;
+
+/* ----------------
  *	 HashState information
  * ----------------
  */
@@ -1980,6 +2029,12 @@ typedef struct HashState
 	HashJoinTable hashtable;	/* hash table for the hashjoin */
 	List	   *hashkeys;		/* list of ExprState nodes */
 	/* hashkeys is same as parent's hj_InnerHashKeys */
+
+	SharedHashInfo *shared_info;	/* one entry per worker */
+	HashInstrumentation *hinstrument;	/* this worker's entry */
+
+	/* Parallel hash state. */
+	struct ParallelHashJoinState *parallel_state;
 } HashState;
 
 /* ----------------

@@ -3,7 +3,7 @@ doc/src/sgml/ref/create_user_mapping.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-CREATEUSERMAPPING">
+<refentry id="sql-createusermapping">
  <indexterm zone="sql-createusermapping">
   <primary>CREATE USER MAPPING</primary>
  </indexterm>
@@ -122,10 +122,10 @@ CREATE USER MAPPING FOR bob SERVER foo OPTIONS (user 'bob', password 'secret');
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-alterusermapping"></member>
-   <member><xref linkend="sql-dropusermapping"></member>
-   <member><xref linkend="sql-createforeigndatawrapper"></member>
-   <member><xref linkend="sql-createserver"></member>
+   <member><xref linkend="sql-alterusermapping"/></member>
+   <member><xref linkend="sql-dropusermapping"/></member>
+   <member><xref linkend="sql-createforeigndatawrapper"/></member>
+   <member><xref linkend="sql-createserver"/></member>
   </simplelist>
  </refsect1>
 

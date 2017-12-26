@@ -579,7 +579,7 @@
   </table>
 
   <para>
-   See also under <xref linkend="infoschema-columns">, a similarly
+   See also under <xref linkend="infoschema-columns"/>, a similarly
    structured view, for further information on some of the columns.
   </para>
  </sect1>
@@ -776,7 +776,7 @@
       <entry><literal>sql_identifier</literal></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
     </tbody>
@@ -895,7 +895,7 @@
    identifies which character set the available collations are
    applicable to.  In PostgreSQL, there is only one character set per
    database (see explanation
-   in <xref linkend="infoschema-character-sets">), so this view does
+   in <xref linkend="infoschema-character-sets"/>), so this view does
    not provide much useful information.
   </para>
 
@@ -1178,7 +1178,7 @@
    that use data types owned by a currently enabled role.  Note that in
    <productname>PostgreSQL</productname>, built-in data types behave
    like user-defined types, so they are included here as well.  See
-   also <xref linkend="infoschema-columns"> for details.
+   also <xref linkend="infoschema-columns"/> for details.
   </para>
 
   <table>
@@ -3134,7 +3134,7 @@ ORDER BY c.ordinal_position;
       <entry><type>sql_identifier</type></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
 
@@ -3594,7 +3594,7 @@ ORDER BY c.ordinal_position;
       <entry><type>sql_identifier</type></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
 
@@ -3930,7 +3930,7 @@ ORDER BY c.ordinal_position;
       <entry><type>sql_identifier</type></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
 
@@ -3972,8 +3972,8 @@ ORDER BY c.ordinal_position;
   <title><literal>routines</literal></title>
 
   <para>
-   The view <literal>routines</literal> contains all functions in the
-   current database.  Only those functions are shown that the current
+   The view <literal>routines</literal> contains all functions and procedures in the
+   current database.  Only those functions and procedures are shown that the current
    user has access to (by way of being the owner or having some
    privilege).
   </para>
@@ -4037,8 +4037,8 @@ ORDER BY c.ordinal_position;
       <entry><literal>routine_type</literal></entry>
       <entry><type>character_data</type></entry>
       <entry>
-       Always <literal>FUNCTION</literal> (In the future there might
-       be other types of routines.)
+       <literal>FUNCTION</literal> for a
+       function, <literal>PROCEDURE</literal> for a procedure
       </entry>
      </row>
 
@@ -4087,7 +4087,7 @@ ORDER BY c.ordinal_position;
        the view <literal>element_types</literal>), else
        <literal>USER-DEFINED</literal> (in that case, the type is
        identified in <literal>type_udt_name</literal> and associated
-       columns).
+       columns).  Null for a procedure.
       </entry>
      </row>
 
@@ -4180,7 +4180,7 @@ ORDER BY c.ordinal_position;
       <entry><type>sql_identifier</type></entry>
       <entry>
        Name of the database that the return data type of the function
-       is defined in (always the current database)
+       is defined in (always the current database).  Null for a procedure.
       </entry>
      </row>
 
@@ -4189,7 +4189,7 @@ ORDER BY c.ordinal_position;
       <entry><type>sql_identifier</type></entry>
       <entry>
        Name of the schema that the return data type of the function is
-       defined in
+       defined in.  Null for a procedure.
       </entry>
      </row>
 
@@ -4197,7 +4197,7 @@ ORDER BY c.ordinal_position;
       <entry><literal>type_udt_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
       <entry>
-       Name of the return data type of the function
+       Name of the return data type of the function.  Null for a procedure.
       </entry>
      </row>
 
@@ -4314,7 +4314,7 @@ ORDER BY c.ordinal_position;
       <entry>
        If the function automatically returns null if any of its
        arguments are null, then <literal>YES</literal>, else
-       <literal>NO</literal>.
+       <literal>NO</literal>.  Null for a procedure.
       </entry>
      </row>
 
@@ -4762,7 +4762,7 @@ ORDER BY c.ordinal_position;
    The table <literal>sql_features</literal> contains information
    about which formal features defined in the SQL standard are
    supported by <productname>PostgreSQL</productname>.  This is the
-   same information that is presented in <xref linkend="features">.
+   same information that is presented in <xref linkend="features"/>.
    There you can also find some additional background information.
   </para>
 
@@ -4998,7 +4998,7 @@ ORDER BY c.ordinal_position;
    The table <literal>sql_packages</literal> contains information
    about which feature packages defined in the SQL standard are
    supported by <productname>PostgreSQL</productname>.  Refer to <xref
-   linkend="features"> for background information on feature packages.
+   linkend="features"/> for background information on feature packages.
   </para>
 
   <table>
@@ -5586,7 +5586,7 @@ ORDER BY c.ordinal_position;
       <entry><literal>sql_identifier</literal></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
 
@@ -5891,9 +5891,9 @@ ORDER BY c.ordinal_position;
    <literal>USAGE</literal> privileges granted on user-defined types to a
    currently enabled role or by a currently enabled role.  There is one row for
    each combination of type, grantor, and grantee.  This view shows only
-   composite types (see under <xref linkend="infoschema-user-defined-types">
+   composite types (see under <xref linkend="infoschema-user-defined-types"/>
    for why); see
-   <xref linkend="infoschema-usage-privileges"> for domain privileges.
+   <xref linkend="infoschema-usage-privileges"/> for domain privileges.
   </para>
 
   <table>
@@ -6068,7 +6068,7 @@ ORDER BY c.ordinal_position;
    differentiate between these.  Other user-defined types such as base
    types and enums, which are <productname>PostgreSQL</productname>
    extensions, are not shown here.  For domains,
-   see <xref linkend="infoschema-domains"> instead.
+   see <xref linkend="infoschema-domains"/> instead.
   </para>
 
   <table>
@@ -6522,7 +6522,7 @@ ORDER BY c.ordinal_position;
       <entry><literal>sql_identifier</literal></entry>
       <entry>
        The <quote>specific name</quote> of the function.  See <xref
-       linkend="infoschema-routines"> for more information.
+       linkend="infoschema-routines"/> for more information.
       </entry>
      </row>
     </tbody>

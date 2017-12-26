@@ -112,7 +112,7 @@ typedef struct
 	int			prettyFlags;	/* enabling of pretty-print functions */
 	int			wrapColumn;		/* max line length, or -1 for no limit */
 	int			indentLevel;	/* current indent level for prettyprint */
-	bool		varprefix;		/* TRUE to print prefixes on Vars */
+	bool		varprefix;		/* true to print prefixes on Vars */
 	ParseExprKind special_exprkind; /* set only for exprkinds needing special
 									 * handling */
 } deparse_context;
@@ -130,7 +130,7 @@ typedef struct
  * rtable_columns holds the column alias names to be used for each RTE.
  *
  * In some cases we need to make names of merged JOIN USING columns unique
- * across the whole query, not only per-RTE.  If so, unique_using is TRUE
+ * across the whole query, not only per-RTE.  If so, unique_using is true
  * and using_names is a list of C strings representing names already assigned
  * to USING columns.
  *
@@ -343,7 +343,7 @@ static void set_relation_column_names(deparse_namespace *dpns,
 						  deparse_columns *colinfo);
 static void set_join_column_names(deparse_namespace *dpns, RangeTblEntry *rte,
 					  deparse_columns *colinfo);
-static bool colname_is_unique(char *colname, deparse_namespace *dpns,
+static bool colname_is_unique(const char *colname, deparse_namespace *dpns,
 				  deparse_columns *colinfo);
 static char *make_colname_unique(char *colname, deparse_namespace *dpns,
 					deparse_columns *colinfo);
@@ -460,6 +460,7 @@ static char *generate_function_name(Oid funcid, int nargs,
 					   bool has_variadic, bool *use_variadic_p,
 					   ParseExprKind special_exprkind);
 static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2);
+static char *generate_qualified_type_name(Oid typid);
 static text *string_to_text(char *str);
 static char *flatten_reloptions(Oid relid);
 
@@ -1550,7 +1551,7 @@ pg_get_statisticsobj_worker(Oid statextid, bool missing_ok)
  *
  * Returns the partition key specification, ie, the following:
  *
- * PARTITION BY { RANGE | LIST } (column opt_collation opt_opclass [, ...])
+ * PARTITION BY { RANGE | LIST | HASH } (column opt_collation opt_opclass [, ...])
  */
 Datum
 pg_get_partkeydef(PG_FUNCTION_ARGS)
@@ -1654,6 +1655,10 @@ pg_get_partkeydef_worker(Oid relid, int prettyFlags,
 
 	switch (form->partstrat)
 	{
+		case PARTITION_STRATEGY_HASH:
+			if (!attrsOnly)
+				appendStringInfo(&buf, "HASH");
+			break;
 		case PARTITION_STRATEGY_LIST:
 			if (!attrsOnly)
 				appendStringInfoString(&buf, "LIST");
@@ -1867,15 +1872,27 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 
 	if (fullCommand)
 	{
-		/*
-		 * Currently, callers want ALTER TABLE (without ONLY) for CHECK
-		 * constraints, and other types of constraints don't inherit anyway so
-		 * it doesn't matter whether we say ONLY or not.  Someday we might
-		 * need to let callers specify whether to put ONLY in the command.
-		 */
-		appendStringInfo(&buf, "ALTER TABLE %s ADD CONSTRAINT %s ",
-						 generate_qualified_relation_name(conForm->conrelid),
-						 quote_identifier(NameStr(conForm->conname)));
+		if (OidIsValid(conForm->conrelid))
+		{
+			/*
+			 * Currently, callers want ALTER TABLE (without ONLY) for CHECK
+			 * constraints, and other types of constraints don't inherit
+			 * anyway so it doesn't matter whether we say ONLY or not. Someday
+			 * we might need to let callers specify whether to put ONLY in the
+			 * command.
+			 */
+			appendStringInfo(&buf, "ALTER TABLE %s ADD CONSTRAINT %s ",
+							 generate_qualified_relation_name(conForm->conrelid),
+							 quote_identifier(NameStr(conForm->conname)));
+		}
+		else
+		{
+			/* Must be a domain constraint */
+			Assert(OidIsValid(conForm->contypid));
+			appendStringInfo(&buf, "ALTER DOMAIN %s ADD CONSTRAINT %s ",
+							 generate_qualified_type_name(conForm->contypid),
+							 quote_identifier(NameStr(conForm->conname)));
+		}
 	}
 
 	switch (conForm->contype)
@@ -2674,6 +2691,12 @@ pg_get_function_result(PG_FUNCTION_ARGS)
 	if (!HeapTupleIsValid(proctup))
 		PG_RETURN_NULL();
 
+	if (((Form_pg_proc) GETSTRUCT(proctup))->prorettype == InvalidOid)
+	{
+		ReleaseSysCache(proctup);
+		PG_RETURN_NULL();
+	}
+
 	initStringInfo(&buf);
 
 	print_function_rettype(&buf, proctup);
@@ -2999,9 +3022,9 @@ deparse_expression(Node *expr, List *dpcontext,
  * for interpreting Vars in the node tree.  It can be NIL if no Vars are
  * expected.
  *
- * forceprefix is TRUE to force all Vars to be prefixed with their table names.
+ * forceprefix is true to force all Vars to be prefixed with their table names.
  *
- * showimplicit is TRUE to force all implicit casts to be shown explicitly.
+ * showimplicit is true to force all implicit casts to be shown explicitly.
  *
  * Tries to pretty up the output according to prettyFlags and startIndent.
  *
@@ -3574,7 +3597,7 @@ set_using_names(deparse_namespace *dpns, Node *jtnode, List *parentUsing)
 		 * If there's a USING clause, select the USING column names and push
 		 * those names down to the children.  We have two strategies:
 		 *
-		 * If dpns->unique_using is TRUE, we force all USING names to be
+		 * If dpns->unique_using is true, we force all USING names to be
 		 * unique across the whole query level.  In principle we'd only need
 		 * the names of dangerous USING columns to be globally unique, but to
 		 * safely assign all USING names in a single pass, we have to enforce
@@ -3587,7 +3610,7 @@ set_using_names(deparse_namespace *dpns, Node *jtnode, List *parentUsing)
 		 * this simplifies the logic and seems likely to lead to less aliasing
 		 * overall.
 		 *
-		 * If dpns->unique_using is FALSE, we only need USING names to be
+		 * If dpns->unique_using is false, we only need USING names to be
 		 * unique within their own join RTE.  We still need to honor
 		 * pushed-down names, though.
 		 *
@@ -4100,7 +4123,7 @@ set_join_column_names(deparse_namespace *dpns, RangeTblEntry *rte,
  * dpns is query-wide info, colinfo is for the column's RTE
  */
 static bool
-colname_is_unique(char *colname, deparse_namespace *dpns,
+colname_is_unique(const char *colname, deparse_namespace *dpns,
 				  deparse_columns *colinfo)
 {
 	int			i;
@@ -5154,7 +5177,7 @@ get_simple_values_rte(Query *query)
 	ListCell   *lc;
 
 	/*
-	 * We want to return TRUE even if the Query also contains OLD or NEW rule
+	 * We want to return true even if the Query also contains OLD or NEW rule
 	 * RTEs.  So the idea is to scan the rtable and see if there is only one
 	 * inFromCl RTE that is a VALUES RTE.
 	 */
@@ -6403,7 +6426,7 @@ get_utility_query_def(Query *query, deparse_context *context)
  * the Var's varlevelsup has to be interpreted with respect to a context
  * above the current one; levelsup indicates the offset.
  *
- * If istoplevel is TRUE, the Var is at the top level of a SELECT's
+ * If istoplevel is true, the Var is at the top level of a SELECT's
  * targetlist, which means we need special treatment of whole-row Vars.
  * Instead of the normal "tab.*", we'll print "tab.*::typename", which is a
  * dirty hack to prevent "tab.*" from being expanded into multiple columns.
@@ -6731,17 +6754,12 @@ get_name_for_var_field(Var *var, int fieldno,
 
 	/*
 	 * If it's a Var of type RECORD, we have to find what the Var refers to;
-	 * if not, we can use get_expr_result_type. If that fails, we try
-	 * lookup_rowtype_tupdesc, which will probably fail too, but will ereport
-	 * an acceptable message.
+	 * if not, we can use get_expr_result_tupdesc().
 	 */
 	if (!IsA(var, Var) ||
 		var->vartype != RECORDOID)
 	{
-		if (get_expr_result_type((Node *) var, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-			tupleDesc = lookup_rowtype_tupdesc_copy(exprType((Node *) var),
-													exprTypmod((Node *) var));
-		Assert(tupleDesc);
+		tupleDesc = get_expr_result_tupdesc((Node *) var, false);
 		/* Got the tupdesc, so we can extract the field name */
 		Assert(fieldno >= 1 && fieldno <= tupleDesc->natts);
 		return NameStr(TupleDescAttr(tupleDesc, fieldno - 1)->attname);
@@ -7044,14 +7062,9 @@ get_name_for_var_field(Var *var, int fieldno,
 
 	/*
 	 * We now have an expression we can't expand any more, so see if
-	 * get_expr_result_type() can do anything with it.  If not, pass to
-	 * lookup_rowtype_tupdesc() which will probably fail, but will give an
-	 * appropriate error message while failing.
+	 * get_expr_result_tupdesc() can do anything with it.
 	 */
-	if (get_expr_result_type(expr, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-		tupleDesc = lookup_rowtype_tupdesc_copy(exprType(expr),
-												exprTypmod(expr));
-	Assert(tupleDesc);
+	tupleDesc = get_expr_result_tupdesc(expr, false);
 	/* Got the tupdesc, so we can extract the field name */
 	Assert(fieldno >= 1 && fieldno <= tupleDesc->natts);
 	return NameStr(TupleDescAttr(tupleDesc, fieldno - 1)->attname);
@@ -8708,6 +8721,15 @@ get_rule_expr(Node *node, deparse_context *context,
 
 				switch (spec->strategy)
 				{
+					case PARTITION_STRATEGY_HASH:
+						Assert(spec->modulus > 0 && spec->remainder >= 0);
+						Assert(spec->modulus > spec->remainder);
+
+						appendStringInfoString(buf, "FOR VALUES");
+						appendStringInfo(buf, " WITH (modulus %d, remainder %d)",
+										 spec->modulus, spec->remainder);
+						break;
+
 					case PARTITION_STRATEGY_LIST:
 						Assert(spec->listdatums != NIL);
 
@@ -10609,7 +10631,7 @@ generate_qualified_relation_name(Oid relid)
  * means a FuncExpr or Aggref, not some other way of calling a function), then
  * has_variadic must specify whether variadic arguments have been merged,
  * and *use_variadic_p will be set to indicate whether to print VARIADIC in
- * the output.  For non-FuncExpr cases, has_variadic should be FALSE and
+ * the output.  For non-FuncExpr cases, has_variadic should be false and
  * use_variadic_p can be NULL.
  *
  * The result includes all necessary quoting and schema-prefixing.
@@ -10786,6 +10808,42 @@ generate_operator_name(Oid operid, Oid arg1, Oid arg2)
 	ReleaseSysCache(opertup);
 
 	return buf.data;
+}
+
+/*
+ * generate_qualified_type_name
+ *		Compute the name to display for a type specified by OID
+ *
+ * This is different from format_type_be() in that we unconditionally
+ * schema-qualify the name.  That also means no special syntax for
+ * SQL-standard type names ... although in current usage, this should
+ * only get used for domains, so such cases wouldn't occur anyway.
+ */
+static char *
+generate_qualified_type_name(Oid typid)
+{
+	HeapTuple	tp;
+	Form_pg_type typtup;
+	char	   *typname;
+	char	   *nspname;
+	char	   *result;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for type %u", typid);
+	typtup = (Form_pg_type) GETSTRUCT(tp);
+	typname = NameStr(typtup->typname);
+
+	nspname = get_namespace_name(typtup->typnamespace);
+	if (!nspname)
+		elog(ERROR, "cache lookup failed for namespace %u",
+			 typtup->typnamespace);
+
+	result = quote_qualified_identifier(nspname, typname);
+
+	ReleaseSysCache(tp);
+
+	return result;
 }
 
 /*

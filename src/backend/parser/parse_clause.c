@@ -2056,7 +2056,7 @@ findTargetlistEntrySQL99(ParseState *pstate, Node *node, List **tlist,
 
 	/*
 	 * If no matches, construct a new target entry which is appended to the
-	 * end of the target list.  This target is given resjunk = TRUE so that it
+	 * end of the target list.  This target is given resjunk = true so that it
 	 * will not be projected into the final tuple.
 	 */
 	target_result = transformTargetEntry(pstate, node, expr, exprKind,
@@ -3164,9 +3164,26 @@ transformOnConflictArbiter(ParseState *pstate,
 
 		pstate->p_namespace = save_namespace;
 
+		/*
+		 * If the arbiter is specified by constraint name, get the constraint
+		 * OID and mark the constrained columns as requiring SELECT privilege,
+		 * in the same way as would have happened if the arbiter had been
+		 * specified by explicit reference to the constraint's index columns.
+		 */
 		if (infer->conname)
-			*constraint = get_relation_constraint_oid(RelationGetRelid(pstate->p_target_relation),
-													  infer->conname, false);
+		{
+			Oid			relid = RelationGetRelid(pstate->p_target_relation);
+			RangeTblEntry *rte = pstate->p_target_rangetblentry;
+			Bitmapset  *conattnos;
+
+			conattnos = get_relation_constraint_attnos(relid, infer->conname,
+													   false, constraint);
+
+			/* Make sure the rel as a whole is marked for SELECT access */
+			rte->requiredPerms |= ACL_SELECT;
+			/* Mark the constrained columns as requiring SELECT access */
+			rte->selectedCols = bms_add_members(rte->selectedCols, conattnos);
+		}
 	}
 
 	/*

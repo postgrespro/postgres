@@ -3,7 +3,7 @@ doc/src/sgml/ref/grant.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-GRANT">
+<refentry id="sql-grant">
  <indexterm zone="sql-grant">
   <primary>GRANT</primary>
  </indexterm>
@@ -55,8 +55,8 @@ GRANT { USAGE | ALL [ PRIVILEGES ] }
     TO <replaceable class="parameter">role_specification</replaceable> [, ...] [ WITH GRANT OPTION ]
 
 GRANT { EXECUTE | ALL [ PRIVILEGES ] }
-    ON { FUNCTION <replaceable>function_name</replaceable> [ ( [ [ <replaceable class="parameter">argmode</replaceable> ] [ <replaceable class="parameter">arg_name</replaceable> ] <replaceable class="parameter">arg_type</replaceable> [, ...] ] ) ] [, ...]
-         | ALL FUNCTIONS IN SCHEMA <replaceable class="parameter">schema_name</replaceable> [, ...] }
+    ON { { FUNCTION | PROCEDURE | ROUTINE } <replaceable>routine_name</replaceable> [ ( [ [ <replaceable class="parameter">argmode</replaceable> ] [ <replaceable class="parameter">arg_name</replaceable> ] <replaceable class="parameter">arg_type</replaceable> [, ...] ] ) ] [, ...]
+         | ALL { FUNCTIONS | PROCEDURES | ROUTINES } IN SCHEMA <replaceable class="parameter">schema_name</replaceable> [, ...] }
     TO <replaceable class="parameter">role_specification</replaceable> [, ...] [ WITH GRANT OPTION ]
 
 GRANT { USAGE | ALL [ PRIVILEGES ] }
@@ -96,7 +96,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
   <para>
    The <command>GRANT</command> command has two basic variants: one
    that grants privileges on a database object (table, column, view, foreign
-   table, sequence, database, foreign-data wrapper, foreign server, function,
+   table, sequence, database, foreign-data wrapper, foreign server, function, procedure,
    procedural language, schema, or tablespace), and one that grants
    membership in a role.  These variants are similar in many ways, but
    they are different enough to be described separately.
@@ -115,8 +115,11 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
   <para>
    There is also an option to grant privileges on all objects of the same
    type within one or more schemas.  This functionality is currently supported
-   only for tables, sequences, and functions (but note that <literal>ALL
-   TABLES</literal> is considered to include views and foreign tables).
+   only for tables, sequences, functions, and procedures.  <literal>ALL
+   TABLES</literal> also affects views and foreign tables, just like the
+   specific-object <command>GRANT</command> command.  <literal>ALL
+   FUNCTIONS</literal> also affects aggregate functions, but not procedures,
+   again just like the specific-object <command>GRANT</command> command.
   </para>
 
   <para>
@@ -169,7 +172,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
    granted to <literal>PUBLIC</literal> are as follows:
    <literal>CONNECT</literal> and <literal>TEMPORARY</literal> (create
    temporary tables) privileges for databases;
-   <literal>EXECUTE</literal> privilege for functions; and
+   <literal>EXECUTE</literal> privilege for functions and procedures; and
    <literal>USAGE</literal> privilege for languages and data types
    (including domains).
    The object owner can, of course, <command>REVOKE</command>
@@ -178,7 +181,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
    creates the object; then there is no window in which another user
    can use the object.)
    Also, these initial default privilege settings can be changed using the
-   <xref linkend="sql-alterdefaultprivileges">
+   <xref linkend="sql-alterdefaultprivileges"/>
    command.
   </para>
 
@@ -190,14 +193,14 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>SELECT</literal></term>
      <listitem>
       <para>
-       Allows <xref linkend="sql-select"> from
+       Allows <xref linkend="sql-select"/> from
        any column, or the specific columns listed, of the specified table,
        view, or sequence.
        Also allows the use of
-       <xref linkend="sql-copy"> TO.
+       <xref linkend="sql-copy"/> TO.
        This privilege is also needed to reference existing column values in
-       <xref linkend="sql-update"> or
-       <xref linkend="sql-delete">.
+       <xref linkend="sql-update"/> or
+       <xref linkend="sql-delete"/>.
        For sequences, this privilege also allows the use of the
        <function>currval</function> function.
        For large objects, this privilege allows the object to be read.
@@ -209,11 +212,11 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>INSERT</literal></term>
      <listitem>
       <para>
-       Allows <xref linkend="sql-insert"> of a new
+       Allows <xref linkend="sql-insert"/> of a new
        row into the specified table.  If specific columns are listed,
        only those columns may be assigned to in the <command>INSERT</command>
        command (other columns will therefore receive default values).
-       Also allows <xref linkend="sql-copy"> FROM.
+       Also allows <xref linkend="sql-copy"/> FROM.
       </para>
      </listitem>
     </varlistentry>
@@ -222,7 +225,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>UPDATE</literal></term>
      <listitem>
       <para>
-       Allows <xref linkend="sql-update"> of any
+       Allows <xref linkend="sql-update"/> of any
        column, or the specific columns listed, of the specified table.
        (In practice, any nontrivial <command>UPDATE</command> command will require
        <literal>SELECT</literal> privilege as well, since it must reference table
@@ -244,7 +247,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>DELETE</literal></term>
      <listitem>
       <para>
-       Allows <xref linkend="sql-delete"> of a row
+       Allows <xref linkend="sql-delete"/> of a row
        from the specified table.
        (In practice, any nontrivial <command>DELETE</command> command will require
        <literal>SELECT</literal> privilege as well, since it must reference table
@@ -257,7 +260,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>TRUNCATE</literal></term>
      <listitem>
       <para>
-       Allows <xref linkend="sql-truncate"> on
+       Allows <xref linkend="sql-truncate"/> on
        the specified table.
       </para>
      </listitem>
@@ -269,7 +272,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
       <para>
        Allows creation of a foreign key constraint referencing the specified
        table, or specified column(s) of the table.  (See the
-       <xref linkend="sql-createtable"> statement.)
+       <xref linkend="sql-createtable"/> statement.)
       </para>
      </listitem>
     </varlistentry>
@@ -279,7 +282,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <listitem>
       <para>
        Allows the creation of a trigger on the specified table.  (See the
-       <xref linkend="sql-createtrigger"> statement.)
+       <xref linkend="sql-createtrigger"/> statement.)
       </para>
      </listitem>
     </varlistentry>
@@ -329,10 +332,12 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
      <term><literal>EXECUTE</literal></term>
      <listitem>
       <para>
-       Allows the use of the specified function and the use of any
-       operators that are implemented on top of the function.  This is
-       the only type of privilege that is applicable to functions.
-       (This syntax works for aggregate functions, as well.)
+       Allows the use of the specified function or procedure and the use of
+       any operators that are implemented on top of the function.  This is the
+       only type of privilege that is applicable to functions and procedures.
+       The <literal>FUNCTION</literal> syntax also works for aggregate
+       functions.  Alternatively, use <literal>ROUTINE</literal> to refer to a function,
+       aggregate function, or procedure regardless of what it is.
       </para>
      </listitem>
     </varlistentry>
@@ -429,11 +434,11 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
  </refsect1>
 
 
- <refsect1 id="SQL-GRANT-notes">
+ <refsect1 id="sql-grant-notes">
   <title>Notes</title>
 
    <para>
-    The <xref linkend="sql-revoke"> command is used
+    The <xref linkend="sql-revoke"/> command is used
     to revoke access privileges.
    </para>
 
@@ -515,7 +520,7 @@ GRANT <replaceable class="parameter">role_name</replaceable> [, ...] TO <replace
    </para>
 
    <para>
-    Use <xref linkend="app-psql">'s <command>\dp</command> command
+    Use <xref linkend="app-psql"/>'s <command>\dp</command> command
     to obtain information about existing privileges for tables and
     columns.  For example:
 <programlisting>
@@ -682,8 +687,8 @@ GRANT admins TO joe;
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-revoke"></member>
-   <member><xref linkend="sql-alterdefaultprivileges"></member>
+   <member><xref linkend="sql-revoke"/></member>
+   <member><xref linkend="sql-alterdefaultprivileges"/></member>
   </simplelist>
  </refsect1>
 

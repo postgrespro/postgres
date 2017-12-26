@@ -61,6 +61,7 @@
 /* GUC parameters */
 double		cursor_tuple_fraction = DEFAULT_CURSOR_TUPLE_FRACTION;
 int			force_parallel_mode = FORCE_PARALLEL_OFF;
+bool		parallel_leader_participation = true;
 
 /* Hook for plugins to get control in planner() */
 planner_hook_type planner_hook = NULL;
@@ -243,7 +244,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	glob->rootResultRelations = NIL;
 	glob->relationOids = NIL;
 	glob->invalItems = NIL;
-	glob->nParamExec = 0;
+	glob->paramExecTypes = NIL;
 	glob->lastPHId = 0;
 	glob->lastRowMarkId = 0;
 	glob->lastPlanNodeId = 0;
@@ -376,6 +377,14 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		Gather	   *gather = makeNode(Gather);
 
+		/*
+		 * If there are any initPlans attached to the formerly-top plan node,
+		 * move them up to the Gather node; same as we do for Material node in
+		 * materialize_finished_plan.
+		 */
+		gather->plan.initPlan = top_plan->initPlan;
+		top_plan->initPlan = NIL;
+
 		gather->plan.targetlist = top_plan->targetlist;
 		gather->plan.qual = NIL;
 		gather->plan.lefttree = top_plan;
@@ -415,7 +424,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	 * set_plan_references' tree traversal, but for now it has to be separate
 	 * because we need to visit subplans before not after main plan.
 	 */
-	if (glob->nParamExec > 0)
+	if (glob->paramExecTypes != NIL)
 	{
 		Assert(list_length(glob->subplans) == list_length(glob->subroots));
 		forboth(lp, glob->subplans, lr, glob->subroots)
@@ -466,7 +475,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	result->rowMarks = glob->finalrowmarks;
 	result->relationOids = glob->relationOids;
 	result->invalItems = glob->invalItems;
-	result->nParamExec = glob->nParamExec;
+	result->paramExecTypes = glob->paramExecTypes;
 	/* utilityStmt should be null, but we might as well copy it */
 	result->utilityStmt = parse->utilityStmt;
 	result->stmt_location = parse->stmt_location;
@@ -777,6 +786,27 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	}
 
 	/*
+	 * Now that we are done preprocessing expressions, and in particular done
+	 * flattening join alias variables, get rid of the joinaliasvars lists.
+	 * They no longer match what expressions in the rest of the tree look
+	 * like, because we have not preprocessed expressions in those lists (and
+	 * do not want to; for example, expanding a SubLink there would result in
+	 * a useless unreferenced subplan).  Leaving them in place simply creates
+	 * a hazard for later scans of the tree.  We could try to prevent that by
+	 * using QTW_IGNORE_JOINALIASES in every tree scan done after this point,
+	 * but that doesn't sound very reliable.
+	 */
+	if (root->hasJoinRTEs)
+	{
+		foreach(l, parse->rtable)
+		{
+			RangeTblEntry *rte = lfirst_node(RangeTblEntry, l);
+
+			rte->joinaliasvars = NIL;
+		}
+	}
+
+	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
 	 * volatile functions (since a HAVING clause is supposed to be executed
@@ -902,11 +932,12 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 
 	/*
 	 * If the query has any join RTEs, replace join alias variables with
-	 * base-relation variables.  We must do this before sublink processing,
-	 * else sublinks expanded out from join aliases would not get processed.
-	 * We can skip it in non-lateral RTE functions, VALUES lists, and
-	 * TABLESAMPLE clauses, however, since they can't contain any Vars of the
-	 * current query level.
+	 * base-relation variables.  We must do this first, since any expressions
+	 * we may extract from the joinaliasvars lists have not been preprocessed.
+	 * For example, if we did this after sublink processing, sublinks expanded
+	 * out from join aliases would not get processed.  But we can skip this in
+	 * non-lateral RTE functions, VALUES lists, and TABLESAMPLE clauses, since
+	 * they can't contain any Vars of the current query level.
 	 */
 	if (root->hasJoinRTEs &&
 		!(kind == EXPRKIND_RTFUNC ||
@@ -1524,7 +1555,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 				 double tuple_fraction)
 {
 	Query	   *parse = root->parse;
-	List	   *tlist = parse->targetList;
+	List	   *tlist;
 	int64		offset_est = 0;
 	int64		count_est = 0;
 	double		limit_tuples = -1.0;
@@ -1654,13 +1685,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		}
 
 		/* Preprocess targetlist */
-		tlist = preprocess_targetlist(root, tlist);
-
-		if (parse->onConflict)
-			parse->onConflict->onConflictSet =
-				preprocess_onconflict_targetlist(parse->onConflict->onConflictSet,
-												 parse->resultRelation,
-												 parse->rtable);
+		tlist = preprocess_targetlist(root);
 
 		/*
 		 * We are now done hacking up the query's targetlist.  Most of the
@@ -3655,9 +3680,12 @@ create_grouping_paths(PlannerInfo *root,
 			path = (Path *)
 				create_append_path(grouped_rel,
 								   paths,
+								   NIL,
 								   NULL,
 								   0,
-								   NIL);
+								   false,
+								   NIL,
+								   -1);
 			path->pathtarget = target;
 		}
 		else
@@ -5031,14 +5059,15 @@ create_ordered_paths(PlannerInfo *root,
 											 ordered_rel,
 											 cheapest_partial_path,
 											 root->sort_pathkeys,
-											 -1.0);
+											 limit_tuples);
 
 			total_groups = cheapest_partial_path->rows *
 				cheapest_partial_path->parallel_workers;
 			path = (Path *)
 				create_gather_merge_path(root, ordered_rel,
 										 path,
-										 target, root->sort_pathkeys, NULL,
+										 path->pathtarget,
+										 root->sort_pathkeys, NULL,
 										 &total_groups);
 
 			/* Add projection step if needed */
@@ -5666,7 +5695,7 @@ make_pathkeys_for_window(PlannerInfo *root, WindowClause *wc,
  * below the Sort step (and the Distinct step, if any).  This will be
  * exactly final_target if we decide a projection step wouldn't be helpful.
  *
- * In addition, *have_postponed_srfs is set to TRUE if we choose to postpone
+ * In addition, *have_postponed_srfs is set to true if we choose to postpone
  * any set-returning functions to after the Sort.
  */
 static PathTarget *
@@ -6018,7 +6047,7 @@ expression_planner(Expr *expr)
  * tableOid is the OID of a table to be clustered on its index indexOid
  * (which is already known to be a btree index).  Decide whether it's
  * cheaper to do an indexscan or a seqscan-plus-sort to execute the CLUSTER.
- * Return TRUE to use sorting, FALSE to use an indexscan.
+ * Return true to use sorting, false to use an indexscan.
  *
  * Note: caller had better already hold some type of lock on the table.
  */

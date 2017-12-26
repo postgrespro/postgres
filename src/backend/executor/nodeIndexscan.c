@@ -676,8 +676,8 @@ ExecIndexEvalRuntimeKeys(ExprContext *econtext,
  * ExecIndexEvalArrayKeys
  *		Evaluate any array key values, and set up to iterate through arrays.
  *
- * Returns TRUE if there are array elements to consider; FALSE means there
- * is at least one null or empty array, so no match is possible.  On TRUE
+ * Returns true if there are array elements to consider; false means there
+ * is at least one null or empty array, so no match is possible.  On true
  * result, the scankeys are initialized with the first elements of the arrays.
  */
 bool
@@ -756,8 +756,8 @@ ExecIndexEvalArrayKeys(ExprContext *econtext,
  * ExecIndexAdvanceArrayKeys
  *		Advance to the next set of array key values, if any.
  *
- * Returns TRUE if there is another set of values to consider, FALSE if not.
- * On TRUE result, the scankeys are initialized with the next set of values.
+ * Returns true if there is another set of values to consider, false if not.
+ * On true result, the scankeys are initialized with the next set of values.
  */
 bool
 ExecIndexAdvanceArrayKeys(IndexArrayKeyInfo *arrayKeys, int numArrayKeys)
@@ -1644,7 +1644,8 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 /* ----------------------------------------------------------------
  *		ExecIndexScanEstimate
  *
- *		estimates the space required to serialize indexscan node.
+ *		Compute the amount of space we'll need in the parallel
+ *		query DSM, and inform pcxt->estimator about our needs.
  * ----------------------------------------------------------------
  */
 void
@@ -1715,11 +1716,12 @@ ExecIndexScanReInitializeDSM(IndexScanState *node,
  * ----------------------------------------------------------------
  */
 void
-ExecIndexScanInitializeWorker(IndexScanState *node, shm_toc *toc)
+ExecIndexScanInitializeWorker(IndexScanState *node,
+							  ParallelWorkerContext *pwcxt)
 {
 	ParallelIndexScanDesc piscan;
 
-	piscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id, false);
+	piscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
 								 node->iss_RelationDesc,

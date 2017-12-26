@@ -3,7 +3,7 @@ doc/src/sgml/ref/create_statistics.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-CREATESTATISTICS">
+<refentry id="sql-createstatistics">
  <indexterm zone="sql-createstatistics">
   <primary>CREATE STATISTICS</primary>
  </indexterm>
@@ -29,7 +29,7 @@ CREATE STATISTICS [ IF NOT EXISTS ] <replaceable class="parameter">statistics_na
 
  </refsynopsisdiv>
 
- <refsect1 id="SQL-CREATESTATISTICS-description">
+ <refsect1 id="sql-createstatistics-description">
   <title>Description</title>
 
   <para>
@@ -86,8 +86,8 @@ CREATE STATISTICS [ IF NOT EXISTS ] <replaceable class="parameter">statistics_na
       dependency statistics.
       If this clause is omitted, all supported statistics kinds are
       included in the statistics object.
-      For more information, see <xref linkend="planner-stats-extended">
-      and <xref linkend="multivariate-statistics-examples">.
+      For more information, see <xref linkend="planner-stats-extended"/>
+      and <xref linkend="multivariate-statistics-examples"/>.
      </para>
     </listitem>
    </varlistentry>
@@ -125,7 +125,7 @@ CREATE STATISTICS [ IF NOT EXISTS ] <replaceable class="parameter">statistics_na
   </para>
  </refsect1>
 
- <refsect1 id="SQL-CREATESTATISTICS-examples">
+ <refsect1 id="sql-createstatistics-examples">
   <title>Examples</title>
 
   <para>
@@ -178,8 +178,8 @@ EXPLAIN ANALYZE SELECT * FROM t1 WHERE (a = 1) AND (b = 0);
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-alterstatistics"></member>
-   <member><xref linkend="sql-dropstatistics"></member>
+   <member><xref linkend="sql-alterstatistics"/></member>
+   <member><xref linkend="sql-dropstatistics"/></member>
   </simplelist>
  </refsect1>
 </refentry>

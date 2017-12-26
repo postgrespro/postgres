@@ -3,7 +3,7 @@ doc/src/sgml/ref/drop_user_mapping.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-DROPUSERMAPPING">
+<refentry id="sql-dropusermapping">
  <indexterm zone="sql-dropusermapping">
   <primary>DROP USER MAPPING</primary>
  </indexterm>
@@ -102,8 +102,8 @@ DROP USER MAPPING IF EXISTS FOR bob SERVER foo;
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-createusermapping"></member>
-   <member><xref linkend="sql-alterusermapping"></member>
+   <member><xref linkend="sql-createusermapping"/></member>
+   <member><xref linkend="sql-alterusermapping"/></member>
   </simplelist>
  </refsect1>
 

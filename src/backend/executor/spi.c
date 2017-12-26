@@ -1907,9 +1907,9 @@ _SPI_prepare_oneshot_plan(const char *src, SPIPlanPtr plan)
  * snapshot: query snapshot to use, or InvalidSnapshot for the normal
  *		behavior of taking a new snapshot for each query.
  * crosscheck_snapshot: for RI use, all others pass InvalidSnapshot
- * read_only: TRUE for read-only execution (no CommandCounterIncrement)
- * fire_triggers: TRUE to fire AFTER triggers at end of query (normal case);
- *		FALSE means any AFTER triggers are postponed to end of outer query
+ * read_only: true for read-only execution (no CommandCounterIncrement)
+ * fire_triggers: true to fire AFTER triggers at end of query (normal case);
+ *		false means any AFTER triggers are postponed to end of outer query
  * tcount: execution tuple-count limit, or 0 for none
  */
 static int
@@ -2259,10 +2259,11 @@ _SPI_convert_params(int nargs, Oid *argtypes,
 		/* we have static list of params, so no hooks needed */
 		paramLI->paramFetch = NULL;
 		paramLI->paramFetchArg = NULL;
+		paramLI->paramCompile = NULL;
+		paramLI->paramCompileArg = NULL;
 		paramLI->parserSetup = NULL;
 		paramLI->parserSetupArg = NULL;
 		paramLI->numParams = nargs;
-		paramLI->paramMask = NULL;
 
 		for (i = 0; i < nargs; i++)
 		{
@@ -2366,6 +2367,9 @@ _SPI_error_callback(void *arg)
 {
 	const char *query = (const char *) arg;
 	int			syntaxerrposition;
+
+	if (query == NULL)			/* in case arg wasn't set yet */
+		return;
 
 	/*
 	 * If there is a syntax error position, convert to internal syntax error;

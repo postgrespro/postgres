@@ -652,7 +652,7 @@ updateFuzzyAttrMatchState(int fuzzy_rte_penalty,
  * for an approximate match and update fuzzystate accordingly.
  */
 Node *
-scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte, char *colname,
+scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte, const char *colname,
 				 int location, int fuzzy_rte_penalty,
 				 FuzzyAttrMatchState *fuzzystate)
 {
@@ -754,7 +754,7 @@ scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte, char *colname,
  *	  If localonly is true, only names in the innermost query are considered.
  */
 Node *
-colNameToVar(ParseState *pstate, char *colname, bool localonly,
+colNameToVar(ParseState *pstate, const char *colname, bool localonly,
 			 int location)
 {
 	Node	   *result = NULL;
@@ -828,7 +828,7 @@ colNameToVar(ParseState *pstate, char *colname, bool localonly,
  * and 'second' will contain the attribute number for the second match.
  */
 static FuzzyAttrMatchState *
-searchRangeTableForCol(ParseState *pstate, const char *alias, char *colname,
+searchRangeTableForCol(ParseState *pstate, const char *alias, const char *colname,
 					   int location)
 {
 	ParseState *orig_pstate = pstate;
@@ -1496,7 +1496,8 @@ addRangeTableEntryForFunction(ParseState *pstate,
 						 parser_errposition(pstate, exprLocation(funcexpr))));
 		}
 
-		if (functypclass == TYPEFUNC_COMPOSITE)
+		if (functypclass == TYPEFUNC_COMPOSITE ||
+			functypclass == TYPEFUNC_COMPOSITE_DOMAIN)
 		{
 			/* Composite data type, e.g. a table's row type */
 			Assert(tupdesc);
@@ -2156,8 +2157,8 @@ addRTEtoQuery(ParseState *pstate, RangeTblEntry *rte,
  *
  * This creates lists of an RTE's column names (aliases if provided, else
  * real names) and Vars for each column.  Only user columns are considered.
- * If include_dropped is FALSE then dropped columns are omitted from the
- * results.  If include_dropped is TRUE then empty strings and NULL constants
+ * If include_dropped is false then dropped columns are omitted from the
+ * results.  If include_dropped is true then empty strings and NULL constants
  * (not Vars!) are returned for dropped columns.
  *
  * rtindex, sublevels_up, and location are the varno, varlevelsup, and location
@@ -2204,13 +2205,22 @@ expandRTE(RangeTblEntry *rte, int rtindex, int sublevels_up,
 					varattno++;
 					Assert(varattno == te->resno);
 
+					/*
+					 * In scenarios where columns have been added to a view
+					 * since the outer query was originally parsed, there can
+					 * be more items in the subquery tlist than the outer
+					 * query expects.  We should ignore such extra column(s)
+					 * --- compare the behavior for composite-returning
+					 * functions, in the RTE_FUNCTION case below.
+					 */
+					if (!aliasp_item)
+						break;
+
 					if (colnames)
 					{
-						/* Assume there is one alias per target item */
 						char	   *label = strVal(lfirst(aliasp_item));
 
 						*colnames = lappend(*colnames, makeString(pstrdup(label)));
-						aliasp_item = lnext(aliasp_item);
 					}
 
 					if (colvars)
@@ -2226,6 +2236,8 @@ expandRTE(RangeTblEntry *rte, int rtindex, int sublevels_up,
 
 						*colvars = lappend(*colvars, varnode);
 					}
+
+					aliasp_item = lnext(aliasp_item);
 				}
 			}
 			break;
@@ -2245,7 +2257,8 @@ expandRTE(RangeTblEntry *rte, int rtindex, int sublevels_up,
 					functypclass = get_expr_result_type(rtfunc->funcexpr,
 														&funcrettype,
 														&tupdesc);
-					if (functypclass == TYPEFUNC_COMPOSITE)
+					if (functypclass == TYPEFUNC_COMPOSITE ||
+						functypclass == TYPEFUNC_COMPOSITE_DOMAIN)
 					{
 						/* Composite data type, e.g. a table's row type */
 						Assert(tupdesc);
@@ -2765,7 +2778,8 @@ get_rte_attribute_type(RangeTblEntry *rte, AttrNumber attnum,
 															&funcrettype,
 															&tupdesc);
 
-						if (functypclass == TYPEFUNC_COMPOSITE)
+						if (functypclass == TYPEFUNC_COMPOSITE ||
+							functypclass == TYPEFUNC_COMPOSITE_DOMAIN)
 						{
 							/* Composite data type, e.g. a table's row type */
 							Form_pg_attribute att_tup;
@@ -2966,14 +2980,11 @@ get_rte_attribute_is_dropped(RangeTblEntry *rte, AttrNumber attnum)
 					if (attnum > atts_done &&
 						attnum <= atts_done + rtfunc->funccolcount)
 					{
-						TypeFuncClass functypclass;
-						Oid			funcrettype;
 						TupleDesc	tupdesc;
 
-						functypclass = get_expr_result_type(rtfunc->funcexpr,
-															&funcrettype,
-															&tupdesc);
-						if (functypclass == TYPEFUNC_COMPOSITE)
+						tupdesc = get_expr_result_tupdesc(rtfunc->funcexpr,
+														  true);
+						if (tupdesc)
 						{
 							/* Composite data type, e.g. a table's row type */
 							Form_pg_attribute att_tup;
@@ -3237,7 +3248,7 @@ errorMissingRTE(ParseState *pstate, RangeVar *relation)
  */
 void
 errorMissingColumn(ParseState *pstate,
-				   char *relname, char *colname, int location)
+				   const char *relname, const char *colname, int location)
 {
 	FuzzyAttrMatchState *state;
 	char	   *closestfirst = NULL;
@@ -3304,7 +3315,7 @@ errorMissingColumn(ParseState *pstate,
 
 
 /*
- * Examine a fully-parsed query, and return TRUE iff any relation underlying
+ * Examine a fully-parsed query, and return true iff any relation underlying
  * the query is a temporary relation (table, view, or materialized view).
  */
 bool

@@ -3,7 +3,7 @@ doc/src/sgml/ref/alter_rule.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-ALTERRULE">
+<refentry id="sql-alterrule">
  <indexterm zone="sql-alterrule">
   <primary>ALTER RULE</primary>
  </indexterm>
@@ -97,8 +97,8 @@ ALTER RULE notify_all ON emp RENAME TO notify_me;
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-createrule"></member>
-   <member><xref linkend="sql-droprule"></member>
+   <member><xref linkend="sql-createrule"/></member>
+   <member><xref linkend="sql-droprule"/></member>
   </simplelist>
  </refsect1>
 

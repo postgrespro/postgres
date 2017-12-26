@@ -1,6 +1,284 @@
 <!-- doc/src/sgml/release-9.4.sgml -->
 <!-- See header comment in release.sgml about typical markup -->
 
+ <sect1 id="release-9-4-15">
+  <title>Release 9.4.15</title>
+
+  <formalpara>
+  <title>Release date:</title>
+  <para>2017-11-09</para>
+  </formalpara>
+
+  <para>
+   This release contains a variety of fixes from 9.4.14.
+   For information about new features in the 9.4 major release, see
+   <xref linkend="release-9-4"/>.
+  </para>
+
+  <sect2>
+   <title>Migration to Version 9.4.15</title>
+
+   <para>
+    A dump/restore is not required for those running 9.4.X.
+   </para>
+
+   <para>
+    However, if you are upgrading from a version earlier than 9.4.13,
+    see <xref linkend="release-9-4-13"/>.
+   </para>
+  </sect2>
+
+  <sect2>
+   <title>Changes</title>
+
+   <itemizedlist>
+
+    <listitem>
+     <para>
+      Fix crash due to rowtype mismatch
+      in <function>json{b}_populate_recordset()</function>
+      (Michael Paquier, Tom Lane)
+     </para>
+
+     <para>
+      These functions used the result rowtype specified in the <literal>FROM
+      ... AS</literal> clause without checking that it matched the actual
+      rowtype of the supplied tuple value.  If it didn't, that would usually
+      result in a crash, though disclosure of server memory contents seems
+      possible as well.
+      (CVE-2017-15098)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix sample server-start scripts to become <literal>$PGUSER</literal>
+      before opening <literal>$PGLOG</literal> (Noah Misch)
+     </para>
+
+     <para>
+      Previously, the postmaster log file was opened while still running as
+      root.  The database owner could therefore mount an attack against
+      another system user by making <literal>$PGLOG</literal> be a symbolic
+      link to some other file, which would then become corrupted by appending
+      log messages.
+     </para>
+
+     <para>
+      By default, these scripts are not installed anywhere.  Users who have
+      made use of them will need to manually recopy them, or apply the same
+      changes to their modified versions.  If the
+      existing <literal>$PGLOG</literal> file is root-owned, it will need to
+      be removed or renamed out of the way before restarting the server with
+      the corrected script.
+      (CVE-2017-12172)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix crash when logical decoding is invoked from a SPI-using function,
+      in particular any function written in a PL language
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <function>json_build_array()</function>,
+      <function>json_build_object()</function>, and their <type>jsonb</type>
+      equivalents to handle explicit <literal>VARIADIC</literal> arguments
+      correctly (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Properly reject attempts to convert infinite float values to
+      type <type>numeric</type> (Tom Lane, KaiGai Kohei)
+     </para>
+
+     <para>
+      Previously the behavior was platform-dependent.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix corner-case crashes when columns have been added to the end of a
+      view (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Record proper dependencies when a view or rule
+      contains <structname>FieldSelect</structname>
+      or <structname>FieldStore</structname> expression nodes (Tom Lane)
+     </para>
+
+     <para>
+      Lack of these dependencies could allow a column or data
+      type <command>DROP</command> to go through when it ought to fail,
+      thereby causing later uses of the view or rule to get errors.
+      This patch does not do anything to protect existing views/rules,
+      only ones created in the future.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Correctly detect hashability of range data types (Tom Lane)
+     </para>
+
+     <para>
+      The planner mistakenly assumed that any range type could be hashed
+      for use in hash joins or hash aggregation, but actually it must check
+      whether the range's subtype has hash support.  This does not affect any
+      of the built-in range types, since they're all hashable anyway.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix low-probability loss of <command>NOTIFY</command> messages due to
+      XID wraparound (Marko Tiikkaja, Tom Lane)
+     </para>
+
+     <para>
+      If a session executed no queries, but merely listened for
+      notifications, for more than 2 billion transactions, it started to miss
+      some notifications from concurrently-committing transactions.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Avoid <systemitem>SIGBUS</systemitem> crash on Linux when a DSM memory
+      request exceeds the space available in <systemitem>tmpfs</systemitem>
+      (Thomas Munro)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Prevent low-probability crash in processing of nested trigger firings
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Allow <command>COPY</command>'s <literal>FREEZE</literal> option to
+      work when the transaction isolation level is <literal>REPEATABLE
+      READ</literal> or higher (Noah Misch)
+     </para>
+
+     <para>
+      This case was unintentionally broken by a previous bug fix.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Correctly restore the umask setting when file creation fails
+      in <command>COPY</command> or <function>lo_export()</function>
+      (Peter Eisentraut)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Give a better error message for duplicate column names
+      in <command>ANALYZE</command> (Nathan Bossart)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix mis-parsing of the last line in a
+      non-newline-terminated <filename>pg_hba.conf</filename> file
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>libpq</application> to not require user's home
+      directory to exist (Tom Lane)
+     </para>
+
+     <para>
+      In v10, failure to find the home directory while trying to
+      read <filename>~/.pgpass</filename> was treated as a hard error,
+      but it should just cause that file to not be found.  Both v10 and
+      previous release branches made the same mistake when
+      reading <filename>~/.pg_service.conf</filename>, though this was less
+      obvious since that file is not sought unless a service name is
+      specified.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>libpq</application> to guard against integer
+      overflow in the row count of a <structname>PGresult</structname>
+      (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>ecpg</application>'s handling of out-of-scope cursor
+      declarations with pointer or array variables (Michael Meskes)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      In ecpglib, correctly handle backslashes in string literals depending
+      on whether <varname>standard_conforming_strings</varname> is set
+      (Tsunakawa Takayuki)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Make ecpglib's Informix-compatibility mode ignore fractional digits in
+      integer input strings, as expected (Gao Zengqi, Michael Meskes)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Sync our copy of the timezone library with IANA release tzcode2017c
+      (Tom Lane)
+     </para>
+
+     <para>
+      This fixes various issues; the only one likely to be user-visible
+      is that the default DST rules for a POSIX-style zone name, if
+      no <filename>posixrules</filename> file exists in the timezone data
+      directory, now match current US law rather than what it was a dozen
+      years ago.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Update time zone data files to <application>tzdata</application>
+      release 2017c for DST law changes in Fiji, Namibia, Northern Cyprus,
+      Sudan, Tonga, and Turks &amp; Caicos Islands, plus historical
+      corrections for Alaska, Apia, Burma, Calcutta, Detroit, Ireland,
+      Namibia, and Pago Pago.
+     </para>
+    </listitem>
+
+   </itemizedlist>
+
+  </sect2>
+ </sect1>
+
  <sect1 id="release-9-4-14">
   <title>Release 9.4.14</title>
 
@@ -12,7 +290,7 @@
   <para>
    This release contains a small number of fixes from 9.4.13.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -24,7 +302,7 @@
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.13,
-    see <xref linkend="release-9-4-13">.
+    see <xref linkend="release-9-4-13"/>.
    </para>
   </sect2>
 
@@ -199,7 +477,7 @@ CREATE OR REPLACE VIEW table_privileges AS
   <para>
    This release contains a variety of fixes from 9.4.12.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -216,7 +494,7 @@ CREATE OR REPLACE VIEW table_privileges AS
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.12,
-    see <xref linkend="release-9-4-12">.
+    see <xref linkend="release-9-4-12"/>.
    </para>
   </sect2>
 
@@ -428,7 +706,7 @@ UPDATE pg_database SET datallowconn = false WHERE datname = 'template0';
 
     <listitem>
      <para>
-      Fix code for setting <xref linkend="guc-tcp-keepalives-idle"> on
+      Fix code for setting <xref linkend="guc-tcp-keepalives-idle"/> on
       Solaris (Tom Lane)
      </para>
     </listitem>
@@ -761,7 +1039,7 @@ Branch: REL9_4_STABLE [23a2b818f] 2017-08-05 14:56:40 -0700
     <listitem>
      <para>
       Fix <application>pg_upgrade</application> to ensure that the ending WAL record
-      does not have <xref linkend="guc-wal-level"> = <literal>minimum</literal>
+      does not have <xref linkend="guc-wal-level"/> = <literal>minimum</literal>
       (Bruce Momjian)
      </para>
 
@@ -872,7 +1150,7 @@ Branch: REL9_4_STABLE [23a2b818f] 2017-08-05 14:56:40 -0700
   <para>
    This release contains a variety of fixes from 9.4.11.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -894,7 +1172,7 @@ Branch: REL9_4_STABLE [23a2b818f] 2017-08-05 14:56:40 -0700
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.11,
-    see <xref linkend="release-9-4-11">.
+    see <xref linkend="release-9-4-11"/>.
    </para>
   </sect2>
 
@@ -928,7 +1206,7 @@ Branch: REL9_4_STABLE [23a2b818f] 2017-08-05 14:56:40 -0700
       By itself, this patch will only fix the behavior in newly initdb'd
       databases.  If you wish to apply this change in an existing database,
       follow the corrected procedure shown in the changelog entry for
-      CVE-2017-7547, in <xref linkend="release-9-4-13">.
+      CVE-2017-7547, in <xref linkend="release-9-4-13"/>.
      </para>
     </listitem>
 
@@ -1358,7 +1636,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
       will use the current and historical DST transition dates of
       the <literal>US/Eastern</literal> zone.  If you don't want that, remove
       the <filename>posixrules</filename> file, or replace it with a copy of some
-      other zone file (see <xref linkend="datatype-timezones">).  Note that
+      other zone file (see <xref linkend="datatype-timezones"/>).  Note that
       due to caching, you may need to restart the server to get such changes
       to take effect.
      </para>
@@ -1380,7 +1658,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
   <para>
    This release contains a variety of fixes from 9.4.10.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -1398,7 +1676,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.10,
-    see <xref linkend="release-9-4-10">.
+    see <xref linkend="release-9-4-10"/>.
    </para>
   </sect2>
 
@@ -1446,7 +1724,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
      </para>
 
      <para>
-      Previously, this was skipped when <xref linkend="guc-wal-level">
+      Previously, this was skipped when <xref linkend="guc-wal-level"/>
       = <literal>minimal</literal>, but actually it's necessary even in that case
       to ensure that the unlogged table is properly reset to empty after a
       crash.
@@ -1519,7 +1797,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
 
      <para>
       Previously, non-default settings
-      of <xref linkend="guc-default-tablespace"> could result in broken
+      of <xref linkend="guc-default-tablespace"/> could result in broken
       indexes.
      </para>
     </listitem>
@@ -1913,7 +2191,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
   <para>
    This release contains a variety of fixes from 9.4.9.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -1931,7 +2209,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.6,
-    see <xref linkend="release-9-4-6">.
+    see <xref linkend="release-9-4-6"/>.
    </para>
   </sect2>
 
@@ -2026,7 +2304,7 @@ Branch: REL9_2_STABLE [fb50c38e9] 2017-04-17 13:52:42 -0400
     <listitem>
      <para>
       Fix <command>EXPLAIN</command> to emit valid XML when
-      <xref linkend="guc-track-io-timing"> is on (Markus Winand)
+      <xref linkend="guc-track-io-timing"/> is on (Markus Winand)
      </para>
 
      <para>
@@ -2379,7 +2657,7 @@ Branch: REL9_4_STABLE [10ad15f48] 2016-09-01 11:45:16 -0400
   <para>
    This release contains a variety of fixes from 9.4.8.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -2391,7 +2669,7 @@ Branch: REL9_4_STABLE [10ad15f48] 2016-09-01 11:45:16 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.6,
-    see <xref linkend="release-9-4-6">.
+    see <xref linkend="release-9-4-6"/>.
    </para>
   </sect2>
 
@@ -2901,7 +3179,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
   <para>
    This release contains a variety of fixes from 9.4.7.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -2913,7 +3191,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.6,
-    see <xref linkend="release-9-4-6">.
+    see <xref linkend="release-9-4-6"/>.
    </para>
   </sect2>
 
@@ -3164,7 +3442,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
   <para>
    This release contains a variety of fixes from 9.4.6.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -3176,7 +3454,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.6,
-    see <xref linkend="release-9-4-6">.
+    see <xref linkend="release-9-4-6"/>.
    </para>
   </sect2>
 
@@ -3226,7 +3504,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
 
     <listitem>
      <para>
-      Ignore <xref linkend="recovery-min-apply-delay"> parameter until
+      Ignore <xref linkend="recovery-min-apply-delay"/> parameter until
       recovery has reached a consistent state (Michael Paquier)
      </para>
 
@@ -3435,7 +3713,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
   <para>
    This release contains a variety of fixes from 9.4.5.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -3453,7 +3731,7 @@ Branch: REL9_1_STABLE [de887cc8a] 2016-05-25 19:39:49 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.4,
-    see <xref linkend="release-9-4-4">.
+    see <xref linkend="release-9-4-4"/>.
    </para>
   </sect2>
 
@@ -4532,7 +4810,7 @@ Branch: REL9_1_STABLE [386dcd539] 2015-12-11 19:08:40 -0500
   <para>
    This release contains a variety of fixes from 9.4.4.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -4544,7 +4822,7 @@ Branch: REL9_1_STABLE [386dcd539] 2015-12-11 19:08:40 -0500
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.4,
-    see <xref linkend="release-9-4-4">.
+    see <xref linkend="release-9-4-4"/>.
    </para>
   </sect2>
 
@@ -6055,7 +6333,7 @@ Branch: REL9_0_STABLE [47ac95f37] 2015-10-02 19:16:37 -0400
   <para>
    This release contains a small number of fixes from 9.4.3.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -6073,7 +6351,7 @@ Branch: REL9_0_STABLE [47ac95f37] 2015-10-02 19:16:37 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.2,
-    see <xref linkend="release-9-4-2">.
+    see <xref linkend="release-9-4-2"/>.
    </para>
   </sect2>
 
@@ -6136,10 +6414,10 @@ Branch: REL9_3_STABLE [2a9b01928] 2015-06-05 09:34:15 -0400
          Otherwise, for each table that has
          <structname>pg_class</structname>.<structfield>relminmxid</structfield> equal to 1,
          <command>VACUUM</command> that table with
-         both <xref linkend="guc-vacuum-multixact-freeze-min-age">
-         and <xref linkend="guc-vacuum-multixact-freeze-table-age"> set to
+         both <xref linkend="guc-vacuum-multixact-freeze-min-age"/>
+         and <xref linkend="guc-vacuum-multixact-freeze-table-age"/> set to
          zero.  (You can use the vacuum cost delay parameters described
-         in <xref linkend="runtime-config-resource-vacuum-cost"> to reduce
+         in <xref linkend="runtime-config-resource-vacuum-cost"/> to reduce
          the performance consequences for concurrent sessions.)
         </para>
        </listitem>
@@ -6236,7 +6514,7 @@ Branch: REL9_3_STABLE [d3fdec6ae] 2015-06-03 11:58:47 -0400
   <para>
    This release contains a small number of fixes from 9.4.2.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -6248,7 +6526,7 @@ Branch: REL9_3_STABLE [d3fdec6ae] 2015-06-03 11:58:47 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.4.2,
-    see <xref linkend="release-9-4-2">.
+    see <xref linkend="release-9-4-2"/>.
    </para>
   </sect2>
 
@@ -6379,7 +6657,7 @@ Branch: REL9_0_STABLE [b06649b7f] 2015-05-26 22:15:00 -0400
   <para>
    This release contains a variety of fixes from 9.4.1.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -6397,7 +6675,7 @@ Branch: REL9_0_STABLE [b06649b7f] 2015-05-26 22:15:00 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.4.1,
-    see <xref linkend="release-9-4-1">.
+    see <xref linkend="release-9-4-1"/>.
    </para>
   </sect2>
 
@@ -7660,7 +7938,7 @@ Branch: REL9_0_STABLE [3c3749a3b] 2015-05-15 19:36:20 -0400
   <para>
    This release contains a variety of fixes from 9.4.0.
    For information about new features in the 9.4 major release, see
-   <xref linkend="release-9-4">.
+   <xref linkend="release-9-4"/>.
   </para>
 
   <sect2>
@@ -8490,14 +8768,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
      <listitem>
       <para>
-       Add new <acronym>SQL</acronym> command <xref linkend="SQL-ALTERSYSTEM">
+       Add new <acronym>SQL</acronym> command <xref linkend="sql-altersystem"/>
        for changing <filename>postgresql.conf</filename> configuration file entries
       </para>
      </listitem>
 
      <listitem>
       <para>
-       Reduce lock strength for some <xref linkend="SQL-ALTERTABLE">
+       Reduce lock strength for some <xref linkend="sql-altertable"/>
        commands
       </para>
      </listitem>
@@ -8537,8 +8815,8 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
   <title>Migration to Version 9.4</title>
 
    <para>
-    A dump/restore using <xref linkend="app-pg-dumpall">, or use
-    of <xref linkend="pgupgrade">, is required for those wishing to migrate
+    A dump/restore using <xref linkend="app-pg-dumpall"/>, or use
+    of <xref linkend="pgupgrade"/>, is required for those wishing to migrate
     data from any previous release.
    </para>
 
@@ -8572,7 +8850,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
      <para>
       Previously such values were rendered according to the current
-      <xref linkend="guc-datestyle"> setting; but many JSON processors
+      <xref linkend="guc-datestyle"/> setting; but many JSON processors
       require timestamps to be in ISO 8601 format.  If necessary, the
       previous behavior can be obtained by explicitly casting the datetime
       value to <type>text</type> before passing it to the JSON conversion
@@ -8679,14 +8957,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
     <listitem>
      <para>
-      <xref linkend="sql-discard"> now also discards sequence-related state
+      <xref linkend="sql-discard"/> now also discards sequence-related state
       (Fabr&iacute;zio de Royes Mello, Robert Haas)
      </para>
     </listitem>
 
     <listitem>
      <para>
-      Rename <link linkend="SQL-EXPLAIN"><command>EXPLAIN
+      Rename <link linkend="sql-explain"><command>EXPLAIN
       ANALYZE</command></link>'s <quote>total runtime</quote> output
       to <quote>execution time</quote> (Tom Lane)
      </para>
@@ -8699,7 +8977,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
     <listitem>
      <para>
-      <link linkend="SQL-SHOW"><command>SHOW TIME ZONE</command></link> now
+      <link linkend="sql-show"><command>SHOW TIME ZONE</command></link> now
       outputs simple numeric UTC offsets in <acronym>POSIX</acronym> timezone
       format (Tom Lane)
      </para>
@@ -8765,7 +9043,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
      <para>
       User commands that did their own quote preservation might need
       adjustment.  This is likely to be an issue for commands used in
-      <xref linkend="guc-archive-command">, <xref linkend="restore-command">,
+      <xref linkend="guc-archive-command"/>, <xref linkend="restore-command"/>,
       and <link linkend="sql-copy"><command>COPY TO/FROM PROGRAM</command></link>.
      </para>
     </listitem>
@@ -8834,7 +9112,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
     <listitem>
      <para>
-      Change empty arrays returned by the <xref linkend="intarray"> module
+      Change empty arrays returned by the <xref linkend="intarray"/> module
       to be zero-dimensional arrays (Bruce Momjian)
      </para>
 
@@ -8849,7 +9127,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
     <listitem>
      <para>
-      <xref linkend="pgupgrade"> now uses <option>-U</option>
+      <xref linkend="pgupgrade"/> now uses <option>-U</option>
       or <option>--username</option> to specify the user name (Bruce Momjian)
      </para>
 
@@ -8910,7 +9188,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
        <para>
         This reduces the likelihood of leaving orphaned child processes
-        behind after <xref linkend="app-postmaster"> shutdown, as well
+        behind after <xref linkend="app-postmaster"/> shutdown, as well
         as ensuring that crash recovery can proceed if some child processes
         have become <quote>stuck</quote>.
        </para>
@@ -8924,7 +9202,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Make <xref linkend="SQL-VACUUM"> properly report dead but
+        Make <xref linkend="sql-vacuum"/> properly report dead but
         not-yet-removable rows to the statistics collector (Hari Babu)
        </para>
 
@@ -8942,14 +9220,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Reduce <link linkend="GIN"><acronym>GIN</acronym></link> index size
+        Reduce <link linkend="gin"><acronym>GIN</acronym></link> index size
         (Alexander Korotkov, Heikki Linnakangas)
        </para>
 
        <para>
-        Indexes upgraded via <xref linkend="pgupgrade"> will work fine
+        Indexes upgraded via <xref linkend="pgupgrade"/> will work fine
         but will still be in the old, larger <acronym>GIN</acronym> format.
-        Use <xref linkend="SQL-REINDEX"> to recreate old GIN indexes in the
+        Use <xref linkend="sql-reindex"/> to recreate old GIN indexes in the
         new format.
        </para>
       </listitem>
@@ -8957,14 +9235,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Improve speed of multi-key <link
-        linkend="GIN"><acronym>GIN</acronym></link> lookups (Alexander Korotkov,
+        linkend="gin"><acronym>GIN</acronym></link> lookups (Alexander Korotkov,
         Heikki Linnakangas)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Add <link linkend="GiST"><acronym>GiST</acronym></link> index support
+        Add <link linkend="gist"><acronym>GiST</acronym></link> index support
         for <link linkend="datatype-inet"><type>inet</type></link> and
         <link linkend="datatype-cidr"><type>cidr</type></link> data types
         (Emre Hasegeli)
@@ -9038,8 +9316,8 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <para>
         Attempt to <link linkend="vacuum-for-wraparound">freeze</link>
         tuples when tables are rewritten with <xref
-        linkend="SQL-CLUSTER"> or <link
-        linkend="SQL-VACUUM"><command>VACUUM FULL</command></link> (Robert Haas,
+        linkend="sql-cluster"/> or <link
+        linkend="sql-vacuum"><command>VACUUM FULL</command></link> (Robert Haas,
         Andres Freund)
        </para>
 
@@ -9050,7 +9328,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Improve speed of <xref linkend="SQL-COPY"> with default <link
+        Improve speed of <xref linkend="sql-copy"/> with default <link
         linkend="functions-sequence-table"><function>nextval()</function></link>
         columns (Simon Riggs)
        </para>
@@ -9059,7 +9337,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Improve speed of accessing many different <link
-        linkend="SQL-CREATESEQUENCE">sequences</link> in the same session
+        linkend="sql-createsequence">sequences</link> in the same session
         (David Rowley)
        </para>
       </listitem>
@@ -9074,7 +9352,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Reduce memory allocated by <application>PL/pgSQL</application>
-        <xref linkend="SQL-DO"> blocks (Tom Lane)
+        <xref linkend="sql-do"/> blocks (Tom Lane)
        </para>
       </listitem>
 
@@ -9121,7 +9399,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="pg-stat-archiver-view"> system view to
+        Add <xref linkend="pg-stat-archiver-view"/> system view to
         report <link linkend="wal"><acronym>WAL</acronym></link> archiver activity
         (Gabriele Bartolini)
        </para>
@@ -9130,13 +9408,13 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Add <structfield>n_mod_since_analyze</structfield> columns to
-        <xref linkend="pg-stat-all-tables-view"> and related system views
+        <xref linkend="pg-stat-all-tables-view"/> and related system views
         (Mark Kirkwood)
        </para>
 
        <para>
         These columns expose the system's estimate of the number of changed
-        tuples since the table's last <xref linkend="sql-analyze">.  This
+        tuples since the table's last <xref linkend="sql-analyze"/>.  This
         estimate drives decisions about when to auto-analyze.
        </para>
       </listitem>
@@ -9144,9 +9422,9 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Add <structfield>backend_xid</structfield> and <structfield>backend_xmin</structfield>
-        columns to the system view <xref linkend="pg-stat-activity-view">,
+        columns to the system view <xref linkend="pg-stat-activity-view"/>,
         and a <structfield>backend_xmin</structfield> column to
-        <xref linkend="pg-stat-replication-view"> (Christian Kruse)
+        <xref linkend="pg-stat-replication-view"/> (Christian Kruse)
        </para>
       </listitem>
 
@@ -9169,14 +9447,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
         This allows use of Elliptic Curve keys for server authentication.
         Such keys are faster and have better security than <acronym>RSA</acronym>
         keys. The new configuration parameter
-        <xref linkend="guc-ssl-ecdh-curve">
+        <xref linkend="guc-ssl-ecdh-curve"/>
         controls which curve is used for <acronym>ECDH</acronym>.
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Improve the default <xref linkend="guc-ssl-ciphers"> setting
+        Improve the default <xref linkend="guc-ssl-ciphers"/> setting
         (Marko Kreen)
        </para>
       </listitem>
@@ -9189,17 +9467,17 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        </para>
 
        <para>
-        Previously, the order specified by <xref linkend="guc-ssl-ciphers">
+        Previously, the order specified by <xref linkend="guc-ssl-ciphers"/>
         was usually ignored in favor of client-side defaults, which are not
         configurable in most <productname>PostgreSQL</productname> clients.  If
         desired, the old behavior can be restored via the new configuration
-        parameter <xref linkend="guc-ssl-prefer-server-ciphers">.
+        parameter <xref linkend="guc-ssl-prefer-server-ciphers"/>.
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Make <xref linkend="guc-log-connections"> show <acronym>SSL</acronym>
+        Make <xref linkend="guc-log-connections"/> show <acronym>SSL</acronym>
         encryption information (Andreas Kunert)
        </para>
       </listitem>
@@ -9222,7 +9500,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add new <acronym>SQL</acronym> command <xref linkend="SQL-ALTERSYSTEM">
+        Add new <acronym>SQL</acronym> command <xref linkend="sql-altersystem"/>
         for changing <filename>postgresql.conf</filename> configuration file entries
         (Amit Kapila)
        </para>
@@ -9235,7 +9513,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="guc-autovacuum-work-mem"> configuration parameter
+        Add <xref linkend="guc-autovacuum-work-mem"/> configuration parameter
         to control the amount of memory used by autovacuum workers
         (Peter Geoghegan)
        </para>
@@ -9243,7 +9521,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="guc-huge-pages"> parameter to allow using huge
+        Add <xref linkend="guc-huge-pages"/> parameter to allow using huge
         memory pages on Linux (Christian Kruse, Richard Poole, Abhijit
         Menon-Sen)
        </para>
@@ -9255,7 +9533,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="guc-max-worker-processes"> parameter
+        Add <xref linkend="guc-max-worker-processes"/> parameter
         to limit the number of background workers (Robert Haas)
        </para>
 
@@ -9267,12 +9545,12 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add superuser-only <xref linkend="guc-session-preload-libraries">
+        Add superuser-only <xref linkend="guc-session-preload-libraries"/>
         parameter to load libraries at session start (Peter Eisentraut)
        </para>
 
        <para>
-        In contrast to <xref linkend="guc-local-preload-libraries">, this
+        In contrast to <xref linkend="guc-local-preload-libraries"/>, this
         parameter can load any shared library, not just those in
         the <filename>$libdir/plugins</filename> directory.
        </para>
@@ -9280,7 +9558,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="guc-wal-log-hints"> parameter to enable WAL
+        Add <xref linkend="guc-wal-log-hints"/> parameter to enable WAL
         logging of hint-bit changes (Sawada Masahiko)
        </para>
 
@@ -9293,8 +9571,8 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Increase the default settings of <xref linkend="guc-work-mem">
-        and <xref linkend="guc-maintenance-work-mem"> by four times (Bruce
+        Increase the default settings of <xref linkend="guc-work-mem"/>
+        and <xref linkend="guc-maintenance-work-mem"/> by four times (Bruce
         Momjian)
        </para>
 
@@ -9306,7 +9584,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Increase the default setting of <xref
-        linkend="guc-effective-cache-size">
+        linkend="guc-effective-cache-size"/>
         to 4GB (Bruce Momjian, Tom Lane)
        </para>
       </listitem>
@@ -9314,7 +9592,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Allow <function>printf</function>-style space padding to be
-        specified in <xref linkend="guc-log-line-prefix"> (David Rowley)
+        specified in <xref linkend="guc-log-line-prefix"/> (David Rowley)
        </para>
       </listitem>
 
@@ -9328,7 +9606,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Show <acronym>PID</acronym>s of lock holders and waiters and improve
-        information about relations in <xref linkend="guc-log-lock-waits">
+        information about relations in <xref linkend="guc-log-lock-waits"/>
         log messages (Christian Kruse)
        </para>
       </listitem>
@@ -9348,7 +9626,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         On Windows, make <literal>SQL_ASCII</literal>-encoded databases and server
-        processes (e.g., <xref linkend="app-postmaster">) emit messages in
+        processes (e.g., <xref linkend="app-postmaster"/>) emit messages in
         the character encoding of the server's Windows user locale
         (Alexander Law, Noah Misch)
        </para>
@@ -9386,7 +9664,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add recovery parameter <xref linkend="recovery-min-apply-delay">
+        Add recovery parameter <xref linkend="recovery-min-apply-delay"/>
         to delay replication (Robert Haas, Fabr&iacute;zio de Royes Mello,
         Simon Riggs)
        </para>
@@ -9399,7 +9677,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="recovery-target">
+        Add <xref linkend="recovery-target"/>
         option <option>immediate</option> to stop <link
         linkend="wal"><acronym>WAL</acronym></link> recovery as soon as a
         consistent state is reached (MauMau, Heikki Linnakangas)
@@ -9486,7 +9764,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
        <listitem>
         <para>
-         Add new <xref linkend="guc-wal-level"> setting <option>logical</option>
+         Add new <xref linkend="guc-wal-level"/> setting <option>logical</option>
          to enable logical change-set encoding in <acronym>WAL</acronym> (Andres
          Freund)
         </para>
@@ -9503,7 +9781,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <listitem>
         <para>
          Add relation option <link
-         linkend="SQL-CREATETABLE-storage-parameters"><option>user_catalog_table</option></link>
+         linkend="sql-createtable-storage-parameters"><option>user_catalog_table</option></link>
          to identify user-created tables involved in logical change-set
          encoding (Andres Freund)
         </para>
@@ -9511,14 +9789,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
        <listitem>
         <para>
-         Add <xref linkend="app-pgrecvlogical"> application to receive
+         Add <xref linkend="app-pgrecvlogical"/> application to receive
          logical-decoding data (Andres Freund)
         </para>
        </listitem>
 
        <listitem>
         <para>
-         Add <xref linkend="test-decoding"> module to illustrate logical
+         Add <xref linkend="test-decoding"/> module to illustrate logical
          decoding at the <acronym>SQL</acronym> level (Andres Freund)
         </para>
        </listitem>
@@ -9558,7 +9836,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Allow <xref linkend="SQL-SELECT"> to have
+        Allow <xref linkend="sql-select"/> to have
         an empty target list (Tom Lane)
        </para>
 
@@ -9570,7 +9848,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Ensure that <link linkend="SQL-SELECT"><literal>SELECT ... FOR UPDATE
+        Ensure that <link linkend="sql-select"><literal>SELECT ... FOR UPDATE
         NOWAIT</literal></link> does not wait in corner cases involving
         already-concurrently-updated tuples (Craig Ringer and Thomas Munro)
        </para>
@@ -9587,7 +9865,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <link linkend="SQL-DISCARD"><command>DISCARD
+        Add <link linkend="sql-discard"><command>DISCARD
         SEQUENCES</command></link> command to discard cached sequence-related state
         (Fabr&iacute;zio de Royes Mello, Robert Haas)
        </para>
@@ -9600,7 +9878,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <listitem>
         <para>
          Add <literal>FORCE NULL</literal> option
-         to <link linkend="SQL-COPY"><command>COPY FROM</command></link>, which
+         to <link linkend="sql-copy"><command>COPY FROM</command></link>, which
          causes quoted strings matching the specified null string to be
          converted to NULLs in <literal>CSV</literal> mode (Ian Barwick, Michael
          Paquier)
@@ -9628,7 +9906,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
      </itemizedlist>
 
      <sect4>
-      <title><xref linkend="SQL-EXPLAIN"></title>
+      <title><xref linkend="sql-explain"/></title>
 
       <itemizedlist>
 
@@ -9671,7 +9949,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
        <para>
         This is done with <link
-        linkend="SQL-REFRESHMATERIALIZEDVIEW"><command>REFRESH MATERIALIZED
+        linkend="sql-refreshmaterializedview"><command>REFRESH MATERIALIZED
         VIEW CONCURRENTLY</command></link>.
        </para>
       </listitem>
@@ -9679,7 +9957,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Allow views to be <link
-        linkend="SQL-CREATEVIEW-updatable-views">automatically
+        linkend="sql-createview-updatable-views">automatically
         updated</link> even if they contain some non-updatable columns
         (Dean Rasheed)
        </para>
@@ -9701,7 +9979,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        </para>
 
        <para>
-        This is controlled with the new <xref linkend="SQL-CREATEVIEW">
+        This is controlled with the new <xref linkend="sql-createview"/>
         clause <literal>WITH CHECK OPTION</literal>.
        </para>
       </listitem>
@@ -9726,7 +10004,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Support triggers on <link linkend="SQL-CREATEFOREIGNTABLE">foreign
+        Support triggers on <link linkend="sql-createforeigntable">foreign
         tables</link> (Ronan Dunklau)
        </para>
       </listitem>
@@ -9735,22 +10013,22 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <para>
         Allow moving groups of objects from one tablespace to another
         using the <literal>ALL IN TABLESPACE ... SET TABLESPACE</literal> form of
-        <xref linkend="SQL-ALTERTABLE">, <xref linkend="SQL-ALTERINDEX">, or
-        <xref linkend="SQL-ALTERMATERIALIZEDVIEW"> (Stephen Frost)
+        <xref linkend="sql-altertable"/>, <xref linkend="sql-alterindex"/>, or
+        <xref linkend="sql-altermaterializedview"/> (Stephen Frost)
        </para>
       </listitem>
 
       <listitem>
        <para>
         Allow changing foreign key constraint deferrability
-        via <xref linkend="SQL-ALTERTABLE"> ... <literal>ALTER
+        via <xref linkend="sql-altertable"/> ... <literal>ALTER
         CONSTRAINT</literal> (Simon Riggs)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Reduce lock strength for some <xref linkend="SQL-ALTERTABLE">
+        Reduce lock strength for some <xref linkend="sql-altertable"/>
         commands
         (Simon Riggs, Noah Misch, Robert Haas)
        </para>
@@ -9768,18 +10046,18 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Allow tablespace options to be set
-        in <xref linkend="SQL-CREATETABLESPACE"> (Vik Fearing)
+        in <xref linkend="sql-createtablespace"/> (Vik Fearing)
        </para>
 
        <para>
         Formerly these options could only be set
-        via <xref linkend="SQL-ALTERTABLESPACE">.
+        via <xref linkend="sql-altertablespace"/>.
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Allow <xref linkend="SQL-CREATEAGGREGATE"> to define the estimated
+        Allow <xref linkend="sql-createaggregate"/> to define the estimated
         size of the aggregate's transition state data (Hadi Moshayedi)
        </para>
 
@@ -10266,14 +10544,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="APP-CREATEUSER"> option <option>-g</option>
+        Add <xref linkend="app-createuser"/> option <option>-g</option>
         to specify role membership (Christopher Browne)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Add <xref linkend="APP-VACUUMDB">
+        Add <xref linkend="app-vacuumdb"/>
         option <option>--analyze-in-stages</option> to analyze in stages of
         increasing granularity (Peter Eisentraut)
        </para>
@@ -10293,7 +10571,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Make <xref linkend="app-initdb"> throw error for incorrect locale
+        Make <xref linkend="app-initdb"/> throw error for incorrect locale
         settings, rather than silently falling back to a default choice
         (Tom Lane)
        </para>
@@ -10301,7 +10579,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Make <xref linkend="app-pg-ctl"> return exit code <literal>4</literal> for
+        Make <xref linkend="app-pg-ctl"/> return exit code <literal>4</literal> for
         an inaccessible data directory (Amit Kapila, Bruce Momjian)
        </para>
 
@@ -10315,7 +10593,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <para>
         On Windows, ensure that a non-absolute <option>-D</option> path
         specification is interpreted relative
-        to <xref linkend="app-pg-ctl">'s current directory
+        to <xref linkend="app-pg-ctl"/>'s current directory
         (Kumar Rajeev Rastogi)
        </para>
 
@@ -10343,14 +10621,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
     </itemizedlist>
 
     <sect4>
-     <title><xref linkend="APP-PSQL"></title>
+     <title><xref linkend="app-psql"/></title>
 
      <itemizedlist>
 
       <listitem>
        <para>
         Suppress <quote>No rows</quote> output in <application>psql</application> <link
-        linkend="APP-PSQL-meta-commands"><option>expanded</option></link>
+        linkend="app-psql-meta-commands"><option>expanded</option></link>
         mode when the footer is disabled (Bruce Momjian)
        </para>
       </listitem>
@@ -10365,7 +10643,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
      </itemizedlist>
 
      <sect5>
-      <title><link linkend="APP-PSQL-meta-commands">Backslash Commands</link></title>
+      <title><link linkend="app-psql-meta-commands">Backslash Commands</link></title>
 
       <itemizedlist>
 
@@ -10475,13 +10753,13 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
     </sect4>
 
     <sect4>
-     <title><xref linkend="APP-PGDUMP"></title>
+     <title><xref linkend="app-pgdump"/></title>
 
      <itemizedlist>
 
       <listitem>
        <para>
-        Allow <xref linkend="APP-PGRESTORE"> options
+        Allow <xref linkend="app-pgrestore"/> options
         <option>-I</option>, <option>-P</option>, <option>-T</option> and <option>-n</option>
         to be specified multiple times (Heikki Linnakangas)
        </para>
@@ -10501,8 +10779,8 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
        <para>
         This change prevents unnecessary errors when removing old objects.
         The new <option>--if-exists</option> option
-        for <xref linkend="APP-PGDUMP">, <xref linkend="APP-PG-DUMPALL">,
-        and <xref linkend="APP-PGRESTORE"> is only available
+        for <xref linkend="app-pgdump"/>, <xref linkend="app-pg-dumpall"/>,
+        and <xref linkend="app-pgrestore"/> is only available
         when <option>--clean</option> is also specified.
        </para>
       </listitem>
@@ -10512,7 +10790,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
     </sect4>
 
     <sect4>
-     <title><xref linkend="app-pgbasebackup"></title>
+     <title><xref linkend="app-pgbasebackup"/></title>
 
      <itemizedlist>
 
@@ -10803,7 +11081,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add <xref linkend="pgprewarm"> extension to preload relation data
+        Add <xref linkend="pgprewarm"/> extension to preload relation data
         into the shared buffer cache at server start (Robert Haas)
        </para>
 
@@ -10815,19 +11093,19 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Add <acronym>UUID</acronym> random number generator
-        <function>gen_random_uuid()</function> to <xref linkend="pgcrypto">
+        <function>gen_random_uuid()</function> to <xref linkend="pgcrypto"/>
         (Oskari Saarenmaa)
        </para>
 
        <para>
         This allows creation of version 4 <acronym>UUID</acronym>s without
-        requiring installation of <xref linkend="uuid-ossp">.
+        requiring installation of <xref linkend="uuid-ossp"/>.
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Allow <xref linkend="uuid-ossp"> to work with
+        Allow <xref linkend="uuid-ossp"/> to work with
         the <systemitem>BSD</systemitem> or <systemitem>e2fsprogs</systemitem> UUID libraries,
         not only the <systemitem>OSSP</systemitem> UUID library (Matteo Beccati)
        </para>
@@ -10842,21 +11120,21 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Add option to <xref linkend="auto-explain"> to include trigger
+        Add option to <xref linkend="auto-explain"/> to include trigger
         execution time (Horiguchi Kyotaro)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Fix <xref linkend="pgstattuple"> to not report rows from
+        Fix <xref linkend="pgstattuple"/> to not report rows from
         uncommitted transactions as dead (Robert Haas)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Make <xref linkend="pgstattuple"> functions
+        Make <xref linkend="pgstattuple"/> functions
         use <type>regclass</type>-type arguments (Satoshi Nagayasu)
        </para>
 
@@ -10868,14 +11146,14 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Improve consistency of <xref linkend="pgrowlocks"> output to honor
+        Improve consistency of <xref linkend="pgrowlocks"/> output to honor
         snapshot rules more consistently (Robert Haas)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Improve <xref linkend="pgtrgm">'s choice of trigrams for indexed
+        Improve <xref linkend="pgtrgm"/>'s choice of trigrams for indexed
         regular expression searches (Alexander Korotkov)
        </para>
 
@@ -10895,7 +11173,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Store <xref linkend="cube"> data more compactly (Stas Kelvich)
+        Store <xref linkend="cube"/> data more compactly (Stas Kelvich)
        </para>
 
        <para>
@@ -10906,7 +11184,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
 
       <listitem>
        <para>
-        Reduce <xref linkend="vacuumlo"> client-side memory usage by using
+        Reduce <xref linkend="vacuumlo"/> client-side memory usage by using
         a cursor (Andrew Dunstan)
        </para>
       </listitem>
@@ -10914,13 +11192,13 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
       <listitem>
        <para>
         Dramatically reduce memory consumption
-        in <xref linkend="pgupgrade"> (Bruce Momjian)
+        in <xref linkend="pgupgrade"/> (Bruce Momjian)
        </para>
       </listitem>
 
       <listitem>
        <para>
-        Pass <xref linkend="pgupgrade">'s user name (<option>-U</option>) option to
+        Pass <xref linkend="pgupgrade"/>'s user name (<option>-U</option>) option to
         generated analyze scripts (Bruce Momjian)
        </para>
       </listitem>
@@ -10928,7 +11206,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
     </itemizedlist>
 
     <sect4>
-     <title><xref linkend="pgbench"></title>
+     <title><xref linkend="pgbench"/></title>
 
      <itemizedlist>
 
@@ -10969,7 +11247,7 @@ Branch: REL9_4_STABLE [c2b06ab17] 2015-01-30 22:45:58 -0500
     </sect4>
 
     <sect4>
-     <title><xref linkend="pgstatstatements"></title>
+     <title><xref linkend="pgstatstatements"/></title>
 
      <itemizedlist>
 

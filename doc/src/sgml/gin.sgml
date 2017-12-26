@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/gin.sgml -->
 
-<chapter id="GIN">
+<chapter id="gin">
 <title>GIN Indexes</title>
 
    <indexterm>
@@ -68,8 +68,8 @@
  <para>
   The core <productname>PostgreSQL</productname> distribution
   includes the <acronym>GIN</acronym> operator classes shown in
-  <xref linkend="gin-builtin-opclasses-table">.
-  (Some of the optional modules described in <xref linkend="contrib">
+  <xref linkend="gin-builtin-opclasses-table"/>.
+  (Some of the optional modules described in <xref linkend="contrib"/>
   provide additional <acronym>GIN</acronym> operator classes.)
  </para>
 
@@ -127,7 +127,7 @@
   Of the two operator classes for type <type>jsonb</type>, <literal>jsonb_ops</literal>
   is the default.  <literal>jsonb_path_ops</literal> supports fewer operators but
   offers better performance for those operators.
-  See <xref linkend="json-indexing"> for details.
+  See <xref linkend="json-indexing"/> for details.
  </para>
 
 </sect1>
@@ -182,7 +182,7 @@
        <literal>query</literal> is the value on the right-hand side of an
        indexable operator whose left-hand side is the indexed column.
        <literal>n</literal> is the strategy number of the operator within the
-       operator class (see <xref linkend="xindex-strategies">).
+       operator class (see <xref linkend="xindex-strategies"/>).
        Often, <function>extractQuery</function> will need
        to consult <literal>n</literal> to determine the data type of
        <literal>query</literal> and the method it should use to extract key values.
@@ -223,9 +223,9 @@
       <para>
        <literal>pmatch</literal> is an output argument for use when partial match
        is supported.  To use it, <function>extractQuery</function> must allocate
-       an array of <literal>*nkeys</literal> booleans and store its address at
-       <literal>*pmatch</literal>.  Each element of the array should be set to TRUE
-       if the corresponding key requires partial match, FALSE if not.
+       an array of <literal>*nkeys</literal> bools and store its address at
+       <literal>*pmatch</literal>.  Each element of the array should be set to true
+       if the corresponding key requires partial match, false if not.
        If <literal>*pmatch</literal> is set to <symbol>NULL</symbol> then GIN assumes partial match
        is not required.  The variable is initialized to <symbol>NULL</symbol> before call,
        so this argument can simply be ignored by operator classes that do
@@ -267,7 +267,7 @@
         Datum queryKeys[], bool nullFlags[])</function></term>
      <listitem>
       <para>
-       Returns TRUE if an indexed item satisfies the query operator with
+       Returns true if an indexed item satisfies the query operator with
        strategy number <literal>n</literal> (or might satisfy it, if the recheck
        indication is returned).  This function does not have direct access
        to the indexed item's value, since <acronym>GIN</acronym> does not
@@ -277,8 +277,8 @@
        <literal>nkeys</literal>, which is the same as the number of keys previously
        returned by <function>extractQuery</function> for this <literal>query</literal> datum.
        Each element of the
-       <literal>check</literal> array is TRUE if the indexed item contains the
-       corresponding query key, i.e., if (check[i] == TRUE) the i-th key of the
+       <literal>check</literal> array is true if the indexed item contains the
+       corresponding query key, i.e., if (check[i] == true) the i-th key of the
        <function>extractQuery</function> result array is present in the indexed item.
        The original <literal>query</literal> datum is
        passed in case the <function>consistent</function> method needs to consult it,
@@ -291,7 +291,7 @@
       <para>
        When <function>extractQuery</function> returns a null key in
        <literal>queryKeys[]</literal>, the corresponding <literal>check[]</literal> element
-       is TRUE if the indexed item contains a null key; that is, the
+       is true if the indexed item contains a null key; that is, the
        semantics of <literal>check[]</literal> are like <literal>IS NOT DISTINCT
        FROM</literal>.  The <function>consistent</function> function can examine the
        corresponding <literal>nullFlags[]</literal> element if it needs to tell
@@ -299,13 +299,13 @@
       </para>
 
       <para>
-       On success, <literal>*recheck</literal> should be set to TRUE if the heap
-       tuple needs to be rechecked against the query operator, or FALSE if
-       the index test is exact.  That is, a FALSE return value guarantees
-       that the heap tuple does not match the query; a TRUE return value with
-       <literal>*recheck</literal> set to FALSE guarantees that the heap tuple does
-       match the query; and a TRUE return value with
-       <literal>*recheck</literal> set to TRUE means that the heap tuple might match
+       On success, <literal>*recheck</literal> should be set to true if the heap
+       tuple needs to be rechecked against the query operator, or false if
+       the index test is exact.  That is, a false return value guarantees
+       that the heap tuple does not match the query; a true return value with
+       <literal>*recheck</literal> set to false guarantees that the heap tuple does
+       match the query; and a true return value with
+       <literal>*recheck</literal> set to true means that the heap tuple might match
        the query, so it needs to be fetched and rechecked by evaluating the
        query operator directly against the originally indexed item.
       </para>
@@ -406,7 +406,7 @@
   provide the <function>comparePartial</function> method, and its
   <function>extractQuery</function> method must set the <literal>pmatch</literal>
   parameter when a partial-match query is encountered.  See
-  <xref linkend="gin-partial-match"> for details.
+  <xref linkend="gin-partial-match"/> for details.
  </para>
 
  <para>
@@ -466,7 +466,7 @@
    When the table is vacuumed or autoanalyzed, or when
    <function>gin_clean_pending_list</function> function is called, or if the
    pending list becomes larger than
-   <xref linkend="guc-gin-pending-list-limit">, the entries are moved to the
+   <xref linkend="guc-gin-pending-list-limit"/>, the entries are moved to the
    main <acronym>GIN</acronym> data structure using the same bulk insert
    techniques used during initial index creation.  This greatly improves
    <acronym>GIN</acronym> index update speed, even counting the additional
@@ -488,7 +488,7 @@
    If consistent response time is more important than update speed,
    use of pending entries can be disabled by turning off the
    <literal>fastupdate</literal> storage parameter for a
-   <acronym>GIN</acronym> index.  See <xref linkend="sql-createindex">
+   <acronym>GIN</acronym> index.  See <xref linkend="sql-createindex"/>
    for details.
   </para>
  </sect2>
@@ -531,14 +531,14 @@
     <para>
      As of <productname>PostgreSQL</productname> 8.4, this advice is less
      necessary since delayed indexing is used (see <xref
-     linkend="gin-fast-update"> for details).  But for very large updates
+     linkend="gin-fast-update"/> for details).  But for very large updates
      it may still be best to drop and recreate the index.
     </para>
    </listitem>
   </varlistentry>
 
   <varlistentry>
-   <term><xref linkend="guc-maintenance-work-mem"></term>
+   <term><xref linkend="guc-maintenance-work-mem"/></term>
    <listitem>
     <para>
      Build time for a <acronym>GIN</acronym> index is very sensitive to
@@ -549,7 +549,7 @@
   </varlistentry>
 
   <varlistentry>
-   <term><xref linkend="guc-gin-pending-list-limit"></term>
+   <term><xref linkend="guc-gin-pending-list-limit"/></term>
    <listitem>
     <para>
      During a series of insertions into an existing <acronym>GIN</acronym>
@@ -574,7 +574,7 @@
   </varlistentry>
 
   <varlistentry>
-   <term><xref linkend="guc-gin-fuzzy-search-limit"></term>
+   <term><xref linkend="guc-gin-fuzzy-search-limit"/></term>
    <listitem>
     <para>
      The primary goal of developing <acronym>GIN</acronym> indexes was
@@ -631,7 +631,7 @@
  <para>
   The core <productname>PostgreSQL</productname> distribution
   includes the <acronym>GIN</acronym> operator classes previously shown in
-  <xref linkend="gin-builtin-opclasses-table">.
+  <xref linkend="gin-builtin-opclasses-table"/>.
   The following <filename>contrib</filename> modules also contain
   <acronym>GIN</acronym> operator classes:
 

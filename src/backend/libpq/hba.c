@@ -144,8 +144,8 @@ static List *tokenize_inc_file(List *tokens, const char *outer_filename,
 				  const char *inc_filename, int elevel, char **err_msg);
 static bool parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 				   int elevel, char **err_msg);
-static bool verify_option_list_length(List *options, char *optionname,
-						  List *masters, char *mastername, int line_num);
+static bool verify_option_list_length(List *options, const char *optionname,
+						  List *masters, const char *mastername, int line_num);
 static ArrayType *gethba_options(HbaLine *hba);
 static void fill_hba_line(Tuplestorestate *tuple_store, TupleDesc tupdesc,
 			  int lineno, HbaLine *hba, const char *err_msg);
@@ -187,9 +187,9 @@ pg_isblank(const char c)
  * set *err_msg to a string describing the error.  Currently the only
  * possible error is token too long for buf.
  *
- * If successful: store null-terminated token at *buf and return TRUE.
- * If no more tokens on line: set *buf = '\0' and return FALSE.
- * If error: fill buf with truncated or misformatted token and return FALSE.
+ * If successful: store null-terminated token at *buf and return true.
+ * If no more tokens on line: set *buf = '\0' and return false.
+ * If error: fill buf with truncated or misformatted token and return false.
  */
 static bool
 next_token(char **lineptr, char *buf, int bufsz,
@@ -1617,7 +1617,7 @@ parse_hba_line(TokenizedLine *tok_line, int elevel)
 
 
 static bool
-verify_option_list_length(List *options, char *optionname, List *masters, char *mastername, int line_num)
+verify_option_list_length(List *options, const char *optionname, List *masters, const char *mastername, int line_num)
 {
 	if (list_length(options) == 0 ||
 		list_length(options) == 1 ||
@@ -1739,9 +1739,11 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 			return false;
 		}
 
-		hbaline->ldapserver = pstrdup(urldata->lud_host);
+		if (urldata->lud_host)
+			hbaline->ldapserver = pstrdup(urldata->lud_host);
 		hbaline->ldapport = urldata->lud_port;
-		hbaline->ldapbasedn = pstrdup(urldata->lud_dn);
+		if (urldata->lud_dn)
+			hbaline->ldapbasedn = pstrdup(urldata->lud_dn);
 
 		if (urldata->lud_attrs)
 			hbaline->ldapsearchattribute = pstrdup(urldata->lud_attrs[0]);	/* only use first one */

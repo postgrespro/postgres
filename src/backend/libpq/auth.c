@@ -26,6 +26,7 @@
 #include "commands/user.h"
 #include "common/ip.h"
 #include "common/md5.h"
+#include "common/scram-common.h"
 #include "libpq/auth.h"
 #include "libpq/crypt.h"
 #include "libpq/libpq.h"
@@ -43,7 +44,7 @@
  * Global authentication functions
  *----------------------------------------------------------------
  */
-static void sendAuthRequest(Port *port, AuthRequest areq, char *extradata,
+static void sendAuthRequest(Port *port, AuthRequest areq, const char *extradata,
 				int extralen);
 static void auth_failed(Port *port, int status, char *logdetail);
 static char *recv_password_packet(Port *port);
@@ -91,7 +92,7 @@ static int	auth_peer(hbaPort *port);
 
 #define PGSQL_PAM_SERVICE "postgresql"	/* Service name passed to PAM */
 
-static int	CheckPAMAuth(Port *port, char *user, char *password);
+static int	CheckPAMAuth(Port *port, const char *user, const char *password);
 static int pam_passwd_conv_proc(int num_msg, const struct pam_message **msg,
 					 struct pam_response **resp, void *appdata_ptr);
 
@@ -100,7 +101,8 @@ static struct pam_conv pam_passw_conv = {
 	NULL
 };
 
-static char *pam_passwd = NULL; /* Workaround for Solaris 2.6 brokenness */
+static const char *pam_passwd = NULL;	/* Workaround for Solaris 2.6
+										 * brokenness */
 static Port *pam_port_cludge;	/* Workaround for passing "Port *port" into
 								 * pam_passwd_conv_proc */
 #endif							/* USE_PAM */
@@ -202,7 +204,7 @@ static int pg_SSPI_make_upn(char *accountname,
  *----------------------------------------------------------------
  */
 static int	CheckRADIUSAuth(Port *port);
-static int	PerformRadiusTransaction(char *server, char *secret, char *portstr, char *identifier, char *user_name, char *passwd);
+static int	PerformRadiusTransaction(const char *server, const char *secret, const char *portstr, const char *identifier, const char *user_name, const char *passwd);
 
 
 /*
@@ -612,7 +614,7 @@ ClientAuthentication(Port *port)
  * Send an authentication request packet to the frontend.
  */
 static void
-sendAuthRequest(Port *port, AuthRequest areq, char *extradata, int extralen)
+sendAuthRequest(Port *port, AuthRequest areq, const char *extradata, int extralen)
 {
 	StringInfoData buf;
 
@@ -860,6 +862,8 @@ CheckMD5Auth(Port *port, char *shadow_pass, char **logdetail)
 static int
 CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 {
+	char	   *sasl_mechs;
+	char	   *p;
 	int			mtype;
 	StringInfoData buf;
 	void	   *scram_opaq;
@@ -869,6 +873,8 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 	int			inputlen;
 	int			result;
 	bool		initial;
+	char	   *tls_finished = NULL;
+	size_t		tls_finished_len = 0;
 
 	/*
 	 * SASL auth is not supported for protocol versions before 3, because it
@@ -885,12 +891,40 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 
 	/*
 	 * Send the SASL authentication request to user.  It includes the list of
-	 * authentication mechanisms (which is trivial, because we only support
-	 * SCRAM-SHA-256 at the moment).  The extra "\0" is for an empty string to
-	 * terminate the list.
+	 * authentication mechanisms that are supported.  The order of mechanisms
+	 * is advertised in decreasing order of importance.  So the
+	 * channel-binding variants go first, if they are supported.  Channel
+	 * binding is only supported in SSL builds.
 	 */
-	sendAuthRequest(port, AUTH_REQ_SASL, SCRAM_SHA256_NAME "\0",
-					strlen(SCRAM_SHA256_NAME) + 2);
+	sasl_mechs = palloc(strlen(SCRAM_SHA256_PLUS_NAME) +
+						strlen(SCRAM_SHA256_NAME) + 3);
+	p = sasl_mechs;
+
+	if (port->ssl_in_use)
+	{
+		strcpy(p, SCRAM_SHA256_PLUS_NAME);
+		p += strlen(SCRAM_SHA256_PLUS_NAME) + 1;
+	}
+
+	strcpy(p, SCRAM_SHA256_NAME);
+	p += strlen(SCRAM_SHA256_NAME) + 1;
+
+	/* Put another '\0' to mark that list is finished. */
+	p[0] = '\0';
+
+	sendAuthRequest(port, AUTH_REQ_SASL, sasl_mechs, p - sasl_mechs + 1);
+	pfree(sasl_mechs);
+
+#ifdef USE_SSL
+
+	/*
+	 * Get data for channel binding.
+	 */
+	if (port->ssl_in_use)
+	{
+		tls_finished = be_tls_get_peer_finished(port, &tls_finished_len);
+	}
+#endif
 
 	/*
 	 * Initialize the status tracker for message exchanges.
@@ -903,7 +937,11 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 	 * This is because we don't want to reveal to an attacker what usernames
 	 * are valid, nor which users have a valid password.
 	 */
-	scram_opaq = pg_be_scram_init(port->user_name, shadow_pass);
+	scram_opaq = pg_be_scram_init(port->user_name,
+								  shadow_pass,
+								  port->ssl_in_use,
+								  tls_finished,
+								  tls_finished_len);
 
 	/*
 	 * Loop through SASL message exchange.  This exchange can consist of
@@ -951,12 +989,9 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 		{
 			const char *selected_mech;
 
-			/*
-			 * We only support SCRAM-SHA-256 at the moment, so anything else
-			 * is an error.
-			 */
 			selected_mech = pq_getmsgrawstring(&buf);
-			if (strcmp(selected_mech, SCRAM_SHA256_NAME) != 0)
+			if (strcmp(selected_mech, SCRAM_SHA256_NAME) != 0 &&
+				strcmp(selected_mech, SCRAM_SHA256_PLUS_NAME) != 0)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -1040,7 +1075,7 @@ static GSS_DLLIMP gss_OID GSS_C_NT_USER_NAME = &GSS_C_NT_USER_NAME_desc;
 
 
 static void
-pg_GSS_error(int severity, char *errmsg, OM_uint32 maj_stat, OM_uint32 min_stat)
+pg_GSS_error(int severity, const char *errmsg, OM_uint32 maj_stat, OM_uint32 min_stat)
 {
 	gss_buffer_desc gmsg;
 	OM_uint32	lmin_s,
@@ -2051,7 +2086,7 @@ static int
 pam_passwd_conv_proc(int num_msg, const struct pam_message **msg,
 					 struct pam_response **resp, void *appdata_ptr)
 {
-	char	   *passwd;
+	const char *passwd;
 	struct pam_response *reply;
 	int			i;
 
@@ -2149,7 +2184,7 @@ fail:
  * Check authentication against PAM.
  */
 static int
-CheckPAMAuth(Port *port, char *user, char *password)
+CheckPAMAuth(Port *port, const char *user, const char *password)
 {
 	int			retval;
 	pam_handle_t *pamh = NULL;
@@ -2311,7 +2346,7 @@ CheckBSDAuth(Port *port, char *user)
  */
 #ifdef USE_LDAP
 
-static int errdetail_for_ldap(LDAP *ldap);
+static int	errdetail_for_ldap(LDAP *ldap);
 
 /*
  * Initialize a connection to the LDAP server, including setting up
@@ -2482,7 +2517,7 @@ CheckLDAPAuth(Port *port)
 		char	   *filter;
 		LDAPMessage *search_message;
 		LDAPMessage *entry;
-		char	   *attributes[] = { LDAP_NO_ATTRS, NULL };
+		char	   *attributes[] = {LDAP_NO_ATTRS, NULL};
 		char	   *dn;
 		char	   *c;
 		int			count;
@@ -2520,7 +2555,8 @@ CheckLDAPAuth(Port *port)
 		{
 			ereport(LOG,
 					(errmsg("could not perform initial LDAP bind for ldapbinddn \"%s\" on server \"%s\": %s",
-							port->hba->ldapbinddn, port->hba->ldapserver,
+							port->hba->ldapbinddn ? port->hba->ldapbinddn : "",
+							port->hba->ldapserver,
 							ldap_err2string(r)),
 					 errdetail_for_ldap(ldap)));
 			ldap_unbind(ldap);
@@ -2742,7 +2778,7 @@ typedef struct
 #define RADIUS_ACCESS_ACCEPT	2
 #define RADIUS_ACCESS_REJECT	3
 
-/* RAIDUS attributes */
+/* RADIUS attributes */
 #define RADIUS_USER_NAME		1
 #define RADIUS_PASSWORD			2
 #define RADIUS_SERVICE_TYPE		6
@@ -2874,7 +2910,7 @@ CheckRADIUSAuth(Port *port)
 }
 
 static int
-PerformRadiusTransaction(char *server, char *secret, char *portstr, char *identifier, char *user_name, char *passwd)
+PerformRadiusTransaction(const char *server, const char *secret, const char *portstr, const char *identifier, const char *user_name, const char *passwd)
 {
 	radius_packet radius_send_pack;
 	radius_packet radius_recv_pack;
@@ -2941,9 +2977,9 @@ PerformRadiusTransaction(char *server, char *secret, char *portstr, char *identi
 		return STATUS_ERROR;
 	}
 	packet->id = packet->vector[0];
-	radius_add_attribute(packet, RADIUS_SERVICE_TYPE, (unsigned char *) &service, sizeof(service));
-	radius_add_attribute(packet, RADIUS_USER_NAME, (unsigned char *) user_name, strlen(user_name));
-	radius_add_attribute(packet, RADIUS_NAS_IDENTIFIER, (unsigned char *) identifier, strlen(identifier));
+	radius_add_attribute(packet, RADIUS_SERVICE_TYPE, (const unsigned char *) &service, sizeof(service));
+	radius_add_attribute(packet, RADIUS_USER_NAME, (const unsigned char *) user_name, strlen(user_name));
+	radius_add_attribute(packet, RADIUS_NAS_IDENTIFIER, (const unsigned char *) identifier, strlen(identifier));
 
 	/*
 	 * RADIUS password attributes are calculated as: e[0] = p[0] XOR

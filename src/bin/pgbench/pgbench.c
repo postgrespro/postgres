@@ -90,10 +90,15 @@ static int	pthread_join(pthread_t th, void **thread_return);
 #define MAXCLIENTS	1024
 #endif
 
+#define DEFAULT_INIT_STEPS "dtgvp"	/* default -I setting */
+
 #define LOG_STEP_SECONDS	5	/* seconds between log messages */
 #define DEFAULT_NXACTS	10		/* default nxacts */
 
+#define ZIPF_CACHE_SIZE	15		/* cache cells number */
+
 #define MIN_GAUSSIAN_PARAM		2.0 /* minimum parameter for gauss */
+#define MAX_ZIPFIAN_PARAM		1000	/* maximum parameter for zipfian */
 
 int			nxacts = 0;			/* number of transactions per client */
 int			duration = 0;		/* duration in seconds */
@@ -112,14 +117,9 @@ int			scale = 1;
 int			fillfactor = 100;
 
 /*
- * create foreign key constraints on the tables?
- */
-int			foreign_keys = 0;
-
-/*
  * use unlogged tables?
  */
-int			unlogged_tables = 0;
+bool		unlogged_tables = false;
 
 /*
  * log sampling rate (1.0 = log everything, 0.0 = option not given)
@@ -334,6 +334,35 @@ typedef struct
 } CState;
 
 /*
+ * Cache cell for zipfian_random call
+ */
+typedef struct
+{
+	/* cell keys */
+	double		s;				/* s - parameter of zipfan_random function */
+	int64		n;				/* number of elements in range (max - min + 1) */
+
+	double		harmonicn;		/* generalizedHarmonicNumber(n, s) */
+	double		alpha;
+	double		beta;
+	double		eta;
+
+	uint64		last_used;		/* last used logical time */
+} ZipfCell;
+
+/*
+ * Zipf cache for zeta values
+ */
+typedef struct
+{
+	uint64		current;		/* counter for LRU cache replacement algorithm */
+
+	int			nb_cells;		/* number of filled cells */
+	int			overflowCount;	/* number of cache overflows */
+	ZipfCell	cells[ZIPF_CACHE_SIZE];
+} ZipfCache;
+
+/*
  * Thread state
  */
 typedef struct
@@ -345,6 +374,8 @@ typedef struct
 	unsigned short random_state[3]; /* separate randomness for each thread */
 	int64		throttle_trigger;	/* previous/next throttling (us) */
 	FILE	   *logfile;		/* where to log, or NULL */
+	ZipfCache	zipf_cache;		/* for thread-safe  zipfian random number
+								 * generation */
 
 	/* per thread collected stats */
 	instr_time	start_time;		/* thread start time */
@@ -362,6 +393,15 @@ typedef struct
 #define META_COMMAND	2
 #define MAX_ARGS		10
 
+typedef enum MetaCommand
+{
+	META_NONE,					/* not a known meta-command */
+	META_SET,					/* \set */
+	META_SETSHELL,				/* \setshell */
+	META_SHELL,					/* \shell */
+	META_SLEEP					/* \sleep */
+} MetaCommand;
+
 typedef enum QueryMode
 {
 	QUERY_SIMPLE,				/* simple query */
@@ -378,6 +418,7 @@ typedef struct
 	char	   *line;			/* text of command line */
 	int			command_num;	/* unique index of this Command struct */
 	int			type;			/* command type (SQL_COMMAND or META_COMMAND) */
+	MetaCommand meta;			/* meta command identifier, or META_NONE */
 	int			argc;			/* number of command words */
 	char	   *argv[MAX_ARGS]; /* command word list */
 	PgBenchExpr *expr;			/* parsed expression, if needed */
@@ -475,8 +516,10 @@ usage(void)
 		   "  %s [OPTION]... [DBNAME]\n"
 		   "\nInitialization options:\n"
 		   "  -i, --initialize         invokes initialization mode\n"
+		   "  -I, --init-steps=[dtgvpf]+ (default \"dtgvp\")\n"
+		   "                           run selected initialization steps\n"
 		   "  -F, --fillfactor=NUM     set fill factor\n"
-		   "  -n, --no-vacuum          do not run VACUUM after initialization\n"
+		   "  -n, --no-vacuum          do not run VACUUM during initialization\n"
 		   "  -q, --quiet              quiet logging (one message each 5 seconds)\n"
 		   "  -s, --scale=NUM          scaling factor\n"
 		   "  --foreign-keys           create foreign key constraints between tables\n"
@@ -735,6 +778,137 @@ getPoissonRand(TState *thread, int64 center)
 	uniform = 1.0 - pg_erand48(thread->random_state);
 
 	return (int64) (-log(uniform) * ((double) center) + 0.5);
+}
+
+/* helper function for getZipfianRand */
+static double
+generalizedHarmonicNumber(int64 n, double s)
+{
+	int			i;
+	double		ans = 0.0;
+
+	for (i = n; i > 1; i--)
+		ans += pow(i, -s);
+	return ans + 1.0;
+}
+
+/* set harmonicn and other parameters to cache cell */
+static void
+zipfSetCacheCell(ZipfCell * cell, int64 n, double s)
+{
+	double		harmonic2;
+
+	cell->n = n;
+	cell->s = s;
+
+	harmonic2 = generalizedHarmonicNumber(2, s);
+	cell->harmonicn = generalizedHarmonicNumber(n, s);
+
+	cell->alpha = 1.0 / (1.0 - s);
+	cell->beta = pow(0.5, s);
+	cell->eta = (1.0 - pow(2.0 / n, 1.0 - s)) / (1.0 - harmonic2 / cell->harmonicn);
+}
+
+/*
+ * search for cache cell with keys (n, s)
+ * and create new cell if it does not exist
+ */
+static ZipfCell *
+zipfFindOrCreateCacheCell(ZipfCache * cache, int64 n, double s)
+{
+	int			i,
+				least_recently_used = 0;
+	ZipfCell   *cell;
+
+	/* search cached cell for given parameters */
+	for (i = 0; i < cache->nb_cells; i++)
+	{
+		cell = &cache->cells[i];
+		if (cell->n == n && cell->s == s)
+			return &cache->cells[i];
+
+		if (cell->last_used < cache->cells[least_recently_used].last_used)
+			least_recently_used = i;
+	}
+
+	/* create new one if it does not exist */
+	if (cache->nb_cells < ZIPF_CACHE_SIZE)
+		i = cache->nb_cells++;
+	else
+	{
+		/* replace LRU cell if cache is full */
+		i = least_recently_used;
+		cache->overflowCount++;
+	}
+
+	zipfSetCacheCell(&cache->cells[i], n, s);
+
+	cache->cells[i].last_used = cache->current++;
+	return &cache->cells[i];
+}
+
+/*
+ * Computing zipfian using rejection method, based on
+ * "Non-Uniform Random Variate Generation",
+ * Luc Devroye, p. 550-551, Springer 1986.
+ */
+static int64
+computeIterativeZipfian(TState *thread, int64 n, double s)
+{
+	double		b = pow(2.0, s - 1.0);
+	double		x,
+				t,
+				u,
+				v;
+
+	while (true)
+	{
+		/* random variates */
+		u = pg_erand48(thread->random_state);
+		v = pg_erand48(thread->random_state);
+
+		x = floor(pow(u, -1.0 / (s - 1.0)));
+
+		t = pow(1.0 + 1.0 / x, s - 1.0);
+		/* reject if too large or out of bound */
+		if (v * x * (t - 1.0) / (b - 1.0) <= t / b && x <= n)
+			break;
+	}
+	return (int64) x;
+}
+
+/*
+ * Computing zipfian using harmonic numbers, based on algorithm described in
+ * "Quickly Generating Billion-Record Synthetic Databases",
+ * Jim Gray et al, SIGMOD 1994
+ */
+static int64
+computeHarmonicZipfian(TState *thread, int64 n, double s)
+{
+	ZipfCell   *cell = zipfFindOrCreateCacheCell(&thread->zipf_cache, n, s);
+	double		uniform = pg_erand48(thread->random_state);
+	double		uz = uniform * cell->harmonicn;
+
+	if (uz < 1.0)
+		return 1;
+	if (uz < 1.0 + cell->beta)
+		return 2;
+	return 1 + (int64) (cell->n * pow(cell->eta * uniform - cell->eta + 1.0, cell->alpha));
+}
+
+/* random number generator: zipfian distribution from min to max inclusive */
+static int64
+getZipfianRand(TState *thread, int64 min, int64 max, double s)
+{
+	int64		n = max - min + 1;
+
+	/* abort if parameter is invalid */
+	Assert(s > 0.0 && s != 1.0 && s <= MAX_ZIPFIAN_PARAM);
+
+
+	return min - 1 + ((s > 1)
+					  ? computeIterativeZipfian(thread, n, s)
+					  : computeHarmonicZipfian(thread, n, s));
 }
 
 /*
@@ -1294,7 +1468,6 @@ coerceToDouble(PgBenchValue *pval, double *dval)
 		return true;
 	}
 }
-
 /* assign an integer value */
 static void
 setIntValue(PgBenchValue *pv, int64 ival)
@@ -1596,6 +1769,7 @@ evalFunc(TState *thread, CState *st,
 		case PGBENCH_RANDOM:
 		case PGBENCH_RANDOM_EXPONENTIAL:
 		case PGBENCH_RANDOM_GAUSSIAN:
+		case PGBENCH_RANDOM_ZIPFIAN:
 			{
 				int64		imin,
 							imax;
@@ -1645,6 +1819,18 @@ evalFunc(TState *thread, CState *st,
 
 						setIntValue(retval,
 									getGaussianRand(thread, imin, imax, param));
+					}
+					else if (func == PGBENCH_RANDOM_ZIPFIAN)
+					{
+						if (param <= 0.0 || param == 1.0 || param > MAX_ZIPFIAN_PARAM)
+						{
+							fprintf(stderr,
+									"zipfian parameter must be in range (0, 1) U (1, %d]"
+									" (got %f)\n", MAX_ZIPFIAN_PARAM, param);
+							return false;
+						}
+						setIntValue(retval,
+									getZipfianRand(thread, imin, imax, param));
 					}
 					else		/* exponential */
 					{
@@ -1719,6 +1905,29 @@ evaluateExpr(TState *thread, CState *st, PgBenchExpr *expr, PgBenchValue *retval
 					expr->etype);
 			exit(1);
 	}
+}
+
+/*
+ * Convert command name to meta-command enum identifier
+ */
+static MetaCommand
+getMetaCommand(const char *cmd)
+{
+	MetaCommand mc;
+
+	if (cmd == NULL)
+		mc = META_NONE;
+	else if (pg_strcasecmp(cmd, "set") == 0)
+		mc = META_SET;
+	else if (pg_strcasecmp(cmd, "setshell") == 0)
+		mc = META_SETSHELL;
+	else if (pg_strcasecmp(cmd, "shell") == 0)
+		mc = META_SHELL;
+	else if (pg_strcasecmp(cmd, "sleep") == 0)
+		mc = META_SLEEP;
+	else
+		mc = META_NONE;
+	return mc;
 }
 
 /*
@@ -1837,7 +2046,7 @@ preparedStatementName(char *buffer, int file, int state)
 }
 
 static void
-commandFailed(CState *st, char *message)
+commandFailed(CState *st, const char *message)
 {
 	fprintf(stderr,
 			"client %d aborted in command %d of script %d; %s\n",
@@ -2214,7 +2423,7 @@ doCustom(TState *thread, CState *st, StatsData *agg)
 						fprintf(stderr, "\n");
 					}
 
-					if (pg_strcasecmp(argv[0], "sleep") == 0)
+					if (command->meta == META_SLEEP)
 					{
 						/*
 						 * A \sleep doesn't execute anything, we just get the
@@ -2240,7 +2449,7 @@ doCustom(TState *thread, CState *st, StatsData *agg)
 					}
 					else
 					{
-						if (pg_strcasecmp(argv[0], "set") == 0)
+						if (command->meta == META_SET)
 						{
 							PgBenchExpr *expr = command->expr;
 							PgBenchValue result;
@@ -2259,7 +2468,7 @@ doCustom(TState *thread, CState *st, StatsData *agg)
 								break;
 							}
 						}
-						else if (pg_strcasecmp(argv[0], "setshell") == 0)
+						else if (command->meta == META_SETSHELL)
 						{
 							bool		ret = runShellCommand(st, argv[1], argv + 2, argc - 2);
 
@@ -2279,7 +2488,7 @@ doCustom(TState *thread, CState *st, StatsData *agg)
 								/* succeeded */
 							}
 						}
-						else if (pg_strcasecmp(argv[0], "shell") == 0)
+						else if (command->meta == META_SHELL)
 						{
 							bool		ret = runShellCommand(st, NULL, argv + 1, argc - 1);
 
@@ -2601,17 +2810,39 @@ disconnect_all(CState *state, int length)
 	}
 }
 
-/* create tables and setup data */
-static void
-init(bool is_no_vacuum)
-{
 /*
- * The scale factor at/beyond which 32-bit integers are insufficient for
- * storing TPC-B account IDs.
- *
- * Although the actual threshold is 21474, we use 20000 because it is easier to
- * document and remember, and isn't that far away from the real threshold.
+ * Remove old pgbench tables, if any exist
  */
+static void
+initDropTables(PGconn *con)
+{
+	fprintf(stderr, "dropping old tables...\n");
+
+	/*
+	 * We drop all the tables in one command, so that whether there are
+	 * foreign key dependencies or not doesn't matter.
+	 */
+	executeStatement(con, "drop table if exists "
+					 "pgbench_accounts, "
+					 "pgbench_branches, "
+					 "pgbench_history, "
+					 "pgbench_tellers");
+}
+
+/*
+ * Create pgbench's standard tables
+ */
+static void
+initCreateTables(PGconn *con)
+{
+	/*
+	 * The scale factor at/beyond which 32-bit integers are insufficient for
+	 * storing TPC-B account IDs.
+	 *
+	 * Although the actual threshold is 21474, we use 20000 because it is
+	 * easier to document and remember, and isn't that far away from the real
+	 * threshold.
+	 */
 #define SCALE_32BIT_THRESHOLD 20000
 
 	/*
@@ -2658,34 +2889,9 @@ init(bool is_no_vacuum)
 			1
 		}
 	};
-	static const char *const DDLINDEXes[] = {
-		"alter table pgbench_branches add primary key (bid)",
-		"alter table pgbench_tellers add primary key (tid)",
-		"alter table pgbench_accounts add primary key (aid)"
-	};
-	static const char *const DDLKEYs[] = {
-		"alter table pgbench_tellers add foreign key (bid) references pgbench_branches",
-		"alter table pgbench_accounts add foreign key (bid) references pgbench_branches",
-		"alter table pgbench_history add foreign key (bid) references pgbench_branches",
-		"alter table pgbench_history add foreign key (tid) references pgbench_tellers",
-		"alter table pgbench_history add foreign key (aid) references pgbench_accounts"
-	};
-
-	PGconn	   *con;
-	PGresult   *res;
-	char		sql[256];
 	int			i;
-	int64		k;
 
-	/* used to track elapsed time and estimate of the remaining time */
-	instr_time	start,
-				diff;
-	double		elapsed_sec,
-				remaining_sec;
-	int			log_interval = 1;
-
-	if ((con = doConnect()) == NULL)
-		exit(1);
+	fprintf(stderr, "creating tables...\n");
 
 	for (i = 0; i < lengthof(DDLs); i++)
 	{
@@ -2693,10 +2899,6 @@ init(bool is_no_vacuum)
 		char		buffer[256];
 		const struct ddlinfo *ddl = &DDLs[i];
 		const char *cols;
-
-		/* Remove old table, if it exists. */
-		snprintf(buffer, sizeof(buffer), "drop table if exists %s", ddl->table);
-		executeStatement(con, buffer);
 
 		/* Construct new create table statement. */
 		opts[0] = '\0';
@@ -2722,9 +2924,48 @@ init(bool is_no_vacuum)
 
 		executeStatement(con, buffer);
 	}
+}
 
+/*
+ * Fill the standard tables with some data
+ */
+static void
+initGenerateData(PGconn *con)
+{
+	char		sql[256];
+	PGresult   *res;
+	int			i;
+	int64		k;
+
+	/* used to track elapsed time and estimate of the remaining time */
+	instr_time	start,
+				diff;
+	double		elapsed_sec,
+				remaining_sec;
+	int			log_interval = 1;
+
+	fprintf(stderr, "generating data...\n");
+
+	/*
+	 * we do all of this in one transaction to enable the backend's
+	 * data-loading optimizations
+	 */
 	executeStatement(con, "begin");
 
+	/*
+	 * truncate away any old data, in one command in case there are foreign
+	 * keys
+	 */
+	executeStatement(con, "truncate table "
+					 "pgbench_accounts, "
+					 "pgbench_branches, "
+					 "pgbench_history, "
+					 "pgbench_tellers");
+
+	/*
+	 * fill branches, tellers, accounts in that order in case foreign keys
+	 * already exist
+	 */
 	for (i = 0; i < nbranches * scale; i++)
 	{
 		/* "filler" column defaults to NULL */
@@ -2743,16 +2984,9 @@ init(bool is_no_vacuum)
 		executeStatement(con, sql);
 	}
 
-	executeStatement(con, "commit");
-
 	/*
-	 * fill the pgbench_accounts table with some data
+	 * accounts is big enough to be worth using COPY and tracking runtime
 	 */
-	fprintf(stderr, "creating tables...\n");
-
-	executeStatement(con, "begin");
-	executeStatement(con, "truncate pgbench_accounts");
-
 	res = PQexec(con, "copy pgbench_accounts from stdin");
 	if (PQresultStatus(res) != PGRES_COPY_IN)
 	{
@@ -2826,22 +3060,37 @@ init(bool is_no_vacuum)
 		fprintf(stderr, "PQendcopy failed\n");
 		exit(1);
 	}
+
 	executeStatement(con, "commit");
+}
 
-	/* vacuum */
-	if (!is_no_vacuum)
-	{
-		fprintf(stderr, "vacuum...\n");
-		executeStatement(con, "vacuum analyze pgbench_branches");
-		executeStatement(con, "vacuum analyze pgbench_tellers");
-		executeStatement(con, "vacuum analyze pgbench_accounts");
-		executeStatement(con, "vacuum analyze pgbench_history");
-	}
+/*
+ * Invoke vacuum on the standard tables
+ */
+static void
+initVacuum(PGconn *con)
+{
+	fprintf(stderr, "vacuuming...\n");
+	executeStatement(con, "vacuum analyze pgbench_branches");
+	executeStatement(con, "vacuum analyze pgbench_tellers");
+	executeStatement(con, "vacuum analyze pgbench_accounts");
+	executeStatement(con, "vacuum analyze pgbench_history");
+}
 
-	/*
-	 * create indexes
-	 */
-	fprintf(stderr, "set primary keys...\n");
+/*
+ * Create primary keys on the standard tables
+ */
+static void
+initCreatePKeys(PGconn *con)
+{
+	static const char *const DDLINDEXes[] = {
+		"alter table pgbench_branches add primary key (bid)",
+		"alter table pgbench_tellers add primary key (tid)",
+		"alter table pgbench_accounts add primary key (aid)"
+	};
+	int			i;
+
+	fprintf(stderr, "creating primary keys...\n");
 	for (i = 0; i < lengthof(DDLINDEXes); i++)
 	{
 		char		buffer[256];
@@ -2861,16 +3110,101 @@ init(bool is_no_vacuum)
 
 		executeStatement(con, buffer);
 	}
+}
 
-	/*
-	 * create foreign keys
-	 */
-	if (foreign_keys)
+/*
+ * Create foreign key constraints between the standard tables
+ */
+static void
+initCreateFKeys(PGconn *con)
+{
+	static const char *const DDLKEYs[] = {
+		"alter table pgbench_tellers add constraint pgbench_tellers_bid_fkey foreign key (bid) references pgbench_branches",
+		"alter table pgbench_accounts add constraint pgbench_accounts_bid_fkey foreign key (bid) references pgbench_branches",
+		"alter table pgbench_history add constraint pgbench_history_bid_fkey foreign key (bid) references pgbench_branches",
+		"alter table pgbench_history add constraint pgbench_history_tid_fkey foreign key (tid) references pgbench_tellers",
+		"alter table pgbench_history add constraint pgbench_history_aid_fkey foreign key (aid) references pgbench_accounts"
+	};
+	int			i;
+
+	fprintf(stderr, "creating foreign keys...\n");
+	for (i = 0; i < lengthof(DDLKEYs); i++)
 	{
-		fprintf(stderr, "set foreign keys...\n");
-		for (i = 0; i < lengthof(DDLKEYs); i++)
+		executeStatement(con, DDLKEYs[i]);
+	}
+}
+
+/*
+ * Validate an initialization-steps string
+ *
+ * (We could just leave it to runInitSteps() to fail if there are wrong
+ * characters, but since initialization can take awhile, it seems friendlier
+ * to check during option parsing.)
+ */
+static void
+checkInitSteps(const char *initialize_steps)
+{
+	const char *step;
+
+	if (initialize_steps[0] == '\0')
+	{
+		fprintf(stderr, "no initialization steps specified\n");
+		exit(1);
+	}
+
+	for (step = initialize_steps; *step != '\0'; step++)
+	{
+		if (strchr("dtgvpf ", *step) == NULL)
 		{
-			executeStatement(con, DDLKEYs[i]);
+			fprintf(stderr, "unrecognized initialization step \"%c\"\n",
+					*step);
+			fprintf(stderr, "allowed steps are: \"d\", \"t\", \"g\", \"v\", \"p\", \"f\"\n");
+			exit(1);
+		}
+	}
+}
+
+/*
+ * Invoke each initialization step in the given string
+ */
+static void
+runInitSteps(const char *initialize_steps)
+{
+	PGconn	   *con;
+	const char *step;
+
+	if ((con = doConnect()) == NULL)
+		exit(1);
+
+	for (step = initialize_steps; *step != '\0'; step++)
+	{
+		switch (*step)
+		{
+			case 'd':
+				initDropTables(con);
+				break;
+			case 't':
+				initCreateTables(con);
+				break;
+			case 'g':
+				initGenerateData(con);
+				break;
+			case 'v':
+				initVacuum(con);
+				break;
+			case 'p':
+				initCreatePKeys(con);
+				break;
+			case 'f':
+				initCreateFKeys(con);
+				break;
+			case ' ':
+				break;			/* ignore */
+			default:
+				fprintf(stderr, "unrecognized initialization step \"%c\"\n",
+						*step);
+				PQfinish(con);
+				exit(1);
 		}
 	}
 
@@ -3023,6 +3357,7 @@ process_sql_command(PQExpBuffer buf, const char *source)
 	my_command = (Command *) pg_malloc0(sizeof(Command));
 	my_command->command_num = num_commands++;
 	my_command->type = SQL_COMMAND;
+	my_command->meta = META_NONE;
 	initSimpleStats(&my_command->stats);
 
 	/*
@@ -3091,7 +3426,10 @@ process_backslash_command(PsqlScanState sstate, const char *source)
 	my_command->argv[j++] = pg_strdup(word_buf.data);
 	my_command->argc++;
 
-	if (pg_strcasecmp(my_command->argv[0], "set") == 0)
+	/* ... and convert it to enum form */
+	my_command->meta = getMetaCommand(my_command->argv[0]);
+
+	if (my_command->meta == META_SET)
 	{
 		/* For \set, collect var name, then lex the expression. */
 		yyscan_t	yyscanner;
@@ -3146,7 +3484,7 @@ process_backslash_command(PsqlScanState sstate, const char *source)
 												  expr_scanner_offset(sstate),
 												  true);
 
-	if (pg_strcasecmp(my_command->argv[0], "sleep") == 0)
+	if (my_command->meta == META_SLEEP)
 	{
 		if (my_command->argc < 2)
 			syntax_error(source, lineno, my_command->line, my_command->argv[0],
@@ -3187,13 +3525,13 @@ process_backslash_command(PsqlScanState sstate, const char *source)
 							 my_command->argv[2], offsets[2] - start_offset);
 		}
 	}
-	else if (pg_strcasecmp(my_command->argv[0], "setshell") == 0)
+	else if (my_command->meta == META_SETSHELL)
 	{
 		if (my_command->argc < 3)
 			syntax_error(source, lineno, my_command->line, my_command->argv[0],
 						 "missing argument", NULL, -1);
 	}
-	else if (pg_strcasecmp(my_command->argv[0], "shell") == 0)
+	else if (my_command->meta == META_SHELL)
 	{
 		if (my_command->argc < 2)
 			syntax_error(source, lineno, my_command->line, my_command->argv[0],
@@ -3201,6 +3539,7 @@ process_backslash_command(PsqlScanState sstate, const char *source)
 	}
 	else
 	{
+		/* my_command->meta == META_NONE */
 		syntax_error(source, lineno, my_command->line, my_command->argv[0],
 					 "invalid command", NULL, -1);
 	}
@@ -3500,29 +3839,36 @@ addScript(ParsedScript script)
 }
 
 static void
-printSimpleStats(char *prefix, SimpleStats *ss)
+printSimpleStats(const char *prefix, SimpleStats *ss)
 {
-	/* print NaN if no transactions where executed */
-	double		latency = ss->sum / ss->count;
-	double		stddev = sqrt(ss->sum2 / ss->count - latency * latency);
+	if (ss->count > 0)
+	{
+		double		latency = ss->sum / ss->count;
+		double		stddev = sqrt(ss->sum2 / ss->count - latency * latency);
 
-	printf("%s average = %.3f ms\n", prefix, 0.001 * latency);
-	printf("%s stddev = %.3f ms\n", prefix, 0.001 * stddev);
+		printf("%s average = %.3f ms\n", prefix, 0.001 * latency);
+		printf("%s stddev = %.3f ms\n", prefix, 0.001 * stddev);
+	}
 }
 
 /* print out results */
 static void
 printResults(TState *threads, StatsData *total, instr_time total_time,
-			 instr_time conn_total_time, int latency_late)
+			 instr_time conn_total_time, int64 latency_late)
 {
 	double		time_include,
 				tps_include,
 				tps_exclude;
+	int64		ntx = total->cnt - total->skipped;
+	int			i,
+				totalCacheOverflows = 0;
 
 	time_include = INSTR_TIME_GET_DOUBLE(total_time);
-	tps_include = total->cnt / time_include;
-	tps_exclude = total->cnt / (time_include -
-								(INSTR_TIME_GET_DOUBLE(conn_total_time) / nclients));
+
+	/* tps is about actually executed transactions */
+	tps_include = ntx / time_include;
+	tps_exclude = ntx /
+		(time_include - (INSTR_TIME_GET_DOUBLE(conn_total_time) / nclients));
 
 	/* Report test parameters. */
 	printf("transaction type: %s\n",
@@ -3535,13 +3881,22 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 	{
 		printf("number of transactions per client: %d\n", nxacts);
 		printf("number of transactions actually processed: " INT64_FORMAT "/%d\n",
-			   total->cnt - total->skipped, nxacts * nclients);
+			   ntx, nxacts * nclients);
 	}
 	else
 	{
 		printf("duration: %d s\n", duration);
 		printf("number of transactions actually processed: " INT64_FORMAT "\n",
-			   total->cnt);
+			   ntx);
+	}
+	/* Report zipfian cache overflow */
+	for (i = 0; i < nthreads; i++)
+	{
+		totalCacheOverflows += threads[i].zipf_cache.overflowCount;
+	}
+	if (totalCacheOverflows > 0)
+	{
+		printf("zipfian cache array overflowed %d time(s)\n", totalCacheOverflows);
 	}
 
 	/* Remaining stats are nonsensical if we failed to execute any xacts */
@@ -3554,9 +3909,9 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 			   100.0 * total->skipped / total->cnt);
 
 	if (latency_limit)
-		printf("number of transactions above the %.1f ms latency limit: %d (%.3f %%)\n",
-			   latency_limit / 1000.0, latency_late,
-			   100.0 * latency_late / total->cnt);
+		printf("number of transactions above the %.1f ms latency limit: " INT64_FORMAT "/" INT64_FORMAT " (%.3f %%)\n",
+			   latency_limit / 1000.0, latency_late, ntx,
+			   (ntx > 0) ? 100.0 * latency_late / ntx : 0.0);
 
 	if (throttle_delay || progress || latency_limit)
 		printSimpleStats("latency", &total->latency);
@@ -3583,47 +3938,55 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 	printf("tps = %f (excluding connections establishing)\n", tps_exclude);
 
 	/* Report per-script/command statistics */
-	if (per_script_stats || latency_limit || is_latencies)
+	if (per_script_stats || is_latencies)
 	{
 		int			i;
 
 		for (i = 0; i < num_scripts; i++)
 		{
-			if (num_scripts > 1)
+			if (per_script_stats)
+			{
+				StatsData  *sstats = &sql_script[i].stats;
+
 				printf("SQL script %d: %s\n"
 					   " - weight: %d (targets %.1f%% of total)\n"
 					   " - " INT64_FORMAT " transactions (%.1f%% of total, tps = %f)\n",
 					   i + 1, sql_script[i].desc,
 					   sql_script[i].weight,
 					   100.0 * sql_script[i].weight / total_weight,
-					   sql_script[i].stats.cnt,
-					   100.0 * sql_script[i].stats.cnt / total->cnt,
-					   sql_script[i].stats.cnt / time_include);
-			else
-				printf("script statistics:\n");
+					   sstats->cnt,
+					   100.0 * sstats->cnt / total->cnt,
+					   (sstats->cnt - sstats->skipped) / time_include);
 
-			if (latency_limit)
-				printf(" - number of transactions skipped: " INT64_FORMAT " (%.3f%%)\n",
-					   sql_script[i].stats.skipped,
-					   100.0 * sql_script[i].stats.skipped / sql_script[i].stats.cnt);
+				if (throttle_delay && latency_limit && sstats->cnt > 0)
+					printf(" - number of transactions skipped: " INT64_FORMAT " (%.3f%%)\n",
+						   sstats->skipped,
+						   100.0 * sstats->skipped / sstats->cnt);
 
-			if (num_scripts > 1)
-				printSimpleStats(" - latency", &sql_script[i].stats.latency);
+				printSimpleStats(" - latency", &sstats->latency);
+			}
 
 			/* Report per-command latencies */
 			if (is_latencies)
 			{
 				Command   **commands;
 
-				printf(" - statement latencies in milliseconds:\n");
+				if (per_script_stats)
+					printf(" - statement latencies in milliseconds:\n");
+				else
+					printf("statement latencies in milliseconds:\n");
 
 				for (commands = sql_script[i].commands;
 					 *commands != NULL;
 					 commands++)
+				{
+					SimpleStats *cstats = &(*commands)->stats;
+
 					printf("   %11.3f  %s\n",
-						   1000.0 * (*commands)->stats.sum /
-						   (*commands)->stats.count,
+						   (cstats->count > 0) ?
+						   1000.0 * cstats->sum / cstats->count : 0.0,
 						   (*commands)->line);
+				}
 			}
 		}
 	}
@@ -3644,6 +4007,7 @@ main(int argc, char **argv)
 		{"fillfactor", required_argument, NULL, 'F'},
 		{"host", required_argument, NULL, 'h'},
 		{"initialize", no_argument, NULL, 'i'},
+		{"init-steps", required_argument, NULL, 'I'},
 		{"jobs", required_argument, NULL, 'j'},
 		{"log", no_argument, NULL, 'l'},
 		{"latency-limit", required_argument, NULL, 'L'},
@@ -3662,21 +4026,23 @@ main(int argc, char **argv)
 		{"username", required_argument, NULL, 'U'},
 		{"vacuum-all", no_argument, NULL, 'v'},
 		/* long-named only options */
-		{"foreign-keys", no_argument, &foreign_keys, 1},
-		{"index-tablespace", required_argument, NULL, 3},
+		{"unlogged-tables", no_argument, NULL, 1},
 		{"tablespace", required_argument, NULL, 2},
-		{"unlogged-tables", no_argument, &unlogged_tables, 1},
+		{"index-tablespace", required_argument, NULL, 3},
 		{"sampling-rate", required_argument, NULL, 4},
 		{"aggregate-interval", required_argument, NULL, 5},
 		{"progress-timestamp", no_argument, NULL, 6},
 		{"log-prefix", required_argument, NULL, 7},
+		{"foreign-keys", no_argument, NULL, 8},
 		{NULL, 0, NULL, 0}
 	};
 
 	int			c;
-	int			is_init_mode = 0;	/* initialize mode? */
-	int			is_no_vacuum = 0;	/* no vacuum at all before testing? */
-	int			do_vacuum_accounts = 0; /* do vacuum accounts before testing? */
+	bool		is_init_mode = false;	/* initialize mode? */
+	char	   *initialize_steps = NULL;
+	bool		foreign_keys = false;
+	bool		is_no_vacuum = false;
+	bool		do_vacuum_accounts = false; /* vacuum accounts table? */
 	int			optindex;
 	bool		scale_given = false;
 
@@ -3736,23 +4102,31 @@ main(int argc, char **argv)
 	state = (CState *) pg_malloc(sizeof(CState));
 	memset(state, 0, sizeof(CState));
 
-	while ((c = getopt_long(argc, argv, "ih:nvp:dqb:SNc:j:Crs:t:T:U:lf:D:F:M:P:R:L:", long_options, &optindex)) != -1)
+	while ((c = getopt_long(argc, argv, "iI:h:nvp:dqb:SNc:j:Crs:t:T:U:lf:D:F:M:P:R:L:", long_options, &optindex)) != -1)
 	{
 		char	   *script;
 
 		switch (c)
 		{
 			case 'i':
-				is_init_mode++;
+				is_init_mode = true;
+				break;
+			case 'I':
+				if (initialize_steps)
+					pg_free(initialize_steps);
+				initialize_steps = pg_strdup(optarg);
+				checkInitSteps(initialize_steps);
+				initialization_option_set = true;
 				break;
 			case 'h':
 				pghost = pg_strdup(optarg);
 				break;
 			case 'n':
-				is_no_vacuum++;
+				is_no_vacuum = true;
 				break;
 			case 'v':
-				do_vacuum_accounts++;
+				benchmarking_option_set = true;
+				do_vacuum_accounts = true;
 				break;
 			case 'p':
 				pgport = pg_strdup(optarg);
@@ -3811,7 +4185,6 @@ main(int argc, char **argv)
 				break;
 			case 'r':
 				benchmarking_option_set = true;
-				per_script_stats = true;
 				is_latencies = true;
 				break;
 			case 's':
@@ -3825,11 +4198,6 @@ main(int argc, char **argv)
 				break;
 			case 't':
 				benchmarking_option_set = true;
-				if (duration > 0)
-				{
-					fprintf(stderr, "specify either a number of transactions (-t) or a duration (-T), not both\n");
-					exit(1);
-				}
 				nxacts = atoi(optarg);
 				if (nxacts <= 0)
 				{
@@ -3840,11 +4208,6 @@ main(int argc, char **argv)
 				break;
 			case 'T':
 				benchmarking_option_set = true;
-				if (nxacts > 0)
-				{
-					fprintf(stderr, "specify either a number of transactions (-t) or a duration (-T), not both\n");
-					exit(1);
-				}
 				duration = atoi(optarg);
 				if (duration <= 0)
 				{
@@ -3863,20 +4226,17 @@ main(int argc, char **argv)
 				initialization_option_set = true;
 				use_quiet = true;
 				break;
-
 			case 'b':
 				if (strcmp(optarg, "list") == 0)
 				{
 					listAvailableScripts();
 					exit(0);
 				}
-
 				weight = parseScriptWeight(optarg, &script);
 				process_builtin(findBuiltin(script), weight);
 				benchmarking_option_set = true;
 				internal_script_used = true;
 				break;
-
 			case 'S':
 				process_builtin(findBuiltin("select-only"), 1);
 				benchmarking_option_set = true;
@@ -3971,10 +4331,9 @@ main(int argc, char **argv)
 					latency_limit = (int64) (limit_ms * 1000);
 				}
 				break;
-			case 0:
-				/* This covers long options which take no argument. */
-				if (foreign_keys || unlogged_tables)
-					initialization_option_set = true;
+			case 1:				/* unlogged-tables */
+				initialization_option_set = true;
+				unlogged_tables = true;
 				break;
 			case 2:				/* tablespace */
 				initialization_option_set = true;
@@ -3984,7 +4343,7 @@ main(int argc, char **argv)
 				initialization_option_set = true;
 				index_tablespace = pg_strdup(optarg);
 				break;
-			case 4:
+			case 4:				/* sampling-rate */
 				benchmarking_option_set = true;
 				sample_rate = atof(optarg);
 				if (sample_rate <= 0.0 || sample_rate > 1.0)
@@ -3993,7 +4352,7 @@ main(int argc, char **argv)
 					exit(1);
 				}
 				break;
-			case 5:
+			case 5:				/* aggregate-interval */
 				benchmarking_option_set = true;
 				agg_interval = atoi(optarg);
 				if (agg_interval <= 0)
@@ -4003,13 +4362,17 @@ main(int argc, char **argv)
 					exit(1);
 				}
 				break;
-			case 6:
+			case 6:				/* progress-timestamp */
 				progress_timestamp = true;
 				benchmarking_option_set = true;
 				break;
-			case 7:
+			case 7:				/* log-prefix */
 				benchmarking_option_set = true;
 				logfile_prefix = pg_strdup(optarg);
+				break;
+			case 8:				/* foreign-keys */
+				initialization_option_set = true;
+				foreign_keys = true;
 				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
@@ -4090,7 +4453,31 @@ main(int argc, char **argv)
 			exit(1);
 		}
 
-		init(is_no_vacuum);
+		if (initialize_steps == NULL)
+			initialize_steps = pg_strdup(DEFAULT_INIT_STEPS);
+
+		if (is_no_vacuum)
+		{
+			/* Remove any vacuum step in initialize_steps */
+			char	   *p;
+
+			while ((p = strchr(initialize_steps, 'v')) != NULL)
+				*p = ' ';
+		}
+
+		if (foreign_keys)
+		{
+			/* Add 'f' to end of initialize_steps, if not already there */
+			if (strchr(initialize_steps, 'f') == NULL)
+			{
+				initialize_steps = (char *)
+					pg_realloc(initialize_steps,
+							   strlen(initialize_steps) + 2);
+				strcat(initialize_steps, "f");
+			}
+		}
+
+		runInitSteps(initialize_steps);
 		exit(0);
 	}
 	else
@@ -4100,6 +4487,12 @@ main(int argc, char **argv)
 			fprintf(stderr, "some of the specified options cannot be used in benchmarking mode\n");
 			exit(1);
 		}
+	}
+
+	if (nxacts > 0 && duration > 0)
+	{
+		fprintf(stderr, "specify either a number of transactions (-t) or a duration (-T), not both\n");
+		exit(1);
 	}
 
 	/* Use DEFAULT_NXACTS if neither nxacts nor duration is specified. */
@@ -4308,6 +4701,9 @@ main(int argc, char **argv)
 		thread->random_state[2] = random();
 		thread->logfile = NULL; /* filled in later */
 		thread->latency_late = 0;
+		thread->zipf_cache.nb_cells = 0;
+		thread->zipf_cache.current = 0;
+		thread->zipf_cache.overflowCount = 0;
 		initStats(&thread->stats, 0);
 
 		nclients_dealt += thread->nstate;
@@ -4592,12 +4988,12 @@ threadRun(void *arg)
 					timeout.tv_usec = min_usec % 1000000;
 					nsocks = select(maxsock + 1, &input_mask, NULL, NULL, &timeout);
 				}
-				else /* nothing active, simple sleep */
+				else			/* nothing active, simple sleep */
 				{
 					pg_usleep(min_usec);
 				}
 			}
-			else /* no explicit delay, select without timeout */
+			else				/* no explicit delay, select without timeout */
 			{
 				nsocks = select(maxsock + 1, &input_mask, NULL, NULL, NULL);
 			}
@@ -4614,8 +5010,10 @@ threadRun(void *arg)
 				goto done;
 			}
 		}
-		else /* min_usec == 0, i.e. something needs to be executed */
+		else
 		{
+			/* min_usec == 0, i.e. something needs to be executed */
+
 			/* If we didn't call select(), don't try to read any data */
 			FD_ZERO(&input_mask);
 		}
@@ -4666,7 +5064,8 @@ threadRun(void *arg)
 			{
 				/* generate and show report */
 				StatsData	cur;
-				int64		run = now - last_report;
+				int64		run = now - last_report,
+							ntx;
 				double		tps,
 							total_run,
 							latency,
@@ -4681,7 +5080,7 @@ threadRun(void *arg)
 				 * XXX: No locking. There is no guarantee that we get an
 				 * atomic snapshot of the transaction count and latencies, so
 				 * these figures can well be off by a small amount. The
-				 * progress is report's purpose is to give a quick overview of
+				 * progress report's purpose is to give a quick overview of
 				 * how the test is going, so that shouldn't matter too much.
 				 * (If a read from a 64-bit integer is not atomic, you might
 				 * get a "torn" read and completely bogus latencies though!)
@@ -4695,15 +5094,21 @@ threadRun(void *arg)
 					cur.skipped += thread[i].stats.skipped;
 				}
 
+				/* we count only actually executed transactions */
+				ntx = (cur.cnt - cur.skipped) - (last.cnt - last.skipped);
 				total_run = (now - thread_start) / 1000000.0;
-				tps = 1000000.0 * (cur.cnt - last.cnt) / run;
-				latency = 0.001 * (cur.latency.sum - last.latency.sum) /
-					(cur.cnt - last.cnt);
-				sqlat = 1.0 * (cur.latency.sum2 - last.latency.sum2)
-					/ (cur.cnt - last.cnt);
-				stdev = 0.001 * sqrt(sqlat - 1000000.0 * latency * latency);
-				lag = 0.001 * (cur.lag.sum - last.lag.sum) /
-					(cur.cnt - last.cnt);
+				tps = 1000000.0 * ntx / run;
+				if (ntx > 0)
+				{
+					latency = 0.001 * (cur.latency.sum - last.latency.sum) / ntx;
+					sqlat = 1.0 * (cur.latency.sum2 - last.latency.sum2) / ntx;
+					stdev = 0.001 * sqrt(sqlat - 1000000.0 * latency * latency);
+					lag = 0.001 * (cur.lag.sum - last.lag.sum) / ntx;
+				}
+				else
+				{
+					latency = sqlat = stdev = lag = 0;
+				}
 
 				if (progress_timestamp)
 				{
@@ -4720,7 +5125,10 @@ threadRun(void *arg)
 							 (long) tv.tv_sec, (long) (tv.tv_usec / 1000));
 				}
 				else
+				{
+					/* round seconds are expected, but the thread may be late */
 					snprintf(tbuf, sizeof(tbuf), "%.1f s", total_run);
+				}
 
 				fprintf(stderr,
 						"progress: %s, %.1f tps, lat %.3f ms stddev %.3f",

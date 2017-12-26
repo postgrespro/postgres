@@ -560,7 +560,7 @@ SELECT ft5, ft5.c1, ft5.c2, ft5.c3, ft4.c1, ft4.c2 FROM ft5 left join ft4 on ft5
 SELECT ft5, ft5.c1, ft5.c2, ft5.c3, ft4.c1, ft4.c2 FROM ft5 left join ft4 on ft5.c1 = ft4.c1 WHERE ft4.c1 BETWEEN 10 and 30 ORDER BY ft5.c1, ft4.c1;
 
 -- check join pushdown in situations where multiple userids are involved
-CREATE ROLE regress_view_owner;
+CREATE ROLE regress_view_owner SUPERUSER;
 CREATE USER MAPPING FOR regress_view_owner SERVER loopback;
 GRANT SELECT ON ft4 TO regress_view_owner;
 GRANT SELECT ON ft5 TO regress_view_owner;
@@ -829,7 +829,7 @@ drop operator public.<^(int, int);
 -- Input relation to aggregate push down hook is not safe to pushdown and thus
 -- the aggregate cannot be pushed down to foreign server.
 explain (verbose, costs off)
-select count(t1.c3) from ft1 t1, ft1 t2 where t1.c1 = postgres_fdw_abs(t1.c2);
+select count(t1.c3) from ft2 t1 left join ft2 t2 on (t1.c1 = random() * t2.c2);
 
 -- Subquery in FROM clause having aggregate
 explain (verbose, costs off)
@@ -1656,6 +1656,24 @@ explain (verbose, costs off)
 update bar set f2 = f2 + 100 returning *;
 update bar set f2 = f2 + 100 returning *;
 
+-- Test that UPDATE/DELETE with inherited target works with row-level triggers
+CREATE TRIGGER trig_row_before
+BEFORE UPDATE OR DELETE ON bar2
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+
+CREATE TRIGGER trig_row_after
+AFTER UPDATE OR DELETE ON bar2
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+
+explain (verbose, costs off)
+update bar set f2 = f2 + 100;
+update bar set f2 = f2 + 100;
+
+explain (verbose, costs off)
+delete from bar where f2 < 400;
+delete from bar where f2 < 400;
+
+-- cleanup
 drop table foo cascade;
 drop table bar cascade;
 drop table loct1;

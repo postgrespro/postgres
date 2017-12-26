@@ -1,6 +1,367 @@
 <!-- doc/src/sgml/release-9.5.sgml -->
 <!-- See header comment in release.sgml about typical markup -->
 
+ <sect1 id="release-9-5-10">
+  <title>Release 9.5.10</title>
+
+  <formalpara>
+  <title>Release date:</title>
+  <para>2017-11-09</para>
+  </formalpara>
+
+  <para>
+   This release contains a variety of fixes from 9.5.9.
+   For information about new features in the 9.5 major release, see
+   <xref linkend="release-9-5"/>.
+  </para>
+
+  <sect2>
+   <title>Migration to Version 9.5.10</title>
+
+   <para>
+    A dump/restore is not required for those running 9.5.X.
+   </para>
+
+   <para>
+    However, if you use BRIN indexes, see the fourth changelog entry below.
+   </para>
+
+   <para>
+    Also, if you are upgrading from a version earlier than 9.5.8,
+    see <xref linkend="release-9-5-8"/>.
+   </para>
+  </sect2>
+
+  <sect2>
+   <title>Changes</title>
+
+   <itemizedlist>
+
+    <listitem>
+     <para>
+      Ensure that <literal>INSERT ... ON CONFLICT DO UPDATE</literal> checks
+      table permissions and RLS policies in all cases (Dean Rasheed)
+     </para>
+
+     <para>
+      The update path of <literal>INSERT ... ON CONFLICT DO UPDATE</literal>
+      requires <literal>SELECT</literal> permission on the columns of the
+      arbiter index, but it failed to check for that in the case of an
+      arbiter specified by constraint name.
+      In addition, for a table with row level security enabled, it failed to
+      check updated rows against the table's <literal>SELECT</literal>
+      policies (regardless of how the arbiter index was specified).
+      (CVE-2017-15099)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix crash due to rowtype mismatch
+      in <function>json{b}_populate_recordset()</function>
+      (Michael Paquier, Tom Lane)
+     </para>
+
+     <para>
+      These functions used the result rowtype specified in the <literal>FROM
+      ... AS</literal> clause without checking that it matched the actual
+      rowtype of the supplied tuple value.  If it didn't, that would usually
+      result in a crash, though disclosure of server memory contents seems
+      possible as well.
+      (CVE-2017-15098)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix sample server-start scripts to become <literal>$PGUSER</literal>
+      before opening <literal>$PGLOG</literal> (Noah Misch)
+     </para>
+
+     <para>
+      Previously, the postmaster log file was opened while still running as
+      root.  The database owner could therefore mount an attack against
+      another system user by making <literal>$PGLOG</literal> be a symbolic
+      link to some other file, which would then become corrupted by appending
+      log messages.
+     </para>
+
+     <para>
+      By default, these scripts are not installed anywhere.  Users who have
+      made use of them will need to manually recopy them, or apply the same
+      changes to their modified versions.  If the
+      existing <literal>$PGLOG</literal> file is root-owned, it will need to
+      be removed or renamed out of the way before restarting the server with
+      the corrected script.
+      (CVE-2017-12172)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix BRIN index summarization to handle concurrent table extension
+      correctly (&Aacute;lvaro Herrera)
+     </para>
+
+     <para>
+      Previously, a race condition allowed some table rows to be omitted from
+      the index.  It may be necessary to reindex existing BRIN indexes to
+      recover from past occurrences of this problem.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix possible failures during concurrent updates of a BRIN index
+      (Tom Lane)
+     </para>
+
+     <para>
+      These race conditions could result in errors like <quote>invalid index
+      offnum</quote> or <quote>inconsistent range map</quote>.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix crash when logical decoding is invoked from a SPI-using function,
+      in particular any function written in a PL language
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <function>json_build_array()</function>,
+      <function>json_build_object()</function>, and their <type>jsonb</type>
+      equivalents to handle explicit <literal>VARIADIC</literal> arguments
+      correctly (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Properly reject attempts to convert infinite float values to
+      type <type>numeric</type> (Tom Lane, KaiGai Kohei)
+     </para>
+
+     <para>
+      Previously the behavior was platform-dependent.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix corner-case crashes when columns have been added to the end of a
+      view (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Record proper dependencies when a view or rule
+      contains <structname>FieldSelect</structname>
+      or <structname>FieldStore</structname> expression nodes (Tom Lane)
+     </para>
+
+     <para>
+      Lack of these dependencies could allow a column or data
+      type <command>DROP</command> to go through when it ought to fail,
+      thereby causing later uses of the view or rule to get errors.
+      This patch does not do anything to protect existing views/rules,
+      only ones created in the future.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Correctly detect hashability of range data types (Tom Lane)
+     </para>
+
+     <para>
+      The planner mistakenly assumed that any range type could be hashed
+      for use in hash joins or hash aggregation, but actually it must check
+      whether the range's subtype has hash support.  This does not affect any
+      of the built-in range types, since they're all hashable anyway.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Correctly ignore <structname>RelabelType</structname> expression nodes
+      when determining relation distinctness (David Rowley)
+     </para>
+
+     <para>
+      This allows the intended optimization to occur when a subquery has
+      a result column of type <type>varchar</type>.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix low-probability loss of <command>NOTIFY</command> messages due to
+      XID wraparound (Marko Tiikkaja, Tom Lane)
+     </para>
+
+     <para>
+      If a session executed no queries, but merely listened for
+      notifications, for more than 2 billion transactions, it started to miss
+      some notifications from concurrently-committing transactions.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Avoid <systemitem>SIGBUS</systemitem> crash on Linux when a DSM memory
+      request exceeds the space available in <systemitem>tmpfs</systemitem>
+      (Thomas Munro)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Prevent low-probability crash in processing of nested trigger firings
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Allow <command>COPY</command>'s <literal>FREEZE</literal> option to
+      work when the transaction isolation level is <literal>REPEATABLE
+      READ</literal> or higher (Noah Misch)
+     </para>
+
+     <para>
+      This case was unintentionally broken by a previous bug fix.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Correctly restore the umask setting when file creation fails
+      in <command>COPY</command> or <function>lo_export()</function>
+      (Peter Eisentraut)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Give a better error message for duplicate column names
+      in <command>ANALYZE</command> (Nathan Bossart)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix mis-parsing of the last line in a
+      non-newline-terminated <filename>pg_hba.conf</filename> file
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>pg_basebackup</application>'s matching of tablespace
+      paths to canonicalize both paths before comparing (Michael Paquier)
+     </para>
+
+     <para>
+      This is particularly helpful on Windows.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>libpq</application> to not require user's home
+      directory to exist (Tom Lane)
+     </para>
+
+     <para>
+      In v10, failure to find the home directory while trying to
+      read <filename>~/.pgpass</filename> was treated as a hard error,
+      but it should just cause that file to not be found.  Both v10 and
+      previous release branches made the same mistake when
+      reading <filename>~/.pg_service.conf</filename>, though this was less
+      obvious since that file is not sought unless a service name is
+      specified.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>libpq</application> to guard against integer
+      overflow in the row count of a <structname>PGresult</structname>
+      (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix <application>ecpg</application>'s handling of out-of-scope cursor
+      declarations with pointer or array variables (Michael Meskes)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      In ecpglib, correctly handle backslashes in string literals depending
+      on whether <varname>standard_conforming_strings</varname> is set
+      (Tsunakawa Takayuki)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Make ecpglib's Informix-compatibility mode ignore fractional digits in
+      integer input strings, as expected (Gao Zengqi, Michael Meskes)
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Fix missing temp-install prerequisites
+      for <literal>check</literal>-like Make targets (Noah Misch)
+     </para>
+
+     <para>
+      Some non-default test procedures that are meant to work
+      like <literal>make check</literal> failed to ensure that the temporary
+      installation was up to date.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Sync our copy of the timezone library with IANA release tzcode2017c
+      (Tom Lane)
+     </para>
+
+     <para>
+      This fixes various issues; the only one likely to be user-visible
+      is that the default DST rules for a POSIX-style zone name, if
+      no <filename>posixrules</filename> file exists in the timezone data
+      directory, now match current US law rather than what it was a dozen
+      years ago.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Update time zone data files to <application>tzdata</application>
+      release 2017c for DST law changes in Fiji, Namibia, Northern Cyprus,
+      Sudan, Tonga, and Turks &amp; Caicos Islands, plus historical
+      corrections for Alaska, Apia, Burma, Calcutta, Detroit, Ireland,
+      Namibia, and Pago Pago.
+     </para>
+    </listitem>
+
+   </itemizedlist>
+
+  </sect2>
+ </sect1>
+
  <sect1 id="release-9-5-9">
   <title>Release 9.5.9</title>
 
@@ -12,7 +373,7 @@
   <para>
    This release contains a small number of fixes from 9.5.8.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -24,7 +385,7 @@
 
    <para>
     However, if you are upgrading from a version earlier than 9.5.8,
-    see <xref linkend="release-9-5-8">.
+    see <xref linkend="release-9-5-8"/>.
    </para>
   </sect2>
 
@@ -189,7 +550,7 @@ CREATE OR REPLACE VIEW table_privileges AS
   <para>
    This release contains a variety of fixes from 9.5.7.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -206,7 +567,7 @@ CREATE OR REPLACE VIEW table_privileges AS
 
    <para>
     Also, if you are upgrading from a version earlier than 9.5.7,
-    see <xref linkend="release-9-5-7">.
+    see <xref linkend="release-9-5-7"/>.
    </para>
   </sect2>
 
@@ -431,7 +792,7 @@ UPDATE pg_database SET datallowconn = false WHERE datname = 'template0';
 
     <listitem>
      <para>
-      Fix code for setting <xref linkend="guc-tcp-keepalives-idle"> on
+      Fix code for setting <xref linkend="guc-tcp-keepalives-idle"/> on
       Solaris (Tom Lane)
      </para>
     </listitem>
@@ -771,7 +1132,7 @@ UPDATE pg_database SET datallowconn = false WHERE datname = 'template0';
     <listitem>
      <para>
       Fix <application>pg_upgrade</application> to ensure that the ending WAL record
-      does not have <xref linkend="guc-wal-level"> = <literal>minimum</literal>
+      does not have <xref linkend="guc-wal-level"/> = <literal>minimum</literal>
       (Bruce Momjian)
      </para>
 
@@ -896,7 +1257,7 @@ Branch: REL9_2_STABLE [1188b9b2c] 2017-08-02 15:07:21 -0400
   <para>
    This release contains a variety of fixes from 9.5.6.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -918,7 +1279,7 @@ Branch: REL9_2_STABLE [1188b9b2c] 2017-08-02 15:07:21 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.5.6,
-    see <xref linkend="release-9-5-6">.
+    see <xref linkend="release-9-5-6"/>.
    </para>
   </sect2>
 
@@ -952,7 +1313,7 @@ Branch: REL9_2_STABLE [1188b9b2c] 2017-08-02 15:07:21 -0400
       By itself, this patch will only fix the behavior in newly initdb'd
       databases.  If you wish to apply this change in an existing database,
       follow the corrected procedure shown in the changelog entry for
-      CVE-2017-7547, in <xref linkend="release-9-5-8">.
+      CVE-2017-7547, in <xref linkend="release-9-5-8"/>.
      </para>
     </listitem>
 
@@ -1443,7 +1804,7 @@ Branch: REL9_3_STABLE [3aa16b117] 2017-05-06 22:17:35 -0400
       will use the current and historical DST transition dates of
       the <literal>US/Eastern</literal> zone.  If you don't want that, remove
       the <filename>posixrules</filename> file, or replace it with a copy of some
-      other zone file (see <xref linkend="datatype-timezones">).  Note that
+      other zone file (see <xref linkend="datatype-timezones"/>).  Note that
       due to caching, you may need to restart the server to get such changes
       to take effect.
      </para>
@@ -1465,7 +1826,7 @@ Branch: REL9_3_STABLE [3aa16b117] 2017-05-06 22:17:35 -0400
   <para>
    This release contains a variety of fixes from 9.5.5.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -1483,7 +1844,7 @@ Branch: REL9_3_STABLE [3aa16b117] 2017-05-06 22:17:35 -0400
 
    <para>
     Also, if you are upgrading from a version earlier than 9.5.5,
-    see <xref linkend="release-9-5-5">.
+    see <xref linkend="release-9-5-5"/>.
    </para>
   </sect2>
 
@@ -1543,7 +1904,7 @@ Branch: REL9_3_STABLE [3aa16b117] 2017-05-06 22:17:35 -0400
      </para>
 
      <para>
-      Previously, this was skipped when <xref linkend="guc-wal-level">
+      Previously, this was skipped when <xref linkend="guc-wal-level"/>
       = <literal>minimal</literal>, but actually it's necessary even in that case
       to ensure that the unlogged table is properly reset to empty after a
       crash.
@@ -1621,7 +1982,7 @@ Branch: REL9_4_STABLE [30e3cb307] 2016-11-17 13:31:30 -0300
 
      <para>
       Previously, non-default settings
-      of <xref linkend="guc-default-tablespace"> could result in broken
+      of <xref linkend="guc-default-tablespace"/> could result in broken
       indexes.
      </para>
     </listitem>
@@ -2127,7 +2488,7 @@ Branch: REL9_2_STABLE [60314e28e] 2016-12-13 19:08:09 -0600
   <para>
    This release contains a variety of fixes from 9.5.4.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -2145,7 +2506,7 @@ Branch: REL9_2_STABLE [60314e28e] 2016-12-13 19:08:09 -0600
 
    <para>
     Also, if you are upgrading from a version earlier than 9.5.2,
-    see <xref linkend="release-9-5-2">.
+    see <xref linkend="release-9-5-2"/>.
    </para>
   </sect2>
 
@@ -2316,7 +2677,7 @@ Branch: REL9_4_STABLE [566afa15c] 2016-08-24 22:20:01 -0400
     <listitem>
      <para>
       Fix <command>EXPLAIN</command> to emit valid XML when
-      <xref linkend="guc-track-io-timing"> is on (Markus Winand)
+      <xref linkend="guc-track-io-timing"/> is on (Markus Winand)
      </para>
 
      <para>
@@ -2441,7 +2802,7 @@ Branch: REL9_1_STABLE [7e01c8ef3] 2016-08-14 15:06:02 -0400
      </para>
 
      <para>
-      With <xref linkend="guc-track-commit-timestamp"> turned on, old
+      With <xref linkend="guc-track-commit-timestamp"/> turned on, old
       commit timestamps became inaccessible after a clean server restart.
      </para>
     </listitem>
@@ -2951,7 +3312,7 @@ Branch: REL9_1_STABLE [380dad29d] 2016-09-02 17:29:32 -0400
   <para>
    This release contains a variety of fixes from 9.5.3.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -2963,7 +3324,7 @@ Branch: REL9_1_STABLE [380dad29d] 2016-09-02 17:29:32 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.5.2,
-    see <xref linkend="release-9-5-2">.
+    see <xref linkend="release-9-5-2"/>.
    </para>
   </sect2>
 
@@ -4024,7 +4385,7 @@ Branch: REL9_1_STABLE [a44388ffe] 2016-08-05 12:59:02 -0400
   <para>
    This release contains a variety of fixes from 9.5.2.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -4036,7 +4397,7 @@ Branch: REL9_1_STABLE [a44388ffe] 2016-08-05 12:59:02 -0400
 
    <para>
     However, if you are upgrading from a version earlier than 9.5.2,
-    see <xref linkend="release-9-5-2">.
+    see <xref linkend="release-9-5-2"/>.
    </para>
   </sect2>
 
@@ -4123,7 +4484,7 @@ Branch: REL9_5_STABLE [81deadd31] 2016-04-21 23:17:36 -0400
 -->
      <para>
       Fix corner-case parser failures occurring
-      when <xref linkend="guc-operator-precedence-warning"> is turned on
+      when <xref linkend="guc-operator-precedence-warning"/> is turned on
       (Tom Lane)
      </para>
 
@@ -4525,7 +4886,7 @@ Branch: REL9_1_STABLE [bfc39da64] 2016-05-05 20:09:32 -0400
   <para>
    This release contains a variety of fixes from 9.5.1.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -4809,7 +5170,7 @@ Branch: REL9_4_STABLE [a9613ee69] 2016-03-06 02:43:26 +0900
 
     <listitem>
      <para>
-      Ignore <xref linkend="recovery-min-apply-delay"> parameter until
+      Ignore <xref linkend="recovery-min-apply-delay"/> parameter until
       recovery has reached a consistent state (Michael Paquier)
      </para>
 
@@ -5236,7 +5597,7 @@ Branch: REL9_1_STABLE [e5fd35cc5] 2016-03-25 19:03:54 -0400
   <para>
    This release contains a variety of fixes from 9.5.0.
    For information about new features in the 9.5 major release, see
-   <xref linkend="release-9-5">.
+   <xref linkend="release-9-5"/>.
   </para>
 
   <sect2>
@@ -5726,7 +6087,7 @@ Branch: REL9_1_STABLE [6887d72d0] 2016-02-05 10:59:39 -0500
 
     <listitem>
      <para>
-      Add <link linkend="BRIN">Block Range Indexes</link> (<acronym>BRIN</acronym>)
+      Add <link linkend="brin">Block Range Indexes</link> (<acronym>BRIN</acronym>)
      </para>
     </listitem>
 
@@ -5755,8 +6116,8 @@ Branch: REL9_1_STABLE [6887d72d0] 2016-02-05 10:59:39 -0500
   <title>Migration to Version 9.5</title>
 
    <para>
-    A dump/restore using <xref linkend="app-pg-dumpall">, or use
-    of <xref linkend="pgupgrade">, is required for those wishing to migrate
+    A dump/restore using <xref linkend="app-pg-dumpall"/>, or use
+    of <xref linkend="pgupgrade"/>, is required for those wishing to migrate
     data from any previous release.
    </para>
 
@@ -5789,7 +6150,7 @@ Branch: REL9_1_STABLE [6887d72d0] 2016-02-05 10:59:39 -0500
       before they had inconsistent precedence, behaving like <literal>NOT</literal>
       with respect to their left operand but like their base operator with
       respect to their right operand.  The new configuration
-      parameter <xref linkend="guc-operator-precedence-warning"> can be
+      parameter <xref linkend="guc-operator-precedence-warning"/> can be
       enabled to warn about queries in which these precedence changes result
       in different parsing choices.
      </para>
@@ -5800,7 +6161,7 @@ Branch: REL9_1_STABLE [6887d72d0] 2016-02-05 10:59:39 -0500
 2015-03-31 [0badb06] Bruce ..: pg_ctl:  change default shutdown mode from 'sma..
 -->
      <para>
-      Change <xref linkend="app-pg-ctl">'s default shutdown mode from
+      Change <xref linkend="app-pg-ctl"/>'s default shutdown mode from
       <literal>smart</literal> to <literal>fast</literal> (Bruce Momjian)
      </para>
 
@@ -5868,8 +6229,8 @@ Branch: REL9_1_STABLE [6887d72d0] 2016-02-05 10:59:39 -0500
 -->
      <para>
       Replace configuration parameter <varname>checkpoint_segments</varname>
-      with <xref linkend="guc-min-wal-size">
-      and <xref linkend="guc-max-wal-size"> (Heikki Linnakangas)
+      with <xref linkend="guc-min-wal-size"/>
+      and <xref linkend="guc-max-wal-size"/> (Heikki Linnakangas)
      </para>
 
      <para>
@@ -5999,7 +6360,7 @@ max_wal_size = (3 * checkpoint_segments) * 16MB
 2015-05-15 [b0b7be6] Alvaro..: Add BRIN infrastructure for "inclusion" opclasses
 -->
        <para>
-        Add <link linkend="BRIN">Block Range Indexes</link> (<acronym>BRIN</acronym>)
+        Add <link linkend="brin">Block Range Indexes</link> (<acronym>BRIN</acronym>)
         (&Aacute;lvaro Herrera)
        </para>
 
@@ -6018,7 +6379,7 @@ max_wal_size = (3 * checkpoint_segments) * 16MB
        <para>
         Allow queries to perform accurate distance filtering of
         bounding-box-indexed objects (polygons, circles) using <link
-        linkend="GiST">GiST</link> indexes (Alexander Korotkov, Heikki
+        linkend="gist">GiST</link> indexes (Alexander Korotkov, Heikki
         Linnakangas)
        </para>
 
@@ -6038,7 +6399,7 @@ max_wal_size = (3 * checkpoint_segments) * 16MB
 2015-03-30 [0633a60] Heikki..: Add index-only scan support to range type GiST ..
 -->
        <para>
-        Allow <link linkend="GiST">GiST</link> indexes to perform index-only
+        Allow <link linkend="gist">GiST</link> indexes to perform index-only
         scans (Anastasia Lubennikova, Heikki Linnakangas, Andreas Karlsson)
        </para>
       </listitem>
@@ -6048,14 +6409,14 @@ max_wal_size = (3 * checkpoint_segments) * 16MB
 Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
-        Add configuration parameter <xref linkend="guc-gin-pending-list-limit">
+        Add configuration parameter <xref linkend="guc-gin-pending-list-limit"/>
         to control the size of <acronym>GIN</acronym> pending lists (Fujii Masao)
        </para>
 
        <para>
         This value can also be set on a per-index basis as an index storage
         parameter.  Previously the pending-list size was controlled
-        by <xref linkend="guc-work-mem">, which was awkward because
+        by <xref linkend="guc-work-mem"/>, which was awkward because
         appropriate values for <varname>work_mem</varname> are often much too large
         for this purpose.
        </para>
@@ -6293,7 +6654,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-06-29 [51adcaa] Andres..: Add cluster_name GUC which is included in proce..
 -->
        <para>
-        Add new configuration parameter <xref linkend="guc-cluster-name">
+        Add new configuration parameter <xref linkend="guc-cluster-name"/>
         (Thomas Munro)
        </para>
 
@@ -6312,7 +6673,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Prevent non-superusers from changing <xref
-        linkend="guc-log-disconnections"> on connection startup (Fujii Masao)
+        linkend="guc-log-disconnections"/> on connection startup (Fujii Masao)
        </para>
       </listitem>
 
@@ -6407,8 +6768,8 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Replace configuration parameter <varname>checkpoint_segments</varname>
-        with <xref linkend="guc-min-wal-size">
-        and <xref linkend="guc-max-wal-size"> (Heikki Linnakangas)
+        with <xref linkend="guc-min-wal-size"/>
+        and <xref linkend="guc-max-wal-size"/> (Heikki Linnakangas)
        </para>
 
        <para>
@@ -6451,7 +6812,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
        <para>
         Allow recording of transaction
         commit time stamps when configuration parameter <xref
-        linkend="guc-track-commit-timestamp">
+        linkend="guc-track-commit-timestamp"/>
         is enabled (&Aacute;lvaro Herrera, Petr Jel&iacute;nek)
        </para>
 
@@ -6467,7 +6828,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-12-22 [584e35d] Peter ..: Change local_preload_libraries to PGC_USERSET
 -->
        <para>
-        Allow <xref linkend="guc-local-preload-libraries"> to be set
+        Allow <xref linkend="guc-local-preload-libraries"/> to be set
         by <command>ALTER ROLE SET</command> (Peter Eisentraut, Kyotaro Horiguchi)
        </para>
       </listitem>
@@ -6488,7 +6849,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-06-20 [3bdcf6a] Andres..: Don't allow to disable backend assertions via t..
 -->
        <para>
-        Make configuration parameter <xref linkend="guc-debug-assertions">
+        Make configuration parameter <xref linkend="guc-debug-assertions"/>
         read-only (Andres Freund)
        </para>
 
@@ -6505,7 +6866,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-10-18 [7feaccc] Peter ..: Allow setting effective_io_concurrency even on..
 -->
        <para>
-        Allow setting <xref linkend="guc-effective-io-concurrency"> on
+        Allow setting <xref linkend="guc-effective-io-concurrency"/> on
         systems where it has no effect (Peter Eisentraut)
        </para>
       </listitem>
@@ -6540,7 +6901,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-09-02 [bd3b7a9] Fujii ..: Support ALTER SYSTEM RESET command.
 -->
        <para>
-        Allow <link linkend="SQL-ALTERSYSTEM"><command>ALTER SYSTEM</command></link>
+        Allow <link linkend="sql-altersystem"><command>ALTER SYSTEM</command></link>
         values to be reset with <command>ALTER SYSTEM RESET</command> (Vik
         Fearing)
        </para>
@@ -6616,7 +6977,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-05-15 [ffd3774] Heikki..: Add archive_mode='always' option.
 -->
        <para>
-        Add new <xref linkend="guc-archive-mode"> value
+        Add new <xref linkend="guc-archive-mode"/> value
         <literal>always</literal> to allow standbys to always archive received
         <acronym>WAL</acronym> files (Fujii Masao)
        </para>
@@ -6628,7 +6989,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Add configuration
-        parameter <xref linkend="guc-wal-retrieve-retry-interval"> to
+        parameter <xref linkend="guc-wal-retrieve-retry-interval"/> to
         control <acronym>WAL</acronym> read retry after failure
         (Alexey Vasiliev, Michael Paquier)
        </para>
@@ -6650,7 +7011,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
        <para>
         This feature reduces WAL volume, at the cost of more CPU time spent
         on WAL logging and WAL replay.  It is controlled by a new
-        configuration parameter <xref linkend="guc-wal-compression">, which
+        configuration parameter <xref linkend="guc-wal-compression"/>, which
         currently is off by default.
        </para>
       </listitem>
@@ -6671,14 +7032,14 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Add configuration parameter <xref
-        linkend="guc-log-replication-commands">
+        linkend="guc-log-replication-commands"/>
         to log replication commands (Fujii Masao)
        </para>
 
        <para>
         By default, replication commands, e.g. <link
         linkend="protocol-replication"><literal>IDENTIFY_SYSTEM</literal></link>,
-        are not logged, even when <xref linkend="guc-log-statement"> is set
+        are not logged, even when <xref linkend="guc-log-statement"/> is set
         to <literal>all</literal>.
        </para>
       </listitem>
@@ -6757,7 +7118,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Allow setting multiple target columns in
-        an <link linkend="SQL-UPDATE"><command>UPDATE</command></link> from the result of
+        an <link linkend="sql-update"><command>UPDATE</command></link> from the result of
         a single sub-SELECT (Tom Lane)
        </para>
 
@@ -6772,7 +7133,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-10-07 [df630b0] Alvaro..: Implement SKIP LOCKED for row-level locks
 -->
        <para>
-        Add <link linkend="SQL-SELECT"><command>SELECT</command></link> option
+        Add <link linkend="sql-select"><command>SELECT</command></link> option
         <literal>SKIP LOCKED</literal> to skip locked rows (Thomas Munro)
        </para>
 
@@ -6787,7 +7148,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-05-15 [f6d208d] Simon ..: TABLESAMPLE, SQL Standard and extensible
 -->
        <para>
-        Add <link linkend="SQL-SELECT"><command>SELECT</command></link> option
+        Add <link linkend="sql-select"><command>SELECT</command></link> option
         <literal>TABLESAMPLE</literal> to return a subset of a table (Petr
         Jel&iacute;nek)
        </para>
@@ -6825,7 +7186,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Add more details about sort ordering in <link
-        linkend="SQL-EXPLAIN"><command>EXPLAIN</command></link> output (Marius Timmer,
+        linkend="sql-explain"><command>EXPLAIN</command></link> output (Marius Timmer,
         Lukas Kreft, Arne Scheffer)
        </para>
 
@@ -6840,7 +7201,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-12-18 [35192f0] Alvaro..: Have VACUUM log number of skipped pages due to ..
 -->
        <para>
-        Make <link linkend="SQL-VACUUM"><command>VACUUM</command></link> log the
+        Make <link linkend="sql-vacuum"><command>VACUUM</command></link> log the
         number of pages skipped due to pins (Jim Nasby)
        </para>
       </listitem>
@@ -6850,7 +7211,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-02-20 [d42358e] Alvaro..: Have TRUNCATE update pgstat tuple counters
 -->
        <para>
-        Make <link linkend="SQL-TRUNCATE"><command>TRUNCATE</command></link> properly
+        Make <link linkend="sql-truncate"><command>TRUNCATE</command></link> properly
         update the <literal>pg_stat</literal>* tuple counters (Alexander Shulgin)
        </para>
       </listitem>
@@ -6858,7 +7219,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
        </itemizedlist>
 
        <sect4>
-        <title><xref linkend="SQL-REINDEX"></title>
+        <title><xref linkend="sql-reindex"/></title>
 
         <itemizedlist>
 
@@ -6926,10 +7287,10 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
        <para>
         This feature allows row-by-row control over which users can add,
         modify, or even see rows in a table.  This is controlled by new
-        commands <link linkend="SQL-CREATEPOLICY"><command>CREATE</command></link>/<link
-        linkend="SQL-ALTERPOLICY"><command>ALTER</command></link>/<link
-        linkend="SQL-DROPPOLICY"><command>DROP POLICY</command></link> and <link
-        linkend="SQL-ALTERTABLE"><command>ALTER TABLE ... ENABLE/DISABLE
+        commands <link linkend="sql-createpolicy"><command>CREATE</command></link>/<link
+        linkend="sql-alterpolicy"><command>ALTER</command></link>/<link
+        linkend="sql-droppolicy"><command>DROP POLICY</command></link> and <link
+        linkend="sql-altertable"><command>ALTER TABLE ... ENABLE/DISABLE
         ROW SECURITY</command></link>.
        </para>
       </listitem>
@@ -6941,7 +7302,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
        <para>
         Allow changing of the <acronym>WAL</acronym>
         logging status of a table after creation with <link
-        linkend="SQL-ALTERTABLE"><command>ALTER TABLE ... SET LOGGED /
+        linkend="sql-altertable"><command>ALTER TABLE ... SET LOGGED /
         UNLOGGED</command></link> (Fabr&iacute;zio de Royes Mello)
        </para>
       </listitem>
@@ -6954,10 +7315,10 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Add <literal>IF NOT EXISTS</literal> clause to <link
-        linkend="SQL-CREATETABLEAS"><command>CREATE TABLE AS</command></link>,
-        <link linkend="SQL-CREATEINDEX"><command>CREATE INDEX</command></link>,
-        <link linkend="SQL-CREATESEQUENCE"><command>CREATE SEQUENCE</command></link>,
-        and <link linkend="SQL-CREATEMATERIALIZEDVIEW"><command>CREATE
+        linkend="sql-createtableas"><command>CREATE TABLE AS</command></link>,
+        <link linkend="sql-createindex"><command>CREATE INDEX</command></link>,
+        <link linkend="sql-createsequence"><command>CREATE SEQUENCE</command></link>,
+        and <link linkend="sql-creatematerializedview"><command>CREATE
         MATERIALIZED VIEW</command></link> (Fabr&iacute;zio de Royes Mello)
        </para>
       </listitem>
@@ -6968,7 +7329,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Add support for <literal>IF EXISTS</literal> to <link
-        linkend="SQL-ALTERTABLE"><command>ALTER TABLE ... RENAME
+        linkend="sql-altertable"><command>ALTER TABLE ... RENAME
         CONSTRAINT</command></link> (Bruce Momjian)
        </para>
       </listitem>
@@ -6986,8 +7347,8 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 
        <para>
         This feature is now supported in
-        <xref linkend="SQL-ALTERUSER">, <xref linkend="SQL-ALTERGROUP">,
-        <xref linkend="SQL-ALTERROLE">, <xref linkend="SQL-GRANT">,
+        <xref linkend="sql-alteruser"/>, <xref linkend="sql-altergroup"/>,
+        <xref linkend="sql-alterrole"/>, <xref linkend="sql-grant"/>,
         and <command>ALTER <replaceable>object</replaceable> OWNER TO</command> commands.
        </para>
       </listitem>
@@ -6997,7 +7358,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-12-23 [7eca575] Alvaro..: get_object_address: separate domain constraints..
 -->
        <para>
-        Support comments on <link linkend="SQL-CREATEDOMAIN">domain
+        Support comments on <link linkend="sql-createdomain">domain
         constraints</link> (&Aacute;lvaro Herrera)
        </para>
       </listitem>
@@ -7017,7 +7378,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-05-11 [fa26424] Stephe..: Allow LOCK TABLE .. ROW EXCLUSIVE MODE with IN..
 -->
        <para>
-        Allow <link linkend="SQL-LOCK"><command>LOCK TABLE ... ROW EXCLUSIVE
+        Allow <link linkend="sql-lock"><command>LOCK TABLE ... ROW EXCLUSIVE
         MODE</command></link> for those with <command>INSERT</command> privileges on the
         target table (Stephen Frost)
        </para>
@@ -7049,8 +7410,8 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
        <para>
         Allow <link
-        linkend="SQL-CREATEDATABASE"><command>CREATE</command></link>/<link
-        linkend="SQL-ALTERDATABASE"><command>ALTER DATABASE</command></link>
+        linkend="sql-createdatabase"><command>CREATE</command></link>/<link
+        linkend="sql-alterdatabase"><command>ALTER DATABASE</command></link>
         to manipulate <structname>datistemplate</structname> and
         <structname>datallowconn</structname> (Vik Fearing)
        </para>
@@ -7075,7 +7436,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-07-10 [59efda3] Tom Lane: Implement IMPORT FOREIGN SCHEMA.
 -->
        <para>
-        Add support for <xref linkend="SQL-IMPORTFOREIGNSCHEMA">
+        Add support for <xref linkend="sql-importforeignschema"/>
         (Ronan Dunklau, Michael Paquier, Tom Lane)
        </para>
 
@@ -7164,7 +7525,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
         <para>
          Allow event triggers on table rewrites caused by <link
-         linkend="SQL-ALTERTABLE"><command>ALTER TABLE</command></link> (Dimitri
+         linkend="sql-altertable"><command>ALTER TABLE</command></link> (Dimitri
          Fontaine)
         </para>
        </listitem>
@@ -7175,10 +7536,10 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
         <para>
          Add event trigger support for database-level <link
-         linkend="SQL-COMMENT"><command>COMMENT</command></link>, <link
-         linkend="SQL-SECURITY-LABEL"><command>SECURITY LABEL</command></link>,
-         and <link linkend="SQL-GRANT"><command>GRANT</command></link>/<link
-         linkend="SQL-REVOKE"><command>REVOKE</command></link> (&Aacute;lvaro Herrera)
+         linkend="sql-comment"><command>COMMENT</command></link>, <link
+         linkend="sql-security-label"><command>SECURITY LABEL</command></link>,
+         and <link linkend="sql-grant"><command>GRANT</command></link>/<link
+         linkend="sql-revoke"><command>REVOKE</command></link> (&Aacute;lvaro Herrera)
         </para>
        </listitem>
 
@@ -7645,8 +8006,8 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 
       <para>
        This change adds new commands <link
-       linkend="SQL-CREATETRANSFORM"><command>CREATE</command></link>/<link
-       linkend="SQL-DROPTRANSFORM"><command>DROP TRANSFORM</command></link>.
+       linkend="sql-createtransform"><command>CREATE</command></link>/<link
+       linkend="sql-droptransform"><command>DROP TRANSFORM</command></link>.
        This also adds optional transformations between the <link
        linkend="hstore"><application>hstore</application></link> and <link
        linkend="ltree"><application>ltree</application></link> types to/from <link
@@ -7776,7 +8137,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-01-23 [a179232] Alvaro..: vacuumdb: enable parallel mode
 -->
       <para>
-       Allow <link linkend="APP-VACUUMDB"><application>vacuumdb</application></link> to
+       Allow <link linkend="app-vacuumdb"><application>vacuumdb</application></link> to
        vacuum in parallel using new <option>--jobs</option> option (Dilip Kumar)
       </para>
      </listitem>
@@ -7786,7 +8147,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-11-12 [5094da9] Alvaro..: vacuumdb: don't prompt for passwords over and ..
 -->
       <para>
-       In <link linkend="APP-VACUUMDB"><application>vacuumdb</application></link>, do not
+       In <link linkend="app-vacuumdb"><application>vacuumdb</application></link>, do not
        prompt for the same password repeatedly when multiple connections
        are necessary (Haribabu Kommi, Michael Paquier)
       </para>
@@ -7798,7 +8159,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
       <para>
        Add <option>--verbose</option> option to <link
-       linkend="APP-REINDEXDB"><application>reindexdb</application></link> (Sawada
+       linkend="app-reindexdb"><application>reindexdb</application></link> (Sawada
        Masahiko)
       </para>
      </listitem>
@@ -7829,7 +8190,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
     </itemizedlist>
 
      <sect4>
-      <title><xref linkend="APP-PSQL"></title>
+      <title><xref linkend="app-psql"/></title>
 
       <itemizedlist>
 
@@ -7879,7 +8240,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
         <para>
          Add new option <literal>%l</literal> in <application>psql</application>'s <link
-         linkend="APP-PSQL-variables"><envar>PROMPT</envar></link> variables
+         linkend="app-psql-variables"><envar>PROMPT</envar></link> variables
          to display the current multiline statement line number
          (Sawada Masahiko)
         </para>
@@ -7891,7 +8252,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
         <para>
          Add <literal>\pset</literal> option <link
-         linkend="APP-PSQL-meta-commands"><varname>pager_min_lines</varname></link>
+         linkend="app-psql-meta-commands"><varname>pager_min_lines</varname></link>
          to control pager invocation (Andrew Dunstan)
         </para>
        </listitem>
@@ -7928,7 +8289,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 -->
         <para>
          Add <application>psql</application> tab completion when setting the
-         <xref linkend="guc-search-path"> variable (Jeff Janes)
+         <xref linkend="guc-search-path"/> variable (Jeff Janes)
         </para>
 
         <para>
@@ -7949,7 +8310,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
       </itemizedlist>
 
      <sect5>
-      <title><link linkend="APP-PSQL-meta-commands">Backslash Commands</link></title>
+      <title><link linkend="app-psql-meta-commands">Backslash Commands</link></title>
 
       <itemizedlist>
 
@@ -8045,7 +8406,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
     </sect4>
 
     <sect4>
-     <title><xref linkend="APP-PGDUMP"></title>
+     <title><xref linkend="app-pgdump"/></title>
 
      <itemizedlist>
 
@@ -8113,7 +8474,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
     </sect4>
 
     <sect4>
-     <title><xref linkend="app-pg-ctl"></title>
+     <title><xref linkend="app-pg-ctl"/></title>
 
      <itemizedlist>
 
@@ -8164,7 +8525,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
     </sect4>
 
     <sect4>
-     <title><xref linkend="pgupgrade"></title>
+     <title><xref linkend="pgupgrade"/></title>
 
      <itemizedlist>
 
@@ -8219,7 +8580,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
     </sect4>
 
     <sect4>
-     <title><xref linkend="pgbench"></title>
+     <title><xref linkend="pgbench"/></title>
 
      <itemizedlist>
 
@@ -8640,7 +9001,7 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2014-11-21 [3a82bc6] Heikki..: Add pageinspect functions for inspecting GIN in..
 -->
       <para>
-       Add <link linkend="GIN"><acronym>GIN</acronym></link>
+       Add <link linkend="gin"><acronym>GIN</acronym></link>
        index inspection functions to <link
        linkend="pageinspect"><application>pageinspect</application></link> (Heikki
        Linnakangas, Peter Geoghegan, Michael Paquier)

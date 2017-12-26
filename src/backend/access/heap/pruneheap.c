@@ -39,7 +39,7 @@ typedef struct
 	OffsetNumber redirected[MaxHeapTuplesPerPage * 2];
 	OffsetNumber nowdead[MaxHeapTuplesPerPage];
 	OffsetNumber nowunused[MaxHeapTuplesPerPage];
-	/* marked[i] is TRUE if item i is entered in one of the above arrays */
+	/* marked[i] is true if item i is entered in one of the above arrays */
 	bool		marked[MaxHeapTuplesPerPage + 1];
 } PruneState;
 
@@ -170,7 +170,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
  * or RECENTLY_DEAD (see HeapTupleSatisfiesVacuum).
  *
  * If report_stats is true then we send the number of reclaimed heap-only
- * tuples to pgstats.  (This must be FALSE during vacuum, since vacuum will
+ * tuples to pgstats.  (This must be false during vacuum, since vacuum will
  * send its own new total to pgstats, and we don't want this delta applied
  * on top of that.)
  *
@@ -473,7 +473,7 @@ heap_prune_chain(Relation relation, Buffer buffer, OffsetNumber rootoffnum,
 		 * Check the tuple XMIN against prior XMAX, if any
 		 */
 		if (TransactionIdIsValid(priorXmax) &&
-			!HeapTupleUpdateXmaxMatchesXmin(priorXmax, htup))
+			!TransactionIdEquals(HeapTupleHeaderGetXmin(htup), priorXmax))
 			break;
 
 		/*
@@ -813,7 +813,7 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 			htup = (HeapTupleHeader) PageGetItem(page, lp);
 
 			if (TransactionIdIsValid(priorXmax) &&
-				!HeapTupleUpdateXmaxMatchesXmin(priorXmax, htup))
+				!TransactionIdEquals(priorXmax, HeapTupleHeaderGetXmin(htup)))
 				break;
 
 			/* Remember the root line pointer for this item */

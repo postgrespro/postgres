@@ -790,7 +790,7 @@ ineq_histogram_selectivity(PlannerInfo *root,
 	 * hand!  (For example, we might have a '<=' operator rather than the '<'
 	 * operator that will appear in staop.)  For now, assume that whatever
 	 * appears in pg_statistic is sorted the same way our operator sorts, or
-	 * the reverse way if isgt is TRUE.
+	 * the reverse way if isgt is true.
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple) &&
 		statistic_proc_security_check(vardata, opproc->fn_oid) &&
@@ -2767,29 +2767,67 @@ neqjoinsel(PG_FUNCTION_ARGS)
 	List	   *args = (List *) PG_GETARG_POINTER(2);
 	JoinType	jointype = (JoinType) PG_GETARG_INT16(3);
 	SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) PG_GETARG_POINTER(4);
-	Oid			eqop;
 	float8		result;
 
-	/*
-	 * We want 1 - eqjoinsel() where the equality operator is the one
-	 * associated with this != operator, that is, its negator.
-	 */
-	eqop = get_negator(operator);
-	if (eqop)
+	if (jointype == JOIN_SEMI || jointype == JOIN_ANTI)
 	{
-		result = DatumGetFloat8(DirectFunctionCall5(eqjoinsel,
-													PointerGetDatum(root),
-													ObjectIdGetDatum(eqop),
-													PointerGetDatum(args),
-													Int16GetDatum(jointype),
-													PointerGetDatum(sjinfo)));
+		/*
+		 * For semi-joins, if there is more than one distinct value in the RHS
+		 * relation then every non-null LHS row must find a row to join since
+		 * it can only be equal to one of them.  We'll assume that there is
+		 * always more than one distinct RHS value for the sake of stability,
+		 * though in theory we could have special cases for empty RHS
+		 * (selectivity = 0) and single-distinct-value RHS (selectivity =
+		 * fraction of LHS that has the same value as the single RHS value).
+		 *
+		 * For anti-joins, if we use the same assumption that there is more
+		 * than one distinct key in the RHS relation, then every non-null LHS
+		 * row must be suppressed by the anti-join.
+		 *
+		 * So either way, the selectivity estimate should be 1 - nullfrac.
+		 */
+		VariableStatData leftvar;
+		VariableStatData rightvar;
+		bool		reversed;
+		HeapTuple	statsTuple;
+		double		nullfrac;
+
+		get_join_variables(root, args, sjinfo, &leftvar, &rightvar, &reversed);
+		statsTuple = reversed ? rightvar.statsTuple : leftvar.statsTuple;
+		if (HeapTupleIsValid(statsTuple))
+			nullfrac = ((Form_pg_statistic) GETSTRUCT(statsTuple))->stanullfrac;
+		else
+			nullfrac = 0.0;
+		ReleaseVariableStats(leftvar);
+		ReleaseVariableStats(rightvar);
+
+		result = 1.0 - nullfrac;
 	}
 	else
 	{
-		/* Use default selectivity (should we raise an error instead?) */
-		result = DEFAULT_EQ_SEL;
+		/*
+		 * We want 1 - eqjoinsel() where the equality operator is the one
+		 * associated with this != operator, that is, its negator.
+		 */
+		Oid			eqop = get_negator(operator);
+
+		if (eqop)
+		{
+			result = DatumGetFloat8(DirectFunctionCall5(eqjoinsel,
+														PointerGetDatum(root),
+														ObjectIdGetDatum(eqop),
+														PointerGetDatum(args),
+														Int16GetDatum(jointype),
+														PointerGetDatum(sjinfo)));
+		}
+		else
+		{
+			/* Use default selectivity (should we raise an error instead?) */
+			result = DEFAULT_EQ_SEL;
+		}
+		result = 1.0 - result;
 	}
-	result = 1.0 - result;
+
 	PG_RETURN_FLOAT8(result);
 }
 
@@ -3361,6 +3399,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 					List **pgset)
 {
 	List	   *varinfos = NIL;
+	double		srf_multiplier = 1.0;
 	double		numdistinct;
 	ListCell   *l;
 	int			i;
@@ -3394,6 +3433,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 	foreach(l, groupExprs)
 	{
 		Node	   *groupexpr = (Node *) lfirst(l);
+		double		this_srf_multiplier;
 		VariableStatData vardata;
 		List	   *varshere;
 		ListCell   *l2;
@@ -3401,6 +3441,21 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		/* is expression in this grouping set? */
 		if (pgset && !list_member_int(*pgset, i++))
 			continue;
+
+		/*
+		 * Set-returning functions in grouping columns are a bit problematic.
+		 * The code below will effectively ignore their SRF nature and come up
+		 * with a numdistinct estimate as though they were scalar functions.
+		 * We compensate by scaling up the end result by the largest SRF
+		 * rowcount estimate.  (This will be an overestimate if the SRF
+		 * produces multiple copies of any output value, but it seems best to
+		 * assume the SRF's outputs are distinct.  In any case, it's probably
+		 * pointless to worry too much about this without much better
+		 * estimates for SRF output rowcounts than we have today.)
+		 */
+		this_srf_multiplier = expression_returns_set_rows(groupexpr);
+		if (srf_multiplier < this_srf_multiplier)
+			srf_multiplier = this_srf_multiplier;
 
 		/* Short-circuit for expressions returning boolean */
 		if (exprType(groupexpr) == BOOLOID)
@@ -3467,9 +3522,15 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 	 */
 	if (varinfos == NIL)
 	{
+		/* Apply SRF multiplier as we would do in the long path */
+		numdistinct *= srf_multiplier;
+		/* Round off */
+		numdistinct = ceil(numdistinct);
 		/* Guard against out-of-range answers */
 		if (numdistinct > input_rows)
 			numdistinct = input_rows;
+		if (numdistinct < 1.0)
+			numdistinct = 1.0;
 		return numdistinct;
 	}
 
@@ -3638,6 +3699,10 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		varinfos = newvarinfos;
 	} while (varinfos != NIL);
 
+	/* Now we can account for the effects of any SRFs */
+	numdistinct *= srf_multiplier;
+
+	/* Round off */
 	numdistinct = ceil(numdistinct);
 
 	/* Guard against out-of-range answers */
@@ -3814,7 +3879,7 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
  *
  * Varinfos that aren't for simple Vars are ignored.
  *
- * Return TRUE if we're able to find a match, FALSE otherwise.
+ * Return true if we're able to find a match, false otherwise.
  */
 static bool
 estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
@@ -4527,12 +4592,12 @@ convert_timevalue_to_scalar(Datum value, Oid typid)
  *	args: clause argument list
  *	varRelid: see specs for restriction selectivity functions
  *
- * Outputs: (these are valid only if TRUE is returned)
+ * Outputs: (these are valid only if true is returned)
  *	*vardata: gets information about variable (see examine_variable)
  *	*other: gets other clause argument, aggressively reduced to a constant
- *	*varonleft: set TRUE if variable is on the left, FALSE if on the right
+ *	*varonleft: set true if variable is on the left, false if on the right
  *
- * Returns TRUE if a variable is identified, otherwise FALSE.
+ * Returns true if a variable is identified, otherwise false.
  *
  * Note: if there are Vars on both sides of the clause, we must fail, because
  * callers are expecting that the other side will act like a pseudoconstant.
@@ -4648,12 +4713,12 @@ get_join_variables(PlannerInfo *root, List *args, SpecialJoinInfo *sjinfo,
  *	atttype, atttypmod: actual type/typmod of the "var" expression.  This is
  *		commonly the same as the exposed type of the variable argument,
  *		but can be different in binary-compatible-type cases.
- *	isunique: TRUE if we were able to match the var to a unique index or a
+ *	isunique: true if we were able to match the var to a unique index or a
  *		single-column DISTINCT clause, implying its values are unique for
  *		this query.  (Caution: this should be trusted for statistical
  *		purposes only, since we do not check indimmediate nor verify that
  *		the exact same definition of equality applies.)
- *	acl_ok: TRUE if current user has permission to read the column(s)
+ *	acl_ok: true if current user has permission to read the column(s)
  *		underlying the pg_statistic entry.  This is consulted by
  *		statistic_proc_security_check().
  *
@@ -5060,7 +5125,7 @@ statistic_proc_security_check(VariableStatData *vardata, Oid func_oid)
  *	  Estimate the number of distinct values of a variable.
  *
  * vardata: results of examine_variable
- * *isdefault: set to TRUE if the result is a default rather than based on
+ * *isdefault: set to true if the result is a default rather than based on
  * anything meaningful.
  *
  * NB: be careful to produce a positive integral result, since callers may
@@ -5193,8 +5258,8 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 /*
  * get_variable_range
  *		Estimate the minimum and maximum value of the specified variable.
- *		If successful, store values in *min and *max, and return TRUE.
- *		If no data available, return FALSE.
+ *		If successful, store values in *min and *max, and return true.
+ *		If no data available, return false.
  *
  * sortop is the "<" comparison operator to use.  This should generally
  * be "<" not ">", as only the former is likely to be found in pg_statistic.
@@ -5327,9 +5392,9 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata, Oid sortop,
  *		Attempt to identify the current *actual* minimum and/or maximum
  *		of the specified variable, by looking for a suitable btree index
  *		and fetching its low and/or high values.
- *		If successful, store values in *min and *max, and return TRUE.
+ *		If successful, store values in *min and *max, and return true.
  *		(Either pointer can be NULL if that endpoint isn't needed.)
- *		If no data available, return FALSE.
+ *		If no data available, return false.
  *
  * sortop is the "<" comparison operator to use.
  */

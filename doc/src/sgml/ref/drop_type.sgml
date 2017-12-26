@@ -3,7 +3,7 @@ doc/src/sgml/ref/drop_type.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-DROPTYPE">
+<refentry id="sql-droptype">
  <indexterm zone="sql-droptype">
   <primary>DROP TYPE</primary>
  </indexterm>
@@ -64,7 +64,7 @@ DROP TYPE [ IF EXISTS ] <replaceable class="parameter">name</replaceable> [, ...
       Automatically drop objects that depend on the type (such as
       table columns, functions, and operators),
       and in turn all objects that depend on those objects
-      (see <xref linkend="ddl-depend">).
+      (see <xref linkend="ddl-depend"/>).
      </para>
     </listitem>
    </varlistentry>
@@ -81,7 +81,7 @@ DROP TYPE [ IF EXISTS ] <replaceable class="parameter">name</replaceable> [, ...
   </variablelist>
  </refsect1>
 
- <refsect1 id="SQL-DROPTYPE-examples">
+ <refsect1 id="sql-droptype-examples">
   <title>Examples</title>
 
   <para>
@@ -91,7 +91,7 @@ DROP TYPE box;
 </programlisting></para>
  </refsect1>
 
- <refsect1 id="SQL-DROPTYPE-compatibility">
+ <refsect1 id="sql-droptype-compatibility">
   <title>Compatibility</title>
 
   <para>
@@ -104,12 +104,12 @@ DROP TYPE box;
   </para>
  </refsect1>
 
- <refsect1 id="SQL-DROPTYPE-see-also">
+ <refsect1 id="sql-droptype-see-also">
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-altertype"></member>
-   <member><xref linkend="sql-createtype"></member>
+   <member><xref linkend="sql-altertype"/></member>
+   <member><xref linkend="sql-createtype"/></member>
   </simplelist>
  </refsect1>
 

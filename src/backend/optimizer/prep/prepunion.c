@@ -590,8 +590,8 @@ generate_union_path(SetOperationStmt *op, PlannerInfo *root,
 	/*
 	 * Append the child results together.
 	 */
-	path = (Path *) create_append_path(result_rel, pathlist, NULL, 0, NIL);
-
+	path = (Path *) create_append_path(result_rel, pathlist, NIL,
+									   NULL, 0, false, NIL, -1);
 	/* We have to manually jam the right tlist into the path; ick */
 	path->pathtarget = create_pathtarget(root, tlist);
 
@@ -702,7 +702,8 @@ generate_nonunion_path(SetOperationStmt *op, PlannerInfo *root,
 	/*
 	 * Append the child results together.
 	 */
-	path = (Path *) create_append_path(result_rel, pathlist, NULL, 0, NIL);
+	path = (Path *) create_append_path(result_rel, pathlist, NIL,
+									   NULL, 0, false, NIL, -1);
 
 	/* We have to manually jam the right tlist into the path; ick */
 	path->pathtarget = create_pathtarget(root, tlist);
@@ -977,6 +978,7 @@ choose_hashed_setop(PlannerInfo *root, List *groupClauses,
 	 */
 	cost_agg(&hashed_p, root, AGG_HASHED, NULL,
 			 numGroupCols, dNumGroups,
+			 NIL,
 			 input_path->startup_cost, input_path->total_cost,
 			 input_path->rows);
 
@@ -991,6 +993,7 @@ choose_hashed_setop(PlannerInfo *root, List *groupClauses,
 			  input_path->rows, input_path->pathtarget->width,
 			  0.0, work_mem, -1.0);
 	cost_group(&sorted_p, root, numGroupCols, dNumGroups,
+			   NIL,
 			   sorted_p.startup_cost, sorted_p.total_cost,
 			   input_path->rows);
 

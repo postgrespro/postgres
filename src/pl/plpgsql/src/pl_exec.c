@@ -22,6 +22,7 @@
 #include "access/tupconvert.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
+#include "executor/execExpr.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -268,12 +269,20 @@ static int exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 			   Portal portal, bool prefetch_ok);
 static ParamListInfo setup_param_list(PLpgSQL_execstate *estate,
 				 PLpgSQL_expr *expr);
-static ParamListInfo setup_unshared_param_list(PLpgSQL_execstate *estate,
-						  PLpgSQL_expr *expr);
-static void plpgsql_param_fetch(ParamListInfo params, int paramid);
+static ParamExternData *plpgsql_param_fetch(ParamListInfo params,
+					int paramid, bool speculative,
+					ParamExternData *prm);
+static void plpgsql_param_compile(ParamListInfo params, Param *param,
+					  ExprState *state,
+					  Datum *resv, bool *resnull);
+static void plpgsql_param_eval_var(ExprState *state, ExprEvalStep *op,
+					   ExprContext *econtext);
+static void plpgsql_param_eval_var_ro(ExprState *state, ExprEvalStep *op,
+						  ExprContext *econtext);
+static void plpgsql_param_eval_non_var(ExprState *state, ExprEvalStep *op,
+						   ExprContext *econtext);
 static void exec_move_row(PLpgSQL_execstate *estate,
-			  PLpgSQL_rec *rec,
-			  PLpgSQL_row *row,
+			  PLpgSQL_variable *target,
 			  HeapTuple tup, TupleDesc tupdesc);
 static HeapTuple make_tuple_from_row(PLpgSQL_execstate *estate,
 					PLpgSQL_row *row,
@@ -281,8 +290,7 @@ static HeapTuple make_tuple_from_row(PLpgSQL_execstate *estate,
 static HeapTuple get_tuple_from_datum(Datum value);
 static TupleDesc get_tupdesc_from_datum(Datum value);
 static void exec_move_row_from_datum(PLpgSQL_execstate *estate,
-						 PLpgSQL_rec *rec,
-						 PLpgSQL_row *row,
+						 PLpgSQL_variable *target,
 						 Datum value);
 static char *convert_value_to_string(PLpgSQL_execstate *estate,
 						Datum value, Oid valtype);
@@ -425,13 +433,15 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 					if (!fcinfo->argnull[i])
 					{
 						/* Assign row value from composite datum */
-						exec_move_row_from_datum(&estate, NULL, row,
+						exec_move_row_from_datum(&estate,
+												 (PLpgSQL_variable *) row,
 												 fcinfo->arg[i]);
 					}
 					else
 					{
 						/* If arg is null, treat it as an empty row */
-						exec_move_row(&estate, NULL, row, NULL, NULL);
+						exec_move_row(&estate, (PLpgSQL_variable *) row,
+									  NULL, NULL);
 					}
 					/* clean up after exec_move_row() */
 					exec_eval_cleanup(&estate);
@@ -462,7 +472,7 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 	estate.err_text = NULL;
 	estate.err_stmt = (PLpgSQL_stmt *) (func->action);
 	rc = exec_stmt_block(&estate, func->action);
-	if (rc != PLPGSQL_RC_RETURN)
+	if (rc != PLPGSQL_RC_RETURN && func->fn_rettype)
 	{
 		estate.err_stmt = NULL;
 		estate.err_text = NULL;
@@ -509,6 +519,12 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 	}
 	else if (!estate.retisnull)
 	{
+		if (!func->fn_rettype)
+		{
+			ereport(ERROR,
+					(errmsg("cannot return a value from a procedure")));
+		}
+
 		if (estate.retistuple)
 		{
 			/*
@@ -1178,7 +1194,6 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 {
 	volatile int rc = -1;
 	int			i;
-	int			n;
 
 	/*
 	 * First initialize all variables declared in this block
@@ -1187,13 +1202,17 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 
 	for (i = 0; i < block->n_initvars; i++)
 	{
-		n = block->initvarnos[i];
+		int			n = block->initvarnos[i];
+		PLpgSQL_datum *datum = estate->datums[n];
 
-		switch (estate->datums[n]->dtype)
+		/*
+		 * The set of dtypes handled here must match plpgsql_add_initdatums().
+		 */
+		switch (datum->dtype)
 		{
 			case PLPGSQL_DTYPE_VAR:
 				{
-					PLpgSQL_var *var = (PLpgSQL_var *) (estate->datums[n]);
+					PLpgSQL_var *var = (PLpgSQL_var *) datum;
 
 					/*
 					 * Free any old value, in case re-entering block, and
@@ -1235,7 +1254,7 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 
 			case PLPGSQL_DTYPE_REC:
 				{
-					PLpgSQL_rec *rec = (PLpgSQL_rec *) (estate->datums[n]);
+					PLpgSQL_rec *rec = (PLpgSQL_rec *) datum;
 
 					if (rec->freetup)
 					{
@@ -1252,13 +1271,8 @@ exec_stmt_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
 				}
 				break;
 
-			case PLPGSQL_DTYPE_RECFIELD:
-			case PLPGSQL_DTYPE_ARRAYELEM:
-				break;
-
 			default:
-				elog(ERROR, "unrecognized dtype: %d",
-					 estate->datums[n]->dtype);
+				elog(ERROR, "unrecognized dtype: %d", datum->dtype);
 		}
 	}
 
@@ -2321,7 +2335,7 @@ exec_stmt_forc(PLpgSQL_execstate *estate, PLpgSQL_stmt_forc *stmt)
 		set_args.sqlstmt = stmt->argquery;
 		set_args.into = true;
 		/* XXX historically this has not been STRICT */
-		set_args.row = (PLpgSQL_row *)
+		set_args.target = (PLpgSQL_variable *)
 			(estate->datums[curvar->cursor_explicit_argrow]);
 
 		if (exec_stmt_execsql(estate, &set_args) != PLPGSQL_RC_OK)
@@ -2342,9 +2356,9 @@ exec_stmt_forc(PLpgSQL_execstate *estate, PLpgSQL_stmt_forc *stmt)
 		exec_prepare_plan(estate, query, curvar->cursor_options);
 
 	/*
-	 * Set up short-lived ParamListInfo
+	 * Set up ParamListInfo for this query
 	 */
-	paramLI = setup_unshared_param_list(estate, query);
+	paramLI = setup_param_list(estate, query);
 
 	/*
 	 * Open the cursor (the paramlist will get copied into the portal)
@@ -3436,17 +3450,16 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	estate->datums = palloc(sizeof(PLpgSQL_datum *) * estate->ndatums);
 	/* caller is expected to fill the datums array */
 
-	/* initialize ParamListInfo with one entry per datum, all invalid */
+	/* initialize our ParamListInfo with appropriate hook functions */
 	estate->paramLI = (ParamListInfo)
-		palloc0(offsetof(ParamListInfoData, params) +
-				estate->ndatums * sizeof(ParamExternData));
+		palloc(offsetof(ParamListInfoData, params));
 	estate->paramLI->paramFetch = plpgsql_param_fetch;
 	estate->paramLI->paramFetchArg = (void *) estate;
+	estate->paramLI->paramCompile = plpgsql_param_compile;
+	estate->paramLI->paramCompileArg = NULL;	/* not needed */
 	estate->paramLI->parserSetup = (ParserSetupHook) plpgsql_parser_setup;
 	estate->paramLI->parserSetupArg = NULL; /* filled during use */
 	estate->paramLI->numParams = estate->ndatums;
-	estate->paramLI->paramMask = NULL;
-	estate->params_dirty = false;
 
 	/* set up for use of appropriate simple-expression EState and cast hash */
 	if (simple_eval_estate)
@@ -3749,8 +3762,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 	{
 		SPITupleTable *tuptab = SPI_tuptable;
 		uint64		n = SPI_processed;
-		PLpgSQL_rec *rec = NULL;
-		PLpgSQL_row *row = NULL;
+		PLpgSQL_variable *target;
 
 		/* If the statement did not return a tuple table, complain */
 		if (tuptab == NULL)
@@ -3758,13 +3770,8 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("INTO used with a command that cannot return data")));
 
-		/* Determine if we assign to a record or a row */
-		if (stmt->rec != NULL)
-			rec = (PLpgSQL_rec *) (estate->datums[stmt->rec->dno]);
-		else if (stmt->row != NULL)
-			row = (PLpgSQL_row *) (estate->datums[stmt->row->dno]);
-		else
-			elog(ERROR, "unsupported target");
+		/* Fetch target's datum entry */
+		target = (PLpgSQL_variable *) estate->datums[stmt->target->dno];
 
 		/*
 		 * If SELECT ... INTO specified STRICT, and the query didn't find
@@ -3788,7 +3795,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 						 errdetail ? errdetail_internal("parameters: %s", errdetail) : 0));
 			}
 			/* set the target to NULL(s) */
-			exec_move_row(estate, rec, row, NULL, tuptab->tupdesc);
+			exec_move_row(estate, target, NULL, tuptab->tupdesc);
 		}
 		else
 		{
@@ -3807,7 +3814,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 						 errdetail ? errdetail_internal("parameters: %s", errdetail) : 0));
 			}
 			/* Put the first result row into the target */
-			exec_move_row(estate, rec, row, tuptab->vals[0], tuptab->tupdesc);
+			exec_move_row(estate, target, tuptab->vals[0], tuptab->tupdesc);
 		}
 
 		/* Clean up */
@@ -3940,8 +3947,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 	{
 		SPITupleTable *tuptab = SPI_tuptable;
 		uint64		n = SPI_processed;
-		PLpgSQL_rec *rec = NULL;
-		PLpgSQL_row *row = NULL;
+		PLpgSQL_variable *target;
 
 		/* If the statement did not return a tuple table, complain */
 		if (tuptab == NULL)
@@ -3949,13 +3955,8 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("INTO used with a command that cannot return data")));
 
-		/* Determine if we assign to a record or a row */
-		if (stmt->rec != NULL)
-			rec = (PLpgSQL_rec *) (estate->datums[stmt->rec->dno]);
-		else if (stmt->row != NULL)
-			row = (PLpgSQL_row *) (estate->datums[stmt->row->dno]);
-		else
-			elog(ERROR, "unsupported target");
+		/* Fetch target's datum entry */
+		target = (PLpgSQL_variable *) estate->datums[stmt->target->dno];
 
 		/*
 		 * If SELECT ... INTO specified STRICT, and the query didn't find
@@ -3979,7 +3980,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 						 errdetail ? errdetail_internal("parameters: %s", errdetail) : 0));
 			}
 			/* set the target to NULL(s) */
-			exec_move_row(estate, rec, row, NULL, tuptab->tupdesc);
+			exec_move_row(estate, target, NULL, tuptab->tupdesc);
 		}
 		else
 		{
@@ -3999,7 +4000,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 			}
 
 			/* Put the first result row into the target */
-			exec_move_row(estate, rec, row, tuptab->vals[0], tuptab->tupdesc);
+			exec_move_row(estate, target, tuptab->vals[0], tuptab->tupdesc);
 		}
 		/* clean up after exec_move_row() */
 		exec_eval_cleanup(estate);
@@ -4157,7 +4158,7 @@ exec_stmt_open(PLpgSQL_execstate *estate, PLpgSQL_stmt_open *stmt)
 			set_args.sqlstmt = stmt->argquery;
 			set_args.into = true;
 			/* XXX historically this has not been STRICT */
-			set_args.row = (PLpgSQL_row *)
+			set_args.target = (PLpgSQL_variable *)
 				(estate->datums[curvar->cursor_explicit_argrow]);
 
 			if (exec_stmt_execsql(estate, &set_args) != PLPGSQL_RC_OK)
@@ -4177,12 +4178,12 @@ exec_stmt_open(PLpgSQL_execstate *estate, PLpgSQL_stmt_open *stmt)
 	}
 
 	/*
-	 * Set up short-lived ParamListInfo
+	 * Set up ParamListInfo for this query
 	 */
-	paramLI = setup_unshared_param_list(estate, query);
+	paramLI = setup_param_list(estate, query);
 
 	/*
-	 * Open the cursor
+	 * Open the cursor (the paramlist will get copied into the portal)
 	 */
 	portal = SPI_cursor_open_with_paramlist(curname, query->plan,
 											paramLI,
@@ -4215,8 +4216,6 @@ static int
 exec_stmt_fetch(PLpgSQL_execstate *estate, PLpgSQL_stmt_fetch *stmt)
 {
 	PLpgSQL_var *curvar;
-	PLpgSQL_rec *rec = NULL;
-	PLpgSQL_row *row = NULL;
 	long		how_many = stmt->how_many;
 	SPITupleTable *tuptab;
 	Portal		portal;
@@ -4263,16 +4262,7 @@ exec_stmt_fetch(PLpgSQL_execstate *estate, PLpgSQL_stmt_fetch *stmt)
 
 	if (!stmt->is_move)
 	{
-		/* ----------
-		 * Determine if we fetch into a record or a row
-		 * ----------
-		 */
-		if (stmt->rec != NULL)
-			rec = (PLpgSQL_rec *) (estate->datums[stmt->rec->dno]);
-		else if (stmt->row != NULL)
-			row = (PLpgSQL_row *) (estate->datums[stmt->row->dno]);
-		else
-			elog(ERROR, "unsupported target");
+		PLpgSQL_variable *target;
 
 		/* ----------
 		 * Fetch 1 tuple from the cursor
@@ -4286,10 +4276,11 @@ exec_stmt_fetch(PLpgSQL_execstate *estate, PLpgSQL_stmt_fetch *stmt)
 		 * Set the target appropriately.
 		 * ----------
 		 */
+		target = (PLpgSQL_variable *) estate->datums[stmt->target->dno];
 		if (n == 0)
-			exec_move_row(estate, rec, row, NULL, tuptab->tupdesc);
+			exec_move_row(estate, target, NULL, tuptab->tupdesc);
 		else
-			exec_move_row(estate, rec, row, tuptab->vals[0], tuptab->tupdesc);
+			exec_move_row(estate, target, tuptab->vals[0], tuptab->tupdesc);
 
 		exec_eval_cleanup(estate);
 		SPI_freetuptable(tuptab);
@@ -4508,7 +4499,8 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				if (isNull)
 				{
 					/* If source is null, just assign nulls to the row */
-					exec_move_row(estate, NULL, row, NULL, NULL);
+					exec_move_row(estate, (PLpgSQL_variable *) row,
+								  NULL, NULL);
 				}
 				else
 				{
@@ -4517,7 +4509,8 @@ exec_assign_value(PLpgSQL_execstate *estate,
 						ereport(ERROR,
 								(errcode(ERRCODE_DATATYPE_MISMATCH),
 								 errmsg("cannot assign non-composite value to a row variable")));
-					exec_move_row_from_datum(estate, NULL, row, value);
+					exec_move_row_from_datum(estate, (PLpgSQL_variable *) row,
+											 value);
 				}
 				break;
 			}
@@ -4532,7 +4525,8 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				if (isNull)
 				{
 					/* If source is null, just assign nulls to the record */
-					exec_move_row(estate, rec, NULL, NULL, NULL);
+					exec_move_row(estate, (PLpgSQL_variable *) rec,
+								  NULL, NULL);
 				}
 				else
 				{
@@ -4541,7 +4535,8 @@ exec_assign_value(PLpgSQL_execstate *estate,
 						ereport(ERROR,
 								(errcode(ERRCODE_DATATYPE_MISMATCH),
 								 errmsg("cannot assign non-composite value to a record variable")));
-					exec_move_row_from_datum(estate, rec, NULL, value);
+					exec_move_row_from_datum(estate, (PLpgSQL_variable *) rec,
+											 value);
 				}
 				break;
 			}
@@ -5282,15 +5277,15 @@ exec_run_select(PLpgSQL_execstate *estate,
 						  portalP == NULL ? CURSOR_OPT_PARALLEL_OK : 0);
 
 	/*
-	 * If a portal was requested, put the query into the portal
+	 * Set up ParamListInfo to pass to executor
+	 */
+	paramLI = setup_param_list(estate, expr);
+
+	/*
+	 * If a portal was requested, put the query and paramlist into the portal
 	 */
 	if (portalP != NULL)
 	{
-		/*
-		 * Set up short-lived ParamListInfo
-		 */
-		paramLI = setup_unshared_param_list(estate, expr);
-
 		*portalP = SPI_cursor_open_with_paramlist(NULL, expr->plan,
 												  paramLI,
 												  estate->readonly_func);
@@ -5300,11 +5295,6 @@ exec_run_select(PLpgSQL_execstate *estate,
 		exec_eval_cleanup(estate);
 		return SPI_OK_CURSOR;
 	}
-
-	/*
-	 * Set up ParamListInfo to pass to executor
-	 */
-	paramLI = setup_param_list(estate, expr);
 
 	/*
 	 * Execute the query
@@ -5335,22 +5325,14 @@ static int
 exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 			   Portal portal, bool prefetch_ok)
 {
-	PLpgSQL_rec *rec = NULL;
-	PLpgSQL_row *row = NULL;
+	PLpgSQL_variable *var;
 	SPITupleTable *tuptab;
 	bool		found = false;
 	int			rc = PLPGSQL_RC_OK;
 	uint64		n;
 
-	/*
-	 * Determine if we assign to a record or a row
-	 */
-	if (stmt->rec != NULL)
-		rec = (PLpgSQL_rec *) (estate->datums[stmt->rec->dno]);
-	else if (stmt->row != NULL)
-		row = (PLpgSQL_row *) (estate->datums[stmt->row->dno]);
-	else
-		elog(ERROR, "unsupported target");
+	/* Fetch loop variable's datum entry */
+	var = (PLpgSQL_variable *) estate->datums[stmt->var->dno];
 
 	/*
 	 * Make sure the portal doesn't get closed by the user statements we
@@ -5373,7 +5355,7 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 	 */
 	if (n == 0)
 	{
-		exec_move_row(estate, rec, row, NULL, tuptab->tupdesc);
+		exec_move_row(estate, var, NULL, tuptab->tupdesc);
 		exec_eval_cleanup(estate);
 	}
 	else
@@ -5391,7 +5373,7 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 			/*
 			 * Assign the tuple to the target
 			 */
-			exec_move_row(estate, rec, row, tuptab->vals[i], tuptab->tupdesc);
+			exec_move_row(estate, var, tuptab->vals[i], tuptab->tupdesc);
 			exec_eval_cleanup(estate);
 
 			/*
@@ -5491,12 +5473,12 @@ loop_exit:
  *								a Datum by directly calling ExecEvalExpr().
  *
  * If successful, store results into *result, *isNull, *rettype, *rettypmod
- * and return TRUE.  If the expression cannot be handled by simple evaluation,
- * return FALSE.
+ * and return true.  If the expression cannot be handled by simple evaluation,
+ * return false.
  *
  * Because we only store one execution tree for a simple expression, we
  * can't handle recursion cases.  So, if we see the tree is already busy
- * with an evaluation in the current xact, we just return FALSE and let the
+ * with an evaluation in the current xact, we just return false and let the
  * caller run the expression the hard way.  (Other alternatives such as
  * creating a new tree for a recursive call either introduce memory leaks,
  * or add enough bookkeeping to be doubtful wins anyway.)  Another case that
@@ -5526,7 +5508,6 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	ExprContext *econtext = estate->eval_econtext;
 	LocalTransactionId curlxid = MyProc->lxid;
 	CachedPlan *cplan;
-	ParamListInfo paramLI;
 	void	   *save_setup_arg;
 	MemoryContext oldcontext;
 
@@ -5574,6 +5555,14 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	*rettypmod = expr->expr_simple_typmod;
 
 	/*
+	 * Set up ParamListInfo to pass to executor.  For safety, save and restore
+	 * estate->paramLI->parserSetupArg around our use of the param list.
+	 */
+	save_setup_arg = estate->paramLI->parserSetupArg;
+
+	econtext->ecxt_param_list_info = setup_param_list(estate, expr);
+
+	/*
 	 * Prepare the expression for execution, if it's not been done already in
 	 * the current transaction.  (This will be forced to happen if we called
 	 * exec_save_simple_expr above.)
@@ -5581,7 +5570,9 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	if (expr->expr_simple_lxid != curlxid)
 	{
 		oldcontext = MemoryContextSwitchTo(estate->simple_eval_estate->es_query_cxt);
-		expr->expr_simple_state = ExecInitExpr(expr->expr_simple_expr, NULL);
+		expr->expr_simple_state =
+			ExecInitExprWithParams(expr->expr_simple_expr,
+								   econtext->ecxt_param_list_info);
 		expr->expr_simple_in_use = false;
 		expr->expr_simple_lxid = curlxid;
 		MemoryContextSwitchTo(oldcontext);
@@ -5599,21 +5590,6 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 		CommandCounterIncrement();
 		PushActiveSnapshot(GetTransactionSnapshot());
 	}
-
-	/*
-	 * Set up ParamListInfo to pass to executor.  We need an unshared list if
-	 * it's going to include any R/W expanded-object pointer.  For safety,
-	 * save and restore estate->paramLI->parserSetupArg around our use of the
-	 * param list.
-	 */
-	save_setup_arg = estate->paramLI->parserSetupArg;
-
-	if (expr->rwparam >= 0)
-		paramLI = setup_unshared_param_list(estate, expr);
-	else
-		paramLI = setup_param_list(estate, expr);
-
-	econtext->ecxt_param_list_info = paramLI;
 
 	/*
 	 * Mark expression as busy for the duration of the ExecEvalExpr call.
@@ -5654,35 +5630,17 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 /*
  * Create a ParamListInfo to pass to SPI
  *
- * We share a single ParamListInfo array across all SPI calls made from this
- * estate, except calls creating cursors, which use setup_unshared_param_list
- * (see its comments for reasons why), and calls that pass a R/W expanded
- * object pointer.  A shared array is generally OK since any given slot in
- * the array would need to contain the same current datum value no matter
- * which query or expression we're evaluating; but of course that doesn't
- * hold when a specific variable is being passed as a R/W pointer, because
- * other expressions in the same function probably don't want to do that.
+ * We use a single ParamListInfo struct for all SPI calls made from this
+ * estate; it contains no per-param data, just hook functions, so it's
+ * effectively read-only for SPI.
  *
- * Note that paramLI->parserSetupArg points to the specific PLpgSQL_expr
- * being evaluated.  This is not an issue for statement-level callers, but
- * lower-level callers must save and restore estate->paramLI->parserSetupArg
- * just in case there's an active evaluation at an outer call level.
- *
- * The general plan for passing parameters to SPI is that plain VAR datums
- * always have valid images in the shared param list.  This is ensured by
- * assign_simple_var(), which also marks those params as PARAM_FLAG_CONST,
- * allowing the planner to use those values in custom plans.  However, non-VAR
- * datums cannot conveniently be managed that way.  For one thing, they could
- * throw errors (for example "no such record field") and we do not want that
- * to happen in a part of the expression that might never be evaluated at
- * runtime.  For another thing, exec_eval_datum() may return short-lived
- * values stored in the estate's eval_mcontext, which will not necessarily
- * survive to the next SPI operation.  And for a third thing, ROW
- * and RECFIELD datums' values depend on other datums, and we don't have a
- * cheap way to track that.  Therefore, param slots for non-VAR datum types
- * are always reset here and then filled on-demand by plpgsql_param_fetch().
- * We can save a few cycles by not bothering with the reset loop unless at
- * least one such param has actually been filled by plpgsql_param_fetch().
+ * An exception from pure read-only-ness is that the parserSetupArg points
+ * to the specific PLpgSQL_expr being evaluated.  This is not an issue for
+ * statement-level callers, but lower-level callers must save and restore
+ * estate->paramLI->parserSetupArg just in case there's an active evaluation
+ * at an outer call level.  (A plausible alternative design would be to
+ * create a ParamListInfo struct for each PLpgSQL_expr, but for the moment
+ * that seems like a waste of memory.)
  */
 static ParamListInfo
 setup_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
@@ -5696,11 +5654,6 @@ setup_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	Assert(expr->plan != NULL);
 
 	/*
-	 * Expressions with R/W parameters can't use the shared param list.
-	 */
-	Assert(expr->rwparam == -1);
-
-	/*
 	 * We only need a ParamListInfo if the expression has parameters.  In
 	 * principle we should test with bms_is_empty(), but we use a not-null
 	 * test because it's faster.  In current usage bits are never removed from
@@ -5712,135 +5665,11 @@ setup_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 		paramLI = estate->paramLI;
 
 		/*
-		 * If any resettable parameters have been passed to the executor since
-		 * last time, we need to reset those param slots to "invalid", for the
-		 * reasons mentioned in the comment above.
-		 */
-		if (estate->params_dirty)
-		{
-			Bitmapset  *resettable_datums = estate->func->resettable_datums;
-			int			dno = -1;
-
-			while ((dno = bms_next_member(resettable_datums, dno)) >= 0)
-			{
-				ParamExternData *prm = &paramLI->params[dno];
-
-				prm->ptype = InvalidOid;
-			}
-			estate->params_dirty = false;
-		}
-
-		/*
 		 * Set up link to active expr where the hook functions can find it.
 		 * Callers must save and restore parserSetupArg if there is any chance
 		 * that they are interrupting an active use of parameters.
 		 */
 		paramLI->parserSetupArg = (void *) expr;
-
-		/*
-		 * Allow parameters that aren't needed by this expression to be
-		 * ignored.
-		 */
-		paramLI->paramMask = expr->paramnos;
-
-		/*
-		 * Also make sure this is set before parser hooks need it.  There is
-		 * no need to save and restore, since the value is always correct once
-		 * set.  (Should be set already, but let's be sure.)
-		 */
-		expr->func = estate->func;
-	}
-	else
-	{
-		/*
-		 * Expression requires no parameters.  Be sure we represent this case
-		 * as a NULL ParamListInfo, so that plancache.c knows there is no
-		 * point in a custom plan.
-		 */
-		paramLI = NULL;
-	}
-	return paramLI;
-}
-
-/*
- * Create an unshared, short-lived ParamListInfo to pass to SPI
- *
- * When creating a cursor, we do not use the shared ParamListInfo array
- * but create a short-lived one that will contain only params actually
- * referenced by the query.  The reason for this is that copyParamList() will
- * be used to copy the parameters into cursor-lifespan storage, and we don't
- * want it to copy anything that's not used by the specific cursor; that
- * could result in uselessly copying some large values.
- *
- * We also use this for expressions that are passing a R/W object pointer
- * to some trusted function.  We don't want the R/W pointer to get into the
- * shared param list, where it could get passed to some less-trusted function.
- *
- * The result, if not NULL, is in the estate's eval_mcontext.
- *
- * XXX. Could we use ParamListInfo's new paramMask to avoid creating unshared
- * parameter lists?
- */
-static ParamListInfo
-setup_unshared_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
-{
-	ParamListInfo paramLI;
-
-	/*
-	 * We must have created the SPIPlan already (hence, query text has been
-	 * parsed/analyzed at least once); else we cannot rely on expr->paramnos.
-	 */
-	Assert(expr->plan != NULL);
-
-	/*
-	 * We only need a ParamListInfo if the expression has parameters.  In
-	 * principle we should test with bms_is_empty(), but we use a not-null
-	 * test because it's faster.  In current usage bits are never removed from
-	 * expr->paramnos, only added, so this test is correct anyway.
-	 */
-	if (expr->paramnos)
-	{
-		int			dno;
-
-		/* initialize ParamListInfo with one entry per datum, all invalid */
-		paramLI = (ParamListInfo)
-			eval_mcontext_alloc0(estate,
-								 offsetof(ParamListInfoData, params) +
-								 estate->ndatums * sizeof(ParamExternData));
-		paramLI->paramFetch = plpgsql_param_fetch;
-		paramLI->paramFetchArg = (void *) estate;
-		paramLI->parserSetup = (ParserSetupHook) plpgsql_parser_setup;
-		paramLI->parserSetupArg = (void *) expr;
-		paramLI->numParams = estate->ndatums;
-		paramLI->paramMask = NULL;
-
-		/*
-		 * Instantiate values for "safe" parameters of the expression.  We
-		 * could skip this and leave them to be filled by plpgsql_param_fetch;
-		 * but then the values would not be available for query planning,
-		 * since the planner doesn't call the paramFetch hook.
-		 */
-		dno = -1;
-		while ((dno = bms_next_member(expr->paramnos, dno)) >= 0)
-		{
-			PLpgSQL_datum *datum = estate->datums[dno];
-
-			if (datum->dtype == PLPGSQL_DTYPE_VAR)
-			{
-				PLpgSQL_var *var = (PLpgSQL_var *) datum;
-				ParamExternData *prm = &paramLI->params[dno];
-
-				if (dno == expr->rwparam)
-					prm->value = var->value;
-				else
-					prm->value = MakeExpandedObjectReadOnly(var->value,
-															var->isnull,
-															var->datatype->typlen);
-				prm->isnull = var->isnull;
-				prm->pflags = PARAM_FLAG_CONST;
-				prm->ptype = var->datatype->typoid;
-			}
-		}
 
 		/*
 		 * Also make sure this is set before parser hooks need it.  There is
@@ -5863,15 +5692,24 @@ setup_unshared_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 
 /*
  * plpgsql_param_fetch		paramFetch callback for dynamic parameter fetch
+ *
+ * We always use the caller's workspace to construct the returned struct.
+ *
+ * Note: this is no longer used during query execution.  It is used during
+ * planning (with speculative == true) and when the ParamListInfo we supply
+ * to the executor is copied into a cursor portal or transferred to a
+ * parallel child process.
  */
-static void
-plpgsql_param_fetch(ParamListInfo params, int paramid)
+static ParamExternData *
+plpgsql_param_fetch(ParamListInfo params,
+					int paramid, bool speculative,
+					ParamExternData *prm)
 {
 	int			dno;
 	PLpgSQL_execstate *estate;
 	PLpgSQL_expr *expr;
 	PLpgSQL_datum *datum;
-	ParamExternData *prm;
+	bool		ok = true;
 	int32		prmtypmod;
 
 	/* paramid's are 1-based, but dnos are 0-based */
@@ -5888,35 +5726,74 @@ plpgsql_param_fetch(ParamListInfo params, int paramid)
 
 	/*
 	 * Since copyParamList() or SerializeParamList() will try to materialize
-	 * every single parameter slot, it's important to do nothing when asked
-	 * for a datum that's not supposed to be used by this SQL expression.
-	 * Otherwise we risk failures in exec_eval_datum(), or copying a lot more
-	 * data than necessary.
+	 * every single parameter slot, it's important to return a dummy param
+	 * when asked for a datum that's not supposed to be used by this SQL
+	 * expression.  Otherwise we risk failures in exec_eval_datum(), or
+	 * copying a lot more data than necessary.
 	 */
 	if (!bms_is_member(dno, expr->paramnos))
-		return;
+		ok = false;
 
-	if (params == estate->paramLI)
+	/*
+	 * If the access is speculative, we prefer to return no data rather than
+	 * to fail in exec_eval_datum().  Check the likely failure cases.
+	 */
+	else if (speculative)
 	{
-		/*
-		 * We need to mark the shared params array dirty if we're about to
-		 * evaluate a resettable datum.
-		 */
 		switch (datum->dtype)
 		{
-			case PLPGSQL_DTYPE_ROW:
-			case PLPGSQL_DTYPE_REC:
-			case PLPGSQL_DTYPE_RECFIELD:
-				estate->params_dirty = true;
+			case PLPGSQL_DTYPE_VAR:
+				/* always safe */
 				break;
 
+			case PLPGSQL_DTYPE_ROW:
+				/* should be safe in all interesting cases */
+				break;
+
+			case PLPGSQL_DTYPE_REC:
+				{
+					PLpgSQL_rec *rec = (PLpgSQL_rec *) datum;
+
+					if (!HeapTupleIsValid(rec->tup))
+						ok = false;
+					break;
+				}
+
+			case PLPGSQL_DTYPE_RECFIELD:
+				{
+					PLpgSQL_recfield *recfield = (PLpgSQL_recfield *) datum;
+					PLpgSQL_rec *rec;
+					int			fno;
+
+					rec = (PLpgSQL_rec *) (estate->datums[recfield->recparentno]);
+					if (!HeapTupleIsValid(rec->tup))
+						ok = false;
+					else
+					{
+						fno = SPI_fnumber(rec->tupdesc, recfield->fieldname);
+						if (fno == SPI_ERROR_NOATTRIBUTE)
+							ok = false;
+					}
+					break;
+				}
+
 			default:
+				ok = false;
 				break;
 		}
 	}
 
-	/* OK, evaluate the value and store into the appropriate paramlist slot */
-	prm = &params->params[dno];
+	/* Return "no such parameter" if not ok */
+	if (!ok)
+	{
+		prm->value = (Datum) 0;
+		prm->isnull = true;
+		prm->pflags = 0;
+		prm->ptype = InvalidOid;
+		return prm;
+	}
+
+	/* OK, evaluate the value and store into the return struct */
 	exec_eval_datum(estate, datum,
 					&prm->ptype, &prmtypmod,
 					&prm->value, &prm->isnull);
@@ -5931,6 +5808,174 @@ plpgsql_param_fetch(ParamListInfo params, int paramid)
 		prm->value = MakeExpandedObjectReadOnly(prm->value,
 												prm->isnull,
 												((PLpgSQL_var *) datum)->datatype->typlen);
+
+	return prm;
+}
+
+/*
+ * plpgsql_param_compile		paramCompile callback for plpgsql parameters
+ */
+static void
+plpgsql_param_compile(ParamListInfo params, Param *param,
+					  ExprState *state,
+					  Datum *resv, bool *resnull)
+{
+	PLpgSQL_execstate *estate;
+	PLpgSQL_expr *expr;
+	int			dno;
+	PLpgSQL_datum *datum;
+	ExprEvalStep scratch;
+
+	/* fetch back the hook data */
+	estate = (PLpgSQL_execstate *) params->paramFetchArg;
+	expr = (PLpgSQL_expr *) params->parserSetupArg;
+
+	/* paramid's are 1-based, but dnos are 0-based */
+	dno = param->paramid - 1;
+	Assert(dno >= 0 && dno < estate->ndatums);
+
+	/* now we can access the target datum */
+	datum = estate->datums[dno];
+
+	scratch.opcode = EEOP_PARAM_CALLBACK;
+	scratch.resvalue = resv;
+	scratch.resnull = resnull;
+
+	/* Select appropriate eval function */
+	if (datum->dtype == PLPGSQL_DTYPE_VAR)
+	{
+		if (dno != expr->rwparam &&
+			((PLpgSQL_var *) datum)->datatype->typlen == -1)
+			scratch.d.cparam.paramfunc = plpgsql_param_eval_var_ro;
+		else
+			scratch.d.cparam.paramfunc = plpgsql_param_eval_var;
+	}
+	else
+		scratch.d.cparam.paramfunc = plpgsql_param_eval_non_var;
+
+	/*
+	 * Note: it's tempting to use paramarg to store the estate pointer and
+	 * thereby save an indirection or two in the eval functions.  But that
+	 * doesn't work because the compiled expression might be used with
+	 * different estates for the same PL/pgSQL function.
+	 */
+	scratch.d.cparam.paramarg = NULL;
+	scratch.d.cparam.paramid = param->paramid;
+	scratch.d.cparam.paramtype = param->paramtype;
+	ExprEvalPushStep(state, &scratch);
+}
+
+/*
+ * plpgsql_param_eval_var		evaluation of EEOP_PARAM_CALLBACK step
+ *
+ * This is specialized to the case of DTYPE_VAR variables for which
+ * we do not need to invoke MakeExpandedObjectReadOnly.
+ */
+static void
+plpgsql_param_eval_var(ExprState *state, ExprEvalStep *op,
+					   ExprContext *econtext)
+{
+	ParamListInfo params;
+	PLpgSQL_execstate *estate;
+	int			dno = op->d.cparam.paramid - 1;
+	PLpgSQL_var *var;
+
+	/* fetch back the hook data */
+	params = econtext->ecxt_param_list_info;
+	estate = (PLpgSQL_execstate *) params->paramFetchArg;
+	Assert(dno >= 0 && dno < estate->ndatums);
+
+	/* now we can access the target datum */
+	var = (PLpgSQL_var *) estate->datums[dno];
+	Assert(var->dtype == PLPGSQL_DTYPE_VAR);
+
+	/* inlined version of exec_eval_datum() */
+	*op->resvalue = var->value;
+	*op->resnull = var->isnull;
+
+	/* safety check -- an assertion should be sufficient */
+	Assert(var->datatype->typoid == op->d.cparam.paramtype);
+}
+
+/*
+ * plpgsql_param_eval_var_ro		evaluation of EEOP_PARAM_CALLBACK step
+ *
+ * This is specialized to the case of DTYPE_VAR variables for which
+ * we need to invoke MakeExpandedObjectReadOnly.
+ */
+static void
+plpgsql_param_eval_var_ro(ExprState *state, ExprEvalStep *op,
+						  ExprContext *econtext)
+{
+	ParamListInfo params;
+	PLpgSQL_execstate *estate;
+	int			dno = op->d.cparam.paramid - 1;
+	PLpgSQL_var *var;
+
+	/* fetch back the hook data */
+	params = econtext->ecxt_param_list_info;
+	estate = (PLpgSQL_execstate *) params->paramFetchArg;
+	Assert(dno >= 0 && dno < estate->ndatums);
+
+	/* now we can access the target datum */
+	var = (PLpgSQL_var *) estate->datums[dno];
+	Assert(var->dtype == PLPGSQL_DTYPE_VAR);
+
+	/*
+	 * Inlined version of exec_eval_datum() ... and while we're at it, force
+	 * expanded datums to read-only.
+	 */
+	*op->resvalue = MakeExpandedObjectReadOnly(var->value,
+											   var->isnull,
+											   -1);
+	*op->resnull = var->isnull;
+
+	/* safety check -- an assertion should be sufficient */
+	Assert(var->datatype->typoid == op->d.cparam.paramtype);
+}
+
+/*
+ * plpgsql_param_eval_non_var		evaluation of EEOP_PARAM_CALLBACK step
+ *
+ * This handles all variable types except DTYPE_VAR.
+ */
+static void
+plpgsql_param_eval_non_var(ExprState *state, ExprEvalStep *op,
+						   ExprContext *econtext)
+{
+	ParamListInfo params;
+	PLpgSQL_execstate *estate;
+	int			dno = op->d.cparam.paramid - 1;
+	PLpgSQL_datum *datum;
+	Oid			datumtype;
+	int32		datumtypmod;
+
+	/* fetch back the hook data */
+	params = econtext->ecxt_param_list_info;
+	estate = (PLpgSQL_execstate *) params->paramFetchArg;
+	Assert(dno >= 0 && dno < estate->ndatums);
+
+	/* now we can access the target datum */
+	datum = estate->datums[dno];
+	Assert(datum->dtype != PLPGSQL_DTYPE_VAR);
+
+	exec_eval_datum(estate, datum,
+					&datumtype, &datumtypmod,
+					op->resvalue, op->resnull);
+
+	/* safety check -- needed for, eg, record fields */
+	if (unlikely(datumtype != op->d.cparam.paramtype))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("type of parameter %d (%s) does not match that when preparing the plan (%s)",
+						op->d.cparam.paramid,
+						format_type_be(datumtype),
+						format_type_be(op->d.cparam.paramtype))));
+
+	/*
+	 * Currently, if the dtype isn't VAR, the value couldn't be a read/write
+	 * expanded datum.
+	 */
 }
 
 
@@ -5943,16 +5988,17 @@ plpgsql_param_fetch(ParamListInfo params, int paramid)
  */
 static void
 exec_move_row(PLpgSQL_execstate *estate,
-			  PLpgSQL_rec *rec,
-			  PLpgSQL_row *row,
+			  PLpgSQL_variable *target,
 			  HeapTuple tup, TupleDesc tupdesc)
 {
 	/*
 	 * Record is simple - just copy the tuple and its descriptor into the
 	 * record variable
 	 */
-	if (rec != NULL)
+	if (target->dtype == PLPGSQL_DTYPE_REC)
 	{
+		PLpgSQL_rec *rec = (PLpgSQL_rec *) target;
+
 		/*
 		 * Copy input first, just in case it is pointing at variable's value
 		 */
@@ -6021,8 +6067,9 @@ exec_move_row(PLpgSQL_execstate *estate,
 	 * If we have no tuple data at all, we'll assign NULL to all columns of
 	 * the row variable.
 	 */
-	if (row != NULL)
+	if (target->dtype == PLPGSQL_DTYPE_ROW)
 	{
+		PLpgSQL_row *row = (PLpgSQL_row *) target;
 		int			td_natts = tupdesc ? tupdesc->natts : 0;
 		int			t_natts;
 		int			fnum;
@@ -6189,8 +6236,7 @@ get_tupdesc_from_datum(Datum value)
  */
 static void
 exec_move_row_from_datum(PLpgSQL_execstate *estate,
-						 PLpgSQL_rec *rec,
-						 PLpgSQL_row *row,
+						 PLpgSQL_variable *target,
 						 Datum value)
 {
 	HeapTupleHeader td = DatumGetHeapTupleHeader(value);
@@ -6211,7 +6257,7 @@ exec_move_row_from_datum(PLpgSQL_execstate *estate,
 	tmptup.t_data = td;
 
 	/* Do the move */
-	exec_move_row(estate, rec, row, &tmptup, tupdesc);
+	exec_move_row(estate, target, &tmptup, tupdesc);
 
 	/* Release tupdesc usage count */
 	ReleaseTupleDesc(tupdesc);
@@ -6309,7 +6355,7 @@ exec_cast_value(PLpgSQL_execstate *estate,
  * or NULL if the cast is a mere no-op relabeling.  If there's work to be
  * done, the cast_exprstate field contains an expression evaluation tree
  * based on a CaseTestExpr input, and the cast_in_use field should be set
- * TRUE while executing it.
+ * true while executing it.
  * ----------
  */
 static plpgsql_CastHashEntry *
@@ -6588,8 +6634,8 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 	 * force_parallel_mode is on, the planner might've stuck a Gather node
 	 * atop that.  The simplest way to deal with this is to look through the
 	 * Gather node.  The Gather node's tlist would normally contain a Var
-	 * referencing the child node's output ... but setrefs.c might also have
-	 * copied a Const as-is.
+	 * referencing the child node's output, but it could also be a Param, or
+	 * it could be a Const that setrefs.c copied as-is.
 	 */
 	plan = stmt->planTree;
 	for (;;)
@@ -6616,9 +6662,9 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 			/* If setrefs.c copied up a Const, no need to look further */
 			if (IsA(tle_expr, Const))
 				break;
-			/* Otherwise, it better be an outer Var */
-			Assert(IsA(tle_expr, Var));
-			Assert(((Var *) tle_expr)->varno == OUTER_VAR);
+			/* Otherwise, it had better be a Param or an outer Var */
+			Assert(IsA(tle_expr, Param) ||(IsA(tle_expr, Var) &&
+										   ((Var *) tle_expr)->varno == OUTER_VAR));
 			/* Descend to the child node */
 			plan = plan->lefttree;
 		}
@@ -6896,14 +6942,12 @@ plpgsql_subxact_cb(SubXactEvent event, SubTransactionId mySubid,
  * assign_simple_var --- assign a new value to any VAR datum.
  *
  * This should be the only mechanism for assignment to simple variables,
- * lest we forget to update the paramLI image.
+ * lest we do the release of the old value incorrectly.
  */
 static void
 assign_simple_var(PLpgSQL_execstate *estate, PLpgSQL_var *var,
 				  Datum newvalue, bool isnull, bool freeable)
 {
-	ParamExternData *prm;
-
 	Assert(var->dtype == PLPGSQL_DTYPE_VAR);
 	/* Free the old value if needed */
 	if (var->freeval)
@@ -6919,15 +6963,6 @@ assign_simple_var(PLpgSQL_execstate *estate, PLpgSQL_var *var,
 	var->value = newvalue;
 	var->isnull = isnull;
 	var->freeval = freeable;
-	/* And update the image in the common parameter list */
-	prm = &estate->paramLI->params[var->dno];
-	prm->value = MakeExpandedObjectReadOnly(newvalue,
-											isnull,
-											var->datatype->typlen);
-	prm->isnull = isnull;
-	/* these might be set already, but let's be sure */
-	prm->pflags = PARAM_FLAG_CONST;
-	prm->ptype = var->datatype->typoid;
 }
 
 /*

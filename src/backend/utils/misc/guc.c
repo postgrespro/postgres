@@ -43,7 +43,6 @@
 #include "commands/trigger.h"
 #include "funcapi.h"
 #include "libpq/auth.h"
-#include "libpq/be-fsstubs.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
@@ -71,6 +70,7 @@
 #include "storage/dsm_impl.h"
 #include "storage/standby.h"
 #include "storage/fd.h"
+#include "storage/large_object.h"
 #include "storage/pg_shmem.h"
 #include "storage/proc.h"
 #include "storage/predicate.h"
@@ -446,6 +446,7 @@ char	   *event_source;
 bool		row_security;
 bool		check_function_bodies = true;
 bool		default_with_oids = false;
+bool		session_auth_is_superuser;
 
 int			log_min_error_statement = ERROR;
 int			log_min_messages = WARNING;
@@ -492,7 +493,6 @@ int			huge_pages;
  * and is kept in sync by assign_hooks.
  */
 static char *syslog_ident_str;
-static bool session_auth_is_superuser;
 static double phony_random_seed;
 static char *client_encoding_string;
 static char *datestyle_string;
@@ -920,7 +920,24 @@ static struct config_bool ConfigureNamesBool[] =
 		false,
 		NULL, NULL, NULL
 	},
-
+	{
+		{"enable_parallel_append", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's use of parallel append plans."),
+			NULL
+		},
+		&enable_parallel_append,
+		true,
+		NULL, NULL, NULL
+	},
+	{
+		{"enable_parallel_hash", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's user of parallel hash plans."),
+			NULL
+		},
+		&enable_parallel_hash,
+		true,
+		NULL, NULL, NULL
+	},
 	{
 		{"geqo", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("Enables genetic query optimization."),
@@ -1672,6 +1689,16 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&syslog_split_messages,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"parallel_leader_participation", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
+			gettext_noop("Controls whether Gather and Gather Merge also run subplans."),
+			gettext_noop("Should gather nodes also run subplans, or just gather tuples?")
+		},
+		&parallel_leader_participation,
 		true,
 		NULL, NULL, NULL
 	},
@@ -3950,9 +3977,9 @@ static int	num_guc_variables;
 static int	size_guc_variables;
 
 
-static bool guc_dirty;			/* TRUE if need to do commit/abort work */
+static bool guc_dirty;			/* true if need to do commit/abort work */
 
-static bool reporting_enabled;	/* TRUE to enable GUC_REPORT */
+static bool reporting_enabled;	/* true to enable GUC_REPORT */
 
 static int	GUCNestLevel = 0;	/* 1 when in main transaction */
 
@@ -4374,7 +4401,7 @@ add_placeholder_variable(const char *name, int elevel)
 
 /*
  * Look up option NAME.  If it exists, return a pointer to its record,
- * else return NULL.  If create_placeholders is TRUE, we'll create a
+ * else return NULL.  If create_placeholders is true, we'll create a
  * placeholder record for a valid-looking custom variable name.
  */
 static struct config_generic *
@@ -4900,7 +4927,7 @@ ResetAllOptions(void)
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-											  conf->reset_extra);
+										  conf->reset_extra);
 					*conf->variable = conf->reset_val;
 					set_extra_field(&conf->gen, &conf->gen.extra,
 									conf->reset_extra);
@@ -4912,7 +4939,7 @@ ResetAllOptions(void)
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-											  conf->reset_extra);
+										  conf->reset_extra);
 					*conf->variable = conf->reset_val;
 					set_extra_field(&conf->gen, &conf->gen.extra,
 									conf->reset_extra);
@@ -4924,7 +4951,7 @@ ResetAllOptions(void)
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-											  conf->reset_extra);
+										  conf->reset_extra);
 					*conf->variable = conf->reset_val;
 					set_extra_field(&conf->gen, &conf->gen.extra,
 									conf->reset_extra);
@@ -4936,7 +4963,7 @@ ResetAllOptions(void)
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-											  conf->reset_extra);
+										  conf->reset_extra);
 					set_string_field(conf, conf->variable, conf->reset_val);
 					set_extra_field(&conf->gen, &conf->gen.extra,
 									conf->reset_extra);
@@ -4948,7 +4975,7 @@ ResetAllOptions(void)
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-											  conf->reset_extra);
+										  conf->reset_extra);
 					*conf->variable = conf->reset_val;
 					set_extra_field(&conf->gen, &conf->gen.extra,
 									conf->reset_extra);
@@ -5643,7 +5670,7 @@ config_enum_lookup_by_value(struct config_enum *record, int val)
  * Lookup the value for an enum option with the selected name
  * (case-insensitive).
  * If the enum option is found, sets the retval value and returns
- * true. If it's not found, return FALSE and retval is set to 0.
+ * true. If it's not found, return false and retval is set to 0.
  */
 bool
 config_enum_lookup_by_name(struct config_enum *record, const char *value,
@@ -5656,12 +5683,12 @@ config_enum_lookup_by_name(struct config_enum *record, const char *value,
 		if (pg_strcasecmp(value, entry->name) == 0)
 		{
 			*retval = entry->val;
-			return TRUE;
+			return true;
 		}
 	}
 
 	*retval = 0;
-	return FALSE;
+	return false;
 }
 
 
@@ -6944,7 +6971,7 @@ write_auto_conf_file(int fd, const char *filename, ConfigVariable *head)
 
 	/* Emit file header containing warning comment */
 	appendStringInfoString(&buf, "# Do not edit this file manually!\n");
-	appendStringInfoString(&buf, "# It will be overwritten by ALTER SYSTEM command.\n");
+	appendStringInfoString(&buf, "# It will be overwritten by the ALTER SYSTEM command.\n");
 
 	errno = 0;
 	if (write(fd, buf.data, buf.len) != buf.len)
@@ -8370,7 +8397,7 @@ show_config_by_name(PG_FUNCTION_ARGS)
 /*
  * show_config_by_name_missing_ok - equiv to SHOW X command but implemented as
  * a function.  If X does not exist, suppress the error and just return NULL
- * if missing_ok is TRUE.
+ * if missing_ok is true.
  */
 Datum
 show_config_by_name_missing_ok(PG_FUNCTION_ARGS)
@@ -8986,12 +9013,18 @@ read_nondefault_variables(void)
  * constants; a few, like server_encoding and lc_ctype, are handled specially
  * outside the serialize/restore procedure.  Therefore, SerializeGUCState()
  * never sends these, and RestoreGUCState() never changes them.
+ *
+ * Role is a special variable in the sense that its current value can be an
+ * invalid value and there are multiple ways by which that can happen (like
+ * after setting the role, someone drops it).  So we handle it outside of
+ * serialize/restore machinery.
  */
 static bool
 can_skip_gucvar(struct config_generic *gconf)
 {
 	return gconf->context == PGC_POSTMASTER ||
-		gconf->context == PGC_INTERNAL || gconf->source == PGC_S_DEFAULT;
+		gconf->context == PGC_INTERNAL || gconf->source == PGC_S_DEFAULT ||
+		strcmp(gconf->name, "role") == 0;
 }
 
 /*
@@ -9252,7 +9285,6 @@ SerializeGUCState(Size maxsize, char *start_address)
 	Size		actual_size;
 	Size		bytes_left;
 	int			i;
-	int			i_role = -1;
 
 	/* Reserve space for saving the actual size of the guc state */
 	Assert(maxsize > sizeof(actual_size));
@@ -9260,19 +9292,7 @@ SerializeGUCState(Size maxsize, char *start_address)
 	bytes_left = maxsize - sizeof(actual_size);
 
 	for (i = 0; i < num_guc_variables; i++)
-	{
-		/*
-		 * It's pretty ugly, but we've got to force "role" to be initialized
-		 * after "session_authorization"; otherwise, the latter will override
-		 * the former.
-		 */
-		if (strcmp(guc_variables[i]->name, "role") == 0)
-			i_role = i;
-		else
-			serialize_variable(&curptr, &bytes_left, guc_variables[i]);
-	}
-	if (i_role >= 0)
-		serialize_variable(&curptr, &bytes_left, guc_variables[i_role]);
+		serialize_variable(&curptr, &bytes_left, guc_variables[i]);
 
 	/* Store actual size without assuming alignment of start_address. */
 	actual_size = maxsize - bytes_left - sizeof(actual_size);
@@ -9699,7 +9719,7 @@ GUCArrayReset(ArrayType *array)
  * or NULL for the Delete/Reset cases.  If skipIfNoPermissions is true, it's
  * not an error to have no permissions to set the option.
  *
- * Returns TRUE if OK, FALSE if skipIfNoPermissions is true and user does not
+ * Returns true if OK, false if skipIfNoPermissions is true and user does not
  * have permission to change this option (all other error cases result in an
  * error being thrown).
  */
@@ -9725,7 +9745,7 @@ validate_option_array_item(const char *name, const char *value,
 	 * define_custom_variable assumes we checked that.
 	 *
 	 * name is not known and can't be created as a placeholder.  Throw error,
-	 * unless skipIfNoPermissions is true, in which case return FALSE.
+	 * unless skipIfNoPermissions is true, in which case return false.
 	 */
 	gconf = find_option(name, true, WARNING);
 	if (!gconf)

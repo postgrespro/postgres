@@ -148,7 +148,7 @@ static int	wal_segment_size_mb;
 
 /* internal vars */
 static const char *progname;
-static int encodingid;
+static int	encodingid;
 static char *bki_file;
 static char *desc_file;
 static char *shdesc_file;
@@ -237,12 +237,12 @@ static char **filter_lines_with_token(char **lines, const char *token);
 static char **readfile(const char *path);
 static void writefile(char *path, char **lines);
 static FILE *popen_check(const char *command, const char *mode);
-static void exit_nicely(void);
+static void exit_nicely(void) pg_attribute_noreturn();
 static char *get_id(void);
-static int get_encoding_id(char *encoding_name);
-static void set_input(char **dest, char *filename);
+static int	get_encoding_id(const char *encoding_name);
+static void set_input(char **dest, const char *filename);
 static void check_input(char *path);
-static void write_version_file(char *extrapath);
+static void write_version_file(const char *extrapath);
 static void set_null_conf(void);
 static void test_config_settings(void);
 static void setup_config(void);
@@ -640,7 +640,7 @@ encodingid_to_string(int enc)
  * get the encoding id for a given encoding name
  */
 static int
-get_encoding_id(char *encoding_name)
+get_encoding_id(const char *encoding_name)
 {
 	int			enc;
 
@@ -751,7 +751,7 @@ find_matching_ts_config(const char *lc_type)
  * set name of given input file variable under data directory
  */
 static void
-set_input(char **dest, char *filename)
+set_input(char **dest, const char *filename)
 {
 	*dest = psprintf("%s/%s", share_path, filename);
 }
@@ -801,7 +801,7 @@ check_input(char *path)
  * if extrapath is not NULL
  */
 static void
-write_version_file(char *extrapath)
+write_version_file(const char *extrapath)
 {
 	FILE	   *version_file;
 	char	   *path;

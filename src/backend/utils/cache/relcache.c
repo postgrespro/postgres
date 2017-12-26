@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
@@ -86,11 +87,6 @@
 #include "utils/syscache.h"
 #include "utils/tqual.h"
 
-
-/*
- *		name of relcache init file(s), used to speed up backend startup
- */
-#define RELCACHE_INIT_FILENAME	"pg_internal.init"
 
 #define RELCACHE_INIT_FILEMAGIC		0x573266	/* version ID value */
 
@@ -232,7 +228,7 @@ do { \
 typedef struct opclasscacheent
 {
 	Oid			opclassoid;		/* lookup key: OID of opclass */
-	bool		valid;			/* set TRUE after successful fill-in */
+	bool		valid;			/* set true after successful fill-in */
 	StrategyNumber numSupport;	/* max # of support procs (from pg_am) */
 	Oid			opcfamily;		/* OID of opclass's family */
 	Oid			opcintype;		/* OID of opclass's declared input type */
@@ -266,7 +262,6 @@ static Relation AllocateRelationDesc(Form_pg_class relp);
 static void RelationParseRelOptions(Relation relation, HeapTuple tuple);
 static void RelationBuildTupleDesc(Relation relation);
 static void RelationBuildPartitionKey(Relation relation);
-static PartitionKey copy_partition_key(PartitionKey fromkey);
 static Relation RelationBuildDesc(Oid targetRelId, bool insertIt);
 static void RelationInitPhysicalAddr(Relation relation);
 static void load_critical_index(Oid indexoid, Oid heapoid);
@@ -673,9 +668,10 @@ RelationBuildRuleLock(Relation relation)
 	/*
 	 * Make the private context.  Assume it'll not contain much data.
 	 */
-	rulescxt = AllocSetContextCreate(CacheMemoryContext,
-									 RelationGetRelationName(relation),
-									 ALLOCSET_SMALL_SIZES);
+	rulescxt = AllocSetContextCreateExtended(CacheMemoryContext,
+											 RelationGetRelationName(relation),
+											 MEMCONTEXT_COPY_NAME,
+											 ALLOCSET_SMALL_SIZES);
 	relation->rd_rulescxt = rulescxt;
 
 	/*
@@ -838,6 +834,7 @@ RelationBuildPartitionKey(Relation relation)
 	Datum		datum;
 	MemoryContext partkeycxt,
 				oldcxt;
+	int16		procnum;
 
 	tuple = SearchSysCache1(PARTRELID,
 							ObjectIdGetDatum(RelationGetRelid(relation)));
@@ -848,6 +845,12 @@ RelationBuildPartitionKey(Relation relation)
 	 */
 	if (!HeapTupleIsValid(tuple))
 		return;
+
+	partkeycxt = AllocSetContextCreateExtended(CurTransactionContext,
+											   RelationGetRelationName(relation),
+											   MEMCONTEXT_COPY_NAME,
+											   ALLOCSET_SMALL_SIZES);
+	oldcxt = MemoryContextSwitchTo(partkeycxt);
 
 	key = (PartitionKey) palloc0(sizeof(PartitionKeyData));
 
@@ -917,6 +920,10 @@ RelationBuildPartitionKey(Relation relation)
 	key->parttypalign = (char *) palloc0(key->partnatts * sizeof(char));
 	key->parttypcoll = (Oid *) palloc0(key->partnatts * sizeof(Oid));
 
+	/* For the hash partitioning, an extended hash function will be used. */
+	procnum = (key->strategy == PARTITION_STRATEGY_HASH) ?
+		HASHEXTENDED_PROC : BTORDER_PROC;
+
 	/* Copy partattrs and fill other per-attribute info */
 	memcpy(key->partattrs, attrs, key->partnatts * sizeof(int16));
 	partexprs_item = list_head(key->partexprs);
@@ -937,18 +944,20 @@ RelationBuildPartitionKey(Relation relation)
 		key->partopfamily[i] = opclassform->opcfamily;
 		key->partopcintype[i] = opclassform->opcintype;
 
-		/*
-		 * A btree support function covers the cases of list and range methods
-		 * currently supported.
-		 */
+		/* Get a support function for the specified opfamily and datatypes */
 		funcid = get_opfamily_proc(opclassform->opcfamily,
 								   opclassform->opcintype,
 								   opclassform->opcintype,
-								   BTORDER_PROC);
-		if (!OidIsValid(funcid))	/* should not happen */
-			elog(ERROR, "missing support function %d(%u,%u) in opfamily %u",
-				 BTORDER_PROC, opclassform->opcintype, opclassform->opcintype,
-				 opclassform->opcfamily);
+								   procnum);
+		if (!OidIsValid(funcid))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("operator class \"%s\" of access method %s is missing support function %d for data type \"%s\"",
+							NameStr(opclassform->opcname),
+							(key->strategy == PARTITION_STRATEGY_HASH) ?
+							"hash" : "btree",
+							procnum,
+							format_type_be(opclassform->opcintype))));
 
 		fmgr_info(funcid, &key->partsupfunc[i]);
 
@@ -980,68 +989,11 @@ RelationBuildPartitionKey(Relation relation)
 
 	ReleaseSysCache(tuple);
 
-	/* Success --- now copy to the cache memory */
-	partkeycxt = AllocSetContextCreate(CacheMemoryContext,
-									   RelationGetRelationName(relation),
-									   ALLOCSET_SMALL_SIZES);
+	/* Success --- make the relcache point to the newly constructed key */
+	MemoryContextSetParent(partkeycxt, CacheMemoryContext);
 	relation->rd_partkeycxt = partkeycxt;
-	oldcxt = MemoryContextSwitchTo(relation->rd_partkeycxt);
-	relation->rd_partkey = copy_partition_key(key);
+	relation->rd_partkey = key;
 	MemoryContextSwitchTo(oldcxt);
-}
-
-/*
- * copy_partition_key
- *
- * The copy is allocated in the current memory context.
- */
-static PartitionKey
-copy_partition_key(PartitionKey fromkey)
-{
-	PartitionKey newkey;
-	int			n;
-
-	newkey = (PartitionKey) palloc(sizeof(PartitionKeyData));
-
-	newkey->strategy = fromkey->strategy;
-	newkey->partnatts = n = fromkey->partnatts;
-
-	newkey->partattrs = (AttrNumber *) palloc(n * sizeof(AttrNumber));
-	memcpy(newkey->partattrs, fromkey->partattrs, n * sizeof(AttrNumber));
-
-	newkey->partexprs = copyObject(fromkey->partexprs);
-
-	newkey->partopfamily = (Oid *) palloc(n * sizeof(Oid));
-	memcpy(newkey->partopfamily, fromkey->partopfamily, n * sizeof(Oid));
-
-	newkey->partopcintype = (Oid *) palloc(n * sizeof(Oid));
-	memcpy(newkey->partopcintype, fromkey->partopcintype, n * sizeof(Oid));
-
-	newkey->partsupfunc = (FmgrInfo *) palloc(n * sizeof(FmgrInfo));
-	memcpy(newkey->partsupfunc, fromkey->partsupfunc, n * sizeof(FmgrInfo));
-
-	newkey->partcollation = (Oid *) palloc(n * sizeof(Oid));
-	memcpy(newkey->partcollation, fromkey->partcollation, n * sizeof(Oid));
-
-	newkey->parttypid = (Oid *) palloc(n * sizeof(Oid));
-	memcpy(newkey->parttypid, fromkey->parttypid, n * sizeof(Oid));
-
-	newkey->parttypmod = (int32 *) palloc(n * sizeof(int32));
-	memcpy(newkey->parttypmod, fromkey->parttypmod, n * sizeof(int32));
-
-	newkey->parttyplen = (int16 *) palloc(n * sizeof(int16));
-	memcpy(newkey->parttyplen, fromkey->parttyplen, n * sizeof(int16));
-
-	newkey->parttypbyval = (bool *) palloc(n * sizeof(bool));
-	memcpy(newkey->parttypbyval, fromkey->parttypbyval, n * sizeof(bool));
-
-	newkey->parttypalign = (char *) palloc(n * sizeof(bool));
-	memcpy(newkey->parttypalign, fromkey->parttypalign, n * sizeof(char));
-
-	newkey->parttypcoll = (Oid *) palloc(n * sizeof(Oid));
-	memcpy(newkey->parttypcoll, fromkey->parttypcoll, n * sizeof(Oid));
-
-	return newkey;
 }
 
 /*
@@ -1563,9 +1515,10 @@ RelationInitIndexAccessInfo(Relation relation)
 	 * a context, and not just a couple of pallocs, is so that we won't leak
 	 * any subsidiary info attached to fmgr lookup records.
 	 */
-	indexcxt = AllocSetContextCreate(CacheMemoryContext,
-									 RelationGetRelationName(relation),
-									 ALLOCSET_SMALL_SIZES);
+	indexcxt = AllocSetContextCreateExtended(CacheMemoryContext,
+											 RelationGetRelationName(relation),
+											 MEMCONTEXT_COPY_NAME,
+											 ALLOCSET_SMALL_SIZES);
 	relation->rd_indexcxt = indexcxt;
 
 	/*
@@ -5363,9 +5316,9 @@ errtableconstraint(Relation rel, const char *conname)
  * load_relcache_init_file -- attempt to load cache from the shared
  * or local cache init file
  *
- * If successful, return TRUE and set criticalRelcachesBuilt or
+ * If successful, return true and set criticalRelcachesBuilt or
  * criticalSharedRelcachesBuilt to true.
- * If not successful, return FALSE.
+ * If not successful, return false.
  *
  * NOTE: we assume we are already switched into CacheMemoryContext.
  */
@@ -5534,9 +5487,11 @@ load_relcache_init_file(bool shared)
 			 * prepare index info context --- parameters should match
 			 * RelationInitIndexAccessInfo
 			 */
-			indexcxt = AllocSetContextCreate(CacheMemoryContext,
-											 RelationGetRelationName(rel),
-											 ALLOCSET_SMALL_SIZES);
+			indexcxt =
+				AllocSetContextCreateExtended(CacheMemoryContext,
+											  RelationGetRelationName(rel),
+											  MEMCONTEXT_COPY_NAME,
+											  ALLOCSET_SMALL_SIZES);
 			rel->rd_indexcxt = indexcxt;
 
 			/*
@@ -6116,14 +6071,8 @@ RelationCacheInitFileRemove(void)
 
 	/* Scan the tablespace link directory to find non-default tablespaces */
 	dir = AllocateDir(tblspcdir);
-	if (dir == NULL)
-	{
-		elog(LOG, "could not open tablespace link directory \"%s\": %m",
-			 tblspcdir);
-		return;
-	}
 
-	while ((de = ReadDir(dir, tblspcdir)) != NULL)
+	while ((de = ReadDirExtended(dir, tblspcdir, LOG)) != NULL)
 	{
 		if (strspn(de->d_name, "0123456789") == strlen(de->d_name))
 		{
@@ -6147,14 +6096,8 @@ RelationCacheInitFileRemoveInDir(const char *tblspcpath)
 
 	/* Scan the tablespace directory to find per-database directories */
 	dir = AllocateDir(tblspcpath);
-	if (dir == NULL)
-	{
-		elog(LOG, "could not open tablespace directory \"%s\": %m",
-			 tblspcpath);
-		return;
-	}
 
-	while ((de = ReadDir(dir, tblspcpath)) != NULL)
+	while ((de = ReadDirExtended(dir, tblspcpath, LOG)) != NULL)
 	{
 		if (strspn(de->d_name, "0123456789") == strlen(de->d_name))
 		{

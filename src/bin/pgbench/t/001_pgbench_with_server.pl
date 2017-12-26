@@ -76,20 +76,33 @@ pgbench(
 # Initialize pgbench tables scale 1
 pgbench(
 	'-i', 0, [qr{^$}],
-	[ qr{creating tables}, qr{vacuum}, qr{set primary keys}, qr{done\.} ],
+	[ qr{creating tables}, qr{vacuuming}, qr{creating primary keys}, qr{done\.} ],
 	'pgbench scale 1 initialization',);
 
 # Again, with all possible options
 pgbench(
-'--initialize --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=pg_default --index-tablespace=pg_default',
+'--initialize --init-steps=dtpvg --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=pg_default --index-tablespace=pg_default',
 	0,
 	[qr{^$}i],
-	[   qr{creating tables},
-		qr{vacuum},
-		qr{set primary keys},
-		qr{set foreign keys},
+	[   qr{dropping old tables},
+		qr{creating tables},
+		qr{vacuuming},
+		qr{creating primary keys},
+		qr{creating foreign keys},
 		qr{done\.} ],
 	'pgbench scale 1 initialization');
+
+# Test interaction of --init-steps with legacy step-selection options
+pgbench(
+	'--initialize --init-steps=dtpvgvv --no-vacuum --foreign-keys --unlogged-tables',
+	0, [qr{^$}],
+	[   qr{dropping old tables},
+		qr{creating tables},
+		qr{creating primary keys},
+		qr{.* of .* tuples \(.*\) done},
+		qr{creating foreign keys},
+		qr{done\.} ],
+	'pgbench --init-steps');
 
 # Run all builtin scripts, for a few transactions each
 pgbench(
@@ -218,7 +231,8 @@ pgbench(
 		qr{command=18.: double 18\b},
 		qr{command=19.: double 19\b},
 		qr{command=20.: double 20\b},
-		qr{command=21.: int 9223372036854775807\b}, ],
+		qr{command=21.: int 9223372036854775807\b},
+		qr{command=23.: int [1-9]\b}, ],
 	'pgbench expressions',
 	{   '001_pgbench_expressions' => q{-- integer functions
 \set i1 debug(random(1, 100))
@@ -248,6 +262,8 @@ pgbench(
 \set maxint debug(:minint - 1)
 -- reset a variable
 \set i1 0
+-- yet another integer function
+\set id debug(random_zipfian(1, 9, 1.3))
 } });
 
 # backslash commands
@@ -358,6 +374,14 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 		0,
 		[qr{exponential parameter must be greater }],
 		q{\set i random_exponential(0, 10, 0.0)} ],
+	[	'set zipfian param to 1',
+		0,
+		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
+		q{\set i random_zipfian(0, 10, 1)} ],
+	[	'set zipfian param too large',
+		0,
+		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
+		q{\set i random_zipfian(0, 10, 1000000)} ],
 	[   'set non numeric value',                     0,
 		[qr{malformed variable "foo" value: "bla"}], q{\set i :foo + 1} ],
 	[ 'set no expression',    1, [qr{syntax error}],      q{\set i} ],
@@ -399,6 +423,31 @@ for my $e (@errors)
 		{ $n => $script });
 }
 
+# zipfian cache array overflow
+pgbench(
+	'-t 1', 0,
+	[ qr{processed: 1/1}, qr{zipfian cache array overflowed 1 time\(s\)} ],
+	[ qr{^} ],
+	'pgbench zipfian array overflow on random_zipfian',
+	{   '001_pgbench_random_zipfian' => q{
+\set i random_zipfian(1, 100, 0.5)
+\set i random_zipfian(2, 100, 0.5)
+\set i random_zipfian(3, 100, 0.5)
+\set i random_zipfian(4, 100, 0.5)
+\set i random_zipfian(5, 100, 0.5)
+\set i random_zipfian(6, 100, 0.5)
+\set i random_zipfian(7, 100, 0.5)
+\set i random_zipfian(8, 100, 0.5)
+\set i random_zipfian(9, 100, 0.5)
+\set i random_zipfian(10, 100, 0.5)
+\set i random_zipfian(11, 100, 0.5)
+\set i random_zipfian(12, 100, 0.5)
+\set i random_zipfian(13, 100, 0.5)
+\set i random_zipfian(14, 100, 0.5)
+\set i random_zipfian(15, 100, 0.5)
+\set i random_zipfian(16, 100, 0.5)
+} });
+
 # throttling
 pgbench(
 	'-t 100 -S --rate=100000 --latency-limit=1000000 -c 2 -n -r',
@@ -414,7 +463,7 @@ pgbench(
 	0,
 	[   qr{processed: [01]/10},
 		qr{type: .*/001_pgbench_sleep},
-		qr{above the 1.0 ms latency limit: [01] } ],
+		qr{above the 1.0 ms latency limit: [01]/} ],
 	[qr{^$}i],
 	'pgbench late throttling',
 	{ '001_pgbench_sleep' => q{\sleep 2ms} });

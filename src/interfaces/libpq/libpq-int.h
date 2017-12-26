@@ -349,6 +349,7 @@ struct pg_conn
 										 * retransmits */
 	char	   *keepalives_count;	/* maximum number of TCP keepalive
 									 * retransmits */
+	char	   *scram_channel_binding; /* SCRAM channel binding type */
 	char	   *sslmode;		/* SSL mode (require,prefer,allow,disable) */
 	char	   *sslcompression; /* SSL compression (0 or 1) */
 	char	   *sslkey;			/* client key filename */
@@ -453,11 +454,13 @@ struct pg_conn
 	/* Assorted state for SASL, SSL, GSS, etc */
 	void	   *sasl_state;
 
+	/* SSL structures */
+	bool		ssl_in_use;
+
 #ifdef USE_SSL
 	bool		allow_ssl_try;	/* Allowed to try SSL negotiation */
 	bool		wait_ssl_try;	/* Delay SSL negotiation until after
 								 * attempting normal connection */
-	bool		ssl_in_use;
 #ifdef USE_OPENSSL
 	SSL		   *ssl;			/* SSL status, if have SSL connection */
 	X509	   *peer;			/* X509 cert of server */
@@ -668,6 +671,7 @@ extern void pgtls_close(PGconn *conn);
 extern ssize_t pgtls_read(PGconn *conn, void *ptr, size_t len);
 extern bool pgtls_read_pending(PGconn *conn);
 extern ssize_t pgtls_write(PGconn *conn, const void *ptr, size_t len);
+extern char *pgtls_get_finished(PGconn *conn, size_t *len);
 
 /*
  * this is so that we can check if a connection is non-blocking internally

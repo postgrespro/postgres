@@ -38,6 +38,7 @@
 #include "executor/nodeSubplan.h"
 #include "executor/tqueue.h"
 #include "miscadmin.h"
+#include "optimizer/planmain.h"
 #include "pgstat.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -73,7 +74,8 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 	gatherstate->ps.ExecProcNode = ExecGather;
 
 	gatherstate->initialized = false;
-	gatherstate->need_to_scan_locally = !node->single_copy;
+	gatherstate->need_to_scan_locally =
+		!node->single_copy && parallel_leader_participation;
 	gatherstate->tuples_needed = -1;
 
 	/*
@@ -102,18 +104,18 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 	outerPlanState(gatherstate) = ExecInitNode(outerNode, estate, eflags);
 
 	/*
-	 * Initialize result tuple type and projection info.
-	 */
-	ExecAssignResultTypeFromTL(&gatherstate->ps);
-	ExecAssignProjectionInfo(&gatherstate->ps, NULL);
-
-	/*
 	 * Initialize funnel slot to same tuple descriptor as outer plan.
 	 */
-	if (!ExecContextForcesOids(&gatherstate->ps, &hasoid))
+	if (!ExecContextForcesOids(outerPlanState(gatherstate), &hasoid))
 		hasoid = false;
 	tupDesc = ExecTypeFromTL(outerNode->targetlist, hasoid);
 	ExecSetSlotDescriptor(gatherstate->funnel_slot, tupDesc);
+
+	/*
+	 * Initialize result tuple type and projection info.
+	 */
+	ExecAssignResultTypeFromTL(&gatherstate->ps);
+	ExecConditionalAssignProjectionInfo(&gatherstate->ps, tupDesc, OUTER_VAR);
 
 	return gatherstate;
 }
@@ -129,7 +131,6 @@ static TupleTableSlot *
 ExecGather(PlanState *pstate)
 {
 	GatherState *node = castNode(GatherState, pstate);
-	TupleTableSlot *fslot = node->funnel_slot;
 	TupleTableSlot *slot;
 	ExprContext *econtext;
 
@@ -150,7 +151,7 @@ ExecGather(PlanState *pstate)
 		 * Sometimes we might have to run without parallelism; but if parallel
 		 * mode is active then we can try to fire up some workers.
 		 */
-		if (gather->num_workers > 0 && IsInParallelMode())
+		if (gather->num_workers > 0 && estate->es_use_parallel_mode)
 		{
 			ParallelContext *pcxt;
 
@@ -158,11 +159,13 @@ ExecGather(PlanState *pstate)
 			if (!node->pei)
 				node->pei = ExecInitParallelPlan(node->ps.lefttree,
 												 estate,
+												 gather->initParam,
 												 gather->num_workers,
 												 node->tuples_needed);
 			else
 				ExecParallelReinitialize(node->ps.lefttree,
-										 node->pei);
+										 node->pei,
+										 gather->initParam);
 
 			/*
 			 * Register backend workers. We might not get as many as we
@@ -193,19 +196,16 @@ ExecGather(PlanState *pstate)
 			node->nextreader = 0;
 		}
 
-		/* Run plan locally if no workers or not single-copy. */
+		/* Run plan locally if no workers or enabled and not single-copy. */
 		node->need_to_scan_locally = (node->nreaders == 0)
-			|| !gather->single_copy;
+			|| (!gather->single_copy && parallel_leader_participation);
 		node->initialized = true;
 	}
 
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
-	 * storage allocated in the previous tuple cycle.  This will also clear
-	 * any previous tuple returned by a TupleQueueReader; to make sure we
-	 * don't leave a dangling pointer around, clear the working slot first.
+	 * storage allocated in the previous tuple cycle.
 	 */
-	ExecClearTuple(fslot);
 	econtext = node->ps.ps_ExprContext;
 	ResetExprContext(econtext);
 
@@ -216,6 +216,10 @@ ExecGather(PlanState *pstate)
 	slot = gather_getnext(node);
 	if (TupIsNull(slot))
 		return NULL;
+
+	/* If no projection is required, we're done. */
+	if (node->ps.ps_ProjInfo == NULL)
+		return slot;
 
 	/*
 	 * Form the result tuple using ExecProject(), and return it.
@@ -250,7 +254,6 @@ gather_getnext(GatherState *gatherstate)
 	PlanState  *outerPlan = outerPlanState(gatherstate);
 	TupleTableSlot *outerTupleSlot;
 	TupleTableSlot *fslot = gatherstate->funnel_slot;
-	MemoryContext tupleContext = gatherstate->ps.ps_ExprContext->ecxt_per_tuple_memory;
 	HeapTuple	tup;
 
 	while (gatherstate->nreaders > 0 || gatherstate->need_to_scan_locally)
@@ -259,12 +262,7 @@ gather_getnext(GatherState *gatherstate)
 
 		if (gatherstate->nreaders > 0)
 		{
-			MemoryContext oldContext;
-
-			/* Run TupleQueueReaders in per-tuple context */
-			oldContext = MemoryContextSwitchTo(tupleContext);
 			tup = gather_readnext(gatherstate);
-			MemoryContextSwitchTo(oldContext);
 
 			if (HeapTupleIsValid(tup))
 			{
@@ -272,14 +270,20 @@ gather_getnext(GatherState *gatherstate)
 							   fslot,	/* slot in which to store the tuple */
 							   InvalidBuffer,	/* buffer associated with this
 												 * tuple */
-							   false);	/* slot should not pfree tuple */
+							   true);	/* pfree tuple when done with it */
 				return fslot;
 			}
 		}
 
 		if (gatherstate->need_to_scan_locally)
 		{
+			EState *estate = gatherstate->ps.state;
+
+			/* Install our DSA area while executing the plan. */
+			estate->es_query_dsa =
+				gatherstate->pei ? gatherstate->pei->area : NULL;
 			outerTupleSlot = ExecProcNode(outerPlan);
+			estate->es_query_dsa = NULL;
 
 			if (!TupIsNull(outerTupleSlot))
 				return outerTupleSlot;

@@ -397,33 +397,16 @@ ExecSortInitializeDSM(SortState *node, ParallelContext *pcxt)
 }
 
 /* ----------------------------------------------------------------
- *		ExecSortReInitializeDSM
- *
- *		Reset shared state before beginning a fresh scan.
- * ----------------------------------------------------------------
- */
-void
-ExecSortReInitializeDSM(SortState *node, ParallelContext *pcxt)
-{
-	/* If there's any instrumentation space, clear it for next time */
-	if (node->shared_info != NULL)
-	{
-		memset(node->shared_info->sinstrument, 0,
-			   node->shared_info->num_workers * sizeof(TuplesortInstrumentation));
-	}
-}
-
-/* ----------------------------------------------------------------
  *		ExecSortInitializeWorker
  *
  *		Attach worker to DSM space for sort statistics.
  * ----------------------------------------------------------------
  */
 void
-ExecSortInitializeWorker(SortState *node, shm_toc *toc)
+ExecSortInitializeWorker(SortState *node, ParallelWorkerContext *pwcxt)
 {
 	node->shared_info =
-		shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id, true);
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
 	node->am_worker = true;
 }
 

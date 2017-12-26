@@ -40,6 +40,7 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "commands/trigger.h"
+#include "executor/execPartition.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
@@ -1517,8 +1518,8 @@ ExecSetupTransitionCaptureState(ModifyTableState *mtstate, EState *estate)
 		if (mtstate->mt_partition_dispatch_info != NULL)
 		{
 			/*
-			 * For tuple routing among partitions, we need TupleDescs based
-			 * on the partition routing table.
+			 * For tuple routing among partitions, we need TupleDescs based on
+			 * the partition routing table.
 			 */
 			ResultRelInfo **resultRelInfos = mtstate->mt_partitions;
 
@@ -1575,7 +1576,7 @@ ExecModifyTable(PlanState *pstate)
 	JunkFilter *junkfilter;
 	TupleTableSlot *slot;
 	TupleTableSlot *planSlot;
-	ItemPointer tupleid = NULL;
+	ItemPointer tupleid;
 	ItemPointerData tuple_ctid;
 	HeapTupleData oldtupdata;
 	HeapTuple	oldtuple;
@@ -1698,6 +1699,7 @@ ExecModifyTable(PlanState *pstate)
 		EvalPlanQualSetSlot(&node->mt_epqstate, planSlot);
 		slot = planSlot;
 
+		tupleid = NULL;
 		oldtuple = NULL;
 		if (junkfilter != NULL)
 		{
@@ -1951,7 +1953,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		int			num_parted,
 					num_partitions;
 
-		ExecSetupPartitionTupleRouting(rel,
+		ExecSetupPartitionTupleRouting(mtstate,
+									   rel,
 									   node->nominalRelation,
 									   estate,
 									   &partition_dispatch_info,

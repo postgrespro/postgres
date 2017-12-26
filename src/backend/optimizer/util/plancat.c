@@ -1414,8 +1414,18 @@ relation_excluded_by_constraints(PlannerInfo *root,
 	if (predicate_refuted_by(safe_restrictions, safe_restrictions, false))
 		return true;
 
-	/* Only plain relations have constraints */
-	if (rte->rtekind != RTE_RELATION || rte->inh)
+	/*
+	 * Only plain relations have constraints.  In a partitioning hierarchy,
+	 * but not with regular table inheritance, it's OK to assume that any
+	 * constraints that hold for the parent also hold for every child; for
+	 * instance, table inheritance allows the parent to have constraints
+	 * marked NO INHERIT, but table partitioning does not.  We choose to check
+	 * whether the partitioning parents can be excluded here; doing so
+	 * consumes some cycles, but potentially saves us the work of excluding
+	 * each child individually.
+	 */
+	if (rte->rtekind != RTE_RELATION ||
+		(rte->inh && rte->relkind != RELKIND_PARTITIONED_TABLE))
 		return false;
 
 	/*
@@ -1825,7 +1835,7 @@ set_relation_partition_info(PlannerInfo *root, RelOptInfo *rel,
 							Relation relation)
 {
 	PartitionDesc partdesc;
-	PartitionKey  partkey;
+	PartitionKey partkey;
 
 	Assert(relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 
@@ -1890,8 +1900,8 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 
 	/*
 	 * Did not find matching partition scheme. Create one copying relevant
-	 * information from the relcache. We need to copy the contents of the array
-	 * since the relcache entry may not survive after we have closed the
+	 * information from the relcache. We need to copy the contents of the
+	 * array since the relcache entry may not survive after we have closed the
 	 * relation.
 	 */
 	part_scheme = (PartitionScheme) palloc0(sizeof(PartitionSchemeData));

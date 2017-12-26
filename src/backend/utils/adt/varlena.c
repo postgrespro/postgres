@@ -21,6 +21,7 @@
 #include "access/tuptoaster.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/int.h"
 #include "common/md5.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
@@ -1047,8 +1048,7 @@ text_overlay(text *t1, text *t2, int sp, int sl)
 		ereport(ERROR,
 				(errcode(ERRCODE_SUBSTRING_ERROR),
 				 errmsg("negative substring length not allowed")));
-	sp_pl_sl = sp + sl;
-	if (sp_pl_sl <= sl)
+	if (pg_add_s32_overflow(sp, sl, &sp_pl_sl))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("integer out of range")));
@@ -1379,7 +1379,7 @@ text_position_cleanup(TextPositionState *state)
  * whether arg1 is less than, equal to, or greater than arg2.
  */
 int
-varstr_cmp(char *arg1, int len1, char *arg2, int len2, Oid collid)
+varstr_cmp(const char *arg1, int len1, const char *arg2, int len2, Oid collid)
 {
 	int			result;
 
@@ -2950,8 +2950,7 @@ bytea_overlay(bytea *t1, bytea *t2, int sp, int sl)
 		ereport(ERROR,
 				(errcode(ERRCODE_SUBSTRING_ERROR),
 				 errmsg("negative substring length not allowed")));
-	sp_pl_sl = sp + sl;
-	if (sp_pl_sl <= sl)
+	if (pg_add_s32_overflow(sp, sl, &sp_pl_sl))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("integer out of range")));
@@ -3255,7 +3254,7 @@ textToQualifiedNameList(text *textval)
  *	namelist: filled with a palloc'd list of pointers to identifiers within
  *			  rawstring.  Caller should list_free() this even on error return.
  *
- * Returns TRUE if okay, FALSE if there is a syntax error in the string.
+ * Returns true if okay, false if there is a syntax error in the string.
  *
  * Note that an empty string is considered okay here, though not in
  * textToQualifiedNameList.
@@ -3383,7 +3382,7 @@ SplitIdentifierString(char *rawstring, char separator,
  *	namelist: filled with a palloc'd list of directory names.
  *			  Caller should list_free_deep() this even on error return.
  *
- * Returns TRUE if okay, FALSE if there is a syntax error in the string.
+ * Returns true if okay, false if there is a syntax error in the string.
  *
  * Note that an empty string is considered okay here.
  */
@@ -5279,13 +5278,13 @@ text_format_parse_digits(const char **ptr, const char *end_ptr, int *value)
 
 	while (*cp >= '0' && *cp <= '9')
 	{
-		int			newval = val * 10 + (*cp - '0');
+		int8		digit = (*cp - '0');
 
-		if (newval / 10 != val) /* overflow? */
+		if (unlikely(pg_mul_s32_overflow(val, 10, &val)) ||
+			unlikely(pg_add_s32_overflow(val, digit, &val)))
 			ereport(ERROR,
 					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 					 errmsg("number is out of range")));
-		val = newval;
 		ADVANCE_PARSE_POINTER(cp, end_ptr);
 		found = true;
 	}

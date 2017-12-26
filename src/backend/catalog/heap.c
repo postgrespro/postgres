@@ -103,12 +103,12 @@ static ObjectAddress AddNewRelationType(const char *typeName,
 				   Oid new_row_type,
 				   Oid new_array_type);
 static void RelationRemoveInheritance(Oid relid);
-static Oid StoreRelCheck(Relation rel, char *ccname, Node *expr,
+static Oid StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 			  bool is_validated, bool is_local, int inhcount,
 			  bool is_no_inherit, bool is_internal);
 static void StoreConstraints(Relation rel, List *cooked_constraints,
 				 bool is_internal);
-static bool MergeWithExistingConstraint(Relation rel, char *ccname, Node *expr,
+static bool MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 							bool allow_merge, bool is_local,
 							bool is_initially_valid,
 							bool is_no_inherit);
@@ -1000,15 +1000,15 @@ AddNewRelationType(const char *typeName,
  *	cooked_constraints: list of precooked check constraints and defaults
  *	relkind: relkind for new rel
  *	relpersistence: rel's persistence status (permanent, temp, or unlogged)
- *	shared_relation: TRUE if it's to be a shared relation
- *	mapped_relation: TRUE if the relation will use the relfilenode map
- *	oidislocal: TRUE if oid column (if any) should be marked attislocal
+ *	shared_relation: true if it's to be a shared relation
+ *	mapped_relation: true if the relation will use the relfilenode map
+ *	oidislocal: true if oid column (if any) should be marked attislocal
  *	oidinhcount: attinhcount to assign to oid column (if any)
  *	oncommit: ON COMMIT marking (only relevant if it's a temp table)
  *	reloptions: reloptions in Datum form, or (Datum) 0 if none
- *	use_user_acl: TRUE if should look for user-defined default permissions;
- *		if FALSE, relacl is always set NULL
- *	allow_system_table_mods: TRUE to allow creation in system namespaces
+ *	use_user_acl: true if should look for user-defined default permissions;
+ *		if false, relacl is always set NULL
+ *	allow_system_table_mods: true to allow creation in system namespaces
  *	is_internal: is this a system-generated catalog?
  *
  * Output parameters:
@@ -1772,6 +1772,8 @@ heap_drop_with_catalog(Oid relid)
 	 * shared-cache-inval notice that will make them update their index lists.
 	 */
 	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
 	if (((Form_pg_class) GETSTRUCT(tuple))->relispartition)
 	{
 		parentOid = get_partition_parent(relid);
@@ -2037,7 +2039,7 @@ StoreAttrDefault(Relation rel, AttrNumber attnum,
  * The OID of the new constraint is returned.
  */
 static Oid
-StoreRelCheck(Relation rel, char *ccname, Node *expr,
+StoreRelCheck(Relation rel, const char *ccname, Node *expr,
 			  bool is_validated, bool is_local, int inhcount,
 			  bool is_no_inherit, bool is_internal)
 {
@@ -2208,9 +2210,9 @@ StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
  * rel: relation to be modified
  * newColDefaults: list of RawColumnDefault structures
  * newConstraints: list of Constraint nodes
- * allow_merge: TRUE if check constraints may be merged with existing ones
- * is_local: TRUE if definition is local, FALSE if it's inherited
- * is_internal: TRUE if result of some internal process, not a user request
+ * allow_merge: true if check constraints may be merged with existing ones
+ * is_local: true if definition is local, false if it's inherited
+ * is_internal: true if result of some internal process, not a user request
  *
  * All entries in newColDefaults will be processed.  Entries in newConstraints
  * will be processed only if they are CONSTR_CHECK type.
@@ -2455,13 +2457,13 @@ AddRelationNewConstraints(Relation rel,
  * new one, and either adjust its conislocal/coninhcount settings or throw
  * error as needed.
  *
- * Returns TRUE if merged (constraint is a duplicate), or FALSE if it's
+ * Returns true if merged (constraint is a duplicate), or false if it's
  * got a so-far-unique name, or throws error if conflict.
  *
  * XXX See MergeConstraintsIntoExisting too if you change this code.
  */
 static bool
-MergeWithExistingConstraint(Relation rel, char *ccname, Node *expr,
+MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
 							bool allow_merge, bool is_local,
 							bool is_initially_valid,
 							bool is_no_inherit)
@@ -2658,7 +2660,7 @@ cookDefault(ParseState *pstate,
 			Node *raw_default,
 			Oid atttypid,
 			int32 atttypmod,
-			char *attname)
+			const char *attname)
 {
 	Node	   *expr;
 
@@ -3130,9 +3132,6 @@ StorePartitionKey(Relation rel,
 	ObjectAddress referenced;
 
 	Assert(rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
-
-	tuple = SearchSysCache1(PARTRELID,
-							ObjectIdGetDatum(RelationGetRelid(rel)));
 
 	/* Copy the partition attribute numbers, opclass OIDs into arrays */
 	partattrs_vec = buildint2vector(partattrs, partnatts);

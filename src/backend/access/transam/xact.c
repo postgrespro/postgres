@@ -671,8 +671,8 @@ SubTransactionIsActive(SubTransactionId subxid)
 /*
  *	GetCurrentCommandId
  *
- * "used" must be TRUE if the caller intends to use the command ID to mark
- * inserted/updated/deleted tuples.  FALSE means the ID is being fetched
+ * "used" must be true if the caller intends to use the command ID to mark
+ * inserted/updated/deleted tuples.  false means the ID is being fetched
  * for read-only purposes (ie, as a snapshot validity cutoff).  See
  * CommandCounterIncrement() for discussion.
  */
@@ -683,12 +683,12 @@ GetCurrentCommandId(bool used)
 	if (used)
 	{
 		/*
-		 * Forbid setting currentCommandIdUsed in parallel mode, because we
-		 * have no provision for communicating this back to the master.  We
+		 * Forbid setting currentCommandIdUsed in a parallel worker, because
+		 * we have no provision for communicating this back to the master.  We
 		 * could relax this restriction when currentCommandIdUsed was already
 		 * true at the start of the parallel operation.
 		 */
-		Assert(CurrentTransactionState->parallelModeLevel == 0);
+		Assert(!IsParallelWorker());
 		currentCommandIdUsed = true;
 	}
 	return currentCommandId;
@@ -997,11 +997,12 @@ AtStart_Memory(void)
 	 */
 	if (TransactionAbortContext == NULL)
 		TransactionAbortContext =
-			AllocSetContextCreate(TopMemoryContext,
-								  "TransactionAbortContext",
-								  32 * 1024,
-								  32 * 1024,
-								  32 * 1024);
+			AllocSetContextCreateExtended(TopMemoryContext,
+										  "TransactionAbortContext",
+										  0,
+										  32 * 1024,
+										  32 * 1024,
+										  32 * 1024);
 
 	/*
 	 * We shouldn't have a transaction context already.
@@ -1164,7 +1165,7 @@ RecordTransactionCommit(void)
 		 * vacuum.  Hence we emit a bespoke record for the invalidations. We
 		 * don't want to use that in case a commit record is emitted, so they
 		 * happen synchronously with commits (besides not wanting to emit more
-		 * WAL recoreds).
+		 * WAL records).
 		 */
 		if (nmsgs != 0)
 		{
@@ -3470,7 +3471,7 @@ BeginTransactionBlock(void)
  *		This executes a PREPARE command.
  *
  * Since PREPARE may actually do a ROLLBACK, the result indicates what
- * happened: TRUE for PREPARE, FALSE for ROLLBACK.
+ * happened: true for PREPARE, false for ROLLBACK.
  *
  * Note that we don't actually do anything here except change blockState.
  * The real work will be done in the upcoming PrepareTransaction().
@@ -3478,7 +3479,7 @@ BeginTransactionBlock(void)
  * resource owner, etc while executing inside a Portal.
  */
 bool
-PrepareTransactionBlock(char *gid)
+PrepareTransactionBlock(const char *gid)
 {
 	TransactionState s;
 	bool		result;
@@ -3522,7 +3523,7 @@ PrepareTransactionBlock(char *gid)
  *		This executes a COMMIT command.
  *
  * Since COMMIT may actually do a ROLLBACK, the result indicates what
- * happened: TRUE for COMMIT, FALSE for ROLLBACK.
+ * happened: true for COMMIT, false for ROLLBACK.
  *
  * Note that we don't actually do anything here except change blockState.
  * The real work will be done in the upcoming CommitTransactionCommand().
@@ -3823,7 +3824,7 @@ EndImplicitTransactionBlock(void)
  *		This executes a SAVEPOINT command.
  */
 void
-DefineSavepoint(char *name)
+DefineSavepoint(const char *name)
 {
 	TransactionState s = CurrentTransactionState;
 
@@ -4168,7 +4169,7 @@ RollbackToSavepoint(List *options)
  *		the caller to do it.
  */
 void
-BeginInternalSubTransaction(char *name)
+BeginInternalSubTransaction(const char *name)
 {
 	TransactionState s = CurrentTransactionState;
 
@@ -4715,6 +4716,9 @@ AbortSubTransaction(void)
 
 	/* Reset WAL record construction state */
 	XLogResetInsertion();
+
+	/* Cancel condition variable sleep */
+	ConditionVariableCancelSleep();
 
 	/*
 	 * Also clean up any open wait for lock, since the lock manager will choke

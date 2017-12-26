@@ -1246,6 +1246,17 @@ advance_combine_function(AggState *aggstate,
 			pergroupstate->noTransValue = false;
 			return;
 		}
+
+		if (pergroupstate->transValueIsNull)
+		{
+			/*
+			 * Don't call a strict function with NULL inputs.  Note it is
+			 * possible to get here despite the above tests, if the combinefn
+			 * is strict *and* returned a NULL on a prior cycle. If that
+			 * happens we will propagate the NULL all the way to the end.
+			 */
+			return;
+		}
 	}
 
 	/* We run the combine functions in per-input-tuple memory context */
@@ -2628,7 +2639,7 @@ agg_retrieve_hash_table(AggState *aggstate)
 			else
 			{
 				/* No more hashtables, so done */
-				aggstate->agg_done = TRUE;
+				aggstate->agg_done = true;
 				return NULL;
 			}
 		}
@@ -4206,12 +4217,12 @@ AggGetTempMemoryContext(FunctionCallInfo fcinfo)
  * AggStateIsShared - find out whether transition state is shared
  *
  * If the function is being called as an aggregate support function,
- * return TRUE if the aggregate's transition state is shared across
- * multiple aggregates, FALSE if it is not.
+ * return true if the aggregate's transition state is shared across
+ * multiple aggregates, false if it is not.
  *
- * Returns TRUE if not called as an aggregate support function.
+ * Returns true if not called as an aggregate support function.
  * This is intended as a conservative answer, ie "no you'd better not
- * scribble on your input".  In particular, will return TRUE if the
+ * scribble on your input".  In particular, will return true if the
  * aggregate is being used as a window function, which is a scenario
  * in which changing the transition state is a bad idea.  We might
  * want to refine the behavior for the window case in future.

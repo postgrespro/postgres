@@ -1418,6 +1418,26 @@ ROLLBACK;
 \d check_fk_presence_2
 DROP TABLE check_fk_presence_1, check_fk_presence_2;
 
+-- check column addition within a view (bug #14876)
+create table at_base_table(id int, stuff text);
+insert into at_base_table values (23, 'skidoo');
+create view at_view_1 as select * from at_base_table bt;
+create view at_view_2 as select *, to_json(v1) as j from at_view_1 v1;
+\d+ at_view_1
+\d+ at_view_2
+explain (verbose, costs off) select * from at_view_2;
+select * from at_view_2;
+
+create or replace view at_view_1 as select *, 2+2 as more from at_base_table bt;
+\d+ at_view_1
+\d+ at_view_2
+explain (verbose, costs off) select * from at_view_2;
+select * from at_view_2;
+
+drop view at_view_2;
+drop view at_view_1;
+drop table at_base_table;
+
 --
 -- lock levels
 --
@@ -1713,6 +1733,14 @@ ALTER TYPE test_type2 RENAME ATTRIBUTE a TO aa CASCADE;
 \d test_tbl2_subclass
 
 DROP TABLE test_tbl2_subclass;
+
+CREATE TYPE test_typex AS (a int, b text);
+CREATE TABLE test_tblx (x int, y test_typex check ((y).a > 0));
+ALTER TYPE test_typex DROP ATTRIBUTE a; -- fails
+ALTER TYPE test_typex DROP ATTRIBUTE a CASCADE;
+\d test_tblx
+DROP TABLE test_tblx;
+DROP TYPE test_typex;
 
 -- This test isn't that interesting on its own, but the purpose is to leave
 -- behind a table to test pg_upgrade with. The table has a composite type
@@ -2111,6 +2139,7 @@ SELECT conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_1'::reg
 -- check that the new partition won't overlap with an existing partition
 CREATE TABLE fail_part (LIKE part_1 INCLUDING CONSTRAINTS);
 ALTER TABLE list_parted ATTACH PARTITION fail_part FOR VALUES IN (1);
+DROP TABLE fail_part;
 -- check that an existing table can be attached as a default partition
 CREATE TABLE def_part (LIKE list_parted INCLUDING CONSTRAINTS);
 ALTER TABLE list_parted ATTACH PARTITION def_part DEFAULT;
@@ -2304,6 +2333,62 @@ CREATE TABLE quuux1 PARTITION OF quuux FOR VALUES IN (1);
 CREATE TABLE quuux2 PARTITION OF quuux FOR VALUES IN (2);
 DROP TABLE quuux;
 
+-- check validation when attaching hash partitions
+
+-- The default hash functions as they exist today aren't portable; they can
+-- return different results on different machines.  Depending upon how the
+-- values are hashed, the row may map to different partitions, which result in
+-- regression failure.  To avoid this, let's create a non-default hash function
+-- that just returns the input value unchanged.
+CREATE OR REPLACE FUNCTION dummy_hashint4(a int4, seed int8) RETURNS int8 AS
+$$ BEGIN RETURN (a + 1 + seed); END; $$ LANGUAGE 'plpgsql' IMMUTABLE;
+CREATE OPERATOR CLASS custom_opclass FOR TYPE int4 USING HASH AS
+OPERATOR 1 = , FUNCTION 2 dummy_hashint4(int4, int8);
+
+-- check that the new partition won't overlap with an existing partition
+CREATE TABLE hash_parted (
+	a int,
+	b int
+) PARTITION BY HASH (a custom_opclass);
+CREATE TABLE hpart_1 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+CREATE TABLE fail_part (LIKE hpart_1);
+ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 8, REMAINDER 4);
+ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 8, REMAINDER 0);
+DROP TABLE fail_part;
+
+-- check validation when attaching hash partitions
+
+-- check that violating rows are correctly reported
+CREATE TABLE hpart_2 (LIKE hash_parted);
+INSERT INTO hpart_2 VALUES (3, 0);
+ALTER TABLE hash_parted ATTACH PARTITION hpart_2 FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+
+-- should be ok after deleting the bad row
+DELETE FROM hpart_2;
+ALTER TABLE hash_parted ATTACH PARTITION hpart_2 FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+
+-- check that leaf partitions are scanned when attaching a partitioned
+-- table
+CREATE TABLE hpart_5 (
+	LIKE hash_parted
+) PARTITION BY LIST (b);
+
+-- check that violating rows are correctly reported
+CREATE TABLE hpart_5_a PARTITION OF hpart_5 FOR VALUES IN ('1', '2', '3');
+INSERT INTO hpart_5_a (a, b) VALUES (7, 1);
+ALTER TABLE hash_parted ATTACH PARTITION hpart_5 FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+
+-- should be ok after deleting the bad row
+DELETE FROM hpart_5_a;
+ALTER TABLE hash_parted ATTACH PARTITION hpart_5 FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+
+-- check that the table being attach is with valid modulus and remainder value
+CREATE TABLE fail_part(LIKE hash_parted);
+ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 0, REMAINDER 1);
+ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 8, REMAINDER 8);
+ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 3, REMAINDER 2);
+DROP TABLE fail_part;
+
 --
 -- DETACH PARTITION
 --
@@ -2315,11 +2400,15 @@ DROP TABLE regular_table;
 
 -- check that the partition being detached exists at all
 ALTER TABLE list_parted2 DETACH PARTITION part_4;
+ALTER TABLE hash_parted DETACH PARTITION hpart_4;
 
 -- check that the partition being detached is actually a partition of the parent
 CREATE TABLE not_a_part (a int);
 ALTER TABLE list_parted2 DETACH PARTITION not_a_part;
 ALTER TABLE list_parted2 DETACH PARTITION part_1;
+
+ALTER TABLE hash_parted DETACH PARTITION not_a_part;
+DROP TABLE not_a_part;
 
 -- check that, after being detached, attinhcount/coninhcount is dropped to 0 and
 -- attislocal/conislocal is set to true
@@ -2390,9 +2479,16 @@ ALTER TABLE part_2 INHERIT inh_test;
 ALTER TABLE list_parted2 DROP COLUMN b;
 ALTER TABLE list_parted2 ALTER COLUMN b TYPE text;
 
+-- dropping non-partition key columns should be allowed on the parent table.
+ALTER TABLE list_parted DROP COLUMN b;
+SELECT * FROM list_parted;
+
 -- cleanup
 DROP TABLE list_parted, list_parted2, range_parted;
 DROP TABLE fail_def_part;
+DROP TABLE hash_parted;
+DROP OPERATOR CLASS custom_opclass USING HASH;
+DROP FUNCTION dummy_hashint4(a int4, seed int8);
 
 -- more tests for certain multi-level partitioning scenarios
 create table p (a int, b int) partition by range (a, b);
@@ -2427,3 +2523,10 @@ create table parted_validate_test_1 partition of parted_validate_test for values
 alter table parted_validate_test add constraint parted_validate_test_chka check (a > 0) not valid;
 alter table parted_validate_test validate constraint parted_validate_test_chka;
 drop table parted_validate_test;
+-- test alter column options
+CREATE TABLE tmp(i integer);
+INSERT INTO tmp VALUES (1);
+ALTER TABLE tmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
+ALTER TABLE tmp ALTER COLUMN i RESET (n_distinct_inherited);
+ANALYZE tmp;
+DROP TABLE tmp;

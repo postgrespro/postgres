@@ -32,7 +32,7 @@ static ScanState *search_plan_tree(PlanState *node, Oid table_oid);
  * of the table is currently being scanned by the cursor named by CURRENT OF,
  * and return the row's TID into *current_tid.
  *
- * Returns TRUE if a row was identified.  Returns FALSE if the cursor is valid
+ * Returns true if a row was identified.  Returns false if the cursor is valid
  * for the table but is not currently scanning a row of the table (this is a
  * legal situation in inheritance cases).  Raises error if cursor is not a
  * valid updatable scan of the specified table.
@@ -216,11 +216,14 @@ fetch_cursor_param_value(ExprContext *econtext, int paramId)
 	if (paramInfo &&
 		paramId > 0 && paramId <= paramInfo->numParams)
 	{
-		ParamExternData *prm = &paramInfo->params[paramId - 1];
+		ParamExternData *prm;
+		ParamExternData prmdata;
 
 		/* give hook a chance in case parameter is dynamic */
-		if (!OidIsValid(prm->ptype) && paramInfo->paramFetch != NULL)
-			paramInfo->paramFetch(paramInfo, paramId);
+		if (paramInfo->paramFetch != NULL)
+			prm = paramInfo->paramFetch(paramInfo, paramId, false, &prmdata);
+		else
+			prm = &paramInfo->params[paramId - 1];
 
 		if (OidIsValid(prm->ptype) && !prm->isnull)
 		{

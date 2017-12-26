@@ -9,14 +9,6 @@
  *-------------------------------------------------------------------------
  */
 
-#ifdef WIN32
-/*
- * Need this to get defines for restricted tokens and jobs. And it
- * has to be set before any header from the Win32 API is loaded.
- */
-#define _WIN32_WINNT 0x0501
-#endif
-
 #include "postgres_fe.h"
 
 #include <fcntl.h>
@@ -965,7 +957,7 @@ do_restart(void)
 		write_stderr(_("%s: PID file \"%s\" does not exist\n"),
 					 progname, pid_file);
 		write_stderr(_("Is server running?\n"));
-		write_stderr(_("starting server anyway\n"));
+		write_stderr(_("trying to start server anyway\n"));
 		do_start();
 		return;
 	}

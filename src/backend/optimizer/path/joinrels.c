@@ -335,7 +335,7 @@ make_rels_by_clauseless_joins(PlannerInfo *root,
  *
  * On success, *sjinfo_p is set to NULL if this is to be a plain inner join,
  * else it's set to point to the associated SpecialJoinInfo node.  Also,
- * *reversed_p is set TRUE if the given relations need to be swapped to
+ * *reversed_p is set true if the given relations need to be swapped to
  * match the SpecialJoinInfo node.
  */
 static bool
@@ -1232,7 +1232,8 @@ mark_dummy_rel(RelOptInfo *rel)
 	rel->partial_pathlist = NIL;
 
 	/* Set up the dummy path */
-	add_path(rel, (Path *) create_append_path(rel, NIL, NULL, 0, NIL));
+	add_path(rel, (Path *) create_append_path(rel, NIL, NIL, NULL,
+											  0, false, NIL, -1));
 
 	/* Set or update cheapest_total_path and related fields */
 	set_cheapest(rel);
@@ -1250,7 +1251,7 @@ mark_dummy_rel(RelOptInfo *rel)
  * decide there's no match for an outer row, which is pretty stupid.  So,
  * we need to detect the case.
  *
- * If only_pushed_down is TRUE, then consider only pushed-down quals.
+ * If only_pushed_down is true, then consider only pushed-down quals.
  */
 static bool
 restriction_is_constant_false(List *restrictlist, bool only_pushed_down)
@@ -1463,7 +1464,7 @@ have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
 			continue;
 
 		/* Skip clauses which are not equality conditions. */
-		if (!rinfo->mergeopfamilies)
+		if (!rinfo->mergeopfamilies && !OidIsValid(rinfo->hashjoinoperator))
 			continue;
 
 		opexpr = (OpExpr *) rinfo->clause;
@@ -1515,8 +1516,14 @@ have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
 		 * The clause allows partition-wise join if only it uses the same
 		 * operator family as that specified by the partition key.
 		 */
-		if (!list_member_oid(rinfo->mergeopfamilies,
-							 part_scheme->partopfamily[ipk1]))
+		if (rel1->part_scheme->strategy == PARTITION_STRATEGY_HASH)
+		{
+			if (!op_in_opfamily(rinfo->hashjoinoperator,
+								part_scheme->partopfamily[ipk1]))
+				continue;
+		}
+		else if (!list_member_oid(rinfo->mergeopfamilies,
+								  part_scheme->partopfamily[ipk1]))
 			continue;
 
 		/* Mark the partition key as having an equi-join clause. */

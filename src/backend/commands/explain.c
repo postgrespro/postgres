@@ -19,7 +19,7 @@
 #include "commands/createas.h"
 #include "commands/defrem.h"
 #include "commands/prepare.h"
-#include "executor/hashjoin.h"
+#include "executor/nodeHash.h"
 #include "foreign/fdwapi.h"
 #include "nodes/extensible.h"
 #include "nodes/nodeFuncs.h"
@@ -107,6 +107,7 @@ static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 static void show_instrumentation_count(const char *qlabel, int which,
 						   PlanState *planstate, ExplainState *es);
 static void show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es);
+static void show_eval_params(Bitmapset *bms_params, ExplainState *es);
 static const char *explain_get_index_name(Oid indexId);
 static void show_buffer_usage(ExplainState *es, const BufferUsage *usage);
 static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
@@ -1441,6 +1442,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 											   planstate, es);
 				ExplainPropertyInteger("Workers Planned",
 									   gather->num_workers, es);
+
+				/* Show params evaluated at gather node */
+				if (gather->initParam)
+					show_eval_params(gather->initParam, es);
+
 				if (es->analyze)
 				{
 					int			nworkers;
@@ -1463,6 +1469,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 											   planstate, es);
 				ExplainPropertyInteger("Workers Planned",
 									   gm->num_workers, es);
+
+				/* Show params evaluated at gather-merge node */
+				if (gm->initParam)
+					show_eval_params(gm->initParam, es);
+
 				if (es->analyze)
 				{
 					int			nworkers;
@@ -2368,34 +2379,62 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 static void
 show_hash_info(HashState *hashstate, ExplainState *es)
 {
-	HashJoinTable hashtable;
+	HashInstrumentation *hinstrument = NULL;
 
-	hashtable = hashstate->hashtable;
-
-	if (hashtable)
+	/*
+	 * In a parallel query, the leader process may or may not have run the
+	 * hash join, and even if it did it may not have built a hash table due to
+	 * timing (if it started late it might have seen no tuples in the outer
+	 * relation and skipped building the hash table).  Therefore we have to be
+	 * prepared to get instrumentation data from a worker if there is no hash
+	 * table.
+	 */
+	if (hashstate->hashtable)
 	{
-		long		spacePeakKb = (hashtable->spacePeak + 1023) / 1024;
+		hinstrument = (HashInstrumentation *)
+			palloc(sizeof(HashInstrumentation));
+		ExecHashGetInstrumentation(hinstrument, hashstate->hashtable);
+	}
+	else if (hashstate->shared_info)
+	{
+		SharedHashInfo *shared_info = hashstate->shared_info;
+		int		i;
+
+		/* Find the first worker that built a hash table. */
+		for (i = 0; i < shared_info->num_workers; ++i)
+		{
+			if (shared_info->hinstrument[i].nbatch > 0)
+			{
+				hinstrument = &shared_info->hinstrument[i];
+				break;
+			}
+		}
+	}
+
+	if (hinstrument)
+	{
+		long		spacePeakKb = (hinstrument->space_peak + 1023) / 1024;
 
 		if (es->format != EXPLAIN_FORMAT_TEXT)
 		{
-			ExplainPropertyLong("Hash Buckets", hashtable->nbuckets, es);
+			ExplainPropertyLong("Hash Buckets", hinstrument->nbuckets, es);
 			ExplainPropertyLong("Original Hash Buckets",
-								hashtable->nbuckets_original, es);
-			ExplainPropertyLong("Hash Batches", hashtable->nbatch, es);
+								hinstrument->nbuckets_original, es);
+			ExplainPropertyLong("Hash Batches", hinstrument->nbatch, es);
 			ExplainPropertyLong("Original Hash Batches",
-								hashtable->nbatch_original, es);
+								hinstrument->nbatch_original, es);
 			ExplainPropertyLong("Peak Memory Usage", spacePeakKb, es);
 		}
-		else if (hashtable->nbatch_original != hashtable->nbatch ||
-				 hashtable->nbuckets_original != hashtable->nbuckets)
+		else if (hinstrument->nbatch_original != hinstrument->nbatch ||
+				 hinstrument->nbuckets_original != hinstrument->nbuckets)
 		{
 			appendStringInfoSpaces(es->str, es->indent * 2);
 			appendStringInfo(es->str,
 							 "Buckets: %d (originally %d)  Batches: %d (originally %d)  Memory Usage: %ldkB\n",
-							 hashtable->nbuckets,
-							 hashtable->nbuckets_original,
-							 hashtable->nbatch,
-							 hashtable->nbatch_original,
+							 hinstrument->nbuckets,
+							 hinstrument->nbuckets_original,
+							 hinstrument->nbatch,
+							 hinstrument->nbatch_original,
 							 spacePeakKb);
 		}
 		else
@@ -2403,7 +2442,7 @@ show_hash_info(HashState *hashstate, ExplainState *es)
 			appendStringInfoSpaces(es->str, es->indent * 2);
 			appendStringInfo(es->str,
 							 "Buckets: %d  Batches: %d  Memory Usage: %ldkB\n",
-							 hashtable->nbuckets, hashtable->nbatch,
+							 hinstrument->nbuckets, hinstrument->nbatch,
 							 spacePeakKb);
 		}
 	}
@@ -2485,6 +2524,29 @@ show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es)
 		if (fdwroutine->ExplainForeignScan != NULL)
 			fdwroutine->ExplainForeignScan(fsstate, es);
 	}
+}
+
+/*
+ * Show initplan params evaluated at Gather or Gather Merge node.
+ */
+static void
+show_eval_params(Bitmapset *bms_params, ExplainState *es)
+{
+	int			paramid = -1;
+	List	   *params = NIL;
+
+	Assert(bms_params);
+
+	while ((paramid = bms_next_member(bms_params, paramid)) >= 0)
+	{
+		char		param[32];
+
+		snprintf(param, sizeof(param), "$%d", paramid);
+		params = lappend(params, pstrdup(param));
+	}
+
+	if (params)
+		ExplainPropertyList("Params Evaluated", params, es);
 }
 
 /*

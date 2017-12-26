@@ -96,9 +96,11 @@ undefine([Ac_cachevar])dnl
 # PGAC_TYPE_128BIT_INT
 # ---------------------
 # Check if __int128 is a working 128 bit integer type, and if so
-# define PG_INT128_TYPE to that typename.  This currently only detects
-# a GCC/clang extension, but support for different environments may be
-# added in the future.
+# define PG_INT128_TYPE to that typename, and define ALIGNOF_PG_INT128_TYPE
+# as its alignment requirement.
+#
+# This currently only detects a GCC/clang extension, but support for other
+# environments may be added in the future.
 #
 # For the moment we only test for support for 128bit math; support for
 # 128bit literals and snprintf is not required.
@@ -128,6 +130,7 @@ return 1;
 [pgac_cv__128bit_int=no])])
 if test x"$pgac_cv__128bit_int" = xyes ; then
   AC_DEFINE(PG_INT128_TYPE, __int128, [Define to the name of a signed 128-bit integer type.])
+  AC_CHECK_ALIGNOF(PG_INT128_TYPE)
 fi])# PGAC_TYPE_128BIT_INT
 
 
@@ -282,10 +285,15 @@ fi])# PGAC_C_BUILTIN_BSWAP64
 # -------------------------
 # Check if the C compiler understands __builtin_constant_p(),
 # and define HAVE__BUILTIN_CONSTANT_P if so.
+# We need __builtin_constant_p("string literal") to be true, but some older
+# compilers don't think that, so test for that case explicitly.
 AC_DEFUN([PGAC_C_BUILTIN_CONSTANT_P],
 [AC_CACHE_CHECK(for __builtin_constant_p, pgac_cv__builtin_constant_p,
 [AC_COMPILE_IFELSE([AC_LANG_SOURCE(
-[[static int x; static int y[__builtin_constant_p(x) ? x : 1];]]
+[[static int x;
+  static int y[__builtin_constant_p(x) ? x : 1];
+  static int z[__builtin_constant_p("string literal") ? 1 : x];
+]]
 )],
 [pgac_cv__builtin_constant_p=yes],
 [pgac_cv__builtin_constant_p=no])])
@@ -293,6 +301,34 @@ if test x"$pgac_cv__builtin_constant_p" = xyes ; then
 AC_DEFINE(HAVE__BUILTIN_CONSTANT_P, 1,
           [Define to 1 if your compiler understands __builtin_constant_p.])
 fi])# PGAC_C_BUILTIN_CONSTANT_P
+
+
+
+# PGAC_C_BUILTIN_OP_OVERFLOW
+# -------------------------
+# Check if the C compiler understands __builtin_$op_overflow(),
+# and define HAVE__BUILTIN_OP_OVERFLOW if so.
+#
+# Check for the most complicated case, 64 bit multiplication, as a
+# proxy for all of the operations.  To detect the case where the compiler
+# knows the function but library support is missing, we must link not just
+# compile, and store the results in global variables so the compiler doesn't
+# optimize away the call.
+AC_DEFUN([PGAC_C_BUILTIN_OP_OVERFLOW],
+[AC_CACHE_CHECK(for __builtin_mul_overflow, pgac_cv__builtin_op_overflow,
+[AC_LINK_IFELSE([AC_LANG_PROGRAM([
+PG_INT64_TYPE a = 1;
+PG_INT64_TYPE b = 1;
+PG_INT64_TYPE result;
+int oflo;
+],
+[oflo = __builtin_mul_overflow(a, b, &result);])],
+[pgac_cv__builtin_op_overflow=yes],
+[pgac_cv__builtin_op_overflow=no])])
+if test x"$pgac_cv__builtin_op_overflow" = xyes ; then
+AC_DEFINE(HAVE__BUILTIN_OP_OVERFLOW, 1,
+          [Define to 1 if your compiler understands __builtin_$op_overflow.])
+fi])# PGAC_C_BUILTIN_OP_OVERFLOW
 
 
 

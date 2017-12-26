@@ -36,6 +36,7 @@
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "utils/ps_status.h"
+#include "utils/relcache.h"
 #include "utils/timestamp.h"
 
 
@@ -51,9 +52,9 @@ typedef struct
 } basebackup_options;
 
 
-static int64 sendDir(char *path, int basepathlen, bool sizeonly,
+static int64 sendDir(const char *path, int basepathlen, bool sizeonly,
 		List *tablespaces, bool sendtblspclinks);
-static bool sendFile(char *readfilename, char *tarfilename,
+static bool sendFile(const char *readfilename, const char *tarfilename,
 		 struct stat *statbuf, bool missing_ok);
 static void sendFileWithContent(const char *filename, const char *content);
 static int64 _tarWriteHeader(const char *filename, const char *linktarget,
@@ -63,7 +64,7 @@ static int64 _tarWriteDir(const char *pathbuf, int basepathlen, struct stat *sta
 static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void base_backup_cleanup(int code, Datum arg);
-static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
+static void perform_base_backup(basebackup_options *opt);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
 static void SendXlogRecPtrResult(XLogRecPtr ptr, TimeLineID tli);
 static int	compareWalFileNames(const void *a, const void *b);
@@ -151,6 +152,9 @@ static const char *excludeFiles[] =
 	/* Skip current log file temporary file */
 	LOG_METAINFO_DATAFILE_TMP,
 
+	/* Skip relation cache because it is rebuilt on startup */
+	RELCACHE_INIT_FILENAME,
+
 	/*
 	 * If there's a backup_label or tablespace_map file, it belongs to a
 	 * backup started by the user with pg_start_backup().  It is *not* correct
@@ -184,7 +188,7 @@ base_backup_cleanup(int code, Datum arg)
  * clobbered by longjmp" from stupider versions of gcc.
  */
 static void
-perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
+perform_base_backup(basebackup_options *opt)
 {
 	XLogRecPtr	startptr;
 	TimeLineID	starttli;
@@ -203,7 +207,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 	tblspc_map_file = makeStringInfo();
 
 	startptr = do_pg_start_backup(opt->label, opt->fastcheckpoint, &starttli,
-								  labelfile, tblspcdir, &tablespaces,
+								  labelfile, &tablespaces,
 								  tblspc_map_file,
 								  opt->progress, opt->sendtblspcmapfile);
 
@@ -211,7 +215,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 	 * Once do_pg_start_backup has been called, ensure that any failure causes
 	 * us to abort the backup so we don't "leak" a backup counter. For this
 	 * reason, *all* functionality between do_pg_start_backup() and
-	 * do_pg_stop_backup() should be inside the error cleanup block!
+	 * the end of do_pg_stop_backup() should be inside the error cleanup block!
 	 */
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
@@ -274,7 +278,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 			/* Send CopyOutResponse message */
 			pq_beginmessage(&buf, 'H');
 			pq_sendbyte(&buf, 0);	/* overall format */
-			pq_sendint16(&buf, 0); /* natts */
+			pq_sendint16(&buf, 0);	/* natts */
 			pq_endmessage(&buf);
 
 			if (ti->path == NULL)
@@ -320,10 +324,11 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 			else
 				pq_putemptymessage('c');	/* CopyDone */
 		}
+
+		endptr = do_pg_stop_backup(labelfile->data, !opt->nowait, &endtli);
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 
-	endptr = do_pg_stop_backup(labelfile->data, !opt->nowait, &endtli);
 
 	if (opt->includewal)
 	{
@@ -363,9 +368,6 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		XLogFileName(lastoff, ThisTimeLineID, endsegno, wal_segment_size);
 
 		dir = AllocateDir("pg_wal");
-		if (!dir)
-			ereport(ERROR,
-					(errmsg("could not open directory \"%s\": %m", "pg_wal")));
 		while ((de = ReadDir(dir, "pg_wal")) != NULL)
 		{
 			/* Does it look like a WAL segment, and is it in the range? */
@@ -689,7 +691,6 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 void
 SendBaseBackup(BaseBackupCmd *cmd)
 {
-	DIR		   *dir;
 	basebackup_options opt;
 
 	parse_basebackup_options(cmd->options, &opt);
@@ -705,15 +706,7 @@ SendBaseBackup(BaseBackupCmd *cmd)
 		set_ps_display(activitymsg, false);
 	}
 
-	/* Make sure we can open the directory with tablespaces in it */
-	dir = AllocateDir("pg_tblspc");
-	if (!dir)
-		ereport(ERROR,
-				(errmsg("could not open directory \"%s\": %m", "pg_tblspc")));
-
-	perform_base_backup(&opt, dir);
-
-	FreeDir(dir);
+	perform_base_backup(&opt);
 }
 
 static void
@@ -740,7 +733,7 @@ SendBackupHeader(List *tablespaces)
 	pq_sendstring(&buf, "spcoid");
 	pq_sendint32(&buf, 0);		/* table oid */
 	pq_sendint16(&buf, 0);		/* attnum */
-	pq_sendint32(&buf, OIDOID);	/* type oid */
+	pq_sendint32(&buf, OIDOID); /* type oid */
 	pq_sendint16(&buf, 4);		/* typlen */
 	pq_sendint32(&buf, 0);		/* typmod */
 	pq_sendint16(&buf, 0);		/* format code */
@@ -770,10 +763,10 @@ SendBackupHeader(List *tablespaces)
 
 		/* Send one datarow message */
 		pq_beginmessage(&buf, 'D');
-		pq_sendint16(&buf, 3); /* number of columns */
+		pq_sendint16(&buf, 3);	/* number of columns */
 		if (ti->path == NULL)
 		{
-			pq_sendint32(&buf, -1);	/* Length = -1 ==> NULL */
+			pq_sendint32(&buf, -1); /* Length = -1 ==> NULL */
 			pq_sendint32(&buf, -1);
 		}
 		else
@@ -791,7 +784,7 @@ SendBackupHeader(List *tablespaces)
 		if (ti->size >= 0)
 			send_int8_string(&buf, ti->size / 1024);
 		else
-			pq_sendint32(&buf, -1);	/* NULL */
+			pq_sendint32(&buf, -1); /* NULL */
 
 		pq_endmessage(&buf);
 	}
@@ -958,7 +951,7 @@ sendTablespace(char *path, bool sizeonly)
  * as it will be sent separately in the tablespace_map file.
  */
 static int64
-sendDir(char *path, int basepathlen, bool sizeonly, List *tablespaces,
+sendDir(const char *path, int basepathlen, bool sizeonly, List *tablespaces,
 		bool sendtblspclinks)
 {
 	DIR		   *dir;
@@ -1203,7 +1196,7 @@ sendDir(char *path, int basepathlen, bool sizeonly, List *tablespaces,
  * and the file did not exist.
  */
 static bool
-sendFile(char *readfilename, char *tarfilename, struct stat *statbuf,
+sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf,
 		 bool missing_ok)
 {
 	FILE	   *fp;

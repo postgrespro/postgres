@@ -3,7 +3,7 @@ doc/src/sgml/ref/alter_schema.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="SQL-ALTERSCHEMA">
+<refentry id="sql-alterschema">
  <indexterm zone="sql-alterschema">
   <primary>ALTER SCHEMA</primary>
  </indexterm>
@@ -92,8 +92,8 @@ ALTER SCHEMA <replaceable>name</replaceable> OWNER TO { <replaceable>new_owner</
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-createschema"></member>
-   <member><xref linkend="sql-dropschema"></member>
+   <member><xref linkend="sql-createschema"/></member>
+   <member><xref linkend="sql-dropschema"/></member>
   </simplelist>
  </refsect1>
 

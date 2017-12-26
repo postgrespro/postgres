@@ -425,7 +425,8 @@ static void ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId,
 					 char *cmd, List **wqueue, LOCKMODE lockmode,
 					 bool rewrite);
 static void RebuildConstraintComment(AlteredTableInfo *tab, int pass,
-						 Oid objid, Relation rel, char *conname);
+						 Oid objid, Relation rel, List *domname,
+						 const char *conname);
 static void TryReuseIndex(Oid oldId, IndexStmt *stmt);
 static void TryReuseForeignKey(Oid oldId, Constraint *con);
 static void change_owner_fix_column_acls(Oid relationOid,
@@ -437,14 +438,14 @@ static ObjectAddress ATExecClusterOn(Relation rel, const char *indexName,
 static void ATExecDropCluster(Relation rel, LOCKMODE lockmode);
 static bool ATPrepChangePersistence(Relation rel, bool toLogged);
 static void ATPrepSetTableSpace(AlteredTableInfo *tab, Relation rel,
-					char *tablespacename, LOCKMODE lockmode);
+					const char *tablespacename, LOCKMODE lockmode);
 static void ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode);
 static void ATExecSetRelOptions(Relation rel, List *defList,
 					AlterTableType operation,
 					LOCKMODE lockmode);
-static void ATExecEnableDisableTrigger(Relation rel, char *trigname,
+static void ATExecEnableDisableTrigger(Relation rel, const char *trigname,
 						   char fires_when, bool skip_system, LOCKMODE lockmode);
-static void ATExecEnableDisableRule(Relation rel, char *rulename,
+static void ATExecEnableDisableRule(Relation rel, const char *rulename,
 						char fires_when, LOCKMODE lockmode);
 static void ATPrepAddInherit(Relation child_rel);
 static ObjectAddress ATExecAddInherit(Relation child_rel, RangeVar *parent, LOCKMODE lockmode);
@@ -470,7 +471,7 @@ static void RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid,
 static bool is_partition_attr(Relation rel, AttrNumber attnum, bool *used_in_expr);
 static PartitionSpec *transformPartitionSpec(Relation rel, PartitionSpec *partspec, char *strategy);
 static void ComputePartitionAttrs(Relation rel, List *partParams, AttrNumber *partattrs,
-					  List **partexprs, Oid *partopclass, Oid *partcollation);
+					  List **partexprs, Oid *partopclass, Oid *partcollation, char strategy);
 static void CreateInheritance(Relation child_rel, Relation parent_rel);
 static void RemoveInheritance(Relation child_rel, Relation parent_rel);
 static ObjectAddress ATExecAttachPartition(List **wqueue, Relation rel,
@@ -893,7 +894,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 
 		ComputePartitionAttrs(rel, stmt->partspec->partParams,
 							  partattrs, &partexprs, partopclass,
-							  partcollation);
+							  partcollation, strategy);
 
 		StorePartitionKey(rel, strategy, partnatts, partattrs, partexprs,
 						  partopclass, partcollation);
@@ -2306,7 +2307,7 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
  *
  * constraints is a list of CookedConstraint structs for previous constraints.
  *
- * Returns TRUE if merged (constraint is a duplicate), or FALSE if it's
+ * Returns true if merged (constraint is a duplicate), or false if it's
  * got a so-far-unique name, or throws error if conflict.
  */
 static bool
@@ -3319,6 +3320,7 @@ AlterTableGetLockLevel(List *cmds)
 			case AT_ProcessedConstraint:	/* becomes AT_AddConstraint */
 			case AT_AddConstraintRecurse:	/* becomes AT_AddConstraint */
 			case AT_ReAddConstraint:	/* becomes AT_AddConstraint */
+			case AT_ReAddDomainConstraint:	/* becomes AT_AddConstraint */
 				if (IsA(cmd->def, Constraint))
 				{
 					Constraint *con = (Constraint *) cmd->def;
@@ -3819,7 +3821,9 @@ ATRewriteCatalogs(List **wqueue, LOCKMODE lockmode)
 			rel = relation_open(tab->relid, NoLock);
 
 			foreach(lcmd, subcmds)
-				ATExecCmd(wqueue, tab, rel, (AlterTableCmd *) lfirst(lcmd), lockmode);
+				ATExecCmd(wqueue, tab, rel,
+						  castNode(AlterTableCmd, lfirst(lcmd)),
+						  lockmode);
 
 			/*
 			 * After the ALTER TYPE pass, do cleanup work (this is not done in
@@ -3935,6 +3939,13 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			address =
 				ATExecAddConstraint(wqueue, tab, rel, (Constraint *) cmd->def,
 									true, true, lockmode);
+			break;
+		case AT_ReAddDomainConstraint:	/* Re-add pre-existing domain check
+										 * constraint */
+			address =
+				AlterDomainAddConstraint(((AlterDomainStmt *) cmd->def)->typeName,
+										 ((AlterDomainStmt *) cmd->def)->def,
+										 NULL);
 			break;
 		case AT_ReAddComment:	/* Re-add existing comment */
 			address = CommentObject((CommentStmt *) cmd->def);
@@ -5091,6 +5102,8 @@ find_typed_table_dependencies(Oid typeOid, const char *typeName, DropBehavior be
  * isn't suitable, throw an error.  Currently, we require that the type
  * originated with CREATE TYPE AS.  We could support any row type, but doing so
  * would require handling a number of extra corner cases in the DDL commands.
+ * (Also, allowing domain-over-composite would open up a can of worms about
+ * whether and how the domain's constraints should apply to derived tables.)
  */
 void
 check_of_type(HeapTuple typetuple)
@@ -5765,7 +5778,7 @@ ATExecDropNotNull(Relation rel, const char *colName, LOCKMODE lockmode)
 	 */
 	if (((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull)
 	{
-		((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull = FALSE;
+		((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull = false;
 
 		CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
 
@@ -5846,7 +5859,7 @@ ATExecSetNotNull(AlteredTableInfo *tab, Relation rel,
 	 */
 	if (!((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull)
 	{
-		((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull = TRUE;
+		((Form_pg_attribute) GETSTRUCT(tuple))->attnotnull = true;
 
 		CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
 
@@ -6190,8 +6203,8 @@ ATPrepSetStatistics(Relation rel, const char *colName, int16 colNum, Node *newVa
 						RelationGetRelationName(rel))));
 
 	/*
-	 * We allow referencing columns by numbers only for indexes, since
-	 * table column numbers could contain gaps if columns are later dropped.
+	 * We allow referencing columns by numbers only for indexes, since table
+	 * column numbers could contain gaps if columns are later dropped.
 	 */
 	if (rel->rd_rel->relkind != RELKIND_INDEX && !colName)
 		ereport(ERROR,
@@ -6823,6 +6836,7 @@ ATExecAddIndexConstraint(AlteredTableInfo *tab, Relation rel,
 	char	   *constraintName;
 	char		constraintType;
 	ObjectAddress address;
+	bits16		flags;
 
 	Assert(IsA(stmt, IndexStmt));
 	Assert(OidIsValid(index_oid));
@@ -6867,16 +6881,18 @@ ATExecAddIndexConstraint(AlteredTableInfo *tab, Relation rel,
 		constraintType = CONSTRAINT_UNIQUE;
 
 	/* Create the catalog entries for the constraint */
+	flags = INDEX_CONSTR_CREATE_UPDATE_INDEX |
+		INDEX_CONSTR_CREATE_REMOVE_OLD_DEPS |
+		(stmt->initdeferred ? INDEX_CONSTR_CREATE_INIT_DEFERRED : 0) |
+		(stmt->deferrable ? INDEX_CONSTR_CREATE_DEFERRABLE : 0) |
+		(stmt->primary ? INDEX_CONSTR_CREATE_MARK_AS_PRIMARY : 0);
+
 	address = index_constraint_create(rel,
 									  index_oid,
 									  indexInfo,
 									  constraintName,
 									  constraintType,
-									  stmt->deferrable,
-									  stmt->initdeferred,
-									  stmt->primary,
-									  true, /* update pg_index */
-									  true, /* remove old dependencies */
+									  flags,
 									  allowSystemTableMods,
 									  false);	/* is_internal */
 
@@ -8299,16 +8315,16 @@ validateForeignKeyConstraint(char *conname,
 	trig.tgoid = InvalidOid;
 	trig.tgname = conname;
 	trig.tgenabled = TRIGGER_FIRES_ON_ORIGIN;
-	trig.tgisinternal = TRUE;
+	trig.tgisinternal = true;
 	trig.tgconstrrelid = RelationGetRelid(pkrel);
 	trig.tgconstrindid = pkindOid;
 	trig.tgconstraint = constraintOid;
-	trig.tgdeferrable = FALSE;
-	trig.tginitdeferred = FALSE;
+	trig.tgdeferrable = false;
+	trig.tginitdeferred = false;
 	/* we needn't fill in remaining fields */
 
 	/*
-	 * See if we can do it with a single LEFT JOIN query.  A FALSE result
+	 * See if we can do it with a single LEFT JOIN query.  A false result
 	 * indicates we must proceed with the fire-the-trigger method.
 	 */
 	if (RI_Initial_Check(&trig, rel, pkrel))
@@ -9614,7 +9630,15 @@ ATPostAlterTypeCleanup(List **wqueue, AlteredTableInfo *tab, LOCKMODE lockmode)
 		if (!HeapTupleIsValid(tup)) /* should not happen */
 			elog(ERROR, "cache lookup failed for constraint %u", oldId);
 		con = (Form_pg_constraint) GETSTRUCT(tup);
-		relid = con->conrelid;
+		if (OidIsValid(con->conrelid))
+			relid = con->conrelid;
+		else
+		{
+			/* must be a domain constraint */
+			relid = get_typ_typrelid(getBaseType(con->contypid));
+			if (!OidIsValid(relid))
+				elog(ERROR, "could not identify relation associated with constraint %u", oldId);
+		}
 		confrelid = con->confrelid;
 		conislocal = con->conislocal;
 		ReleaseSysCache(tup);
@@ -9751,7 +9775,7 @@ ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId, char *cmd,
 
 			foreach(lcmd, stmt->cmds)
 			{
-				AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
+				AlterTableCmd *cmd = castNode(AlterTableCmd, lfirst(lcmd));
 
 				if (cmd->subtype == AT_AddIndex)
 				{
@@ -9775,13 +9799,14 @@ ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId, char *cmd,
 					RebuildConstraintComment(tab,
 											 AT_PASS_OLD_INDEX,
 											 oldId,
-											 rel, indstmt->idxname);
+											 rel,
+											 NIL,
+											 indstmt->idxname);
 				}
 				else if (cmd->subtype == AT_AddConstraint)
 				{
-					Constraint *con;
+					Constraint *con = castNode(Constraint, cmd->def);
 
-					con = castNode(Constraint, cmd->def);
 					con->old_pktable_oid = refRelId;
 					/* rewriting neither side of a FK */
 					if (con->contype == CONSTR_FOREIGN &&
@@ -9795,12 +9820,40 @@ ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId, char *cmd,
 					RebuildConstraintComment(tab,
 											 AT_PASS_OLD_CONSTR,
 											 oldId,
-											 rel, con->conname);
+											 rel,
+											 NIL,
+											 con->conname);
 				}
 				else
 					elog(ERROR, "unexpected statement subtype: %d",
 						 (int) cmd->subtype);
 			}
+		}
+		else if (IsA(stm, AlterDomainStmt))
+		{
+			AlterDomainStmt *stmt = (AlterDomainStmt *) stm;
+
+			if (stmt->subtype == 'C')	/* ADD CONSTRAINT */
+			{
+				Constraint *con = castNode(Constraint, stmt->def);
+				AlterTableCmd *cmd = makeNode(AlterTableCmd);
+
+				cmd->subtype = AT_ReAddDomainConstraint;
+				cmd->def = (Node *) stmt;
+				tab->subcmds[AT_PASS_OLD_CONSTR] =
+					lappend(tab->subcmds[AT_PASS_OLD_CONSTR], cmd);
+
+				/* recreate any comment on the constraint */
+				RebuildConstraintComment(tab,
+										 AT_PASS_OLD_CONSTR,
+										 oldId,
+										 NULL,
+										 stmt->typeName,
+										 con->conname);
+			}
+			else
+				elog(ERROR, "unexpected statement subtype: %d",
+					 (int) stmt->subtype);
 		}
 		else
 			elog(ERROR, "unexpected statement type: %d",
@@ -9811,12 +9864,19 @@ ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId, char *cmd,
 }
 
 /*
- * Subroutine for ATPostAlterTypeParse() to recreate a comment entry for
- * a constraint that is being re-added.
+ * Subroutine for ATPostAlterTypeParse() to recreate any existing comment
+ * for a table or domain constraint that is being rebuilt.
+ *
+ * objid is the OID of the constraint.
+ * Pass "rel" for a table constraint, or "domname" (domain's qualified name
+ * as a string list) for a domain constraint.
+ * (We could dig that info, as well as the conname, out of the pg_constraint
+ * entry; but callers already have them so might as well pass them.)
  */
 static void
 RebuildConstraintComment(AlteredTableInfo *tab, int pass, Oid objid,
-						 Relation rel, char *conname)
+						 Relation rel, List *domname,
+						 const char *conname)
 {
 	CommentStmt *cmd;
 	char	   *comment_str;
@@ -9827,12 +9887,23 @@ RebuildConstraintComment(AlteredTableInfo *tab, int pass, Oid objid,
 	if (comment_str == NULL)
 		return;
 
-	/* Build node CommentStmt */
+	/* Build CommentStmt node, copying all input data for safety */
 	cmd = makeNode(CommentStmt);
-	cmd->objtype = OBJECT_TABCONSTRAINT;
-	cmd->object = (Node *) list_make3(makeString(get_namespace_name(RelationGetNamespace(rel))),
-									  makeString(pstrdup(RelationGetRelationName(rel))),
-									  makeString(pstrdup(conname)));
+	if (rel)
+	{
+		cmd->objtype = OBJECT_TABCONSTRAINT;
+		cmd->object = (Node *)
+			list_make3(makeString(get_namespace_name(RelationGetNamespace(rel))),
+					   makeString(pstrdup(RelationGetRelationName(rel))),
+					   makeString(pstrdup(conname)));
+	}
+	else
+	{
+		cmd->objtype = OBJECT_DOMCONSTRAINT;
+		cmd->object = (Node *)
+			list_make2(makeTypeNameFromNameList(copyObject(domname)),
+					   makeString(pstrdup(conname)));
+	}
 	cmd->comment = comment_str;
 
 	/* Append it to list of commands */
@@ -10325,7 +10396,7 @@ ATExecDropCluster(Relation rel, LOCKMODE lockmode)
  * ALTER TABLE SET TABLESPACE
  */
 static void
-ATPrepSetTableSpace(AlteredTableInfo *tab, Relation rel, char *tablespacename, LOCKMODE lockmode)
+ATPrepSetTableSpace(AlteredTableInfo *tab, Relation rel, const char *tablespacename, LOCKMODE lockmode)
 {
 	Oid			tablespaceId;
 
@@ -10992,7 +11063,7 @@ copy_relation_data(SMgrRelation src, SMgrRelation dst,
  * We just pass this off to trigger.c.
  */
 static void
-ATExecEnableDisableTrigger(Relation rel, char *trigname,
+ATExecEnableDisableTrigger(Relation rel, const char *trigname,
 						   char fires_when, bool skip_system, LOCKMODE lockmode)
 {
 	EnableDisableTrigger(rel, trigname, fires_when, skip_system);
@@ -11004,7 +11075,7 @@ ATExecEnableDisableTrigger(Relation rel, char *trigname,
  * We just pass this off to rewriteDefine.c.
  */
 static void
-ATExecEnableDisableRule(Relation rel, char *rulename,
+ATExecEnableDisableRule(Relation rel, const char *rulename,
 						char fires_when, LOCKMODE lockmode)
 {
 	EnableDisableRule(rel, rulename, fires_when);
@@ -13269,7 +13340,9 @@ transformPartitionSpec(Relation rel, PartitionSpec *partspec, char *strategy)
 	newspec->location = partspec->location;
 
 	/* Parse partitioning strategy name */
-	if (pg_strcasecmp(partspec->strategy, "list") == 0)
+	if (pg_strcasecmp(partspec->strategy, "hash") == 0)
+		*strategy = PARTITION_STRATEGY_HASH;
+	else if (pg_strcasecmp(partspec->strategy, "list") == 0)
 		*strategy = PARTITION_STRATEGY_LIST;
 	else if (pg_strcasecmp(partspec->strategy, "range") == 0)
 		*strategy = PARTITION_STRATEGY_RANGE;
@@ -13339,10 +13412,12 @@ transformPartitionSpec(Relation rel, PartitionSpec *partspec, char *strategy)
  */
 static void
 ComputePartitionAttrs(Relation rel, List *partParams, AttrNumber *partattrs,
-					  List **partexprs, Oid *partopclass, Oid *partcollation)
+					  List **partexprs, Oid *partopclass, Oid *partcollation,
+					  char strategy)
 {
 	int			attn;
 	ListCell   *lc;
+	Oid			am_oid;
 
 	attn = 0;
 	foreach(lc, partParams)
@@ -13502,25 +13577,41 @@ ComputePartitionAttrs(Relation rel, List *partParams, AttrNumber *partattrs,
 		partcollation[attn] = attcollation;
 
 		/*
-		 * Identify a btree opclass to use. Currently, we use only btree
-		 * operators, which seems enough for list and range partitioning.
+		 * Identify the appropriate operator class.  For list and range
+		 * partitioning, we use a btree operator class; hash partitioning uses
+		 * a hash operator class.
 		 */
+		if (strategy == PARTITION_STRATEGY_HASH)
+			am_oid = HASH_AM_OID;
+		else
+			am_oid = BTREE_AM_OID;
+
 		if (!pelem->opclass)
 		{
-			partopclass[attn] = GetDefaultOpClass(atttype, BTREE_AM_OID);
+			partopclass[attn] = GetDefaultOpClass(atttype, am_oid);
 
 			if (!OidIsValid(partopclass[attn]))
-				ereport(ERROR,
-						(errcode(ERRCODE_UNDEFINED_OBJECT),
-						 errmsg("data type %s has no default btree operator class",
-								format_type_be(atttype)),
-						 errhint("You must specify a btree operator class or define a default btree operator class for the data type.")));
+			{
+				if (strategy == PARTITION_STRATEGY_HASH)
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_OBJECT),
+							 errmsg("data type %s has no default hash operator class",
+									format_type_be(atttype)),
+							 errhint("You must specify a hash operator class or define a default hash operator class for the data type.")));
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_OBJECT),
+							 errmsg("data type %s has no default btree operator class",
+									format_type_be(atttype)),
+							 errhint("You must specify a btree operator class or define a default btree operator class for the data type.")));
+
+			}
 		}
 		else
 			partopclass[attn] = ResolveOpClass(pelem->opclass,
 											   atttype,
-											   "btree",
-											   BTREE_AM_OID);
+											   am_oid == HASH_AM_OID ? "hash" : "btree",
+											   am_oid);
 
 		attn++;
 	}
@@ -14020,6 +14111,9 @@ ATExecDetachPartition(Relation rel, RangeVar *name)
 	classRel = heap_open(RelationRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheCopy1(RELOID,
 								ObjectIdGetDatum(RelationGetRelid(partRel)));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for relation %u",
+			 RelationGetRelid(partRel));
 	Assert(((Form_pg_class) GETSTRUCT(tuple))->relispartition);
 
 	(void) SysCacheGetAttr(RELOID, tuple, Anum_pg_class_relpartbound,

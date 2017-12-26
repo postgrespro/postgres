@@ -5506,7 +5506,7 @@ DESCR("pg_config binary as a function");
 DATA(insert OID = 3441 ( pg_control_system PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{23,23,20,1184}" "{o,o,o,o}" "{pg_control_version,catalog_version_no,system_identifier,pg_control_last_modified}" _null_ _null_ pg_control_system _null_ _null_ _null_ ));
 DESCR("pg_controldata general state information as a function");
 
-DATA(insert OID = 3442 ( pg_control_checkpoint PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{3220,3220,3220,25,23,23,16,25,26,28,28,28,26,28,28,26,28,28,1184}" "{o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{checkpoint_lsn,prior_lsn,redo_lsn,redo_wal_file,timeline_id,prev_timeline_id,full_page_writes,next_xid,next_oid,next_multixact_id,next_multi_offset,oldest_xid,oldest_xid_dbid,oldest_active_xid,oldest_multi_xid,oldest_multi_dbid,oldest_commit_ts_xid,newest_commit_ts_xid,checkpoint_time}" _null_ _null_ pg_control_checkpoint _null_ _null_ _null_ ));
+DATA(insert OID = 3442 ( pg_control_checkpoint PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{3220,3220,25,23,23,16,25,26,28,28,28,26,28,28,26,28,28,1184}" "{o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{checkpoint_lsn,redo_lsn,redo_wal_file,timeline_id,prev_timeline_id,full_page_writes,next_xid,next_oid,next_multixact_id,next_multi_offset,oldest_xid,oldest_xid_dbid,oldest_active_xid,oldest_multi_xid,oldest_multi_dbid,oldest_commit_ts_xid,newest_commit_ts_xid,checkpoint_time}" _null_ _null_ pg_control_checkpoint _null_ _null_ _null_ ));
 DESCR("pg_controldata checkpoint state information as a function");
 
 DATA(insert OID = 3443 ( pg_control_recovery PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{3220,23,3220,3220,16}" "{o,o,o,o,o}" "{min_recovery_end_lsn,min_recovery_end_timeline,backup_start_lsn,backup_end_lsn,end_of_backup_record_required}" _null_ _null_ pg_control_recovery _null_ _null_ _null_ ));
@@ -5527,6 +5527,10 @@ DATA(insert OID = 3353 (  pg_ls_logdir				 PGNSP PGUID 12 10 20 0 0 f f f f t t 
 DESCR("list files in the log directory");
 DATA(insert OID = 3354 (  pg_ls_waldir				 PGNSP PGUID 12 10 20 0 0 f f f f t t v s 0 0 2249 "" "{25,20,1184}" "{o,o,o}" "{name,size,modification}" _null_ _null_ pg_ls_waldir _null_ _null_ _null_ ));
 DESCR("list of files in the WAL directory");
+
+/* hash partitioning constraint function */
+DATA(insert OID = 5028 ( satisfies_hash_partition PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 4 0 16 "26 23 23 2276" _null_ "{i,i,i,v}" _null_ _null_ _null_ satisfies_hash_partition _null_ _null_ _null_ ));
+DESCR("hash partition CHECK constraint");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

@@ -1646,10 +1646,11 @@ exec_bind_message(StringInfo input_message)
 		/* we have static list of params, so no hooks needed */
 		params->paramFetch = NULL;
 		params->paramFetchArg = NULL;
+		params->paramCompile = NULL;
+		params->paramCompileArg = NULL;
 		params->parserSetup = NULL;
 		params->parserSetupArg = NULL;
 		params->numParams = numParams;
-		params->paramMask = NULL;
 
 		for (paramno = 0; paramno < numParams; paramno++)
 		{
@@ -2122,7 +2123,7 @@ check_log_statement(List *stmt_list)
  * If logging is needed, the duration in msec is formatted into msec_str[],
  * which must be a 32-byte buffer.
  *
- * was_logged should be TRUE if caller already logged query details (this
+ * was_logged should be true if caller already logged query details (this
  * essentially prevents 2 from being returned).
  */
 int
@@ -2210,6 +2211,9 @@ errdetail_params(ParamListInfo params)
 		StringInfoData param_str;
 		MemoryContext oldcontext;
 		int			paramno;
+
+		/* This code doesn't support dynamic param lists */
+		Assert(params->paramFetch == NULL);
 
 		/* Make sure any trash is generated in MessageContext */
 		oldcontext = MemoryContextSwitchTo(MessageContext);
@@ -2374,8 +2378,8 @@ exec_describe_statement_message(const char *stmt_name)
 	/*
 	 * First describe the parameters...
 	 */
-	pq_beginmessage_reuse(&row_description_buf, 't'); /* parameter description
-													   * message type */
+	pq_beginmessage_reuse(&row_description_buf, 't');	/* parameter description
+														 * message type */
 	pq_sendint16(&row_description_buf, psrc->num_params);
 
 	for (i = 0; i < psrc->num_params; i++)
@@ -2952,14 +2956,14 @@ ProcessInterrupts(void)
 	/*
 	 * Don't allow query cancel interrupts while reading input from the
 	 * client, because we might lose sync in the FE/BE protocol.  (Die
-	 * interrupts are OK, because we won't read any further messages from
-	 * the client in that case.)
+	 * interrupts are OK, because we won't read any further messages from the
+	 * client in that case.)
 	 */
 	if (QueryCancelPending && QueryCancelHoldoffCount != 0)
 	{
 		/*
-		 * Re-arm InterruptPending so that we process the cancel request
-		 * as soon as we're done reading the message.
+		 * Re-arm InterruptPending so that we process the cancel request as
+		 * soon as we're done reading the message.
 		 */
 		InterruptPending = true;
 	}
@@ -4494,10 +4498,10 @@ ShowUsage(const char *title)
 	appendStringInfo(&str,
 					 "!\t%ld kB max resident size\n",
 #if defined(__darwin__)
-					 /* in bytes on macOS */
-					 r.ru_maxrss/1024
+	/* in bytes on macOS */
+					 r.ru_maxrss / 1024
 #else
-					 /* in kilobytes on most other platforms */
+	/* in kilobytes on most other platforms */
 					 r.ru_maxrss
 #endif
 		);
