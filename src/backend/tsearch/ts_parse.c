@@ -1021,6 +1021,7 @@ TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 	int			left_size;
 	int			i;
 
+
 	left_res = LexizeExecTSElement(ld, token, expression->left);
 	left_size = TSLexemeGetSize(left_res);
 
@@ -1028,6 +1029,14 @@ TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 		result = LexizeExecTSElement(ld, token, expression->right);
 	else
 	{
+		TSMapElement *relatedRuleTmp = NULL;
+		relatedRuleTmp = palloc0(sizeof(TSMapElement));
+		relatedRuleTmp->parent = NULL;
+		relatedRuleTmp->type = TSMAP_EXPRESSION;
+		relatedRuleTmp->value.objectExpression = palloc0(sizeof(TSMapExpression));
+		relatedRuleTmp->value.objectExpression->operator = expression->operator;
+		relatedRuleTmp->value.objectExpression->left = token->relatedRule;
+
 		for (i = 0; i < left_size; i++)
 		{
 			TSLexeme   *tmp_res = NULL;
@@ -1040,11 +1049,13 @@ TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 			tmp_token.next = NULL;
 
 			tmp_res = LexizeExecTSElement(ld, &tmp_token, expression->right);
+			relatedRuleTmp->value.objectExpression->right = tmp_token.relatedRule;
 			prev_res = result;
 			result = TSLexemeUnion(prev_res, tmp_res);
 			if (prev_res)
 				pfree(prev_res);
 		}
+		token->relatedRule = relatedRuleTmp;
 	}
 
 	return result;
@@ -1093,17 +1104,18 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 		TSMapElement *relatedRuleTmp;
 		TSMapExpression *expression = config->value.objectExpression;
 
-		if (ld->debugContext)
-		{
-			relatedRuleTmp = palloc0(sizeof(TSMapElement));
-			relatedRuleTmp->parent = NULL;
-			relatedRuleTmp->type = TSMAP_EXPRESSION;
-			relatedRuleTmp->value.objectExpression = palloc0(sizeof(TSMapExpression));
-			relatedRuleTmp->value.objectExpression->operator = expression->operator;
-		}
-
 		if (expression->operator != TSMAP_OP_MAP)
 		{
+
+			if (ld->debugContext)
+			{
+				relatedRuleTmp = palloc0(sizeof(TSMapElement));
+				relatedRuleTmp->parent = NULL;
+				relatedRuleTmp->type = TSMAP_EXPRESSION;
+				relatedRuleTmp->value.objectExpression = palloc0(sizeof(TSMapExpression));
+				relatedRuleTmp->value.objectExpression->operator = expression->operator;
+			}
+
 			resLeft = LexizeExecTSElement(ld, token, expression->left);
 			if (ld->debugContext)
 				relatedRuleTmp->value.objectExpression->left = token->relatedRule;
@@ -1135,7 +1147,7 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 				break;
 		}
 
-		if (ld->debugContext)
+		if (ld->debugContext && expression->operator != TSMAP_OP_MAP)
 			token->relatedRule = relatedRuleTmp;
 	}
 
