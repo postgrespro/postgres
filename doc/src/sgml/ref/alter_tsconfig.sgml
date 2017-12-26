@@ -22,11 +22,11 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
-    ADD MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionaries_map</replaceable>
+    ADD MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">config</replaceable>
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
     ADD MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_name</replaceable> [, ... ]
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
-    ALTER MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionaries_map</replaceable>
+    ALTER MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">config</replaceable>
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
     ALTER MAPPING FOR <replaceable class="parameter">token_type</replaceable> [, ... ] WITH <replaceable class="parameter">dictionary_name</replaceable> [, ... ]
 ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable>
@@ -93,12 +93,12 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">dictionary_expression</replaceable></term>
+    <term><replaceable class="parameter">config</replaceable></term>
     <listitem>
      <para>
-      The expression of dictionaries tree. The dctionary expression
-      is a triple of condition/command/elsebranch that define way to process
-      text. The elsebranch part is optional.
+      The dictionaries tree expression. The dictionary expression
+      is a triple of condition/command/else that define way to process
+      the text. The <literal>ELSE</literal> part is optional.
      </para>
     </listitem>
    </varlistentry>
@@ -170,56 +170,48 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
  </refsect1>
 
  <refsect1>
-  <title>Dictionaries map</title>
+  <title>Dictionaries Map Config</title>
 
   <refsect2>
    <title>Format</title>
-   <programlisting>
-    <replaceable class="parameter">dictionary_name</replaceable>
-
-    <replaceable class="parameter">dictionaries_map</replaceable> { UNION | EXCEPT | INTERSECT | MAP } <replaceable class="parameter">dictionaries_map</replaceable>
-
-    CASE
-      <replaceable class="parameter">dictionaries_map</replaceable> WHEN <optional>NO</optional> MATCH THEN <replaceable class="parameter">command</replaceable>
-      <optional> ELSE <replaceable class="parameter">dictionaries_map</replaceable> </optional>
-    END
-   </programlisting>
    <para>
-    A command is
+    Formally <replaceable class="parameter">config</replaceable> is one of:
    </para>
-
    <programlisting>
-    <replaceable class="parameter">dictionaries_map</replaceable>
-    or
-    KEEP
+    * dictionary_name
+
+    * config { UNION | INTERSECT | EXCEPT | MAP } config
+
+    * CASE config
+        WHEN [ NO ] MATCH THEN { KEEP | config }
+        [ ELSE config ]
+      END
    </programlisting>
   </refsect2>
 
   <refsect2>
    <title>Description</title>
    <para>
-    <replaceable class="parameter">dictionaries_map</replaceable> can be used
+    <replaceable class="parameter">config</replaceable> can be used
     in three different formats. The most simple format is name of dictionary to
     use for tokens processing.
    </para>
    <para>
     In order to use more than one dictionary
-    simultaneously use should interconnect dictionaries by operators. Operators
-    <literal>UNION</literal>, <literal>EXCEPT</literal> and 
+    simultaneously user should interconnect dictionaries by operators. Operators
+    <literal>UNION</literal>, <literal>EXCEPT</literal> and
     <literal>INTERSECT</literal> have same meaning as in operations on sets.
     Special operator <literal>MAP</literal> gets output of left subexpression
     and uses it as an input to right subexpression.
    </para>
    <para>
-    The last but not the least format of
-    <replaceable class="parameter">dictionaries_map</replaceable> is similar to
-    <literal>CASE/WHEN/THEN/ELSE</literal> structure. It consists of three
-    replaceable parts. First one is configuration who to construct lexemes set
-    for matching check. If the condition is triggered, the command is executed.
-    Use command <literal>KEEP</literal> in order to avoid repeating of the same
-    configuration in condition and command part. However, command differ from
-    condition configuration. The <literal>ELSE</literal> branch is executed
-    overwise.
+    The third format of <replaceable class="parameter">config</replaceable> is similar to
+    <literal>CASE/WHEN/THEN/ELSE</literal> structure. It's consists of three
+    replaceable parts. First one is configuration which is used to construct lexemes set
+    for matching condition. If the condition is triggered, the command is executed.
+    Use command <literal>KEEP</literal> to avoid repeating of the same
+    configuration in condition and command part. However, command may differ from
+    the condition. The <literal>ELSE</literal> branch is executed otherwise.
    </para>
   </refsect2>
  </refsect1>
@@ -237,6 +229,34 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
 ALTER TEXT SEARCH CONFIGURATION my_config
   ALTER MAPPING REPLACE english WITH swedish;
 </programlisting>
+
+  <para>
+   Next example shows how to analyse documents in both English and German languages.
+   <literal>english_hunspell</literal> and <literal>german_hunspell</literal>
+   return result only if a word is recognized. Otherwise, stemmer dictionaries
+   are used to process a token.
+  </para>
+
+<programlisting>
+ALTER TEXT SEARCH CONFIGURATION my_config
+  ALTER MAPPING FOR asciiword, word WITH
+   CASE english_hunspell WHEN MATCH THEN KEEP ELSE english_stem END
+    UNION
+   CASE german_hunspell WHEN MATCH THEN KEEP ELSE german_stem END;
+</programlisting>
+
+  <para>
+    In order to combine search for both exact and processed forms the vector
+    should contain lexemes produced by <literal>simple</literal> for exact form
+    of the word as well as lexemes produced by linguistic-aware dictionary
+    (e.g. <literal>english_stem</literal>) for processed forms.
+  </para>
+
+<programlisting>
+ALTER TEXT SEARCH CONFIGURATION my_config
+  ALTER MAPPING FOR asciiword, word WITH english_stem UNION simple;
+</programlisting>
+
  </refsect1>
 
  <refsect1>

@@ -19,17 +19,6 @@
 #include "miscadmin.h"
 #include "tsearch/ts_locale.h"
 #include "tsearch/ts_utils.h"
-#include "catalog/indexing.h"
-#include "catalog/pg_ts_config_map.h"
-#include "catalog/pg_ts_dict.h"
-#include "storage/lockdefs.h"
-#include "access/heapam.h"
-#include "access/genam.h"
-#include "access/htup_details.h"
-#include "access/sysattr.h"
-#include "utils/fmgroids.h"
-#include "utils/builtins.h"
-#include "tsearch/ts_cache.h"
 
 /*
  * Given the base name and extension of a tsearch config file, return

@@ -1289,8 +1289,8 @@ CreateCaseForSingleDictionary(Oid dictOid)
 {
 	TSMapElement *result = palloc0(sizeof(TSMapElement));
 	TSMapElement *keepElement = palloc0(sizeof(TSMapElement));
-	TSMapCase *caseObject = palloc0(sizeof(TSMapCase));
 	TSMapElement *condition = palloc0(sizeof(TSMapElement));
+	TSMapCase  *caseObject = palloc0(sizeof(TSMapCase));
 
 	keepElement->type = TSMAP_KEEP;
 	keepElement->parent = result;
@@ -1315,7 +1315,7 @@ ParseTSMapConfig(DictMapElem *elem)
 
 	if (elem->kind == DICT_MAP_CASE)
 	{
-		TSMapCase *caseObject = palloc0(sizeof(TSMapCase));
+		TSMapCase  *caseObject = palloc0(sizeof(TSMapCase));
 		DictMapCase *caseASTObject = elem->data;
 
 		caseObject->condition = ParseTSMapConfig(caseASTObject->condition);
@@ -1356,15 +1356,16 @@ ParseTSMapConfig(DictMapElem *elem)
 	}
 	else if (elem->kind == DICT_MAP_DICTIONARY_LIST)
 	{
-		int i = 0;
+		int			i = 0;
 		ListCell   *c;
 		TSMapElement *root = NULL;
 		TSMapElement *currentNode = NULL;
-		foreach(c, (List*)elem->data)
+
+		foreach(c, (List *) elem->data)
 		{
 			TSMapElement *prevNode = currentNode;
 			List	   *names = (List *) lfirst(c);
-			Oid oid = get_ts_dict_oid(names, false);
+			Oid			oid = get_ts_dict_oid(names, false);
 
 			currentNode = CreateCaseForSingleDictionary(oid);
 

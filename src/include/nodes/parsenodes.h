@@ -3404,8 +3404,8 @@ typedef enum DictMapElemType
 typedef struct DictMapElem
 {
 	NodeTag		type;
-	int8		kind; /* See DictMapElemType */
-	void*		data; /* Type should be detected by kind value */
+	int8		kind;			/* See DictMapElemType */
+	void	   *data;			/* Type should be detected by kind value */
 } DictMapElem;
 
 typedef struct DictMapExprElem

@@ -39,13 +39,11 @@
 #include "catalog/pg_ts_template.h"
 #include "commands/defrem.h"
 #include "tsearch/ts_cache.h"
-#include "tsearch/ts_utils.h"
 #include "tsearch/ts_configmap.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
-#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/regproc.h"
@@ -510,7 +508,7 @@ lookup_ts_config_cache(Oid cfgId)
 		{
 			/* save the overall map */
 			entry->lenmap = maxtokentype + 1;
-			entry->map = (TSMapElement **)
+			entry->map = (TSMapElement * *)
 				MemoryContextAlloc(CacheMemoryContext,
 								   sizeof(TSMapElement *) * entry->lenmap);
 			memcpy(entry->map, mapconfigs,

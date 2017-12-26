@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * ts_configmap.c
- *		internal represtation of text search configuration and utilities for it
+ *		internal representation of text search configuration and utilities for it
  *
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
@@ -28,16 +28,17 @@
 #include "utils/fmgroids.h"
 
 /*
- * Size selected arbitary, based on assumption that 1024 frames of stack
- * is enouth for parsing of any configuration
+ * Size selected arbitrary, based on assumption that 1024 frames of stack
+ * is enough for parsing of configurations
  */
 #define JSONB_PARSE_STATE_STACK_SIZE 1024
 
 /*
  * Used during the parsing of TSMapElement from JSONB into internal
- * datastructures.
+ * data structures.
  */
-typedef enum TSMapParseState {
+typedef enum TSMapParseState
+{
 	TSMPS_WAIT_ELEMENT,
 	TSMPS_READ_DICT_OID,
 	TSMPS_READ_COMPLEX_OBJ,
@@ -53,19 +54,25 @@ typedef enum TSMapParseState {
 	TSMPS_READ_RIGHT
 } TSMapParseState;
 
-typedef struct TSMapJsonbParseData {
-	TSMapParseState states[JSONB_PARSE_STATE_STACK_SIZE]; /* Stack of states of JSONB parsing automaton */
-	int statesIndex; /* Index of current stack frame */
-	TSMapElement *element; /* Element that is in cnstruction now */
+/*
+ * Context used during Jsonb parsing to construct a TSMap
+ */
+typedef struct TSMapJsonbParseData
+{
+	TSMapParseState states[JSONB_PARSE_STATE_STACK_SIZE];	/* Stack of states of
+															 * JSONB parsing
+															 * automaton */
+	int			statesIndex;	/* Index of current stack frame */
+	TSMapElement *element;		/* Element that is in cnstruction now */
 } TSMapJsonbParseData;
 
 static JsonbValue *TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState);
-static TSMapElement *JsonbToTSMapElement(JsonbContainer *root);
+static TSMapElement * JsonbToTSMapElement(JsonbContainer *root);
 
 /*
  * Print name of the dictionary into StringInfo variable result
  */
-static void
+void
 TSMapPrintDictName(Oid dictId, StringInfo result)
 {
 	Relation	maprel;
@@ -203,6 +210,7 @@ dictionary_mapping_to_text(PG_FUNCTION_ARGS)
 	if (cacheEntry->lenmap > tokentype && cacheEntry->map[tokentype] != NULL)
 	{
 		TSMapElement *element = cacheEntry->map[tokentype];
+
 		TSMapPrintElement(element, rawResult);
 	}
 
@@ -216,13 +224,19 @@ dictionary_mapping_to_text(PG_FUNCTION_ARGS)
  * ----------------
  */
 
+/*
+ * Convert an integer value into JsonbValue
+ */
 static JsonbValue *
 IntToJsonbValue(int intValue)
 {
 	char		buffer[16];
 	JsonbValue *value = palloc0(sizeof(JsonbValue));
 
-	 /* String size is based on limit of int capacity up to 12 chars with sign and NULL-character */
+	/*
+	 * String size is based on limit of int capacity up to 12 chars with sign
+	 * and NULL-character
+	 */
 	memset(buffer, 0, sizeof(char) * 12);
 
 	pg_ltoa(intValue, buffer);
@@ -235,6 +249,9 @@ IntToJsonbValue(int intValue)
 	return value;
 }
 
+/*
+ * Convert a FTS configuration expression into JsonbValue
+ */
 static JsonbValue *
 TSMapExpressionToJsonbValue(TSMapExpression *expression, JsonbParseState *jsonbState)
 {
@@ -272,6 +289,9 @@ TSMapExpressionToJsonbValue(TSMapExpression *expression, JsonbParseState *jsonbS
 	return pushJsonbValue(&jsonbState, WJB_END_OBJECT, NULL);
 }
 
+/*
+ * Convert a FTS configuration case into JsonbValue
+ */
 static JsonbValue *
 TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 {
@@ -325,6 +345,9 @@ TSMapCaseToJsonbValue(TSMapCase *caseObject, JsonbParseState *jsonbState)
 	return pushJsonbValue(&jsonbState, WJB_END_OBJECT, NULL);
 }
 
+/*
+ * Convert a FTS KEEP command into JsonbValue
+ */
 static JsonbValue *
 TSMapKeepToJsonbValue(JsonbParseState *jsonbState)
 {
@@ -337,10 +360,14 @@ TSMapKeepToJsonbValue(JsonbParseState *jsonbState)
 	return pushJsonbValue(&jsonbState, WJB_VALUE, value);
 }
 
+/*
+ * Convert a FTS element into JsonbValue. Common point for all types of TSMapElement
+ */
 JsonbValue *
 TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
 {
 	JsonbValue *result = NULL;
+
 	if (element != NULL)
 	{
 		switch (element->type)
@@ -355,9 +382,6 @@ TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
 				result = TSMapCaseToJsonbValue(element->value.objectCase, jsonbState);
 				break;
 			case TSMAP_KEEP:
-				// TODO: Store real keep comand
-				// Assert(element->parent->type == TSMAP_CASE);
-				// result = TSMapElementToJsonbValue(element->parent->value.objectCase->condition, jsonbState);
 				result = TSMapKeepToJsonbValue(jsonbState);
 				break;
 			default:
@@ -371,6 +395,9 @@ TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
 	return result;
 }
 
+/*
+ * Convert a FTS configuration into Jsonb
+ */
 Jsonb *
 TSMapToJsonb(TSMapElement *element)
 {
@@ -389,27 +416,47 @@ TSMapToJsonb(TSMapElement *element)
  * ----------------
  */
 
+/*
+ * Extract an integer from JsonbValue
+ */
+static int
+JsonbValueToInt(JsonbValue *value)
+{
+	char	   *str;
+
+	str = DatumGetCString(DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
+	return pg_atoi(str, sizeof(int), 0);
+}
+
+/*
+ * Check is a key one of FTS configuration case fields
+ */
 static bool
 IsTSMapCaseKey(JsonbValue *value)
 {
 	/*
-	 * JsonbValue string may be not null-terminated.
-	 * Convert it for apropriate behavior of strcmp function.
+	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * behavior of strcmp function.
 	 */
-	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+	char	   *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+
 	key[value->val.string.len] = '\0';
 	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
 	return strcmp(key, "match") == 0 || strcmp(key, "condition") == 0 || strcmp(key, "command") == 0 || strcmp(key, "elsebranch") == 0;
 }
 
+/*
+ * Check is a key one of FTS configuration expression fields
+ */
 static bool
 IsTSMapExpressionKey(JsonbValue *value)
 {
 	/*
-	 * JsonbValue string may be not null-terminated.
-	 * Convert it for apropriate behavior of strcmp function.
+	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * behavior of strcmp function.
 	 */
-	char *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+	char	   *key = palloc0(sizeof(char) * (value->val.string.len + 1));
+
 	key[value->val.string.len] = '\0';
 	memcpy(key, value->val.string.val, sizeof(char) * value->val.string.len);
 	return strcmp(key, "operator") == 0 || strcmp(key, "left") == 0 || strcmp(key, "right") == 0;
@@ -422,6 +469,7 @@ static void
 JsonbBeginObjectKey(JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	TSMapElement *parentElement = parseData->element;
+
 	parseData->element = palloc0(sizeof(TSMapElement));
 	parseData->element->parent = parentElement;
 
@@ -440,14 +488,18 @@ JsonbBeginObjectKey(JsonbValue value, TSMapJsonbParseData *parseData)
 	}
 }
 
+/*
+ * Process a JsonbValue inside a FTS configuration expression
+ */
 static void
 JsonbKeyExpressionProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	/*
-	 * JsonbValue string may be not null-terminated.
-	 * Convert it for apropriate behavior of strcmp function.
+	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * behavior of strcmp function.
 	 */
-	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+	char	   *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+
 	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
 	parseData->statesIndex++;
 
@@ -466,14 +518,18 @@ JsonbKeyExpressionProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_RIGHT;
 }
 
+/*
+ * Process a JsonbValue inside a FTS configuration case
+ */
 static void
 JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	/*
-	 * JsonbValue string may be not null-terminated.
-	 * Convert it for apropriate behavior of strcmp function.
+	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * behavior of strcmp function.
 	 */
-	char *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+	char	   *key = palloc0(sizeof(char) * (value.val.string.len + 1));
+
 	memcpy(key, value.val.string.val, sizeof(char) * value.val.string.len);
 	parseData->statesIndex++;
 
@@ -494,29 +550,30 @@ JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 		parseData->states[parseData->statesIndex] = TSMPS_READ_MATCH;
 }
 
-static int
-JsonbValueToInt(JsonbValue *value)
-{
-	char *str;
-	str = DatumGetCString(DirectFunctionCall1(numeric_out, NumericGetDatum(value->val.numeric)));
-	return pg_atoi(str, sizeof(int), 0);
-}
-
+/*
+ * Convert a JsonbValue into OID TSMapElement
+ */
 static TSMapElement *
 JsonbValueToOidElement(JsonbValue *value, TSMapElement *parent)
 {
 	TSMapElement *element = palloc0(sizeof(TSMapElement));
+
 	element->parent = parent;
 	element->type = TSMAP_DICTIONARY;
 	element->value.objectDictionary = JsonbValueToInt(value);
 	return element;
 }
 
+/*
+ * Convert a JsonbValue into string TSMapElement.
+ * Used for special values such as KEEP command
+ */
 static TSMapElement *
 JsonbValueReadString(JsonbValue *value, TSMapElement *parent)
 {
-	char *str;
+	char	   *str;
 	TSMapElement *element = palloc0(sizeof(TSMapElement));
+
 	element->parent = parent;
 	str = palloc0(sizeof(char) * (value->val.string.len + 1));
 	memcpy(str, value->val.string.val, sizeof(char) * value->val.string.len);
@@ -529,13 +586,22 @@ JsonbValueReadString(JsonbValue *value, TSMapElement *parent)
 	return element;
 }
 
+/*
+ * Process a JsonbValue object
+ */
 static void
 JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	TSMapElement *element;
+
 	switch (r)
 	{
 		case WJB_KEY:
+
+			/*
+			 * Construct an TSMapElement object. At first key inside Jsonb
+			 * object a type is selected based on key.
+			 */
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMPLEX_OBJ)
 				JsonbBeginObjectKey(value, parseData);
 
@@ -546,10 +612,18 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 
 			break;
 		case WJB_BEGIN_OBJECT:
+
+			/*
+			 * Begin construction of new object
+			 */
 			parseData->statesIndex++;
 			parseData->states[parseData->statesIndex] = TSMPS_READ_COMPLEX_OBJ;
 			break;
 		case WJB_END_OBJECT:
+
+			/*
+			 * Save constructed object based on current state of parser
+			 */
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_LEFT)
 				parseData->element->parent->value.objectExpression->left = parseData->element;
 			else if (parseData->states[parseData->statesIndex] == TSMPS_READ_RIGHT)
@@ -568,6 +642,10 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 				parseData->element = parseData->element->parent;
 			break;
 		case WJB_VALUE:
+
+			/*
+			 * Save a value inside constructing object
+			 */
 			if (value.type == jbvBinary)
 				element = JsonbToTSMapElement(value.val.binary.data);
 			else if (value.type == jbvString)
@@ -597,6 +675,10 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 				parseData->element = parseData->element->parent;
 			break;
 		case WJB_ELEM:
+
+			/*
+			 * Store a simple element such as dictionary OID
+			 */
 			if (parseData->states[parseData->statesIndex] == TSMPS_WAIT_ELEMENT)
 			{
 				if (parseData->element != NULL)
@@ -611,6 +693,9 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 	}
 }
 
+/*
+ * Convert a JsonbContainer into TSMapElement
+ */
 static TSMapElement *
 JsonbToTSMapElement(JsonbContainer *root)
 {
@@ -631,10 +716,14 @@ JsonbToTSMapElement(JsonbContainer *root)
 	return parseData.element;
 }
 
+/*
+ * Convert a Jsonb into TSMapElement
+ */
 TSMapElement *
 JsonbToTSMap(Jsonb *json)
 {
 	JsonbContainer *root = &json->root;
+
 	return JsonbToTSMapElement(root);
 }
 
@@ -643,25 +732,37 @@ JsonbToTSMap(Jsonb *json)
  * ----------------
  */
 
-typedef struct OidList {
-	Oid* data;
-	int size; /* Size of data array. Uninitialized elemenets in data filled with InvalidOid */
+/*
+ * Dynamicly extendable list of OIDs
+ */
+typedef struct OidList
+{
+	Oid		   *data;
+	int			size;			/* Size of data array. Uninitialized elements
+								 * in data filled with InvalidOid */
 } OidList;
 
+/*
+ * Initialize a list
+ */
 static OidList *
 OidListInit()
 {
-	OidList *result = palloc0(sizeof(OidList));
+	OidList    *result = palloc0(sizeof(OidList));
+
 	result->size = 1;
 	result->data = palloc0(result->size * sizeof(Oid));
 	result->data[0] = InvalidOid;
 	return result;
 }
 
+/*
+ * Add a new OID into list. If it is already stored in list, it won't be add second time.
+ */
 static void
 OidListAdd(OidList *list, Oid oid)
 {
-	int i;
+	int			i;
 
 	/* Search for the Oid in the list */
 	for (i = 0; list->data[i] != InvalidOid; i++)
@@ -669,10 +770,10 @@ OidListAdd(OidList *list, Oid oid)
 			return;
 
 	/* If not found, insert it in the end of the list */
-	i++;
-	if (i == list->size)
+	if (i >= list->size - 1)
 	{
-		int j;
+		int			j;
+
 		list->size = list->size * 2;
 		list->data = repalloc(list->data, sizeof(Oid) * list->size);
 
@@ -682,6 +783,10 @@ OidListAdd(OidList *list, Oid oid)
 	list->data[i] = oid;
 }
 
+/*
+ * Get OIDs of all dictionaries used in TSMapElement.
+ * Used for internal recursive calls.
+ */
 static void
 TSMapGetDictionariesInternal(TSMapElement *config, OidList *list)
 {
@@ -703,11 +808,14 @@ TSMapGetDictionariesInternal(TSMapElement *config, OidList *list)
 	}
 }
 
+/*
+ * Get OIDs of all dictionaries used in TSMapElement
+ */
 Oid *
 TSMapGetDictionaries(TSMapElement *config)
 {
-	Oid *result;
-	OidList *list = OidListInit();
+	Oid		   *result;
+	OidList    *list = OidListInit();
 
 	TSMapGetDictionariesInternal(config, list);
 
@@ -717,6 +825,9 @@ TSMapGetDictionaries(TSMapElement *config)
 	return result;
 }
 
+/*
+ * Replace one dictionary OID with another in all instances inside a configuration
+ */
 void
 TSMapReplaceDictionary(TSMapElement *config, Oid oldDict, Oid newDict)
 {
@@ -744,6 +855,9 @@ TSMapReplaceDictionary(TSMapElement *config, Oid oldDict, Oid newDict)
  * ----------------
  */
 
+/*
+ * Move a FTS configuration expression to another memory context
+ */
 static TSMapElement *
 TSMapExpressionMoveToMemoryContext(TSMapExpression *expression, MemoryContext context)
 {
@@ -765,11 +879,14 @@ TSMapExpressionMoveToMemoryContext(TSMapExpression *expression, MemoryContext co
 	return result;
 }
 
+/*
+ * Move a FTS configuration case to another memory context
+ */
 static TSMapElement *
 TSMapCaseMoveToMemoryContext(TSMapCase *caseObject, MemoryContext context)
 {
 	TSMapElement *result = MemoryContextAlloc(context, sizeof(TSMapElement));
-	TSMapCase *resultCaseObject = MemoryContextAlloc(context, sizeof(TSMapCase));
+	TSMapCase  *resultCaseObject = MemoryContextAlloc(context, sizeof(TSMapCase));
 
 	memset(resultCaseObject, 0, sizeof(TSMapCase));
 	result->value.objectCase = resultCaseObject;
@@ -792,6 +909,9 @@ TSMapCaseMoveToMemoryContext(TSMapCase *caseObject, MemoryContext context)
 	return result;
 }
 
+/*
+ * Move a FTS configuration to another memory context
+ */
 TSMapElement *
 TSMapMoveToMemoryContext(TSMapElement *config, MemoryContext context)
 {
@@ -826,6 +946,9 @@ TSMapMoveToMemoryContext(TSMapElement *config, MemoryContext context)
 	return result;
 }
 
+/*
+ * Free memory occupied by FTS configuration expression
+ */
 static void
 TSMapExpressionFree(TSMapExpression *expression)
 {
@@ -836,6 +959,9 @@ TSMapExpressionFree(TSMapExpression *expression)
 	pfree(expression);
 }
 
+/*
+ * Free memory occupied by FTS configuration case
+ */
 static void
 TSMapCaseFree(TSMapCase *caseObject)
 {
@@ -845,6 +971,9 @@ TSMapCaseFree(TSMapCase *caseObject)
 	pfree(caseObject);
 }
 
+/*
+ * Free memory occupied by FTS configuration element
+ */
 void
 TSMapElementFree(TSMapElement *element)
 {
@@ -863,38 +992,42 @@ TSMapElementFree(TSMapElement *element)
 	}
 }
 
-bool TSMapElementEquals(TSMapElement *a, TSMapElement *b)
+/*
+ * Do a deep comparison of two TSMapElements. Doesn't check parents of elements
+ */
+bool
+TSMapElementEquals(TSMapElement *a, TSMapElement *b)
 {
-	bool result = true;
-	
+	bool		result = true;
+
 	if (a->type == b->type)
 	{
 		switch (a->type)
 		{
 			case TSMAP_CASE:
 				if (!TSMapElementEquals(a->value.objectCase->condition, b->value.objectCase->condition))
-						result = false;
+					result = false;
 				if (!TSMapElementEquals(a->value.objectCase->command, b->value.objectCase->command))
-						result = false;
+					result = false;
 
 				if (a->value.objectCase->elsebranch != NULL && b->value.objectCase->elsebranch != NULL)
 				{
 					if (!TSMapElementEquals(a->value.objectCase->elsebranch, b->value.objectCase->elsebranch))
-							result = false;
+						result = false;
 				}
 				else if (a->value.objectCase->elsebranch != NULL || b->value.objectCase->elsebranch != NULL)
 					result = false;
 
 				if (a->value.objectCase->match != b->value.objectCase->match)
-						result = false;
+					result = false;
 				break;
 			case TSMAP_EXPRESSION:
 				if (!TSMapElementEquals(a->value.objectExpression->left, b->value.objectExpression->left))
-						result = false;
+					result = false;
 				if (!TSMapElementEquals(a->value.objectExpression->right, b->value.objectExpression->right))
-						result = false;
+					result = false;
 				if (a->value.objectExpression->operator != b->value.objectExpression->operator)
-						result = false;
+					result = false;
 				break;
 			case TSMAP_DICTIONARY:
 				result = a->value.objectDictionary == b->value.objectDictionary;

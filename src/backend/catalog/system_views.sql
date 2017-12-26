@@ -949,8 +949,9 @@ CREATE FUNCTION ts_debug(IN document text,
     OUT alias text,
     OUT description text,
     OUT token text,
-    OUT dictionaries text,
-    OUT dictionary text,
+    OUT dictionaries regdictionary[],
+    OUT configuration text,
+    OUT command text,
     OUT lexemes text[])
 RETURNS SETOF record AS
 $$

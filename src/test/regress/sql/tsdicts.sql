@@ -261,4 +261,3 @@ END;
 SELECT to_tsvector('thesaurus_tst', 'one two');
 SELECT to_tsvector('thesaurus_tst', 'one two three');
 SELECT to_tsvector('thesaurus_tst', 'one two four');
-

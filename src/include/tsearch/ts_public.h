@@ -14,7 +14,6 @@
 #define _PG_TS_PUBLIC_H_
 
 #include "tsearch/ts_type.h"
-#include "catalog/pg_ts_config_map.h"
 
 /*
  * Parser's framework

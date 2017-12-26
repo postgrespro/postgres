@@ -18,13 +18,13 @@
 #include "tsearch/ts_utils.h"
 #include "tsearch/ts_configmap.h"
 #include "utils/builtins.h"
-
 #include "funcapi.h"
 
 #define IGNORE_LONGLEXEME	1
 
-/*
+/*-------------------
  * Lexize subsystem
+ *-------------------
  */
 
 typedef struct ParsedLex
@@ -35,9 +35,11 @@ typedef struct ParsedLex
 	int			maplen;			/* Length of the map */
 	bool	   *accepted;		/* Is accepted by some dictionary */
 	bool	   *rejected;		/* Is rejected by all dictionaries */
-	bool	   *notFinished;	/* Some dictionary not finished processing and waits for more tokens */
+	bool	   *notFinished;	/* Some dictionary not finished processing and
+								 * waits for more tokens */
 	struct ParsedLex *next;		/* Next token in the list */
-	TSMapElement *relatedRule;	/* Rule which is used to produce lexemes from the token */
+	TSMapElement *relatedRule;	/* Rule which is used to produce lexemes from
+								 * the token */
 } ParsedLex;
 
 typedef struct ListParsedLex
@@ -48,14 +50,16 @@ typedef struct ListParsedLex
 
 typedef struct DictState
 {
-	Oid			relatedDictionary;	/* DictState contains state of dictionary with this Oid */
-	DictSubState subState;			/* Internal state of the dictionary used to store some state between dictionary calls */
+	Oid			relatedDictionary;	/* DictState contains state of dictionary
+									 * with this Oid */
+	DictSubState subState;		/* Internal state of the dictionary used to
+								 * store some state between dictionary calls */
 	ListParsedLex acceptedTokens;	/* Tokens which are processed and
 									 * accepted, used in last returned result
 									 * by the dictionary */
 	ListParsedLex intermediateTokens;	/* Tokens which are not accepted, but
 										 * were processed by thesaurus-like
-										 * dictionry */
+										 * dictionary */
 	bool		storeToAccepted;	/* Should current token be appended to
 									 * accepted or intermediate tokens */
 	bool		processed;		/* Is the dictionary take control during
@@ -94,19 +98,28 @@ typedef struct ResultStorage
 
 typedef struct LexizeData
 {
-	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for current configuration */
-	DictStateList dslist;		/* List of all currently stored states of dictionaries */
+	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for
+								 * current configuration */
+	DictStateList dslist;		/* List of all currently stored states of
+								 * dictionaries */
 	ListParsedLex towork;		/* Current list to work */
 	ListParsedLex waste;		/* List of lexemes that already lexized */
-	LexemesBuffer buffer;		/* Buffer of processed lexemes. Used to avoid multiple execution of token lexize process with same parameters */
-	ResultStorage delayedResults; /* Results that should be returned but may be rejected in future */
-	Oid			skipDictionary;	/* The dictionary we should skip during processing. Used to avoid infinite loop in configuration with pharase dictionary */
+	LexemesBuffer buffer;		/* Buffer of processed lexemes. Used to avoid
+								 * multiple execution of token lexize process
+								 * with same parameters */
+	ResultStorage delayedResults;	/* Results that should be returned but may
+									 * be rejected in future */
+	Oid			skipDictionary; /* The dictionary we should skip during
+								 * processing. Used to avoid infinite loop in
+								 * configuration with phrase dictionary */
+	bool		debugContext;	/* If true, relatedRule attribute is filled */
 } LexizeData;
 
 typedef struct TSDebugContext
 {
-	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for current configuration */
-	TSParserCacheEntry *prsobj;	/* Parser context of current ts_debug context */
+	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for
+								 * current configuration */
+	TSParserCacheEntry *prsobj; /* Parser context of current ts_debug context */
 	LexDescr   *tokenTypes;		/* Token types supported by current parser */
 	void	   *prsdata;		/* Parser data of current ts_debug context */
 	LexizeData	ldata;			/* Lexize data of current ts_debug context */
@@ -116,24 +129,17 @@ typedef struct TSDebugContext
 	ParsedLex  *leftTokens;		/* Corresponded ParsedLex */
 } TSDebugContext;
 
-static TSLexeme *TSLexemeMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *expression);
+static TSLexeme *TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression);
 static TSLexeme *LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config);
 
-static void
-LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
-{
-	ld->cfg = cfg;
-	ld->skipDictionary = InvalidOid;
-	ld->towork.head = ld->towork.tail = NULL;
-	ld->waste.head = ld->waste.tail = NULL;
-	ld->dslist.listLength = 0;
-	ld->dslist.states = NULL;
-	ld->buffer.size = 0;
-	ld->buffer.data = NULL;
-	ld->delayedResults.lexemes = NULL;
-	ld->delayedResults.accepted = NULL;
-}
+/*-------------------
+ * ListParsedLex API
+ *-------------------
+ */
 
+/*
+ * Add a ParsedLex to the end of the list
+ */
 static void
 LPLAddTail(ListParsedLex *list, ParsedLex *newpl)
 {
@@ -147,6 +153,9 @@ LPLAddTail(ListParsedLex *list, ParsedLex *newpl)
 	newpl->next = NULL;
 }
 
+/*
+ * Add a copy of ParsedLex to the end of the list
+ */
 static void
 LPLAddTailCopy(ListParsedLex *list, ParsedLex *newpl)
 {
@@ -167,6 +176,9 @@ LPLAddTailCopy(ListParsedLex *list, ParsedLex *newpl)
 		list->head = list->tail = copy;
 }
 
+/*
+ * Remove the head of the list. Return pointer to detached head
+ */
 static ParsedLex *
 LPLRemoveHead(ListParsedLex *list)
 {
@@ -181,6 +193,9 @@ LPLRemoveHead(ListParsedLex *list)
 	return res;
 }
 
+/*
+ * Remove all ParsedLex from the list
+ */
 static void
 LPLClear(ListParsedLex *list)
 {
@@ -197,10 +212,37 @@ LPLClear(ListParsedLex *list)
 	list->head = list->tail = NULL;
 }
 
+/*-------------------
+ * LexizeData manipulation functions
+ *-------------------
+ */
+
+/*
+ * Initialize empty LexizeData object
+ */
+static void
+LexizeInit(LexizeData *ld, TSConfigCacheEntry *cfg)
+{
+	ld->cfg = cfg;
+	ld->skipDictionary = InvalidOid;
+	ld->towork.head = ld->towork.tail = NULL;
+	ld->waste.head = ld->waste.tail = NULL;
+	ld->dslist.listLength = 0;
+	ld->dslist.states = NULL;
+	ld->buffer.size = 0;
+	ld->buffer.data = NULL;
+	ld->delayedResults.lexemes = NULL;
+	ld->delayedResults.accepted = NULL;
+}
+
+/*
+ * Add a token to the processing queue
+ */
 static void
 LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 {
 	ParsedLex  *newpl = (ParsedLex *) palloc(sizeof(ParsedLex));
+
 	newpl->type = type;
 	newpl->lemm = lemm;
 	newpl->lenlemm = lenlemm;
@@ -208,12 +250,18 @@ LexizeAddLemm(LexizeData *ld, int type, char *lemm, int lenlemm)
 	LPLAddTail(&ld->towork, newpl);
 }
 
+/*
+ * Remove head of the processing queue
+ */
 static void
 RemoveHead(LexizeData *ld)
 {
 	LPLAddTail(&ld->waste, LPLRemoveHead(&ld->towork));
 }
 
+/*
+ * Set token corresponded to current lexeme
+ */
 static void
 setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 {
@@ -225,6 +273,14 @@ setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
 	ld->waste.head = ld->waste.tail = NULL;
 }
 
+/*-------------------
+ * DictState manipulation functions
+ *-------------------
+ */
+
+/*
+ * Get a state of dictionary based on its oid
+ */
 static DictState *
 DictStateListGet(DictStateList *list, Oid dictId)
 {
@@ -238,6 +294,9 @@ DictStateListGet(DictStateList *list, Oid dictId)
 	return result;
 }
 
+/*
+ * Remove a state of dictionary based on its oid
+ */
 static void
 DictStateListRemove(DictStateList *list, Oid dictId)
 {
@@ -258,6 +317,9 @@ DictStateListRemove(DictStateList *list, Oid dictId)
 	}
 }
 
+/*
+ * Insert a state of dictionary with specified oid
+ */
 static DictState *
 DictStateListAdd(DictStateList *list, DictState *state)
 {
@@ -274,6 +336,9 @@ DictStateListAdd(DictStateList *list, DictState *state)
 	return list->states + list->listLength - 1;
 }
 
+/*
+ * Remove states of all dictionaries
+ */
 static void
 DictStateListClear(DictStateList *list)
 {
@@ -283,6 +348,14 @@ DictStateListClear(DictStateList *list)
 	list->states = NULL;
 }
 
+/*-------------------
+ * LexemesBuffer manipulation functions
+ *-------------------
+ */
+
+/*
+ * Check if there is a saved lexeme generated by specified TSMapElement
+ */
 static bool
 LexemesBufferContains(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token)
 {
@@ -295,6 +368,9 @@ LexemesBufferContains(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token
 	return false;
 }
 
+/*
+ * Get a saved lexeme generated by specified TSMapElement
+ */
 static TSLexeme *
 LexemesBufferGet(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token)
 {
@@ -308,6 +384,9 @@ LexemesBufferGet(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token)
 	return result;
 }
 
+/*
+ * Remove a saved lexeme generated by specified TSMapElement
+ */
 static void
 LexemesBufferRemove(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token)
 {
@@ -328,6 +407,9 @@ LexemesBufferRemove(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token)
 	}
 }
 
+/*
+ * Same a lexeme generated by specified TSMapElement
+ */
 static void
 LexemesBufferAdd(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token, TSLexeme *data)
 {
@@ -344,17 +426,20 @@ LexemesBufferAdd(LexemesBuffer *buffer, TSMapElement *key, ParsedLex *token, TSL
 	buffer->data[buffer->size - 1].data = data;
 }
 
+/*
+ * Remove all lexemes saved in a buffer
+ */
 static void
 LexemesBufferClear(LexemesBuffer *buffer)
 {
-	int i;
-	bool *skipEntry = palloc0(sizeof(bool) * buffer->size);
+	int			i;
+	bool	   *skipEntry = palloc0(sizeof(bool) * buffer->size);
 
 	for (i = 0; i < buffer->size; i++)
 	{
 		if (buffer->data[i].data != NULL && !skipEntry[i])
 		{
-			int j;
+			int			j;
 
 			for (j = 0; j < buffer->size; j++)
 				if (buffer->data[i].data == buffer->data[j].data)
@@ -370,10 +455,14 @@ LexemesBufferClear(LexemesBuffer *buffer)
 	buffer->data = NULL;
 }
 
-/*
+/*-------------------
  * TSLexeme util functions
+ *-------------------
  */
 
+/*
+ * Get size of TSLexeme except empty-lexeme
+ */
 static int
 TSLexemeGetSize(TSLexeme *lex)
 {
@@ -390,7 +479,7 @@ TSLexemeGetSize(TSLexeme *lex)
 }
 
 /*
- * Remove repeated lexemes. Remove copies of whole nvariant groups.
+ * Remove repeated lexemes. Also remove copies of whole nvariant groups.
  */
 static TSLexeme *
 TSLexemeRemoveDuplications(TSLexeme *lexeme)
@@ -473,7 +562,6 @@ TSLexemeRemoveDuplications(TSLexeme *lexeme)
 	}
 
 	pfree(shouldCopy);
-	pfree(lexeme);
 	return res;
 }
 
@@ -588,8 +676,9 @@ TSLexemeMarkMulti(TSLexeme *lexemes)
 	}
 }
 
-/*
+/*-------------------
  * Lexemes set operations
+ *-------------------
  */
 
 /*
@@ -631,12 +720,18 @@ TSLexemeUnionOpt(TSLexeme *left, TSLexeme *right, bool append)
 	return result;
 }
 
+/*
+ * Combine left and right lexeme lists into one
+ */
 static TSLexeme *
 TSLexemeUnion(TSLexeme *left, TSLexeme *right)
 {
 	return TSLexemeUnionOpt(left, right, false);
 }
 
+/*
+ * Remove common lexemes and return only which is stored in left list
+ */
 static TSLexeme *
 TSLexemeExcept(TSLexeme *left, TSLexeme *right)
 {
@@ -664,6 +759,9 @@ TSLexemeExcept(TSLexeme *left, TSLexeme *right)
 	return result;
 }
 
+/*
+ * Keep only common lexemes
+ */
 static TSLexeme *
 TSLexemeIntersect(TSLexeme *left, TSLexeme *right)
 {
@@ -691,10 +789,14 @@ TSLexemeIntersect(TSLexeme *left, TSLexeme *right)
 	return result;
 }
 
-/*
+/*-------------------
  * Result storage functions
+ *-------------------
  */
 
+/*
+ * Add a lexeme to the result storage
+ */
 static void
 ResultStorageAdd(ResultStorage *storage, ParsedLex *token, TSLexeme *lexs)
 {
@@ -705,6 +807,9 @@ ResultStorageAdd(ResultStorage *storage, ParsedLex *token, TSLexeme *lexs)
 		pfree(oldLexs);
 }
 
+/*
+ * Move all saved lexemes to accepted list
+ */
 static void
 ResultStorageMoveToAccepted(ResultStorage *storage)
 {
@@ -725,6 +830,9 @@ ResultStorageMoveToAccepted(ResultStorage *storage)
 	storage->lexemes = NULL;
 }
 
+/*
+ * Remove all non-accepted lexemes
+ */
 static void
 ResultStorageClearLexemes(ResultStorage *storage)
 {
@@ -733,6 +841,9 @@ ResultStorageClearLexemes(ResultStorage *storage)
 	storage->lexemes = NULL;
 }
 
+/*
+ * Remove all accepted lexemes
+ */
 static void
 ResultStorageClearAccepted(ResultStorage *storage)
 {
@@ -741,21 +852,24 @@ ResultStorageClearAccepted(ResultStorage *storage)
 	storage->accepted = NULL;
 }
 
-/*
+/*-------------------
  * Condition and command execution
+ *-------------------
  */
 
+/*
+ * Process a token by the dictionary
+ */
 static TSLexeme *
 LexizeExecDictionary(LexizeData *ld, ParsedLex *token, TSMapElement *dictionary)
 {
 	TSLexeme   *res;
 	TSDictionaryCacheEntry *dict;
 	DictSubState subState;
-	Oid dictId = dictionary->value.objectDictionary;
+	Oid			dictId = dictionary->value.objectDictionary;
 
 	if (ld->skipDictionary == dictId)
 		return NULL;
-
 
 	if (LexemesBufferContains(&ld->buffer, dictionary, token))
 		res = LexemesBufferGet(&ld->buffer, dictionary, token);
@@ -854,6 +968,9 @@ LexizeExecDictionary(LexizeData *ld, ParsedLex *token, TSMapElement *dictionary)
 	return res;
 }
 
+/*
+ * Check is dictionary waits for more tokens or not
+ */
 static bool
 LexizeExecDictionaryWaitNext(LexizeData *ld, Oid dictId)
 {
@@ -865,30 +982,39 @@ LexizeExecDictionaryWaitNext(LexizeData *ld, Oid dictId)
 		return false;
 }
 
+/*
+ * Check is dictionary result for current token is NULL or not.
+ * It dictionary waits for more lexemes, the result is interpreted as not null.
+ */
 static bool
 LexizeExecIsNull(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 {
-	bool result = false;
+	bool		result = false;
+
 	if (config->type == TSMAP_EXPRESSION)
 	{
 		TSMapExpression *expression = config->value.objectExpression;
+
 		result = LexizeExecIsNull(ld, token, expression->left) || LexizeExecIsNull(ld, token, expression->right);
 	}
 	else if (config->type == TSMAP_DICTIONARY)
 	{
-		Oid dictOid = config->value.objectDictionary;
+		Oid			dictOid = config->value.objectDictionary;
 		TSLexeme   *lexemes = LexizeExecDictionary(ld, token, config);
 
 		if (lexemes)
 			result = false;
 		else
-			result =!LexizeExecDictionaryWaitNext(ld, dictOid);
+			result = !LexizeExecDictionaryWaitNext(ld, dictOid);
 	}
 	return result;
 }
 
+/*
+ * Execute a MAP operator
+ */
 static TSLexeme *
-TSLexemeMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
+TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 {
 	TSLexeme   *left_res;
 	TSLexeme   *result = NULL;
@@ -924,26 +1050,34 @@ TSLexemeMapBy(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 	return result;
 }
 
+/*
+ * Execute a TSMapElement
+ * Common point of all possible types of TSMapElement
+ */
 static TSLexeme *
 LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 {
-	TSLexeme *result = NULL;
+	TSLexeme   *result = NULL;
+
 	if (LexemesBufferContains(&ld->buffer, config, token))
+	{
+		if (ld->debugContext)
+			token->relatedRule = config;
 		result = LexemesBufferGet(&ld->buffer, config, token);
+	}
 	else if (config->type == TSMAP_DICTIONARY)
 	{
-		token->relatedRule = config;
+		if (ld->debugContext)
+			token->relatedRule = config;
 		result = LexizeExecDictionary(ld, token, config);
 	}
 	else if (config->type == TSMAP_CASE)
 	{
-		TSMapCase *caseObject = config->value.objectCase;
-		bool conditionIsNull = LexizeExecIsNull(ld, token, caseObject->condition);
+		TSMapCase  *caseObject = config->value.objectCase;
+		bool		conditionIsNull = LexizeExecIsNull(ld, token, caseObject->condition);
 
 		if ((!conditionIsNull && caseObject->match) || (conditionIsNull && !caseObject->match))
 		{
-			token->relatedRule = config;
-
 			if (caseObject->command->type == TSMAP_KEEP)
 				result = LexizeExecTSElement(ld, token, caseObject->condition);
 			else
@@ -954,17 +1088,32 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 	}
 	else if (config->type == TSMAP_EXPRESSION)
 	{
-		TSLexeme *resLeft = NULL;
-		TSLexeme *resRight = NULL;
+		TSLexeme   *resLeft = NULL;
+		TSLexeme   *resRight = NULL;
+		TSMapElement *relatedRuleTmp;
 		TSMapExpression *expression = config->value.objectExpression;
+
+		if (ld->debugContext)
+		{
+			relatedRuleTmp = palloc0(sizeof(TSMapElement));
+			relatedRuleTmp->parent = NULL;
+			relatedRuleTmp->type = TSMAP_EXPRESSION;
+			relatedRuleTmp->value.objectExpression = palloc0(sizeof(TSMapExpression));
+			relatedRuleTmp->value.objectExpression->operator = expression->operator;
+		}
 
 		if (expression->operator != TSMAP_OP_MAP)
 		{
 			resLeft = LexizeExecTSElement(ld, token, expression->left);
+			if (ld->debugContext)
+				relatedRuleTmp->value.objectExpression->left = token->relatedRule;
+
 			resRight = LexizeExecTSElement(ld, token, expression->right);
+			if (ld->debugContext)
+				relatedRuleTmp->value.objectExpression->right = token->relatedRule;
 		}
 
-		switch(expression->operator)
+		switch (expression->operator)
 		{
 			case TSMAP_OP_UNION:
 				result = TSLexemeUnion(resLeft, resRight);
@@ -976,7 +1125,7 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 				result = TSLexemeIntersect(resLeft, resRight);
 				break;
 			case TSMAP_OP_MAP:
-				result = TSLexemeMapBy(ld, token, expression);
+				result = TSLexemeMap(ld, token, expression);
 				break;
 			default:
 				ereport(ERROR,
@@ -985,10 +1134,9 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 						 errdetail("Text search configuration contains invalid expression operator.")));
 				break;
 		}
-		if (resLeft && expression->left->type != TSMAP_DICTIONARY)
-			pfree(resLeft);
-		if (resRight && expression->right->type != TSMAP_DICTIONARY)
-			pfree(resRight);
+
+		if (ld->debugContext)
+			token->relatedRule = relatedRuleTmp;
 	}
 
 	if (!LexemesBufferContains(&ld->buffer, config, token))
@@ -997,10 +1145,15 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 	return result;
 }
 
-/*
+/*-------------------
  * LexizeExec and helpers functions
+ *-------------------
  */
 
+/*
+ * Processing of EOF-like token.
+ * Return all temporary results if any are saved.
+ */
 static TSLexeme *
 LexizeExecFinishProcessing(LexizeData *ld)
 {
@@ -1019,6 +1172,9 @@ LexizeExecFinishProcessing(LexizeData *ld)
 	return res;
 }
 
+/*
+ * Get last accepted result of the phrase-dictionary
+ */
 static TSLexeme *
 LexizeExecGetPreviousResults(LexizeData *ld)
 {
@@ -1040,6 +1196,9 @@ LexizeExecGetPreviousResults(LexizeData *ld)
 	return res;
 }
 
+/*
+ * Remove all dictionary states which wasn't used for current token
+ */
 static void
 LexizeExecClearDictStates(LexizeData *ld)
 {
@@ -1055,6 +1214,9 @@ LexizeExecClearDictStates(LexizeData *ld)
 	}
 }
 
+/*
+ * Check if there are any dictionaries that didn't processed current token
+ */
 static bool
 LexizeExecNotProcessedDictStates(LexizeData *ld)
 {
@@ -1067,6 +1229,9 @@ LexizeExecNotProcessedDictStates(LexizeData *ld)
 	return false;
 }
 
+/*
+ * Do a lexize processing for a towork queue in LexizeData
+ */
 static TSLexeme *
 LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 {
@@ -1192,7 +1357,11 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		ResultStorageAdd(&ld->delayedResults, token, res);
 		if (accepted)
 			ResultStorageMoveToAccepted(&ld->delayedResults);
-		/* Current value of res should not be cleared, because it is stored in LexemesBuffer */
+
+		/*
+		 * Current value of res should not be cleared, because it is stored in
+		 * LexemesBuffer
+		 */
 		res = NULL;
 	}
 	else
@@ -1209,12 +1378,15 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		/*
 		 * Add accepted delayed results to the output of the parsing. All
 		 * lexemes returned during thesaurus pharse processing should be
-		 * returned simultaniously, since all phrase tokens are processed as
+		 * returned simultaneously, since all phrase tokens are processed as
 		 * one.
 		 */
 		if (ld->delayedResults.accepted != NULL)
 		{
-			/* Previous value of res should not be cleared, because it is stored in LexemesBuffer */
+			/*
+			 * Previous value of res should not be cleared, because it is
+			 * stored in LexemesBuffer
+			 */
 			res = TSLexemeUnionOpt(ld->delayedResults.accepted, res, prevIterationResult == NULL);
 
 			ResultStorageClearLexemes(&ld->delayedResults);
@@ -1231,13 +1403,14 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 		res = TSLexemeRemoveDuplications(res);
 
 	/*
-	 * Copy result since it may be stored in LexemesBuffere
-	 * and removed at the next step.
+	 * Copy result since it may be stored in LexemesBuffere and removed at the
+	 * next step.
 	 */
 	if (res)
 	{
-		TSLexeme *oldRes = res;
-		int resSize = TSLexemeGetSize(res);
+		TSLexeme   *oldRes = res;
+		int			resSize = TSLexemeGetSize(res);
+
 		res = palloc0(sizeof(TSLexeme) * (resSize + 1));
 		memcpy(res, oldRes, sizeof(TSLexeme) * resSize);
 	}
@@ -1246,8 +1419,9 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 	return res;
 }
 
-/*
+/*-------------------
  * ts_parse API functions
+ *-------------------
  */
 
 /*
@@ -1341,6 +1515,27 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 	FunctionCall1(&(prsobj->prsend), PointerGetDatum(prsdata));
 }
 
+/*-------------------
+ * ts_debug and helper functions
+ *-------------------
+ */
+
+/*
+ * Free memory occupied by temporary TSMapElement
+ */
+
+static void
+ts_debug_free_rule(TSMapElement *element)
+{
+	if (element->type == TSMAP_EXPRESSION)
+	{
+		ts_debug_free_rule(element->value.objectExpression->left);
+		ts_debug_free_rule(element->value.objectExpression->right);
+		pfree(element->value.objectExpression);
+		pfree(element);
+	}
+}
+
 /*
  * Initialize SRF context and text parser for ts_debug execution.
  */
@@ -1380,6 +1575,7 @@ ts_debug_init(Oid cfgId, text *inputText, FunctionCallInfo fcinfo)
 															  PointerGetDatum(buf),
 															  Int32GetDatum(buflen)));
 	LexizeInit(&context->ldata, context->cfg);
+	context->ldata.debugContext = true;
 	context->tokentype = 1;
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1470,7 +1666,7 @@ ts_debug(PG_FUNCTION_ARGS)
 		StringInfo	str = NULL;
 		TSLexeme   *ptr;
 
-		values = palloc0(sizeof(char *) * 6);
+		values = palloc0(sizeof(char *) * 7);
 		str = makeStringInfo();
 		initStringInfo(str);
 
@@ -1480,19 +1676,38 @@ ts_debug(PG_FUNCTION_ARGS)
 		values[2] = palloc0(sizeof(char) * (lex->lenlemm + 1));
 		memcpy(values[2], lex->lemm, sizeof(char) * lex->lenlemm);
 
+		initStringInfo(str);
+		appendStringInfoChar(str, '{');
 		if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
 		{
-			TSMapPrintElement(context->ldata.cfg->map[lex->type], str);
-			values[3] = str->data;
-			str = makeStringInfo();
-			initStringInfo(str);
+			Oid *dictionaries = TSMapGetDictionaries(context->ldata.cfg->map[lex->type]);
+			Oid *currentDictionary = NULL;
+			for (currentDictionary = dictionaries; *currentDictionary != InvalidOid; currentDictionary++)
+			{
+				if (currentDictionary != dictionaries)
+					appendStringInfoChar(str, ',');
 
+				TSMapPrintDictName(*currentDictionary, str);
+			}
+		}
+		appendStringInfoChar(str, '}');
+		values[3] = str->data;
+
+		if (lex->type < context->ldata.cfg->lenmap && context->ldata.cfg->map[lex->type])
+		{
+			initStringInfo(str);
+			TSMapPrintElement(context->ldata.cfg->map[lex->type], str);
+			values[4] = str->data;
+
+			initStringInfo(str);
 			if (lex->relatedRule)
 			{
 				TSMapPrintElement(lex->relatedRule, str);
-				values[4] = str->data;
+				values[5] = str->data;
 				str = makeStringInfo();
 				initStringInfo(str);
+				ts_debug_free_rule(lex->relatedRule);
+				lex->relatedRule = NULL;
 			}
 		}
 
@@ -1510,9 +1725,9 @@ ts_debug(PG_FUNCTION_ARGS)
 		if (context->savedLexemes)
 			appendStringInfoChar(str, '}');
 		if (context->savedLexemes)
-			values[5] = str->data;
+			values[6] = str->data;
 		else
-			values[5] = NULL;
+			values[6] = NULL;
 
 		tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
 		result = HeapTupleGetDatum(tuple);
@@ -1529,9 +1744,11 @@ ts_debug(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
-/*
+/*-------------------
  * Headline framework
+ *-------------------
  */
+
 static void
 hladdword(HeadlineParsedText *prs, char *buf, int buflen, int type)
 {
