@@ -90,6 +90,7 @@ typedef struct TSMapCase
 #define TSMAP_OP_UNION			2
 #define TSMAP_OP_EXCEPT			3
 #define TSMAP_OP_INTERSECT		4
+#define TSMAP_OP_COMMA			5
 
 /* ----------------
  *		TSMapElement object types

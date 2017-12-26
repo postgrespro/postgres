@@ -589,6 +589,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					dictionary_map_set_expr dictionary_map_case
 					dictionary_map_action dictionary_map
 					opt_dictionary_map_case_else dictionary_config
+					dictionary_config_comma
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -10403,15 +10404,46 @@ opt_dictionary_map_no:
 			| { $$ = false; }
 		;
 
+dictionary_config_comma:
+			dictionary_map_dict { $$ = $1; }
+			| dictionary_map_dict ',' dictionary_config_comma
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				DictMapElem *r = makeNode(DictMapElem);
+
+				n->left = $1;
+				n->oper = TSMAP_OP_COMMA;
+				n->right = $3;
+
+				r->kind = DICT_MAP_EXPRESSION;
+				r->data = n;
+				$$ = r;
+			}
+		;
+
 dictionary_config:
 			dictionary_map { $$ = $1; }
-			| any_name_list ',' any_name
+			| dictionary_map_dict ',' dictionary_config_comma
+			{
+				DictMapExprElem *n = makeNode(DictMapExprElem);
+				DictMapElem *r = makeNode(DictMapElem);
+
+				n->left = $1;
+				n->oper = TSMAP_OP_COMMA;
+				n->right = $3;
+
+				r->kind = DICT_MAP_EXPRESSION;
+				r->data = n;
+				$$ = r;
+			}
+/*			| any_name_list ',' any_name
 			{
 				DictMapElem *n = makeNode(DictMapElem);
 				n->kind = DICT_MAP_DICTIONARY_LIST;
 				n->data = lappend($1, $3);
 				$$ = n;
 			}
+*/
 		;
 
 dictionary_map:

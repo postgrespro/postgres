@@ -121,6 +121,9 @@ TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 		case TSMAP_OP_INTERSECT:
 			appendStringInfoString(result, " INTERSECT ");
 			break;
+		case TSMAP_OP_COMMA:
+			appendStringInfoString(result, ", ");
+			break;
 		case TSMAP_OP_MAP:
 			appendStringInfoString(result, " MAP ");
 			break;

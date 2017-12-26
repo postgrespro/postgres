@@ -1021,12 +1021,14 @@ TSLexemeMap(LexizeData *ld, ParsedLex *token, TSMapExpression *expression)
 	int			left_size;
 	int			i;
 
-
 	left_res = LexizeExecTSElement(ld, token, expression->left);
 	left_size = TSLexemeGetSize(left_res);
 
-	if (left_res == NULL)
+	if (left_res == NULL && LexizeExecIsNull(ld, token, expression->left))
 		result = LexizeExecTSElement(ld, token, expression->right);
+	else if (expression->operator == TSMAP_OP_COMMA &&
+			((left_res != NULL && (left_res->flags & TSL_FILTER) == 0) || left_res == NULL))
+		result = left_res;
 	else
 	{
 		TSMapElement *relatedRuleTmp = NULL;
@@ -1101,12 +1103,11 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 	{
 		TSLexeme   *resLeft = NULL;
 		TSLexeme   *resRight = NULL;
-		TSMapElement *relatedRuleTmp;
+		TSMapElement *relatedRuleTmp = NULL;
 		TSMapExpression *expression = config->value.objectExpression;
 
-		if (expression->operator != TSMAP_OP_MAP)
+		if (expression->operator != TSMAP_OP_MAP && expression->operator != TSMAP_OP_COMMA)
 		{
-
 			if (ld->debugContext)
 			{
 				relatedRuleTmp = palloc0(sizeof(TSMapElement));
@@ -1137,6 +1138,7 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 				result = TSLexemeIntersect(resLeft, resRight);
 				break;
 			case TSMAP_OP_MAP:
+			case TSMAP_OP_COMMA:
 				result = TSLexemeMap(ld, token, expression);
 				break;
 			default:
@@ -1147,7 +1149,7 @@ LexizeExecTSElement(LexizeData *ld, ParsedLex *token, TSMapElement *config)
 				break;
 		}
 
-		if (ld->debugContext && expression->operator != TSMAP_OP_MAP)
+		if (ld->debugContext && relatedRuleTmp != NULL)
 			token->relatedRule = relatedRuleTmp;
 	}
 
@@ -1539,7 +1541,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 static void
 ts_debug_free_rule(TSMapElement *element)
 {
-	if (element->type == TSMAP_EXPRESSION)
+	if (element != NULL && element->type == TSMAP_EXPRESSION)
 	{
 		ts_debug_free_rule(element->value.objectExpression->left);
 		ts_debug_free_rule(element->value.objectExpression->right);
@@ -1723,6 +1725,7 @@ ts_debug(PG_FUNCTION_ARGS)
 			}
 		}
 
+		initStringInfo(str);
 		ptr = context->savedLexemes;
 		if (context->savedLexemes)
 			appendStringInfoChar(str, '{');

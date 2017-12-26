@@ -1356,7 +1356,9 @@ ParseTSMapConfig(DictMapElem *elem)
 	}
 	else if (elem->kind == DICT_MAP_DICTIONARY_LIST)
 	{
-		int			i = 0;
+		Assert(false);
+		/* TODO: Store as array */
+		int i = 0;
 		ListCell   *c;
 		TSMapElement *root = NULL;
 		TSMapElement *currentNode = NULL;
