@@ -2230,6 +2230,14 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
     </listitem>
     <listitem>
      <para>
+      a single lexeme with the <literal>TSL_FILTER</literal> flag set, to replace
+      the original token with a new token to be passed to subsequent
+      dictionaries (a dictionary that does this is called a
+      <firstterm>filtering dictionary</firstterm>)
+     </para>
+    </listitem>
+    <listitem>
+     <para>
       an empty array if the dictionary knows the token, but it is a stop word
      </para>
     </listitem>

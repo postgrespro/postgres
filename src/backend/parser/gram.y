@@ -10436,14 +10436,6 @@ dictionary_config:
 				r->data = n;
 				$$ = r;
 			}
-/*			| any_name_list ',' any_name
-			{
-				DictMapElem *n = makeNode(DictMapElem);
-				n->kind = DICT_MAP_DICTIONARY_LIST;
-				n->data = lappend($1, $3);
-				$$ = n;
-			}
-*/
 		;
 
 dictionary_map:

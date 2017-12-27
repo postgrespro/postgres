@@ -3397,8 +3397,7 @@ typedef enum DictMapElemType
 	DICT_MAP_CASE,
 	DICT_MAP_EXPRESSION,
 	DICT_MAP_KEEP,
-	DICT_MAP_DICTIONARY,
-	DICT_MAP_DICTIONARY_LIST
+	DICT_MAP_DICTIONARY
 } DictMapElemType;
 
 typedef struct DictMapElem

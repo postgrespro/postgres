@@ -1285,30 +1285,6 @@ getTokenTypes(Oid prsId, List *tokennames)
 }
 
 static TSMapElement *
-CreateCaseForSingleDictionary(Oid dictOid)
-{
-	TSMapElement *result = palloc0(sizeof(TSMapElement));
-	TSMapElement *keepElement = palloc0(sizeof(TSMapElement));
-	TSMapElement *condition = palloc0(sizeof(TSMapElement));
-	TSMapCase  *caseObject = palloc0(sizeof(TSMapCase));
-
-	keepElement->type = TSMAP_KEEP;
-	keepElement->parent = result;
-	caseObject->command = keepElement;
-	caseObject->match = true;
-
-	condition->type = TSMAP_DICTIONARY;
-	condition->parent = result;
-	condition->value.objectDictionary = dictOid;
-	caseObject->condition = condition;
-
-	result->value.objectCase = caseObject;
-	result->type = TSMAP_CASE;
-
-	return result;
-}
-
-static TSMapElement *
 ParseTSMapConfig(DictMapElem *elem)
 {
 	TSMapElement *result = palloc0(sizeof(TSMapElement));
@@ -1353,37 +1329,6 @@ ParseTSMapConfig(DictMapElem *elem)
 	{
 		result->value.objectDictionary = get_ts_dict_oid(elem->data, false);
 		result->type = TSMAP_DICTIONARY;
-	}
-	else if (elem->kind == DICT_MAP_DICTIONARY_LIST)
-	{
-		Assert(false);
-		/* TODO: Store as array */
-		int i = 0;
-		ListCell   *c;
-		TSMapElement *root = NULL;
-		TSMapElement *currentNode = NULL;
-
-		foreach(c, (List *) elem->data)
-		{
-			TSMapElement *prevNode = currentNode;
-			List	   *names = (List *) lfirst(c);
-			Oid			oid = get_ts_dict_oid(names, false);
-
-			currentNode = CreateCaseForSingleDictionary(oid);
-
-			if (root == NULL)
-				root = currentNode;
-			else
-			{
-				prevNode->value.objectCase->elsebranch = currentNode;
-				currentNode->parent = prevNode;
-			}
-
-			prevNode = currentNode;
-
-			i++;
-		}
-		result = root;
 	}
 	return result;
 }
