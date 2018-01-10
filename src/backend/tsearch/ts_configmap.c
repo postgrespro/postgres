@@ -595,7 +595,7 @@ JsonbValueReadString(JsonbValue *value, TSMapElement *parent)
 static void
 JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData *parseData)
 {
-	TSMapElement *element;
+	TSMapElement *element = NULL;
 
 	switch (r)
 	{
@@ -655,6 +655,11 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 				element = JsonbValueReadString(&value, parseData->element);
 			else if (value.type == jbvNumeric)
 				element = JsonbValueToOidElement(&value, parseData->element);
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg("text search configuration is invalid"),
+						 errdetail("Text search configuration contains object with invalid type.")));
 
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_CONDITION)
 				parseData->element->value.objectCase->condition = element;
