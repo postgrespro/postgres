@@ -14204,16 +14204,29 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 	PQclear(res);
 
 	resetPQExpBuffer(query);
-	appendPQExpBuffer(query,
-					  "SELECT\n"
-					  "  ( SELECT alias FROM pg_catalog.ts_token_type('%u'::pg_catalog.oid) AS t\n"
-					  "    WHERE t.tokid = m.maptokentype ) AS tokenname,\n"
-					  "  dictionary_mapping_to_text(m.mapcfg, m.maptokentype) AS dictname\n"
-					  "FROM pg_catalog.pg_ts_config_map AS m\n"
-					  "WHERE m.mapcfg = '%u'\n"
-					  "GROUP BY m.mapcfg, m.maptokentype\n"
-					  "ORDER BY m.mapcfg, m.maptokentype",
-					  cfginfo->cfgparser, cfginfo->dobj.catId.oid);
+	
+	if (fout->remoteVersion >= 110000)
+		appendPQExpBuffer(query,
+						  "SELECT\n"
+						  "  ( SELECT alias FROM pg_catalog.ts_token_type('%u'::pg_catalog.oid) AS t\n"
+						  "    WHERE t.tokid = m.maptokentype ) AS tokenname,\n"
+						  "  dictionary_mapping_to_text(m.mapcfg, m.maptokentype) AS dictname\n"
+						  "FROM pg_catalog.pg_ts_config_map AS m\n"
+						  "WHERE m.mapcfg = '%u'\n"
+						  "GROUP BY m.mapcfg, m.maptokentype\n"
+						  "ORDER BY m.mapcfg, m.maptokentype",
+						  cfginfo->cfgparser, cfginfo->dobj.catId.oid);
+	else
+		appendPQExpBuffer(query,
+						  "SELECT\n"
+						  "  ( SELECT alias FROM pg_catalog.ts_token_type('%u'::pg_catalog.oid) AS t\n"
+						  "    WHERE t.tokid = m.maptokentype ) AS tokenname,\n"
+						  "  m.mapdict::pg_catalog.regdictionary AS dictname\n"
+						  "FROM pg_catalog.pg_ts_config_map AS m\n"
+						  "WHERE m.mapcfg = '%u'\n"
+						  "GROUP BY m.mapcfg, m.maptokentype, m.mapseqno\n"
+						  "ORDER BY m.mapcfg, m.maptokentype",
+						  cfginfo->cfgparser, cfginfo->dobj.catId.oid);
 
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 	ntups = PQntuples(res);

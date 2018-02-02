@@ -4600,19 +4600,41 @@ describeOneTSConfig(const char *oid, const char *nspname, const char *cfgname,
 
 	initPQExpBuffer(&buf);
 
-	printfPQExpBuffer(&buf,
-					  "SELECT\n"
-					  "  ( SELECT t.alias FROM\n"
-					  "    pg_catalog.ts_token_type(c.cfgparser) AS t\n"
-					  "    WHERE t.tokid = m.maptokentype ) AS \"%s\",\n"
-					  " dictionary_mapping_to_text(m.mapcfg, m.maptokentype) AS \"%s\"\n"
-					  "FROM pg_catalog.pg_ts_config AS c, pg_catalog.pg_ts_config_map AS m\n"
-					  "WHERE c.oid = '%s' AND m.mapcfg = c.oid\n"
-					  "GROUP BY m.mapcfg, m.maptokentype, c.cfgparser\n"
-					  "ORDER BY 1;",
-					  gettext_noop("Token"),
-					  gettext_noop("Dictionaries"),
-					  oid);
+	if (pset.sversion >= 110000)
+		printfPQExpBuffer(&buf,
+						  "SELECT\n"
+						  "  ( SELECT t.alias FROM\n"
+						  "    pg_catalog.ts_token_type(c.cfgparser) AS t\n"
+						  "    WHERE t.tokid = m.maptokentype ) AS \"%s\",\n"
+						  " dictionary_mapping_to_text(m.mapcfg, m.maptokentype) AS \"%s\"\n"
+						  "FROM pg_catalog.pg_ts_config AS c, pg_catalog.pg_ts_config_map AS m\n"
+						  "WHERE c.oid = '%s' AND m.mapcfg = c.oid\n"
+						  "GROUP BY m.mapcfg, m.maptokentype, c.cfgparser\n"
+						  "ORDER BY 1;",
+						  gettext_noop("Token"),
+						  gettext_noop("Dictionaries"),
+						  oid);
+	else
+		printfPQExpBuffer(&buf,
+						  "SELECT\n"
+						  "  ( SELECT t.alias FROM\n"
+						  "    pg_catalog.ts_token_type(c.cfgparser) AS t\n"
+						  "    WHERE t.tokid = m.maptokentype ) AS \"%s\",\n"
+						  "  pg_catalog.btrim(\n"
+						  "    ARRAY( SELECT mm.mapdict::pg_catalog.regdictionary\n"
+						  "           FROM pg_catalog.pg_ts_config_map AS mm\n"
+						  "           WHERE mm.mapcfg = m.mapcfg AND mm.maptokentype = m.maptokentype\n"
+						  "           ORDER BY mapcfg, maptokentype, mapseqno\n"
+						  "    ) :: pg_catalog.text,\n"
+						  "  '{}') AS \"%s\"\n"
+						  "FROM pg_catalog.pg_ts_config AS c, pg_catalog.pg_ts_config_map AS m\n"
+						  "WHERE c.oid = '%s' AND m.mapcfg = c.oid\n"
+						  "GROUP BY m.mapcfg, m.maptokentype, c.cfgparser\n"
+						  "ORDER BY 1;",
+						  gettext_noop("Token"),
+						  gettext_noop("Dictionaries"),
+						  oid);
+
 
 	res = PSQLexec(buf.data);
 	termPQExpBuffer(&buf);

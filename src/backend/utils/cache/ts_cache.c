@@ -449,10 +449,8 @@ lookup_ts_config_cache(Oid cfgId)
 			if (entry->map)
 			{
 				for (i = 0; i < entry->lenmap; i++)
-				{
 					if (entry->map[i])
 						TSMapElementFree(entry->map[i]);
-				}
 				pfree(entry->map);
 			}
 		}

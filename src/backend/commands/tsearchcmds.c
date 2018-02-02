@@ -1284,6 +1284,10 @@ getTokenTypes(Oid prsId, List *tokennames)
 	return res;
 }
 
+/*
+ * Parse parse node extracted from dictionary mapping and transform it into
+ * internal representation of dictionary mapping.
+ */
 static TSMapElement *
 ParseTSMapConfig(DictMapElem *elem)
 {

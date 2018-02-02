@@ -27,6 +27,10 @@
  *-------------------
  */
 
+/*
+ * Representation of token produced by FTS parser. It contains intermediate
+ * lexemes in case of phrase dictionary processing.
+ */
 typedef struct ParsedLex
 {
 	int			type;			/* Token type */
@@ -42,12 +46,18 @@ typedef struct ParsedLex
 								 * the token */
 } ParsedLex;
 
+/*
+ * List of tokens produced by FTS parser.
+ */
 typedef struct ListParsedLex
 {
 	ParsedLex  *head;
 	ParsedLex  *tail;
 } ListParsedLex;
 
+/*
+ * Dictionary state shared between processing of different tokens
+ */
 typedef struct DictState
 {
 	Oid			relatedDictionary;	/* DictState contains state of dictionary
@@ -64,38 +74,52 @@ typedef struct DictState
 									 * accepted or intermediate tokens */
 	bool		processed;		/* Is the dictionary take control during
 								 * current token processing */
-	TSLexeme   *tmpResult;		/* Last result retued by thesaurus-like
+	TSLexeme   *tmpResult;		/* Last result returned by thesaurus-like
 								 * dictionary, if dictionary still waiting for
 								 * more lexemes */
 } DictState;
 
+/*
+ * List of dictionary states
+ */
 typedef struct DictStateList
 {
 	int			listLength;
 	DictState  *states;
 } DictStateList;
 
+/*
+ * Buffer entry with lexemes produced from current token
+ */
 typedef struct LexemesBufferEntry
 {
-	Oid			dictId;
-	TSMapElement *key;
-	ParsedLex  *token;
-	TSLexeme   *data;
+	TSMapElement *key;	/* Element of the mapping configuration produced the entry */
+	ParsedLex  *token;	/* Token used for production of the lexemes */
+	TSLexeme   *data;	/* Lexemes produced from current token */
 } LexemesBufferEntry;
 
+/*
+ * Buffer with lexemes produced from current token
+ */
 typedef struct LexemesBuffer
 {
 	int			size;
 	LexemesBufferEntry *data;
 } LexemesBuffer;
 
+/*
+ * Storage for accepted and possible accepted lexemes
+ */
 typedef struct ResultStorage
 {
 	TSLexeme   *lexemes;		/* Processed lexemes, which is not yet
 								 * accepted */
-	TSLexeme   *accepted;
+	TSLexeme   *accepted;		/* Already accepted lexemes */
 } ResultStorage;
 
+/*
+ * FTS processing context
+ */
 typedef struct LexizeData
 {
 	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for
@@ -115,6 +139,9 @@ typedef struct LexizeData
 	bool		debugContext;	/* If true, relatedRule attribute is filled */
 } LexizeData;
 
+/*
+ * FTS processing debug context. Used during ts_debug calls.
+ */
 typedef struct TSDebugContext
 {
 	TSConfigCacheEntry *cfg;	/* Text search configuration mappings for
@@ -279,7 +306,7 @@ setCorrLex(LexizeData *ld, ParsedLex **correspondLexem)
  */
 
 /*
- * Get a state of dictionary based on its oid
+ * Get a state of dictionary based on its OID
  */
 static DictState *
 DictStateListGet(DictStateList *list, Oid dictId)
@@ -295,7 +322,7 @@ DictStateListGet(DictStateList *list, Oid dictId)
 }
 
 /*
- * Remove a state of dictionary based on its oid
+ * Remove a state of dictionary based on its OID
  */
 static void
 DictStateListRemove(DictStateList *list, Oid dictId)
@@ -318,7 +345,7 @@ DictStateListRemove(DictStateList *list, Oid dictId)
 }
 
 /*
- * Insert a state of dictionary with specified oid
+ * Insert a state of dictionary with specified OID
  */
 static DictState *
 DictStateListAdd(DictStateList *list, DictState *state)
@@ -1391,7 +1418,7 @@ LexizeExec(LexizeData *ld, ParsedLex **correspondLexem)
 
 		/*
 		 * Add accepted delayed results to the output of the parsing. All
-		 * lexemes returned during thesaurus pharse processing should be
+		 * lexemes returned during thesaurus phrase processing should be
 		 * returned simultaneously, since all phrase tokens are processed as
 		 * one.
 		 */

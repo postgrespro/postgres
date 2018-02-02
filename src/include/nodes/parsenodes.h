@@ -3392,6 +3392,9 @@ typedef enum AlterTSConfigType
 	ALTER_TSCONFIG_DROP_MAPPING
 } AlterTSConfigType;
 
+/*
+ * TS Configuration expression tree element's types
+ */
 typedef enum DictMapElemType
 {
 	DICT_MAP_CASE,
@@ -3400,6 +3403,9 @@ typedef enum DictMapElemType
 	DICT_MAP_DICTIONARY
 } DictMapElemType;
 
+/*
+ * TS Configuration expression tree abstract element
+ */
 typedef struct DictMapElem
 {
 	NodeTag		type;
@@ -3407,6 +3413,9 @@ typedef struct DictMapElem
 	void	   *data;			/* Type should be detected by kind value */
 } DictMapElem;
 
+/*
+ * TS Configuration expression tree element with operator and operands
+ */
 typedef struct DictMapExprElem
 {
 	NodeTag		type;
@@ -3415,6 +3424,9 @@ typedef struct DictMapExprElem
 	int8		oper;
 } DictMapExprElem;
 
+/*
+ * TS Configuration expression tree CASE element
+ */
 typedef struct DictMapCase
 {
 	NodeTag		type;
@@ -3436,7 +3448,7 @@ typedef struct AlterTSConfigurationStmt
 	 */
 	List	   *tokentype;		/* list of Value strings */
 	List	   *dicts;			/* list of list of Value strings */
-	DictMapElem *dict_map;
+	DictMapElem *dict_map;		/* tree of the mapping expression */
 	bool		override;		/* if true - remove old variant */
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */

@@ -31,7 +31,8 @@
  */
 #define TSConfigMapRelationId	3603
 
-/* Create a typedef in order to use same type name in
+/*
+ * Create a typedef in order to use same type name in
  * generated DB initialization script and C source code
  */
 typedef Jsonb jsonb;
@@ -45,19 +46,25 @@ CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;
 
+/*
+ * Element of the mapping expression tree
+ */
 typedef struct TSMapElement
 {
-	int			type;
+	int			type; /* Type of the element */
 	union
 	{
 		struct TSMapExpression *objectExpression;
 		struct TSMapCase *objectCase;
 		Oid			objectDictionary;
 		void	   *object;
-	}			value;
-	struct TSMapElement *parent;
+	} value;
+	struct TSMapElement *parent; /* Parent in the expression tree */
 } TSMapElement;
 
+/*
+ * Representation of expression with operator and two operands
+ */
 typedef struct TSMapExpression
 {
 	int			operator;
@@ -65,6 +72,9 @@ typedef struct TSMapExpression
 	TSMapElement *right;
 } TSMapExpression;
 
+/*
+ * Representation of CASE structure inside database
+ */
 typedef struct TSMapCase
 {
 	TSMapElement *condition;

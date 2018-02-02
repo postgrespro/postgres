@@ -3,7 +3,7 @@
  * ts_configmap.h
  *	  internal representation of text search configuration and utilities for it
  *
- * Copyright (c) 1998-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2018, PostgreSQL Global Development Group
  *
  * src/include/tsearch/ts_utils.h
  *

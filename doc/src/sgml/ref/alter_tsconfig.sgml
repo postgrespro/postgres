@@ -170,7 +170,7 @@ ALTER TEXT SEARCH CONFIGURATION <replaceable>name</replaceable> SET SCHEMA <repl
  </refsect1>
 
  <refsect1>
-  <title>Dictionaries Map Config</title>
+  <title>Dictionaries Map Configuration</title>
 
   <refsect2>
    <title>Format</title>

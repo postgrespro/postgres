@@ -3,7 +3,7 @@
  * ts_configmap.c
  *		internal representation of text search configuration and utilities for it
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -55,7 +55,7 @@ typedef enum TSMapParseState
 } TSMapParseState;
 
 /*
- * Context used during Jsonb parsing to construct a TSMap
+ * Context used during JSONB parsing to construct a TSMap
  */
 typedef struct TSMapJsonbParseData
 {
@@ -63,7 +63,7 @@ typedef struct TSMapJsonbParseData
 															 * JSONB parsing
 															 * automaton */
 	int			statesIndex;	/* Index of current stack frame */
-	TSMapElement *element;		/* Element that is in cnstruction now */
+	TSMapElement *element;		/* Element that is in construction now */
 } TSMapJsonbParseData;
 
 static JsonbValue *TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState);
@@ -81,6 +81,9 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 	SysScanDesc mapscan;
 	HeapTuple	maptup;
 	Form_pg_ts_dict dict;
+
+	if (false)
+		return;
 
 	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
 	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
@@ -223,7 +226,7 @@ dictionary_mapping_to_text(PG_FUNCTION_ARGS)
 }
 
 /* ----------------
- * Functions used to convert TSMap structure into Jsonb representation
+ * Functions used to convert TSMap structure into JSONB representation
  * ----------------
  */
 
@@ -399,7 +402,7 @@ TSMapElementToJsonbValue(TSMapElement *element, JsonbParseState *jsonbState)
 }
 
 /*
- * Convert a FTS configuration into Jsonb
+ * Convert a FTS configuration into JSONB
  */
 Jsonb *
 TSMapToJsonb(TSMapElement *element)
@@ -415,7 +418,7 @@ TSMapToJsonb(TSMapElement *element)
 }
 
 /* ----------------
- * Functions used to get TSMap structure from Jsonb representation
+ * Functions used to get TSMap structure from JSONB representation
  * ----------------
  */
 
@@ -438,7 +441,7 @@ static bool
 IsTSMapCaseKey(JsonbValue *value)
 {
 	/*
-	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * JsonbValue string may be not null-terminated. Convert it for appropriate
 	 * behavior of strcmp function.
 	 */
 	char	   *key = palloc0(sizeof(char) * (value->val.string.len + 1));
@@ -455,7 +458,7 @@ static bool
 IsTSMapExpressionKey(JsonbValue *value)
 {
 	/*
-	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * JsonbValue string may be not null-terminated. Convert it for appropriate
 	 * behavior of strcmp function.
 	 */
 	char	   *key = palloc0(sizeof(char) * (value->val.string.len + 1));
@@ -498,7 +501,7 @@ static void
 JsonbKeyExpressionProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	/*
-	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * JsonbValue string may be not null-terminated. Convert it for appropriate
 	 * behavior of strcmp function.
 	 */
 	char	   *key = palloc0(sizeof(char) * (value.val.string.len + 1));
@@ -528,7 +531,7 @@ static void
 JsonbKeyCaseProcessing(JsonbValue value, TSMapJsonbParseData *parseData)
 {
 	/*
-	 * JsonbValue string may be not null-terminated. Convert it for apropriate
+	 * JsonbValue string may be not null-terminated. Convert it for appropriate
 	 * behavior of strcmp function.
 	 */
 	char	   *key = palloc0(sizeof(char) * (value.val.string.len + 1));
@@ -602,7 +605,7 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 		case WJB_KEY:
 
 			/*
-			 * Construct an TSMapElement object. At first key inside Jsonb
+			 * Construct an TSMapElement object. At first key inside JSONB
 			 * object a type is selected based on key.
 			 */
 			if (parseData->states[parseData->statesIndex] == TSMPS_READ_COMPLEX_OBJ)
@@ -696,7 +699,7 @@ JsonbProcessElement(JsonbIteratorToken r, JsonbValue value, TSMapJsonbParseData 
 			}
 			break;
 		default:
-			/* Ignore unused Jsonb tokens */
+			/* Ignore unused JSONB tokens */
 			break;
 	}
 }
@@ -725,7 +728,7 @@ JsonbToTSMapElement(JsonbContainer *root)
 }
 
 /*
- * Convert a Jsonb into TSMapElement
+ * Convert a JSONB into TSMapElement
  */
 TSMapElement *
 JsonbToTSMap(Jsonb *json)
@@ -741,7 +744,7 @@ JsonbToTSMap(Jsonb *json)
  */
 
 /*
- * Dynamicly extendable list of OIDs
+ * Dynamically extendable list of OIDs
  */
 typedef struct OidList
 {

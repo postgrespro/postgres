@@ -258,6 +258,22 @@ ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH C
 	thesaurus WHEN MATCH THEN simple UNION thesaurus
 	ELSE simple
 END;
+\dF+ thesaurus_tst
 SELECT to_tsvector('thesaurus_tst', 'one two');
 SELECT to_tsvector('thesaurus_tst', 'one two three');
 SELECT to_tsvector('thesaurus_tst', 'one two four');
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH CASE
+	thesaurus WHEN NO MATCH THEN simple ELSE thesaurus
+END;
+\dF+ thesaurus_tst
+SELECT to_tsvector('thesaurus_tst', 'one two');
+SELECT to_tsvector('thesaurus_tst', 'one two three');
+SELECT to_tsvector('thesaurus_tst', 'one two books');
+
+ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING
+	REPLACE simple WITH english_stem;
+SELECT to_tsvector('thesaurus_tst', 'one two');
+SELECT to_tsvector('thesaurus_tst', 'one two three');
+SELECT to_tsvector('thesaurus_tst', 'one two books');
+
