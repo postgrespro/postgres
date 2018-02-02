@@ -61,3 +61,14 @@ SELECT ts_lexize('unaccent', '³φιλ');
  {εφιλ}
 (1 row)
 
+CREATE TEXT SEARCH CONFIGURATION unaccent(
+						COPY=russian
+);
+ALTER TEXT SEARCH CONFIGURATION unaccent ALTER MAPPING FOR
+	asciiword, word WITH unaccent MAP russian_stem;
+SELECT to_tsvector('unaccent', 'foobar ³φιλι £ΜΛΙ');
+         to_tsvector          
+------------------------------
+ 'foobar':1 'εφιλι':2 'ΕΜΛ':3
+(1 row)
+
