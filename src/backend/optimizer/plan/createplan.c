@@ -5,7 +5,7 @@
  *	  Planning is complete, we just need to convert the selected
  *	  Path into a Plan.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -279,6 +279,7 @@ static ProjectSet *make_project_set(List *tlist, Plan *subplan);
 static ModifyTable *make_modifytable(PlannerInfo *root,
 				 CmdType operation, bool canSetTag,
 				 Index nominalRelation, List *partitioned_rels,
+				 bool partColsUpdated,
 				 List *resultRelations, List *subplans,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
@@ -356,6 +357,9 @@ static Plan *
 create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 {
 	Plan	   *plan;
+
+	/* Guard against stack overflow due to overly complex plans */
+	check_stack_depth();
 
 	switch (best_path->pathtype)
 	{
@@ -2373,6 +2377,7 @@ create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path)
 							best_path->canSetTag,
 							best_path->nominalRelation,
 							best_path->partitioned_rels,
+							best_path->partColsUpdated,
 							best_path->resultRelations,
 							subplans,
 							best_path->withCheckOptionLists,
@@ -6326,7 +6331,6 @@ make_setop(SetOpCmd cmd, SetOpStrategy strategy, Plan *lefttree,
 	 * convert SortGroupClause list into arrays of attr indexes and equality
 	 * operators, as wanted by executor
 	 */
-	Assert(numCols > 0);
 	dupColIdx = (AttrNumber *) palloc(sizeof(AttrNumber) * numCols);
 	dupOperators = (Oid *) palloc(sizeof(Oid) * numCols);
 
@@ -6443,6 +6447,7 @@ static ModifyTable *
 make_modifytable(PlannerInfo *root,
 				 CmdType operation, bool canSetTag,
 				 Index nominalRelation, List *partitioned_rels,
+				 bool partColsUpdated,
 				 List *resultRelations, List *subplans,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam)
@@ -6469,6 +6474,7 @@ make_modifytable(PlannerInfo *root,
 	node->canSetTag = canSetTag;
 	node->nominalRelation = nominalRelation;
 	node->partitioned_rels = partitioned_rels;
+	node->partColsUpdated = partColsUpdated;
 	node->resultRelations = resultRelations;
 	node->resultRelIndex = -1;	/* will be set correctly in setrefs.c */
 	node->rootResultRelIndex = -1;	/* will be set correctly in setrefs.c */

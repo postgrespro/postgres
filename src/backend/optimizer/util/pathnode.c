@@ -3,7 +3,7 @@
  * pathnode.c
  *	  Routines to manipulate pathlists and create path nodes
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,8 +17,9 @@
 #include <math.h>
 
 #include "miscadmin.h"
-#include "nodes/nodeFuncs.h"
+#include "foreign/fdwapi.h"
 #include "nodes/extensible.h"
+#include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/pathnode.h"
@@ -29,7 +30,6 @@
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"
 #include "parser/parsetree.h"
-#include "foreign/fdwapi.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/selfuncs.h"
@@ -1274,38 +1274,44 @@ create_append_path(RelOptInfo *rel,
 
 /*
  * append_total_cost_compare
- *	  list_qsort comparator for sorting append child paths by total_cost
+ *	  qsort comparator for sorting append child paths by total_cost descending
+ *
+ * For equal total costs, we fall back to comparing startup costs; if those
+ * are equal too, break ties using bms_compare on the paths' relids.
+ * (This is to avoid getting unpredictable results from qsort.)
  */
 static int
 append_total_cost_compare(const void *a, const void *b)
 {
 	Path	   *path1 = (Path *) lfirst(*(ListCell **) a);
 	Path	   *path2 = (Path *) lfirst(*(ListCell **) b);
+	int			cmp;
 
-	if (path1->total_cost > path2->total_cost)
-		return -1;
-	if (path1->total_cost < path2->total_cost)
-		return 1;
-
-	return 0;
+	cmp = compare_path_costs(path1, path2, TOTAL_COST);
+	if (cmp != 0)
+		return -cmp;
+	return bms_compare(path1->parent->relids, path2->parent->relids);
 }
 
 /*
  * append_startup_cost_compare
- *	  list_qsort comparator for sorting append child paths by startup_cost
+ *	  qsort comparator for sorting append child paths by startup_cost descending
+ *
+ * For equal startup costs, we fall back to comparing total costs; if those
+ * are equal too, break ties using bms_compare on the paths' relids.
+ * (This is to avoid getting unpredictable results from qsort.)
  */
 static int
 append_startup_cost_compare(const void *a, const void *b)
 {
 	Path	   *path1 = (Path *) lfirst(*(ListCell **) a);
 	Path	   *path2 = (Path *) lfirst(*(ListCell **) b);
+	int			cmp;
 
-	if (path1->startup_cost > path2->startup_cost)
-		return -1;
-	if (path1->startup_cost < path2->startup_cost)
-		return 1;
-
-	return 0;
+	cmp = compare_path_costs(path1, path2, STARTUP_COST);
+	if (cmp != 0)
+		return -cmp;
+	return bms_compare(path1->parent->relids, path2->parent->relids);
 }
 
 /*
@@ -3268,6 +3274,8 @@ create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
  * 'partitioned_rels' is an integer list of RT indexes of non-leaf tables in
  *		the partition tree, if this is an UPDATE/DELETE to a partitioned table.
  *		Otherwise NIL.
+ * 'partColsUpdated' is true if any partitioning columns are being updated,
+ *		either from the target relation or a descendent partitioned table.
  * 'resultRelations' is an integer list of actual RT indexes of target rel(s)
  * 'subpaths' is a list of Path(s) producing source data (one per rel)
  * 'subroots' is a list of PlannerInfo structs (one per rel)
@@ -3281,6 +3289,7 @@ ModifyTablePath *
 create_modifytable_path(PlannerInfo *root, RelOptInfo *rel,
 						CmdType operation, bool canSetTag,
 						Index nominalRelation, List *partitioned_rels,
+						bool partColsUpdated,
 						List *resultRelations, List *subpaths,
 						List *subroots,
 						List *withCheckOptionLists, List *returningLists,
@@ -3348,6 +3357,7 @@ create_modifytable_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->canSetTag = canSetTag;
 	pathnode->nominalRelation = nominalRelation;
 	pathnode->partitioned_rels = list_copy(partitioned_rels);
+	pathnode->partColsUpdated = partColsUpdated;
 	pathnode->resultRelations = resultRelations;
 	pathnode->subpaths = subpaths;
 	pathnode->subroots = subroots;
@@ -3529,6 +3539,40 @@ reparameterize_path(PlannerInfo *root, Path *path,
 														 spath->subpath,
 														 spath->path.pathkeys,
 														 required_outer);
+			}
+		case T_Append:
+			{
+				AppendPath *apath = (AppendPath *) path;
+				List	   *childpaths = NIL;
+				List	   *partialpaths = NIL;
+				int			i;
+				ListCell   *lc;
+
+				/* Reparameterize the children */
+				i = 0;
+				foreach(lc, apath->subpaths)
+				{
+					Path	   *spath = (Path *) lfirst(lc);
+
+					spath = reparameterize_path(root, spath,
+												required_outer,
+												loop_count);
+					if (spath == NULL)
+						return NULL;
+					/* We have to re-split the regular and partial paths */
+					if (i < apath->first_partial_path)
+						childpaths = lappend(childpaths, spath);
+					else
+						partialpaths = lappend(partialpaths, spath);
+					i++;
+				}
+				return (Path *)
+					create_append_path(rel, childpaths, partialpaths,
+									   required_outer,
+									   apath->path.parallel_workers,
+									   apath->path.parallel_aware,
+									   apath->partitioned_rels,
+									   -1);
 			}
 		default:
 			break;

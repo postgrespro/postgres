@@ -15,7 +15,7 @@
  *
  * Note that this lexer operates within the framework created by psqlscan.l,
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pgbench/exprscan.l
@@ -70,6 +70,22 @@ newline			[\n]
 
 /* Line continuation marker */
 continuation	\\{newline}
+
+/* case insensitive keywords */
+and				[Aa][Nn][Dd]
+or				[Oo][Rr]
+not				[Nn][Oo][Tt]
+case			[Cc][Aa][Ss][Ee]
+when			[Ww][Hh][Ee][Nn]
+then			[Tt][Hh][Ee][Nn]
+else			[Ee][Ll][Ss][Ee]
+end				[Ee][Nn][Dd]
+true			[Tt][Rr][Uu][Ee]
+false			[Ff][Aa][Ll][Ss][Ee]
+null			[Nn][Uu][Ll][Ll]
+is				[Ii][Ss]
+isnull			[Ii][Ss][Nn][Uu][Ll][Ll]
+notnull			[Nn][Oo][Tt][Nn][Uu][Ll][Ll]
 
 /* Exclusive states */
 %x EXPR
@@ -129,14 +145,51 @@ continuation	\\{newline}
 "-"				{ return '-'; }
 "*"				{ return '*'; }
 "/"				{ return '/'; }
-"%"				{ return '%'; }
+"%"				{ return '%'; } /* C version, also in Pg SQL */
+"="				{ return '='; }
+"<>"			{ return NE_OP; }
+"!="			{ return NE_OP; } /* C version, also in Pg SQL */
+"<="			{ return LE_OP; }
+">="			{ return GE_OP; }
+"<<"			{ return LS_OP; }
+">>"			{ return RS_OP; }
+"<"				{ return '<'; }
+">"				{ return '>'; }
+"|"				{ return '|'; }
+"&"				{ return '&'; }
+"#"				{ return '#'; }
+"~"				{ return '~'; }
+
 "("				{ return '('; }
 ")"				{ return ')'; }
 ","				{ return ','; }
 
+{and}			{ return AND_OP; }
+{or}			{ return OR_OP; }
+{not}			{ return NOT_OP; }
+{is}			{ return IS_OP; }
+{isnull}		{ return ISNULL_OP; }
+{notnull}		{ return NOTNULL_OP; }
+
+{case}			{ return CASE_KW; }
+{when}			{ return WHEN_KW; }
+{then}			{ return THEN_KW; }
+{else}			{ return ELSE_KW; }
+{end}			{ return END_KW; }
+
 :{alnum}+		{
 					yylval->str = pg_strdup(yytext + 1);
 					return VARIABLE;
+				}
+
+{null}			{ return NULL_CONST; }
+{true}			{
+					yylval->bval = true;
+					return BOOLEAN_CONST;
+				}
+{false}			{
+					yylval->bval = false;
+					return BOOLEAN_CONST;
 				}
 {digit}+		{
 					yylval->ival = strtoint64(yytext);

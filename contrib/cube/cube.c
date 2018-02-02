@@ -1337,15 +1337,72 @@ g_cube_distance(PG_FUNCTION_ARGS)
 
 	if (strategy == CubeKNNDistanceCoord)
 	{
+		/*
+		 * Handle ordering by ~> operator.  See comments of cube_coord_llur()
+		 * for details
+		 */
 		int			coord = PG_GETARG_INT32(1);
+		bool		isLeaf = GistPageIsLeaf(entry->page);
+		bool		inverse = false;
 
-		if (DIM(cube) == 0)
-			retval = 0.0;
-		else if (IS_POINT(cube))
-			retval = cube->x[(coord - 1) % DIM(cube)];
+		/* 0 is the only unsupported coordinate value */
+		if (coord == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_ARRAY_ELEMENT_ERROR),
+					 errmsg("zero cube index is not defined")));
+
+		/* Return inversed value for negative coordinate */
+		if (coord < 0)
+		{
+			coord = -coord;
+			inverse = true;
+		}
+
+		if (coord <= 2 * DIM(cube))
+		{
+			/* dimension index */
+			int		index = (coord - 1) / 2;
+			/* whether this is upper bound (lower bound otherwise) */
+			bool	upper = ((coord - 1) % 2 == 1);
+
+			if (IS_POINT(cube))
+			{
+				retval = cube->x[index];
+			}
+			else
+			{
+				if (isLeaf)
+				{
+					/* For leaf just return required upper/lower bound */
+					if (upper)
+						retval = Max(cube->x[index], cube->x[index + DIM(cube)]);
+					else
+						retval = Min(cube->x[index], cube->x[index + DIM(cube)]);
+				}
+				else
+				{
+					/*
+					 * For non-leaf we should always return lower bound,
+					 * because even upper bound of a child in the subtree can
+					 * be as small as our lower bound.  For inversed case we
+					 * return upper bound because it becomes lower bound for
+					 * inversed value.
+					 */
+					if (!inverse)
+						retval = Min(cube->x[index], cube->x[index + DIM(cube)]);
+					else
+						retval = Max(cube->x[index], cube->x[index + DIM(cube)]);
+				}
+			}
+		}
 		else
-			retval = Min(cube->x[(coord - 1) % DIM(cube)],
-						 cube->x[(coord - 1) % DIM(cube) + DIM(cube)]);
+		{
+			retval = 0.0;
+		}
+
+		/* Inverse return value if needed */
+		if (inverse)
+			retval = -retval;
 	}
 	else
 	{
@@ -1492,43 +1549,84 @@ cube_coord(PG_FUNCTION_ARGS)
 }
 
 
-/*
- * This function works like cube_coord(),
- * but rearranges coordinates of corners to get cube representation
- * in the form of (lower left, upper right).
- * For historical reasons that extension allows us to create cubes in form
- * ((2,1),(1,2)) and instead of normalizing such cube to ((1,1),(2,2)) it
- * stores cube in original way. But to get cubes ordered by one of dimensions
- * directly from the index without extra sort step we need some
- * representation-independent coordinate getter. This function implements it.
+/*----
+ * This function works like cube_coord(), but rearranges coordinates in the
+ * way suitable to support coordinate ordering using KNN-GiST.  For historical
+ * reasons this extension allows us to create cubes in form ((2,1),(1,2)) and
+ * instead of normalizing such cube to ((1,1),(2,2)) it stores cube in original
+ * way.  But in order to get cubes ordered by one of dimensions from the index
+ * without explicit sort step we need this representation-independent coordinate
+ * getter.  Moreover, indexed dataset may contain cubes of different dimensions
+ * number.  Accordingly, this coordinate getter should be able to return
+ * lower/upper bound for particular dimension independently on number of cube
+ * dimensions.  Also, KNN-GiST supports only ascending sorting.  In order to
+ * support descending sorting, this function returns inverse of value when
+ * negative coordinate is given.
+ *
+ * Long story short, this function uses following meaning of coordinates:
+ * # (2 * N - 1) -- lower bound of Nth dimension,
+ * # (2 * N) -- upper bound of Nth dimension,
+ * # - (2 * N - 1) -- negative of lower bound of Nth dimension,
+ * # - (2 * N) -- negative of upper bound of Nth dimension.
+ *
+ * When given coordinate exceeds number of cube dimensions, then 0 returned
+ * (reproducing logic of GiST indexing of variable-length cubes).
  */
 Datum
 cube_coord_llur(PG_FUNCTION_ARGS)
 {
 	NDBOX	   *cube = PG_GETARG_NDBOX_P(0);
 	int			coord = PG_GETARG_INT32(1);
+	bool		inverse = false;
+	float8		result;
 
-	if (coord <= 0 || coord > 2 * DIM(cube))
+	/* 0 is the only unsupported coordinate value */
+	if (coord == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_ELEMENT_ERROR),
-				 errmsg("cube index %d is out of bounds", coord)));
+				 errmsg("zero cube index is not defined")));
 
-	if (coord <= DIM(cube))
+	/* Return inversed value for negative coordinate */
+	if (coord < 0)
 	{
+		coord = -coord;
+		inverse = true;
+	}
+
+	if (coord <= 2 * DIM(cube))
+	{
+		/* dimension index */
+		int		index = (coord - 1) / 2;
+		/* whether this is upper bound (lower bound otherwise) */
+		bool	upper = ((coord - 1) % 2 == 1);
+
 		if (IS_POINT(cube))
-			PG_RETURN_FLOAT8(cube->x[coord - 1]);
+		{
+			result = cube->x[index];
+		}
 		else
-			PG_RETURN_FLOAT8(Min(cube->x[coord - 1],
-								 cube->x[coord - 1 + DIM(cube)]));
+		{
+			if (upper)
+				result = Max(cube->x[index], cube->x[index + DIM(cube)]);
+			else
+				result = Min(cube->x[index], cube->x[index + DIM(cube)]);
+		}
 	}
 	else
 	{
-		if (IS_POINT(cube))
-			PG_RETURN_FLOAT8(cube->x[(coord - 1) % DIM(cube)]);
-		else
-			PG_RETURN_FLOAT8(Max(cube->x[coord - 1],
-								 cube->x[coord - 1 - DIM(cube)]));
+		/*
+		 * Return zero if coordinate is out of bound.  That reproduces logic of
+		 * how cubes with low dimension number are expanded during GiST
+		 * indexing.
+		 */
+		result = 0.0;
 	}
+
+	/* Inverse value if needed */
+	if (inverse)
+		result = -result;
+
+	PG_RETURN_FLOAT8(result);
 }
 
 /* Increase or decrease box size by a radius in at least n dimensions. */

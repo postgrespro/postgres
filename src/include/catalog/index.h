@@ -4,7 +4,7 @@
  *	  prototypes for catalog/index.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/index.h
@@ -47,10 +47,13 @@ extern void index_check_primary_key(Relation heapRel,
 #define	INDEX_CREATE_SKIP_BUILD				(1 << 2)
 #define	INDEX_CREATE_CONCURRENT				(1 << 3)
 #define	INDEX_CREATE_IF_NOT_EXISTS			(1 << 4)
+#define	INDEX_CREATE_PARTITIONED			(1 << 5)
+#define INDEX_CREATE_INVALID				(1 << 6)
 
 extern Oid index_create(Relation heapRelation,
 			 const char *indexRelationName,
 			 Oid indexRelationId,
+			 Oid parentIndexRelid,
 			 Oid relFileNode,
 			 IndexInfo *indexInfo,
 			 List *indexColNames,
@@ -83,6 +86,11 @@ extern ObjectAddress index_constraint_create(Relation heapRelation,
 extern void index_drop(Oid indexId, bool concurrent);
 
 extern IndexInfo *BuildIndexInfo(Relation index);
+
+extern bool CompareIndexInfo(IndexInfo *info1, IndexInfo *info2,
+				 Oid *collations1, Oid *collations2,
+				 Oid *opfamilies1, Oid *opfamilies2,
+				 AttrNumber *attmap, int maplen);
 
 extern void BuildSpeculativeIndexInfo(Relation index, IndexInfo *ii);
 
@@ -133,5 +141,11 @@ extern bool reindex_relation(Oid relid, int flags, int options);
 extern bool ReindexIsProcessingHeap(Oid heapOid);
 extern bool ReindexIsProcessingIndex(Oid indexOid);
 extern Oid	IndexGetRelation(Oid indexId, bool missing_ok);
+
+extern Size EstimateReindexStateSpace(void);
+extern void SerializeReindexState(Size maxsize, char *start_address);
+extern void RestoreReindexState(void *reindexstate);
+
+extern void IndexSetParentIndex(Relation idx, Oid parentOid);
 
 #endif							/* INDEX_H */

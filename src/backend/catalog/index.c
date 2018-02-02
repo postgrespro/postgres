@@ -3,7 +3,7 @@
  * index.c
  *	  code to create and destroy POSTGRES index relations
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -41,6 +41,8 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_constraint_fn.h"
+#include "catalog/pg_depend.h"
+#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_tablespace.h"
@@ -55,6 +57,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "parser/parser.h"
+#include "rewrite/rewriteManip.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -86,6 +89,18 @@ typedef struct
 				tups_inserted;
 } v_i_state;
 
+/*
+ * Pointer-free representation of variables used when reindexing system
+ * catalogs; we use this to propagate those values to parallel workers.
+ */
+typedef struct
+{
+	Oid			currentlyReindexedHeap;
+	Oid			currentlyReindexedIndex;
+	int			numPendingReindexedIndexes;
+	Oid			pendingReindexedIndexes[FLEXIBLE_ARRAY_MEMBER];
+} SerializedReindexState;
+
 /* non-export function prototypes */
 static bool relationHasPrimaryKey(Relation rel);
 static TupleDesc ConstructTupleDescriptor(Relation heapRelation,
@@ -98,6 +113,7 @@ static void InitializeAttributeOids(Relation indexRelation,
 						int numatts, Oid indexoid);
 static void AppendAttributeTuples(Relation indexRelation, int numatts);
 static void UpdateIndexRelation(Oid indexoid, Oid heapoid,
+					Oid parentIndexId,
 					IndexInfo *indexInfo,
 					Oid *collationOids,
 					Oid *classOids,
@@ -105,7 +121,8 @@ static void UpdateIndexRelation(Oid indexoid, Oid heapoid,
 					bool primary,
 					bool isexclusion,
 					bool immediate,
-					bool isvalid);
+					bool isvalid,
+					bool isready);
 static void index_update_stats(Relation rel,
 				   bool hasindex, bool isprimary,
 				   double reltuples);
@@ -551,6 +568,7 @@ AppendAttributeTuples(Relation indexRelation, int numatts)
 static void
 UpdateIndexRelation(Oid indexoid,
 					Oid heapoid,
+					Oid parentIndexOid,
 					IndexInfo *indexInfo,
 					Oid *collationOids,
 					Oid *classOids,
@@ -558,7 +576,8 @@ UpdateIndexRelation(Oid indexoid,
 					bool primary,
 					bool isexclusion,
 					bool immediate,
-					bool isvalid)
+					bool isvalid,
+					bool isready)
 {
 	int2vector *indkey;
 	oidvector  *indcollation;
@@ -632,8 +651,7 @@ UpdateIndexRelation(Oid indexoid,
 	values[Anum_pg_index_indisclustered - 1] = BoolGetDatum(false);
 	values[Anum_pg_index_indisvalid - 1] = BoolGetDatum(isvalid);
 	values[Anum_pg_index_indcheckxmin - 1] = BoolGetDatum(false);
-	/* we set isvalid and isready the same way */
-	values[Anum_pg_index_indisready - 1] = BoolGetDatum(isvalid);
+	values[Anum_pg_index_indisready - 1] = BoolGetDatum(isready);
 	values[Anum_pg_index_indislive - 1] = BoolGetDatum(true);
 	values[Anum_pg_index_indisreplident - 1] = BoolGetDatum(false);
 	values[Anum_pg_index_indkey - 1] = PointerGetDatum(indkey);
@@ -670,6 +688,8 @@ UpdateIndexRelation(Oid indexoid,
  * indexRelationId: normally, pass InvalidOid to let this routine
  *		generate an OID for the index.  During bootstrap this may be
  *		nonzero to specify a preselected OID.
+ * parentIndexRelid: if creating an index partition, the OID of the
+ *		parent index; otherwise InvalidOid.
  * relFileNode: normally, pass InvalidOid to get new storage.  May be
  *		nonzero to attach an existing valid build.
  * indexInfo: same info executor uses to insert into the index
@@ -695,6 +715,8 @@ UpdateIndexRelation(Oid indexoid,
  *		INDEX_CREATE_IF_NOT_EXISTS:
  *			do not throw an error if a relation with the same name
  *			already exists.
+ *		INDEX_CREATE_PARTITIONED:
+ *			create a partitioned index (table must be partitioned)
  * constr_flags: flags passed to index_constraint_create
  *		(only if INDEX_CREATE_ADD_CONSTRAINT is set)
  * allow_system_table_mods: allow table to be a system catalog
@@ -706,6 +728,7 @@ Oid
 index_create(Relation heapRelation,
 			 const char *indexRelationName,
 			 Oid indexRelationId,
+			 Oid parentIndexRelid,
 			 Oid relFileNode,
 			 IndexInfo *indexInfo,
 			 List *indexColNames,
@@ -731,12 +754,18 @@ index_create(Relation heapRelation,
 	int			i;
 	char		relpersistence;
 	bool		isprimary = (flags & INDEX_CREATE_IS_PRIMARY) != 0;
+	bool		invalid = (flags & INDEX_CREATE_INVALID) != 0;
 	bool		concurrent = (flags & INDEX_CREATE_CONCURRENT) != 0;
+	bool		partitioned = (flags & INDEX_CREATE_PARTITIONED) != 0;
+	char		relkind;
 
 	/* constraint flags can only be set when a constraint is requested */
 	Assert((constr_flags == 0) ||
 		   ((flags & INDEX_CREATE_ADD_CONSTRAINT) != 0));
+	/* partitioned indexes must never be "built" by themselves */
+	Assert(!partitioned || (flags & INDEX_CREATE_SKIP_BUILD));
 
+	relkind = partitioned ? RELKIND_PARTITIONED_INDEX : RELKIND_INDEX;
 	is_exclusion = (indexInfo->ii_ExclusionOps != NULL);
 
 	pg_class = heap_open(RelationRelationId, RowExclusiveLock);
@@ -854,9 +883,9 @@ index_create(Relation heapRelation,
 	}
 
 	/*
-	 * create the index relation's relcache entry and physical disk file. (If
-	 * we fail further down, it's the smgr's responsibility to remove the disk
-	 * file again.)
+	 * create the index relation's relcache entry and, if necessary, the
+	 * physical disk file. (If we fail further down, it's the smgr's
+	 * responsibility to remove the disk file again, if any.)
 	 */
 	indexRelation = heap_create(indexRelationName,
 								namespaceId,
@@ -864,7 +893,7 @@ index_create(Relation heapRelation,
 								indexRelationId,
 								relFileNode,
 								indexTupDesc,
-								RELKIND_INDEX,
+								relkind,
 								relpersistence,
 								shared_relation,
 								mapped_relation,
@@ -921,11 +950,17 @@ index_create(Relation heapRelation,
 	 *	  (Or, could define a rule to maintain the predicate) --Nels, Feb '92
 	 * ----------------
 	 */
-	UpdateIndexRelation(indexRelationId, heapRelationId, indexInfo,
+	UpdateIndexRelation(indexRelationId, heapRelationId, parentIndexRelid,
+						indexInfo,
 						collationObjectId, classObjectId, coloptions,
 						isprimary, is_exclusion,
 						(constr_flags & INDEX_CONSTR_CREATE_DEFERRABLE) == 0,
+						!concurrent && !invalid,
 						!concurrent);
+
+	/* update pg_inherits, if needed */
+	if (OidIsValid(parentIndexRelid))
+		StoreSingleInheritance(indexRelationId, parentIndexRelid, 1);
 
 	/*
 	 * Register constraint and dependencies for the index.
@@ -978,6 +1013,9 @@ index_create(Relation heapRelation,
 		else
 		{
 			bool		have_simple_col = false;
+			DependencyType	deptype;
+
+			deptype = OidIsValid(parentIndexRelid) ? DEPENDENCY_INTERNAL_AUTO : DEPENDENCY_AUTO;
 
 			/* Create auto dependencies on simply-referenced columns */
 			for (i = 0; i < indexInfo->ii_NumIndexAttrs; i++)
@@ -988,7 +1026,7 @@ index_create(Relation heapRelation,
 					referenced.objectId = heapRelationId;
 					referenced.objectSubId = indexInfo->ii_KeyAttrNumbers[i];
 
-					recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+					recordDependencyOn(&myself, &referenced, deptype);
 
 					have_simple_col = true;
 				}
@@ -1006,8 +1044,18 @@ index_create(Relation heapRelation,
 				referenced.objectId = heapRelationId;
 				referenced.objectSubId = 0;
 
-				recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+				recordDependencyOn(&myself, &referenced, deptype);
 			}
+		}
+
+		/* Store dependency on parent index, if any */
+		if (OidIsValid(parentIndexRelid))
+		{
+			referenced.classId = RelationRelationId;
+			referenced.objectId = parentIndexRelid;
+			referenced.objectSubId = 0;
+
+			recordDependencyOn(&myself, &referenced, DEPENDENCY_INTERNAL_AUTO);
 		}
 
 		/* Store dependency on collations */
@@ -1555,9 +1603,10 @@ index_drop(Oid indexId, bool concurrent)
 	}
 
 	/*
-	 * Schedule physical removal of the files
+	 * Schedule physical removal of the files (if any)
 	 */
-	RelationDropStorage(userIndexRelation);
+	if (userIndexRelation->rd_rel->relkind != RELKIND_PARTITIONED_INDEX)
+		RelationDropStorage(userIndexRelation);
 
 	/*
 	 * Close and flush the index's relcache entry, to ensure relcache doesn't
@@ -1600,6 +1649,11 @@ index_drop(Oid indexId, bool concurrent)
 	 * fix RELATION relation
 	 */
 	DeleteRelationTuple(indexId);
+
+	/*
+	 * fix INHERITS relation
+	 */
+	DeleteInheritsTuple(indexId, InvalidOid);
 
 	/*
 	 * We are presently too lazy to attempt to compute the new correct value
@@ -1694,10 +1748,120 @@ BuildIndexInfo(Relation index)
 	ii->ii_BrokenHotChain = false;
 
 	/* set up for possible use by index AM */
+	ii->ii_Am = index->rd_rel->relam;
 	ii->ii_AmCache = NULL;
 	ii->ii_Context = CurrentMemoryContext;
 
 	return ii;
+}
+
+/*
+ * CompareIndexInfo
+ *		Return whether the properties of two indexes (in different tables)
+ *		indicate that they have the "same" definitions.
+ *
+ * Note: passing collations and opfamilies separately is a kludge.  Adding
+ * them to IndexInfo may result in better coding here and elsewhere.
+ *
+ * Use convert_tuples_by_name_map(index2, index1) to build the attmap.
+ */
+bool
+CompareIndexInfo(IndexInfo *info1, IndexInfo *info2,
+				 Oid *collations1, Oid *collations2,
+				 Oid *opfamilies1, Oid *opfamilies2,
+				 AttrNumber *attmap, int maplen)
+{
+	int		i;
+
+	if (info1->ii_Unique != info2->ii_Unique)
+		return false;
+
+	/* indexes are only equivalent if they have the same access method */
+	if (info1->ii_Am != info2->ii_Am)
+		return false;
+
+	/* and same number of attributes */
+	if (info1->ii_NumIndexAttrs != info2->ii_NumIndexAttrs)
+		return false;
+
+	/*
+	 * and columns match through the attribute map (actual attribute numbers
+	 * might differ!)  Note that this implies that index columns that are
+	 * expressions appear in the same positions.  We will next compare the
+	 * expressions themselves.
+	 */
+	for (i = 0; i < info1->ii_NumIndexAttrs; i++)
+	{
+		if (maplen < info2->ii_KeyAttrNumbers[i])
+			elog(ERROR, "incorrect attribute map");
+
+		/* ignore expressions at this stage */
+		if ((info1->ii_KeyAttrNumbers[i] != InvalidAttrNumber) &&
+			(attmap[info2->ii_KeyAttrNumbers[i] - 1] !=
+			info1->ii_KeyAttrNumbers[i]))
+			return false;
+
+		if (collations1[i] != collations2[i])
+			return false;
+		if (opfamilies1[i] != opfamilies2[i])
+			return false;
+	}
+
+	/*
+	 * For expression indexes: either both are expression indexes, or neither
+	 * is; if they are, make sure the expressions match.
+	 */
+	if ((info1->ii_Expressions != NIL) != (info2->ii_Expressions != NIL))
+		return false;
+	if (info1->ii_Expressions != NIL)
+	{
+		bool	found_whole_row;
+		Node   *mapped;
+
+		mapped = map_variable_attnos((Node *) info2->ii_Expressions,
+									 1, 0, attmap, maplen,
+									 InvalidOid, &found_whole_row);
+		if (found_whole_row)
+		{
+			/*
+			 * we could throw an error here, but seems out of scope for this
+			 * routine.
+			 */
+			return false;
+		}
+
+		if (!equal(info1->ii_Expressions, mapped))
+			return false;
+	}
+
+	/* Partial index predicates must be identical, if they exist */
+	if ((info1->ii_Predicate == NULL) != (info2->ii_Predicate == NULL))
+		return false;
+	if (info1->ii_Predicate != NULL)
+	{
+		bool	found_whole_row;
+		Node   *mapped;
+
+		mapped = map_variable_attnos((Node *) info2->ii_Predicate,
+									 1, 0, attmap, maplen,
+									 InvalidOid, &found_whole_row);
+		if (found_whole_row)
+		{
+			/*
+			 * we could throw an error here, but seems out of scope for this
+			 * routine.
+			 */
+			return false;
+		}
+		if (!equal(info1->ii_Predicate, mapped))
+			return false;
+	}
+
+	/* No support currently for comparing exclusion indexes. */
+	if (info1->ii_ExclusionOps != NULL || info2->ii_ExclusionOps != NULL)
+		return false;
+
+	return true;
 }
 
 /* ----------------
@@ -1921,6 +2085,9 @@ index_update_stats(Relation rel,
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "could not find tuple for relation %u", relid);
 	rd_rel = (Form_pg_class) GETSTRUCT(tuple);
+
+	/* Should this be a more comprehensive test? */
+	Assert(rd_rel->relkind != RELKIND_PARTITIONED_INDEX);
 
 	/* Apply required updates, if any, to copied tuple */
 
@@ -3332,6 +3499,14 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	iRel = index_open(indexId, AccessExclusiveLock);
 
 	/*
+	 * The case of reindexing partitioned tables and indexes is handled
+	 * differently by upper layers, so this case shouldn't arise.
+	 */
+	if (iRel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
+		elog(ERROR, "unsupported relation kind for index \"%s\"",
+			 RelationGetRelationName(iRel));
+
+	/*
 	 * Don't allow reindex on temp tables of other backends ... their local
 	 * buffer manager is not going to cope.
 	 */
@@ -3530,6 +3705,22 @@ reindex_relation(Oid relid, int flags, int options)
 	 */
 	rel = heap_open(relid, ShareLock);
 
+	/*
+	 * This may be useful when implemented someday; but that day is not today.
+	 * For now, avoid erroring out when called in a multi-table context
+	 * (REINDEX SCHEMA) and happen to come across a partitioned table.  The
+	 * partitions may be reindexed on their own anyway.
+	 */
+	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("REINDEX of partitioned tables is not yet implemented, skipping \"%s\"",
+						RelationGetRelationName(rel))));
+		heap_close(rel, ShareLock);
+		return false;
+	}
+
 	toast_relid = rel->rd_rel->reltoastrelid;
 
 	/*
@@ -3653,7 +3844,8 @@ reindex_relation(Oid relid, int flags, int options)
  * When we are busy reindexing a system index, this code provides support
  * for preventing catalog lookups from using that index.  We also make use
  * of this to catch attempted uses of user indexes during reindexing of
- * those indexes.
+ * those indexes.  This information is propagated to parallel workers;
+ * attempting to change it during a parallel operation is not permitted.
  * ----------------------------------------------------------------
  */
 
@@ -3719,6 +3911,8 @@ SetReindexProcessing(Oid heapOid, Oid indexOid)
 static void
 ResetReindexProcessing(void)
 {
+	if (IsInParallelMode())
+		elog(ERROR, "cannot modify reindex state during a parallel operation");
 	currentlyReindexedHeap = InvalidOid;
 	currentlyReindexedIndex = InvalidOid;
 }
@@ -3736,6 +3930,8 @@ SetReindexPending(List *indexes)
 	/* Reindexing is not re-entrant. */
 	if (pendingReindexedIndexes)
 		elog(ERROR, "cannot reindex while reindexing");
+	if (IsInParallelMode())
+		elog(ERROR, "cannot modify reindex state during a parallel operation");
 	pendingReindexedIndexes = list_copy(indexes);
 }
 
@@ -3746,6 +3942,8 @@ SetReindexPending(List *indexes)
 static void
 RemoveReindexPending(Oid indexOid)
 {
+	if (IsInParallelMode())
+		elog(ERROR, "cannot modify reindex state during a parallel operation");
 	pendingReindexedIndexes = list_delete_oid(pendingReindexedIndexes,
 											  indexOid);
 }
@@ -3757,5 +3955,59 @@ RemoveReindexPending(Oid indexOid)
 static void
 ResetReindexPending(void)
 {
+	if (IsInParallelMode())
+		elog(ERROR, "cannot modify reindex state during a parallel operation");
 	pendingReindexedIndexes = NIL;
+}
+
+/*
+ * EstimateReindexStateSpace
+ *		Estimate space needed to pass reindex state to parallel workers.
+ */
+extern Size
+EstimateReindexStateSpace(void)
+{
+	return offsetof(SerializedReindexState, pendingReindexedIndexes)
+		+ mul_size(sizeof(Oid), list_length(pendingReindexedIndexes));
+}
+
+/*
+ * SerializeReindexState
+ *		Serialize reindex state for parallel workers.
+ */
+extern void
+SerializeReindexState(Size maxsize, char *start_address)
+{
+	SerializedReindexState *sistate = (SerializedReindexState *) start_address;
+	int			c = 0;
+	ListCell   *lc;
+
+	sistate->currentlyReindexedHeap = currentlyReindexedHeap;
+	sistate->currentlyReindexedIndex = currentlyReindexedIndex;
+	sistate->numPendingReindexedIndexes = list_length(pendingReindexedIndexes);
+	foreach(lc, pendingReindexedIndexes)
+		sistate->pendingReindexedIndexes[c++] = lfirst_oid(lc);
+}
+
+/*
+ * RestoreReindexState
+ *		Restore reindex state in a parallel worker.
+ */
+extern void
+RestoreReindexState(void *reindexstate)
+{
+	SerializedReindexState *sistate = (SerializedReindexState *) reindexstate;
+	int			c = 0;
+	MemoryContext	oldcontext;
+
+	currentlyReindexedHeap = sistate->currentlyReindexedHeap;
+	currentlyReindexedIndex = sistate->currentlyReindexedIndex;
+
+	Assert(pendingReindexedIndexes == NIL);
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	for (c = 0; c < sistate->numPendingReindexedIndexes; ++c)
+		pendingReindexedIndexes =
+			lappend_oid(pendingReindexedIndexes,
+						sistate->pendingReindexedIndexes[c]);
+	MemoryContextSwitchTo(oldcontext);
 }

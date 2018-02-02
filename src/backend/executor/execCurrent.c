@@ -3,7 +3,7 @@
  * execCurrent.c
  *	  executor support for WHERE CURRENT OF cursor
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/executor/execCurrent.c
@@ -75,7 +75,7 @@ execCurrentOf(CurrentOfExpr *cexpr,
 				(errcode(ERRCODE_INVALID_CURSOR_STATE),
 				 errmsg("cursor \"%s\" is not a SELECT query",
 						cursor_name)));
-	queryDesc = PortalGetQueryDesc(portal);
+	queryDesc = portal->queryDesc;
 	if (queryDesc == NULL || queryDesc->estate == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_CURSOR_STATE),

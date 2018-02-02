@@ -1,5 +1,12 @@
 --
 -- ALTER_TABLE
+--
+-- Clean up in case a prior regression run failed
+SET client_min_messages TO 'warning';
+DROP ROLE IF EXISTS regress_alter_user1;
+RESET client_min_messages;
+CREATE USER regress_alter_user1;
+--
 -- add attribute
 --
 CREATE TABLE tmp (initial int4);
@@ -209,9 +216,17 @@ ALTER INDEX IF EXISTS __tmp_onek_unique1 RENAME TO onek_unique1;
 NOTICE:  relation "__tmp_onek_unique1" does not exist, skipping
 ALTER INDEX onek_unique1 RENAME TO tmp_onek_unique1;
 ALTER INDEX tmp_onek_unique1 RENAME TO onek_unique1;
+SET ROLE regress_alter_user1;
+ALTER INDEX onek_unique1 RENAME TO fail;  -- permission denied
+ERROR:  must be owner of index onek_unique1
+RESET ROLE;
 -- renaming views
 CREATE VIEW tmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE tmp_view RENAME TO tmp_view_new;
+SET ROLE regress_alter_user1;
+ALTER VIEW tmp_view_new RENAME TO fail;  -- permission denied
+ERROR:  must be owner of view tmp_view_new
+RESET ROLE;
 -- hack to ensure we get an indexscan here
 set enable_seqscan to off;
 set enable_bitmapscan to off;
@@ -1965,6 +1980,67 @@ create table tab1 (a int, b text);
 create table tab2 (x int, y tab1);
 alter table tab1 alter column b type varchar; -- fails
 ERROR:  cannot alter table "tab1" because column "tab2.y" uses its row type
+-- Alter column type that's part of a partitioned index
+create table at_partitioned (a int, b text) partition by range (a);
+create table at_part_1 partition of at_partitioned for values from (0) to (1000);
+insert into at_partitioned values (512, '0.123');
+create table at_part_2 (b text, a int);
+insert into at_part_2 values ('1.234', 1024);
+create index on at_partitioned (b);
+create index on at_partitioned (a);
+\d at_part_1
+             Table "public.at_part_1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ a      | integer |           |          | 
+ b      | text    |           |          | 
+Partition of: at_partitioned FOR VALUES FROM (0) TO (1000)
+Indexes:
+    "at_part_1_a_idx" btree (a)
+    "at_part_1_b_idx" btree (b)
+
+\d at_part_2
+             Table "public.at_part_2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ b      | text    |           |          | 
+ a      | integer |           |          | 
+
+alter table at_partitioned attach partition at_part_2 for values from (1000) to (2000);
+\d at_part_2
+             Table "public.at_part_2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ b      | text    |           |          | 
+ a      | integer |           |          | 
+Partition of: at_partitioned FOR VALUES FROM (1000) TO (2000)
+Indexes:
+    "at_part_2_a_idx" btree (a)
+    "at_part_2_b_idx" btree (b)
+
+alter table at_partitioned alter column b type numeric using b::numeric;
+\d at_part_1
+             Table "public.at_part_1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ a      | integer |           |          | 
+ b      | numeric |           |          | 
+Partition of: at_partitioned FOR VALUES FROM (0) TO (1000)
+Indexes:
+    "at_part_1_a_idx" btree (a)
+    "at_part_1_b_idx" btree (b)
+
+\d at_part_2
+             Table "public.at_part_2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ b      | numeric |           |          | 
+ a      | integer |           |          | 
+Partition of: at_partitioned FOR VALUES FROM (1000) TO (2000)
+Indexes:
+    "at_part_2_a_idx" btree (a)
+    "at_part_2_b_idx" btree (b)
+
 -- disallow recursive containment of row types
 create temp table recur1 (f1 int);
 alter table recur1 add column f2 recur1; -- fails
@@ -3276,7 +3352,7 @@ CREATE TABLE unparted (
 );
 CREATE TABLE fail_part (like unparted);
 ALTER TABLE unparted ATTACH PARTITION fail_part FOR VALUES IN ('a');
-ERROR:  "unparted" is not partitioned
+ERROR:  table "unparted" is not partitioned
 DROP TABLE unparted, fail_part;
 -- check that partition bound is compatible
 CREATE TABLE list_parted (
@@ -3303,7 +3379,7 @@ CREATE TABLE owned_by_me (
 	a int
 ) PARTITION BY LIST (a);
 ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
-ERROR:  must be owner of relation not_owned_by_me
+ERROR:  must be owner of table not_owned_by_me
 RESET SESSION AUTHORIZATION;
 DROP TABLE owned_by_me, not_owned_by_me;
 DROP ROLE regress_test_not_me;
@@ -3656,7 +3732,7 @@ DROP TABLE fail_part;
 -- check that the table is partitioned at all
 CREATE TABLE regular_table (a int);
 ALTER TABLE regular_table DETACH PARTITION any_name;
-ERROR:  "regular_table" is not partitioned
+ERROR:  table "regular_table" is not partitioned
 DROP TABLE regular_table;
 -- check that the partition being detached exists at all
 ALTER TABLE list_parted2 DETACH PARTITION part_4;
@@ -3822,3 +3898,4 @@ ALTER TABLE tmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
 ALTER TABLE tmp ALTER COLUMN i RESET (n_distinct_inherited);
 ANALYZE tmp;
 DROP TABLE tmp;
+DROP USER regress_alter_user1;

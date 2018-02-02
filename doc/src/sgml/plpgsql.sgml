@@ -3449,6 +3449,48 @@ END LOOP <optional> <replaceable>label</replaceable> </optional>;
 
   </sect1>
 
+  <sect1 id="plpgsql-transactions">
+   <title>Transaction Management</title>
+
+   <para>
+    In procedures invoked by the <command>CALL</command> command from the top
+    level as well as in anonymous code blocks (<command>DO</command> command)
+    called from the top level, it is possible to end transactions using the
+    commands <command>COMMIT</command> and <command>ROLLBACK</command>.  A new
+    transaction is started automatically after a transaction is ended using
+    these commands, so there is no separate <command>START
+    TRANSACTION</command> command.  (Note that <command>BEGIN</command> and
+    <command>END</command> have different meanings in PL/pgSQL.)
+   </para>
+
+   <para>
+    Here is a simple example:
+<programlisting>
+CREATE PROCEDURE transaction_test1()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    FOR i IN 0..9 LOOP
+        INSERT INTO test1 (a) VALUES (i);
+        IF i % 2 = 0 THEN
+            COMMIT;
+        ELSE
+            ROLLBACK;
+        END IF;
+    END LOOP;
+END
+$$;
+
+CALL transaction_test1();
+</programlisting>
+   </para>
+
+   <para>
+    A transaction cannot be ended inside a loop over a query result, nor
+    inside a block with exception handlers.
+   </para>
+  </sect1>
+
   <sect1 id="plpgsql-errors-and-messages">
    <title>Errors and Messages</title>
 
@@ -5432,14 +5474,13 @@ SELECT * FROM cs_parse_url('http://foobar.com/query.cgi?baz');
 <programlisting>
 CREATE OR REPLACE PROCEDURE cs_create_job(v_job_id IN INTEGER) IS
     a_running_job_count INTEGER;
-    PRAGMA AUTONOMOUS_TRANSACTION; -- <co id="co.plpgsql-porting-pragma"/>
 BEGIN
-    LOCK TABLE cs_jobs IN EXCLUSIVE MODE; -- <co id="co.plpgsql-porting-locktable"/>
+    LOCK TABLE cs_jobs IN EXCLUSIVE MODE;
 
     SELECT count(*) INTO a_running_job_count FROM cs_jobs WHERE end_stamp IS NULL;
 
     IF a_running_job_count &gt; 0 THEN
-        COMMIT; -- free lock <co id="co.plpgsql-porting-commit"/>
+        COMMIT; -- free lock
         raise_application_error(-20000,
                  'Unable to create a new job: a job is currently running.');
     END IF;
@@ -5460,44 +5501,10 @@ show errors
    </para>
 
    <para>
-    Procedures like this can easily be converted into <productname>PostgreSQL</productname>
-    functions returning <type>void</type>. This procedure in
-    particular is interesting because it can teach us some things:
-
-    <calloutlist>
-     <callout arearefs="co.plpgsql-porting-pragma">
-      <para>
-       There is no <literal>PRAGMA</literal> statement in <productname>PostgreSQL</productname>.
-      </para>
-     </callout>
-
-     <callout arearefs="co.plpgsql-porting-locktable">
-      <para>
-       If you do a <command>LOCK TABLE</command> in <application>PL/pgSQL</application>,
-       the lock will not be released until the calling transaction is
-       finished.
-      </para>
-     </callout>
-
-     <callout arearefs="co.plpgsql-porting-commit">
-      <para>
-       You cannot issue <command>COMMIT</command> in a
-       <application>PL/pgSQL</application> function.  The function is
-       running within some outer transaction and so <command>COMMIT</command>
-       would imply terminating the function's execution.  However, in
-       this particular case it is not necessary anyway, because the lock
-       obtained by the <command>LOCK TABLE</command> will be released when
-       we raise an error.
-      </para>
-     </callout>
-    </calloutlist>
-   </para>
-
-   <para>
     This is how we could port this procedure to <application>PL/pgSQL</application>:
 
 <programlisting>
-CREATE OR REPLACE FUNCTION cs_create_job(v_job_id integer) RETURNS void AS $$
+CREATE OR REPLACE PROCEDURE cs_create_job(v_job_id integer) AS $$
 DECLARE
     a_running_job_count integer;
 BEGIN
@@ -5506,6 +5513,7 @@ BEGIN
     SELECT count(*) INTO a_running_job_count FROM cs_jobs WHERE end_stamp IS NULL;
 
     IF a_running_job_count &gt; 0 THEN
+        COMMIT; -- free lock
         RAISE EXCEPTION 'Unable to create a new job: a job is currently running'; -- <co id="co.plpgsql-porting-raise"/>
     END IF;
 
@@ -5518,6 +5526,7 @@ BEGIN
         WHEN unique_violation THEN -- <co id="co.plpgsql-porting-exception"/>
             -- don't worry if it already exists
     END;
+    COMMIT;
 END;
 $$ LANGUAGE plpgsql;
 </programlisting>
@@ -5541,12 +5550,6 @@ $$ LANGUAGE plpgsql;
       </para>
      </callout>
     </calloutlist>
-
-    The main functional difference between this procedure and the
-    Oracle equivalent is that the exclusive lock on the <literal>cs_jobs</literal>
-    table will be held until the calling transaction completes.  Also, if
-    the caller later aborts (for example due to an error), the effects of
-    this procedure will be rolled back.
    </para>
    </example>
   </sect2>
@@ -5647,27 +5650,29 @@ $$ LANGUAGE plpgsql STRICT IMMUTABLE;
     <primary><function>instr</function> function</primary>
    </indexterm>
 
-<programlisting>
+<programlisting><![CDATA[
 --
 -- instr functions that mimic Oracle's counterpart
--- Syntax: instr(string1, string2, [n], [m]) where [] denotes optional parameters.
+-- Syntax: instr(string1, string2 [, n [, m]])
+-- where [] denotes optional parameters.
 --
--- Searches string1 beginning at the nth character for the mth occurrence
--- of string2.  If n is negative, search backwards.  If m is not passed,
--- assume 1 (search starts at first character).
+-- Search string1, beginning at the nth character, for the mth occurrence
+-- of string2.  If n is negative, search backwards, starting at the abs(n)'th
+-- character from the end of string1.
+-- If n is not passed, assume 1 (search starts at first character).
+-- If m is not passed, assume 1 (find first occurrence).
+-- Returns starting index of string2 in string1, or 0 if string2 is not found.
 --
 
 CREATE FUNCTION instr(varchar, varchar) RETURNS integer AS $$
-DECLARE
-    pos integer;
 BEGIN
-    pos:= instr($1, $2, 1);
-    RETURN pos;
+    RETURN instr($1, $2, 1);
 END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
 
 
-CREATE FUNCTION instr(string varchar, string_to_search varchar, beg_index integer)
+CREATE FUNCTION instr(string varchar, string_to_search_for varchar,
+                      beg_index integer)
 RETURNS integer AS $$
 DECLARE
     pos integer NOT NULL DEFAULT 0;
@@ -5676,25 +5681,23 @@ DECLARE
     length integer;
     ss_length integer;
 BEGIN
-    IF beg_index &gt; 0 THEN
+    IF beg_index > 0 THEN
         temp_str := substring(string FROM beg_index);
-        pos := position(string_to_search IN temp_str);
+        pos := position(string_to_search_for IN temp_str);
 
         IF pos = 0 THEN
             RETURN 0;
         ELSE
             RETURN pos + beg_index - 1;
         END IF;
-    ELSIF beg_index &lt; 0 THEN
-        ss_length := char_length(string_to_search);
+    ELSIF beg_index < 0 THEN
+        ss_length := char_length(string_to_search_for);
         length := char_length(string);
-        beg := length + beg_index - ss_length + 2;
+        beg := length + 1 + beg_index;
 
-        WHILE beg &gt; 0 LOOP
+        WHILE beg > 0 LOOP
             temp_str := substring(string FROM beg FOR ss_length);
-            pos := position(string_to_search IN temp_str);
-
-            IF pos &gt; 0 THEN
+            IF string_to_search_for = temp_str THEN
                 RETURN beg;
             END IF;
 
@@ -5709,7 +5712,7 @@ END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
 
 
-CREATE FUNCTION instr(string varchar, string_to_search varchar,
+CREATE FUNCTION instr(string varchar, string_to_search_for varchar,
                       beg_index integer, occur_index integer)
 RETURNS integer AS $$
 DECLARE
@@ -5721,39 +5724,32 @@ DECLARE
     length integer;
     ss_length integer;
 BEGIN
-    IF beg_index &gt; 0 THEN
-        beg := beg_index;
-        temp_str := substring(string FROM beg_index);
+    IF occur_index <= 0 THEN
+        RAISE 'argument ''%'' is out of range', occur_index
+          USING ERRCODE = '22003';
+    END IF;
 
+    IF beg_index > 0 THEN
+        beg := beg_index - 1;
         FOR i IN 1..occur_index LOOP
-            pos := position(string_to_search IN temp_str);
-
-            IF i = 1 THEN
-                beg := beg + pos - 1;
-            ELSE
-                beg := beg + pos;
-            END IF;
-
             temp_str := substring(string FROM beg + 1);
+            pos := position(string_to_search_for IN temp_str);
+            IF pos = 0 THEN
+                RETURN 0;
+            END IF;
+            beg := beg + pos;
         END LOOP;
 
-        IF pos = 0 THEN
-            RETURN 0;
-        ELSE
-            RETURN beg;
-        END IF;
-    ELSIF beg_index &lt; 0 THEN
-        ss_length := char_length(string_to_search);
+        RETURN beg;
+    ELSIF beg_index < 0 THEN
+        ss_length := char_length(string_to_search_for);
         length := char_length(string);
-        beg := length + beg_index - ss_length + 2;
+        beg := length + 1 + beg_index;
 
-        WHILE beg &gt; 0 LOOP
+        WHILE beg > 0 LOOP
             temp_str := substring(string FROM beg FOR ss_length);
-            pos := position(string_to_search IN temp_str);
-
-            IF pos &gt; 0 THEN
+            IF string_to_search_for = temp_str THEN
                 occur_number := occur_number + 1;
-
                 IF occur_number = occur_index THEN
                     RETURN beg;
                 END IF;
@@ -5768,6 +5764,7 @@ BEGIN
     END IF;
 END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
+]]>
 </programlisting>
   </sect2>
 

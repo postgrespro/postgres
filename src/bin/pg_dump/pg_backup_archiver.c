@@ -70,7 +70,7 @@ static void _selectOutputSchema(ArchiveHandle *AH, const char *schemaName);
 static void _selectTablespace(ArchiveHandle *AH, const char *tablespace);
 static void processEncodingEntry(ArchiveHandle *AH, TocEntry *te);
 static void processStdStringsEntry(ArchiveHandle *AH, TocEntry *te);
-static teReqs _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt);
+static teReqs _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH);
 static RestorePass _tocEntryRestorePass(TocEntry *te);
 static bool _tocEntryIsACL(TocEntry *te);
 static void _disableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te);
@@ -169,9 +169,9 @@ dumpOptionsFromRestoreOptions(RestoreOptions *ropt)
 	dopt->outputNoTablespaces = ropt->noTablespace;
 	dopt->disable_triggers = ropt->disable_triggers;
 	dopt->use_setsessauth = ropt->use_setsessauth;
-
 	dopt->disable_dollar_quoting = ropt->disable_dollar_quoting;
 	dopt->dump_inserts = ropt->dump_inserts;
+	dopt->no_comments = ropt->no_comments;
 	dopt->no_publications = ropt->no_publications;
 	dopt->no_security_labels = ropt->no_security_labels;
 	dopt->no_subscriptions = ropt->no_subscriptions;
@@ -312,7 +312,7 @@ ProcessArchiveRestoreOptions(Archive *AHX)
 		if (te->section != SECTION_NONE)
 			curSection = te->section;
 
-		te->reqs = _tocEntryRequired(te, curSection, ropt);
+		te->reqs = _tocEntryRequired(te, curSection, AH);
 	}
 
 	/* Enforce strict names checking */
@@ -488,17 +488,13 @@ RestoreArchive(Archive *AHX)
 			 * In createDB mode, issue a DROP *only* for the database as a
 			 * whole.  Issuing drops against anything else would be wrong,
 			 * because at this point we're connected to the wrong database.
-			 * Conversely, if we're not in createDB mode, we'd better not
-			 * issue a DROP against the database at all.
+			 * (The DATABASE PROPERTIES entry, if any, should be treated like
+			 * the DATABASE entry.)
 			 */
 			if (ropt->createDB)
 			{
-				if (strcmp(te->desc, "DATABASE") != 0)
-					continue;
-			}
-			else
-			{
-				if (strcmp(te->desc, "DATABASE") == 0)
+				if (strcmp(te->desc, "DATABASE") != 0 &&
+					strcmp(te->desc, "DATABASE PROPERTIES") != 0)
 					continue;
 			}
 
@@ -558,6 +554,8 @@ RestoreArchive(Archive *AHX)
 							 * we simply emit the original command for DEFAULT
 							 * objects (modulo the adjustment made above).
 							 *
+							 * Likewise, don't mess with DATABASE PROPERTIES.
+							 *
 							 * If we used CREATE OR REPLACE VIEW as a means of
 							 * quasi-dropping an ON SELECT rule, that should
 							 * be emitted unchanged as well.
@@ -570,6 +568,7 @@ RestoreArchive(Archive *AHX)
 							 * search for hardcoded "DROP CONSTRAINT" instead.
 							 */
 							if (strcmp(te->desc, "DEFAULT") == 0 ||
+								strcmp(te->desc, "DATABASE PROPERTIES") == 0 ||
 								strncmp(dropStmt, "CREATE OR REPLACE VIEW", 22) == 0)
 								appendPQExpBufferStr(ftStmt, dropStmt);
 							else
@@ -746,17 +745,6 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 
 	AH->currentTE = te;
 
-	/* Work out what, if anything, we want from this entry */
-	reqs = te->reqs;
-
-	/*
-	 * Ignore DATABASE entry unless we should create it.  We must check this
-	 * here, not in _tocEntryRequired, because the createDB option should not
-	 * affect emitting a DATABASE entry to an archive file.
-	 */
-	if (!ropt->createDB && strcmp(te->desc, "DATABASE") == 0)
-		reqs = 0;
-
 	/* Dump any relevant dump warnings to stderr */
 	if (!ropt->suppressDumpWarnings && strcmp(te->desc, "WARNING") == 0)
 	{
@@ -765,6 +753,9 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 		else if (te->copyStmt != NULL && strlen(te->copyStmt) != 0)
 			write_msg(modulename, "warning from original dump file: %s\n", te->copyStmt);
 	}
+
+	/* Work out what, if anything, we want from this entry */
+	reqs = te->reqs;
 
 	defnDumped = false;
 
@@ -819,8 +810,13 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 			}
 		}
 
-		/* If we created a DB, connect to it... */
-		if (strcmp(te->desc, "DATABASE") == 0)
+		/*
+		 * If we created a DB, connect to it.  Also, if we changed DB
+		 * properties, reconnect to ensure that relevant GUC settings are
+		 * applied to our session.
+		 */
+		if (strcmp(te->desc, "DATABASE") == 0 ||
+			strcmp(te->desc, "DATABASE PROPERTIES") == 0)
 		{
 			PQExpBufferData connstr;
 
@@ -1172,7 +1168,7 @@ PrintTOCSummary(Archive *AHX)
 		if (te->section != SECTION_NONE)
 			curSection = te->section;
 		if (ropt->verbose ||
-			(_tocEntryRequired(te, curSection, ropt) & (REQ_SCHEMA | REQ_DATA)) != 0)
+			(_tocEntryRequired(te, curSection, AH) & (REQ_SCHEMA | REQ_DATA)) != 0)
 		{
 			char	   *sanitized_name;
 			char	   *sanitized_schema;
@@ -2805,29 +2801,59 @@ StrictNamesCheck(RestoreOptions *ropt)
 	}
 }
 
+/*
+ * Determine whether we want to restore this TOC entry.
+ *
+ * Returns 0 if entry should be skipped, or some combination of the
+ * REQ_SCHEMA and REQ_DATA bits if we want to restore schema and/or data
+ * portions of this TOC entry, or REQ_SPECIAL if it's a special entry.
+ */
 static teReqs
-_tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
+_tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 {
 	teReqs		res = REQ_SCHEMA | REQ_DATA;
+	RestoreOptions *ropt = AH->public.ropt;
 
 	/* ENCODING and STDSTRINGS items are treated specially */
 	if (strcmp(te->desc, "ENCODING") == 0 ||
 		strcmp(te->desc, "STDSTRINGS") == 0)
 		return REQ_SPECIAL;
 
+	/*
+	 * DATABASE and DATABASE PROPERTIES also have a special rule: they are
+	 * restored in createDB mode, and not restored otherwise, independently of
+	 * all else.
+	 */
+	if (strcmp(te->desc, "DATABASE") == 0 ||
+		strcmp(te->desc, "DATABASE PROPERTIES") == 0)
+	{
+		if (ropt->createDB)
+			return REQ_SCHEMA;
+		else
+			return 0;
+	}
+
+	/*
+	 * Process exclusions that affect certain classes of TOC entries.
+	 */
+
 	/* If it's an ACL, maybe ignore it */
 	if (ropt->aclsSkip && _tocEntryIsACL(te))
+		return 0;
+
+	/* If it's a comment, maybe ignore it */
+	if (ropt->no_comments && strcmp(te->desc, "COMMENT") == 0)
 		return 0;
 
 	/* If it's a publication, maybe ignore it */
 	if (ropt->no_publications && strcmp(te->desc, "PUBLICATION") == 0)
 		return 0;
 
-	/* If it's security labels, maybe ignore it */
+	/* If it's a security label, maybe ignore it */
 	if (ropt->no_security_labels && strcmp(te->desc, "SECURITY LABEL") == 0)
 		return 0;
 
-	/* If it's a subcription, maybe ignore it */
+	/* If it's a subscription, maybe ignore it */
 	if (ropt->no_subscriptions && strcmp(te->desc, "SUBSCRIPTION") == 0)
 		return 0;
 
@@ -2851,65 +2877,118 @@ _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 			return 0;
 	}
 
-	/* Check options for selective dump/restore */
-	if (ropt->schemaNames.head != NULL)
-	{
-		/* If no namespace is specified, it means all. */
-		if (!te->namespace)
-			return 0;
-		if (!(simple_string_list_member(&ropt->schemaNames, te->namespace)))
-			return 0;
-	}
-
-	if (ropt->schemaExcludeNames.head != NULL &&
-		te->namespace &&
-		simple_string_list_member(&ropt->schemaExcludeNames, te->namespace))
+	/* Ignore it if rejected by idWanted[] (cf. SortTocFromFile) */
+	if (ropt->idWanted && !ropt->idWanted[te->dumpId - 1])
 		return 0;
 
-	if (ropt->selTypes)
+	/*
+	 * Check options for selective dump/restore.
+	 */
+	if (strcmp(te->desc, "ACL") == 0 ||
+		strcmp(te->desc, "COMMENT") == 0 ||
+		strcmp(te->desc, "SECURITY LABEL") == 0)
 	{
-		if (strcmp(te->desc, "TABLE") == 0 ||
-			strcmp(te->desc, "TABLE DATA") == 0 ||
-			strcmp(te->desc, "VIEW") == 0 ||
-			strcmp(te->desc, "FOREIGN TABLE") == 0 ||
-			strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
-			strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0 ||
-			strcmp(te->desc, "SEQUENCE") == 0 ||
-			strcmp(te->desc, "SEQUENCE SET") == 0)
+		/* Database properties react to createDB, not selectivity options. */
+		if (strncmp(te->tag, "DATABASE ", 9) == 0)
 		{
-			if (!ropt->selTable)
-				return 0;
-			if (ropt->tableNames.head != NULL && (!(simple_string_list_member(&ropt->tableNames, te->tag))))
+			if (!ropt->createDB)
 				return 0;
 		}
-		else if (strcmp(te->desc, "INDEX") == 0)
+		else if (ropt->schemaNames.head != NULL ||
+				 ropt->schemaExcludeNames.head != NULL ||
+				 ropt->selTypes)
 		{
-			if (!ropt->selIndex)
-				return 0;
-			if (ropt->indexNames.head != NULL && (!(simple_string_list_member(&ropt->indexNames, te->tag))))
+			/*
+			 * In a selective dump/restore, we want to restore these dependent
+			 * TOC entry types only if their parent object is being restored.
+			 * Without selectivity options, we let through everything in the
+			 * archive.  Note there may be such entries with no parent, eg
+			 * non-default ACLs for built-in objects.
+			 *
+			 * This code depends on the parent having been marked already,
+			 * which should be the case; if it isn't, perhaps due to
+			 * SortTocFromFile rearrangement, skipping the dependent entry
+			 * seems prudent anyway.
+			 *
+			 * Ideally we'd handle, eg, table CHECK constraints this way too.
+			 * But it's hard to tell which of their dependencies is the one to
+			 * consult.
+			 */
+			if (te->nDeps != 1 ||
+				TocIDRequired(AH, te->dependencies[0]) == 0)
 				return 0;
 		}
-		else if (strcmp(te->desc, "FUNCTION") == 0 ||
-				 strcmp(te->desc, "PROCEDURE") == 0)
+	}
+	else
+	{
+		/* Apply selective-restore rules for standalone TOC entries. */
+		if (ropt->schemaNames.head != NULL)
 		{
-			if (!ropt->selFunction)
+			/* If no namespace is specified, it means all. */
+			if (!te->namespace)
 				return 0;
-			if (ropt->functionNames.head != NULL && (!(simple_string_list_member(&ropt->functionNames, te->tag))))
+			if (!simple_string_list_member(&ropt->schemaNames, te->namespace))
 				return 0;
 		}
-		else if (strcmp(te->desc, "TRIGGER") == 0)
-		{
-			if (!ropt->selTrigger)
-				return 0;
-			if (ropt->triggerNames.head != NULL && (!(simple_string_list_member(&ropt->triggerNames, te->tag))))
-				return 0;
-		}
-		else
+
+		if (ropt->schemaExcludeNames.head != NULL &&
+			te->namespace &&
+			simple_string_list_member(&ropt->schemaExcludeNames, te->namespace))
 			return 0;
+
+		if (ropt->selTypes)
+		{
+			if (strcmp(te->desc, "TABLE") == 0 ||
+				strcmp(te->desc, "TABLE DATA") == 0 ||
+				strcmp(te->desc, "VIEW") == 0 ||
+				strcmp(te->desc, "FOREIGN TABLE") == 0 ||
+				strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
+				strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0 ||
+				strcmp(te->desc, "SEQUENCE") == 0 ||
+				strcmp(te->desc, "SEQUENCE SET") == 0)
+			{
+				if (!ropt->selTable)
+					return 0;
+				if (ropt->tableNames.head != NULL &&
+					!simple_string_list_member(&ropt->tableNames, te->tag))
+					return 0;
+			}
+			else if (strcmp(te->desc, "INDEX") == 0)
+			{
+				if (!ropt->selIndex)
+					return 0;
+				if (ropt->indexNames.head != NULL &&
+					!simple_string_list_member(&ropt->indexNames, te->tag))
+					return 0;
+			}
+			else if (strcmp(te->desc, "FUNCTION") == 0 ||
+					 strcmp(te->desc, "AGGREGATE") == 0 ||
+					 strcmp(te->desc, "PROCEDURE") == 0)
+			{
+				if (!ropt->selFunction)
+					return 0;
+				if (ropt->functionNames.head != NULL &&
+					!simple_string_list_member(&ropt->functionNames, te->tag))
+					return 0;
+			}
+			else if (strcmp(te->desc, "TRIGGER") == 0)
+			{
+				if (!ropt->selTrigger)
+					return 0;
+				if (ropt->triggerNames.head != NULL &&
+					!simple_string_list_member(&ropt->triggerNames, te->tag))
+					return 0;
+			}
+			else
+				return 0;
+		}
 	}
 
 	/*
-	 * Check if we had a dataDumper. Indicates if the entry is schema or data
+	 * Determine whether the TOC entry contains schema and/or data components,
+	 * and mask off inapplicable REQ bits.  If it had a dataDumper, assume
+	 * it's both schema and data.  Otherwise it's probably schema-only, but
+	 * there are exceptions.
 	 */
 	if (!te->hadDumper)
 	{
@@ -2917,8 +2996,8 @@ _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 		 * Special Case: If 'SEQUENCE SET' or anything to do with BLOBs, then
 		 * it is considered a data entry.  We don't need to check for the
 		 * BLOBS entry or old-style BLOB COMMENTS, because they will have
-		 * hadDumper = true ... but we do need to check new-style BLOB
-		 * comments.
+		 * hadDumper = true ... but we do need to check new-style BLOB ACLs,
+		 * comments, etc.
 		 */
 		if (strcmp(te->desc, "SEQUENCE SET") == 0 ||
 			strcmp(te->desc, "BLOB") == 0 ||
@@ -2933,6 +3012,10 @@ _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 			res = res & ~REQ_DATA;
 	}
 
+	/* If there's no definition command, there's no schema component */
+	if (!te->defn || !te->defn[0])
+		res = res & ~REQ_SCHEMA;
+
 	/*
 	 * Special case: <Init> type with <Max OID> tag; this is obsolete and we
 	 * always ignore it.
@@ -2944,28 +3027,28 @@ _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 	if (ropt->schemaOnly)
 	{
 		/*
-		 * In binary-upgrade mode, even with schema-only set, we do not mask
-		 * out large objects.  Only large object definitions, comments and
-		 * other information should be generated in binary-upgrade mode (not
-		 * the actual data).
+		 * The sequence_data option overrides schemaOnly for SEQUENCE SET.
+		 *
+		 * In binary-upgrade mode, even with schemaOnly set, we do not mask
+		 * out large objects.  (Only large object definitions, comments and
+		 * other metadata should be generated in binary-upgrade mode, not the
+		 * actual data, but that need not concern us here.)
 		 */
 		if (!(ropt->sequence_data && strcmp(te->desc, "SEQUENCE SET") == 0) &&
-			!(ropt->binary_upgrade && strcmp(te->desc, "BLOB") == 0) &&
-			!(ropt->binary_upgrade && strncmp(te->tag, "LARGE OBJECT ", 13) == 0))
+			!(ropt->binary_upgrade &&
+			  (strcmp(te->desc, "BLOB") == 0 ||
+			   (strcmp(te->desc, "ACL") == 0 &&
+				strncmp(te->tag, "LARGE OBJECT ", 13) == 0) ||
+			   (strcmp(te->desc, "COMMENT") == 0 &&
+				strncmp(te->tag, "LARGE OBJECT ", 13) == 0) ||
+			   (strcmp(te->desc, "SECURITY LABEL") == 0 &&
+				strncmp(te->tag, "LARGE OBJECT ", 13) == 0))))
 			res = res & REQ_SCHEMA;
 	}
 
 	/* Mask it if we only want data */
 	if (ropt->dataOnly)
 		res = res & REQ_DATA;
-
-	/* Mask it if we don't have a schema contribution */
-	if (!te->defn || strlen(te->defn) == 0)
-		res = res & ~REQ_SCHEMA;
-
-	/* Finally, if there's a per-ID filter, limit based on that as well */
-	if (ropt->idWanted && !ropt->idWanted[te->dumpId - 1])
-		return 0;
 
 	return res;
 }
@@ -3426,29 +3509,6 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 {
 	RestoreOptions *ropt = AH->public.ropt;
 
-	/*
-	 * Avoid dumping the public schema, as it will already be created ...
-	 * unless we are using --clean mode (and *not* --create mode), in which
-	 * case we've previously issued a DROP for it so we'd better recreate it.
-	 *
-	 * Likewise for its comment, if any.  (We could try issuing the COMMENT
-	 * command anyway; but it'd fail if the restore is done as non-super-user,
-	 * so let's not.)
-	 *
-	 * XXX it looks pretty ugly to hard-wire the public schema like this, but
-	 * it sits in a sort of no-mans-land between being a system object and a
-	 * user object, so it really is special in a way.
-	 */
-	if (!(ropt->dropSchema && !ropt->createDB))
-	{
-		if (strcmp(te->desc, "SCHEMA") == 0 &&
-			strcmp(te->tag, "public") == 0)
-			return;
-		if (strcmp(te->desc, "COMMENT") == 0 &&
-			strcmp(te->tag, "SCHEMA public") == 0)
-			return;
-	}
-
 	/* Select owner, schema, and tablespace as necessary */
 	_becomeOwner(AH, te);
 	_selectOutputSchema(AH, te->namespace);
@@ -3590,6 +3650,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 		else if (strcmp(te->desc, "CAST") == 0 ||
 				 strcmp(te->desc, "CHECK CONSTRAINT") == 0 ||
 				 strcmp(te->desc, "CONSTRAINT") == 0 ||
+				 strcmp(te->desc, "DATABASE PROPERTIES") == 0 ||
 				 strcmp(te->desc, "DEFAULT") == 0 ||
 				 strcmp(te->desc, "FK CONSTRAINT") == 0 ||
 				 strcmp(te->desc, "INDEX") == 0 ||

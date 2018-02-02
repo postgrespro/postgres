@@ -3,7 +3,7 @@
  * nodeIndexonlyscan.c
  *	  Routines to support index-only scans
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -214,8 +214,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		if (scandesc->xs_recheck)
 		{
 			econtext->ecxt_scantuple = slot;
-			ResetExprContext(econtext);
-			if (!ExecQual(node->indexqual, econtext))
+			if (!ExecQualAndReset(node->indexqual, econtext))
 			{
 				/* Fails recheck, so drop it and loop back for another */
 				InstrCountFiltered2(node, 1);
@@ -421,11 +420,39 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 
 /* ----------------------------------------------------------------
  *		ExecIndexOnlyMarkPos
+ *
+ * Note: we assume that no caller attempts to set a mark before having read
+ * at least one tuple.  Otherwise, ioss_ScanDesc might still be NULL.
  * ----------------------------------------------------------------
  */
 void
 ExecIndexOnlyMarkPos(IndexOnlyScanState *node)
 {
+	EState	   *estate = node->ss.ps.state;
+
+	if (estate->es_epqTuple != NULL)
+	{
+		/*
+		 * We are inside an EvalPlanQual recheck.  If a test tuple exists for
+		 * this relation, then we shouldn't access the index at all.  We would
+		 * instead need to save, and later restore, the state of the
+		 * es_epqScanDone flag, so that re-fetching the test tuple is
+		 * possible.  However, given the assumption that no caller sets a mark
+		 * at the start of the scan, we can only get here with es_epqScanDone
+		 * already set, and so no state need be saved.
+		 */
+		Index		scanrelid = ((Scan *) node->ss.ps.plan)->scanrelid;
+
+		Assert(scanrelid > 0);
+		if (estate->es_epqTupleSet[scanrelid - 1])
+		{
+			/* Verify the claim above */
+			if (!estate->es_epqScanDone[scanrelid - 1])
+				elog(ERROR, "unexpected ExecIndexOnlyMarkPos call in EPQ recheck");
+			return;
+		}
+	}
+
 	index_markpos(node->ioss_ScanDesc);
 }
 
@@ -436,6 +463,23 @@ ExecIndexOnlyMarkPos(IndexOnlyScanState *node)
 void
 ExecIndexOnlyRestrPos(IndexOnlyScanState *node)
 {
+	EState	   *estate = node->ss.ps.state;
+
+	if (estate->es_epqTuple != NULL)
+	{
+		/* See comments in ExecIndexOnlyMarkPos */
+		Index		scanrelid = ((Scan *) node->ss.ps.plan)->scanrelid;
+
+		Assert(scanrelid > 0);
+		if (estate->es_epqTupleSet[scanrelid - 1])
+		{
+			/* Verify the claim above */
+			if (!estate->es_epqScanDone[scanrelid - 1])
+				elog(ERROR, "unexpected ExecIndexOnlyRestrPos call in EPQ recheck");
+			return;
+		}
+	}
+
 	index_restrpos(node->ioss_ScanDesc);
 }
 

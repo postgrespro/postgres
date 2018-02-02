@@ -6,7 +6,7 @@
  *	  message integrity and endpoint authentication.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -128,6 +128,14 @@ struct sigpipe_info
 /*			 Procedures common to all secure sessions			*/
 /* ------------------------------------------------------------ */
 
+
+int
+PQsslInUse(PGconn *conn)
+{
+	if (!conn)
+		return 0;
+	return conn->ssl_in_use;
+}
 
 /*
  *	Exported function to allow application to tell us it's already
@@ -383,12 +391,6 @@ retry_masked:
 
 /* Dummy versions of SSL info functions, when built without SSL support */
 #ifndef USE_SSL
-
-int
-PQsslInUse(PGconn *conn)
-{
-	return 0;
-}
 
 void *
 PQgetssl(PGconn *conn)

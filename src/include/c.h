@@ -9,7 +9,7 @@
  *	  polluting the namespace with lots of stuff...
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/c.h
@@ -146,14 +146,21 @@
 #define pg_attribute_noreturn()
 #endif
 
-/* GCC, Sunpro and XLC support always_inline via __attribute__ */
-#if defined(__GNUC__)
-#define pg_attribute_always_inline __attribute__((always_inline))
-/* msvc via a special keyword */
+/*
+ * Use "pg_attribute_always_inline" in place of "inline" for functions that
+ * we wish to force inlining of, even when the compiler's heuristics would
+ * choose not to.  But, if possible, don't force inlining in unoptimized
+ * debug builds.
+ */
+#if (defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)) || defined(__SUNPRO_C) || defined(__IBMC__)
+/* GCC > 3, Sunpro and XLC support always_inline via __attribute__ */
+#define pg_attribute_always_inline __attribute__((always_inline)) inline
 #elif defined(_MSC_VER)
+/* MSVC has a special keyword for this */
 #define pg_attribute_always_inline __forceinline
 #else
-#define pg_attribute_always_inline
+/* Otherwise, the best we can do is to say "inline" */
+#define pg_attribute_always_inline inline
 #endif
 
 /*
@@ -754,6 +761,7 @@ typedef NameData *Name;
  * about a negative width for a struct bit-field.  This will not include a
  * helpful error message, but it beats not getting an error at all.
  */
+#ifndef __cplusplus
 #ifdef HAVE__STATIC_ASSERT
 #define StaticAssertStmt(condition, errmessage) \
 	do { _Static_assert(condition, errmessage); } while(0)
@@ -765,6 +773,19 @@ typedef NameData *Name;
 #define StaticAssertExpr(condition, errmessage) \
 	StaticAssertStmt(condition, errmessage)
 #endif							/* HAVE__STATIC_ASSERT */
+#else							/* C++ */
+#if defined(__cpp_static_assert) && __cpp_static_assert >= 200410
+#define StaticAssertStmt(condition, errmessage) \
+	static_assert(condition, errmessage)
+#define StaticAssertExpr(condition, errmessage) \
+	StaticAssertStmt(condition, errmessage)
+#else
+#define StaticAssertStmt(condition, errmessage) \
+	do { struct static_assert_struct { int static_assert_failure : (condition) ? 1 : -1; }; } while(0)
+#define StaticAssertExpr(condition, errmessage) \
+	({ StaticAssertStmt(condition, errmessage); })
+#endif
+#endif							/* C++ */
 
 
 /*

@@ -1,5 +1,15 @@
 --
 -- ALTER_TABLE
+--
+
+-- Clean up in case a prior regression run failed
+SET client_min_messages TO 'warning';
+DROP ROLE IF EXISTS regress_alter_user1;
+RESET client_min_messages;
+
+CREATE USER regress_alter_user1;
+
+--
 -- add attribute
 --
 
@@ -209,9 +219,18 @@ ALTER INDEX IF EXISTS __tmp_onek_unique1 RENAME TO onek_unique1;
 
 ALTER INDEX onek_unique1 RENAME TO tmp_onek_unique1;
 ALTER INDEX tmp_onek_unique1 RENAME TO onek_unique1;
+
+SET ROLE regress_alter_user1;
+ALTER INDEX onek_unique1 RENAME TO fail;  -- permission denied
+RESET ROLE;
+
 -- renaming views
 CREATE VIEW tmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE tmp_view RENAME TO tmp_view_new;
+
+SET ROLE regress_alter_user1;
+ALTER VIEW tmp_view_new RENAME TO fail;  -- permission denied
+RESET ROLE;
 
 -- hack to ensure we get an indexscan here
 set enable_seqscan to off;
@@ -1329,6 +1348,22 @@ drop table another;
 create table tab1 (a int, b text);
 create table tab2 (x int, y tab1);
 alter table tab1 alter column b type varchar; -- fails
+
+-- Alter column type that's part of a partitioned index
+create table at_partitioned (a int, b text) partition by range (a);
+create table at_part_1 partition of at_partitioned for values from (0) to (1000);
+insert into at_partitioned values (512, '0.123');
+create table at_part_2 (b text, a int);
+insert into at_part_2 values ('1.234', 1024);
+create index on at_partitioned (b);
+create index on at_partitioned (a);
+\d at_part_1
+\d at_part_2
+alter table at_partitioned attach partition at_part_2 for values from (1000) to (2000);
+\d at_part_2
+alter table at_partitioned alter column b type numeric using b::numeric;
+\d at_part_1
+\d at_part_2
 
 -- disallow recursive containment of row types
 create temp table recur1 (f1 int);
@@ -2530,3 +2565,5 @@ ALTER TABLE tmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
 ALTER TABLE tmp ALTER COLUMN i RESET (n_distinct_inherited);
 ANALYZE tmp;
 DROP TABLE tmp;
+
+DROP USER regress_alter_user1;

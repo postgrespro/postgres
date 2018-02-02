@@ -3,7 +3,7 @@
  * parallel.h
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/parallel.h
@@ -43,6 +43,7 @@ typedef struct ParallelContext
 	void	   *private_memory;
 	shm_toc    *toc;
 	ParallelWorkerInfo *worker;
+	bool	   *any_message_received;
 } ParallelContext;
 
 typedef struct ParallelWorkerContext

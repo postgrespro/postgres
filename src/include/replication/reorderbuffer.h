@@ -2,7 +2,7 @@
  * reorderbuffer.h
  *	  PostgreSQL logical replay/reorder buffer management.
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2018, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
  */
@@ -168,6 +168,8 @@ typedef struct ReorderBufferTXN
 	 * * plain abort record
 	 * * prepared transaction abort
 	 * * error during decoding
+	 * * for a crashed transaction, the LSN of the last change, regardless of
+	 *   what it was.
 	 * ----
 	 */
 	XLogRecPtr	final_lsn;

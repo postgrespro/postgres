@@ -4,7 +4,7 @@
  *	  PostgreSQL logical replay/reorder buffer management
  *
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -15,7 +15,7 @@
  *	  they are written to the WAL and is responsible to reassemble them into
  *	  toplevel transaction sized pieces. When a transaction is completely
  *	  reassembled - signalled by reading the transaction commit record - it
- *	  will then call the output plugin (c.f. ReorderBufferCommit()) with the
+ *	  will then call the output plugin (cf. ReorderBufferCommit()) with the
  *	  individual changes. The output plugins rely on snapshots built by
  *	  snapbuild.c which hands them to us.
  *
@@ -1670,8 +1670,8 @@ ReorderBufferAbortOld(ReorderBuffer *rb, TransactionId oldestRunningXid)
 	 * Iterate through all (potential) toplevel TXNs and abort all that are
 	 * older than what possibly can be running. Once we've found the first
 	 * that is alive we stop, there might be some that acquired an xid earlier
-	 * but started writing later, but it's unlikely and they will cleaned up
-	 * in a later call to ReorderBufferAbortOld().
+	 * but started writing later, but it's unlikely and they will be cleaned
+	 * up in a later call to this function.
 	 */
 	dlist_foreach_modify(it, &rb->toplevel_by_lsn)
 	{
@@ -1681,6 +1681,21 @@ ReorderBufferAbortOld(ReorderBuffer *rb, TransactionId oldestRunningXid)
 
 		if (TransactionIdPrecedes(txn->xid, oldestRunningXid))
 		{
+			/*
+			 * We set final_lsn on a transaction when we decode its commit or
+			 * abort record, but we never see those records for crashed
+			 * transactions.  To ensure cleanup of these transactions, set
+			 * final_lsn to that of their last change; this causes
+			 * ReorderBufferRestoreCleanup to do the right thing.
+			 */
+			if (txn->serialized && txn->final_lsn == 0)
+			{
+				ReorderBufferChange *last =
+					dlist_tail_element(ReorderBufferChange, node, &txn->changes);
+
+				txn->final_lsn = last->lsn;
+			}
+
 			elog(DEBUG2, "aborting old transaction %u", txn->xid);
 
 			/* remove potential on-disk data, and deallocate this tx */
@@ -1737,7 +1752,7 @@ ReorderBufferForget(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn)
 /*
  * Execute invalidations happening outside the context of a decoded
  * transaction. That currently happens either for xid-less commits
- * (c.f. RecordTransactionCommit()) or for invalidations in uninteresting
+ * (cf. RecordTransactionCommit()) or for invalidations in uninteresting
  * transactions (via ReorderBufferForget()).
  */
 void

@@ -4,7 +4,7 @@
  *	  POSTGRES define and remove utility definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/defrem.h
@@ -25,12 +25,13 @@ extern void RemoveObjects(DropStmt *stmt);
 extern ObjectAddress DefineIndex(Oid relationId,
 			IndexStmt *stmt,
 			Oid indexRelationId,
+			Oid parentIndexId,
 			bool is_alter_table,
 			bool check_rights,
 			bool check_not_in_use,
 			bool skip_build,
 			bool quiet);
-extern Oid	ReindexIndex(RangeVar *indexRelation, int options);
+extern void ReindexIndex(RangeVar *indexRelation, int options);
 extern Oid	ReindexTable(RangeVar *relation, int options);
 extern void ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 					  int options);
@@ -58,8 +59,8 @@ extern ObjectAddress CreateTransform(CreateTransformStmt *stmt);
 extern void DropTransformById(Oid transformOid);
 extern void IsThereFunctionInNamespace(const char *proname, int pronargs,
 						   oidvector *proargtypes, Oid nspOid);
-extern void ExecuteDoStmt(DoStmt *stmt);
-extern void ExecuteCallStmt(ParseState *pstate, CallStmt *stmt);
+extern void ExecuteDoStmt(DoStmt *stmt, bool atomic);
+extern void ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic);
 extern Oid	get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok);
 extern Oid	get_transform_oid(Oid type_id, Oid lang_id, bool missing_ok);
 extern void interpret_function_parameter_list(ParseState *pstate,

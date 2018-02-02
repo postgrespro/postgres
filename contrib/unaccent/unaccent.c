@@ -3,7 +3,7 @@
  * unaccent.c
  *	  Text search unaccent dictionary
  *
- * Copyright (c) 2009-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2009-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/unaccent/unaccent.c
@@ -276,7 +276,7 @@ unaccent_init(PG_FUNCTION_ARGS)
 	{
 		DefElem    *defel = (DefElem *) lfirst(l);
 
-		if (pg_strcasecmp("Rules", defel->defname) == 0)
+		if (strcmp(defel->defname, "rules") == 0)
 		{
 			if (fileloaded)
 				ereport(ERROR,

@@ -4,7 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -202,6 +202,16 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			 * IndexIsReady.
 			 */
 			if (!IndexIsValid(index))
+			{
+				index_close(indexRelation, NoLock);
+				continue;
+			}
+
+			/*
+			 * Ignore partitioned indexes, since they are not usable for
+			 * queries.
+			 */
+			if (indexRelation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
 			{
 				index_close(indexRelation, NoLock);
 				continue;

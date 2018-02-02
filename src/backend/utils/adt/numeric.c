@@ -11,7 +11,7 @@
  * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
  * pages 359-367.
  *
- * Copyright (c) 1998-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/numeric.c
@@ -354,12 +354,12 @@ typedef struct NumericSumAccum
  */
 #define NUMERIC_ABBREV_BITS (SIZEOF_DATUM * BITS_PER_BYTE)
 #if SIZEOF_DATUM == 8
-#define NumericAbbrevGetDatum(X) ((Datum) SET_8_BYTES(X))
-#define DatumGetNumericAbbrev(X) ((int64) GET_8_BYTES(X))
+#define NumericAbbrevGetDatum(X) ((Datum) (X))
+#define DatumGetNumericAbbrev(X) ((int64) (X))
 #define NUMERIC_ABBREV_NAN		 NumericAbbrevGetDatum(PG_INT64_MIN)
 #else
-#define NumericAbbrevGetDatum(X) ((Datum) SET_4_BYTES(X))
-#define DatumGetNumericAbbrev(X) ((int32) GET_4_BYTES(X))
+#define NumericAbbrevGetDatum(X) ((Datum) (X))
+#define DatumGetNumericAbbrev(X) ((int32) (X))
 #define NUMERIC_ABBREV_NAN		 NumericAbbrevGetDatum(PG_INT32_MIN)
 #endif
 

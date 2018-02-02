@@ -17,7 +17,7 @@
  * append relations, and thenceforth share code with the UNION ALL case.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -105,7 +105,8 @@ static void expand_partitioned_rtentry(PlannerInfo *root,
 						   RangeTblEntry *parentrte,
 						   Index parentRTindex, Relation parentrel,
 						   PlanRowMark *top_parentrc, LOCKMODE lockmode,
-						   List **appinfos, List **partitioned_child_rels);
+						   List **appinfos, List **partitioned_child_rels,
+						   bool *part_cols_updated);
 static void expand_single_inheritance_child(PlannerInfo *root,
 								RangeTblEntry *parentrte,
 								Index parentRTindex, Relation parentrel,
@@ -266,6 +267,9 @@ recurse_set_operations(Node *setOp, PlannerInfo *root,
 					   List **pTargetList,
 					   double *pNumGroups)
 {
+	/* Guard against stack overflow due to overly complex setop nests */
+	check_stack_depth();
+
 	if (IsA(setOp, RangeTblRef))
 	{
 		RangeTblRef *rtr = (RangeTblRef *) setOp;
@@ -711,10 +715,6 @@ generate_nonunion_path(SetOperationStmt *op, PlannerInfo *root,
 	/* Identify the grouping semantics */
 	groupList = generate_setop_grouplist(op, tlist);
 
-	/* punt if nothing to group on (can this happen?) */
-	if (groupList == NIL)
-		return path;
-
 	/*
 	 * Estimate number of distinct groups that we'll need hashtable entries
 	 * for; this is the size of the left-hand input for EXCEPT, or the smaller
@@ -741,7 +741,7 @@ generate_nonunion_path(SetOperationStmt *op, PlannerInfo *root,
 								   dNumGroups, dNumOutputRows,
 								   (op->op == SETOP_INTERSECT) ? "INTERSECT" : "EXCEPT");
 
-	if (!use_hash)
+	if (groupList && !use_hash)
 		path = (Path *) create_sort_path(root,
 										 result_rel,
 										 path,
@@ -864,10 +864,6 @@ make_union_unique(SetOperationStmt *op, Path *path, List *tlist,
 	/* Identify the grouping semantics */
 	groupList = generate_setop_grouplist(op, tlist);
 
-	/* punt if nothing to group on (can this happen?) */
-	if (groupList == NIL)
-		return path;
-
 	/*
 	 * XXX for the moment, take the number of distinct groups as equal to the
 	 * total input size, ie, the worst case.  This is too conservative, but we
@@ -898,13 +894,15 @@ make_union_unique(SetOperationStmt *op, Path *path, List *tlist,
 	else
 	{
 		/* Sort and Unique */
-		path = (Path *) create_sort_path(root,
-										 result_rel,
-										 path,
-										 make_pathkeys_for_sortclauses(root,
-																	   groupList,
-																	   tlist),
-										 -1.0);
+		if (groupList)
+			path = (Path *)
+				create_sort_path(root,
+								 result_rel,
+								 path,
+								 make_pathkeys_for_sortclauses(root,
+															   groupList,
+															   tlist),
+								 -1.0);
 		/* We have to manually jam the right tlist into the path; ick */
 		path->pathtarget = create_pathtarget(root, tlist);
 		path = (Path *) create_upper_unique_path(root,
@@ -1467,16 +1465,19 @@ expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 	if (RelationGetPartitionDesc(oldrelation) != NULL)
 	{
 		List	   *partitioned_child_rels = NIL;
+		bool		part_cols_updated = false;
 
 		Assert(rte->relkind == RELKIND_PARTITIONED_TABLE);
 
 		/*
 		 * If this table has partitions, recursively expand them in the order
-		 * in which they appear in the PartitionDesc.
+		 * in which they appear in the PartitionDesc.  While at it, also
+		 * extract the partition key columns of all the partitioned tables.
 		 */
 		expand_partitioned_rtentry(root, rte, rti, oldrelation, oldrc,
 								   lockmode, &root->append_rel_list,
-								   &partitioned_child_rels);
+								   &partitioned_child_rels,
+								   &part_cols_updated);
 
 		/*
 		 * We keep a list of objects in root, each of which maps a root
@@ -1493,6 +1494,7 @@ expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 			pcinfo = makeNode(PartitionedChildRelInfo);
 			pcinfo->parent_relid = rti;
 			pcinfo->child_rels = partitioned_child_rels;
+			pcinfo->part_cols_updated = part_cols_updated;
 			root->pcinfo_list = lappend(root->pcinfo_list, pcinfo);
 		}
 	}
@@ -1569,7 +1571,8 @@ static void
 expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 						   Index parentRTindex, Relation parentrel,
 						   PlanRowMark *top_parentrc, LOCKMODE lockmode,
-						   List **appinfos, List **partitioned_child_rels)
+						   List **appinfos, List **partitioned_child_rels,
+						   bool *part_cols_updated)
 {
 	int			i;
 	RangeTblEntry *childrte;
@@ -1583,6 +1586,17 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 	Assert(partdesc);
 
 	Assert(parentrte->inh);
+
+	/*
+	 * Note down whether any partition key cols are being updated. Though it's
+	 * the root partitioned table's updatedCols we are interested in, we
+	 * instead use parentrte to get the updatedCols. This is convenient because
+	 * parentrte already has the root partrel's updatedCols translated to match
+	 * the attribute ordering of parentrel.
+	 */
+	if (!*part_cols_updated)
+		*part_cols_updated =
+			has_partition_attrs(parentrel, parentrte->updatedCols, NULL);
 
 	/* First expand the partitioned table itself. */
 	expand_single_inheritance_child(root, parentrte, parentRTindex, parentrel,
@@ -1623,7 +1637,8 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 		if (childrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 			expand_partitioned_rtentry(root, childrte, childRTindex,
 									   childrel, top_parentrc, lockmode,
-									   appinfos, partitioned_child_rels);
+									   appinfos, partitioned_child_rels,
+									   part_cols_updated);
 
 		/* Close child relation, but keep locks */
 		heap_close(childrel, NoLock);
@@ -1640,11 +1655,8 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 
 /*
  * expand_single_inheritance_child
- *		Expand a single inheritance child, if needed.
- *
- * If this is a temp table of another backend, we'll return without doing
- * anything at all.  Otherwise, build a RangeTblEntry and an AppendRelInfo, if
- * appropriate, plus maybe a PlanRowMark.
+ *		Build a RangeTblEntry and an AppendRelInfo, if appropriate, plus
+ *		maybe a PlanRowMark.
  *
  * We now expand the partition hierarchy level by level, creating a
  * corresponding hierarchy of AppendRelInfos and RelOptInfos, where each
@@ -1841,7 +1853,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		 */
 		if (old_attno < newnatts &&
 			(att = TupleDescAttr(new_tupdesc, old_attno)) != NULL &&
-			!att->attisdropped && att->attinhcount != 0 &&
+			!att->attisdropped &&
 			strcmp(attname, NameStr(att->attname)) == 0)
 			new_attno = old_attno;
 		else
@@ -1849,7 +1861,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 			for (new_attno = 0; new_attno < newnatts; new_attno++)
 			{
 				att = TupleDescAttr(new_tupdesc, new_attno);
-				if (!att->attisdropped && att->attinhcount != 0 &&
+				if (!att->attisdropped &&
 					strcmp(attname, NameStr(att->attname)) == 0)
 					break;
 			}
@@ -2511,7 +2523,7 @@ build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
  * 		Find AppendRelInfo structures for all relations specified by relids.
  *
  * The AppendRelInfos are returned in an array, which can be pfree'd by the
- * caller. *nappinfos is set to the the number of entries in the array.
+ * caller. *nappinfos is set to the number of entries in the array.
  */
 AppendRelInfo **
 find_appinfos_by_relids(PlannerInfo *root, Relids relids, int *nappinfos)

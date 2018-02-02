@@ -4,7 +4,7 @@
  *	  definitions for query plan nodes
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/plannodes.h
@@ -219,6 +219,7 @@ typedef struct ModifyTable
 	Index		nominalRelation;	/* Parent RT index for use of EXPLAIN */
 	/* RT indexes of non-leaf tables in a partition tree */
 	List	   *partitioned_rels;
+	bool		partColsUpdated;	/* some part key in hierarchy updated */
 	List	   *resultRelations;	/* integer list of RT indexes */
 	int			resultRelIndex; /* index of first resultRel in plan's list */
 	int			rootResultRelIndex; /* index of the partitioned table root */

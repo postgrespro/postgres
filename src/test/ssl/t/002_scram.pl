@@ -4,12 +4,16 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 4;
+use Test::More tests => 5;
 use ServerSetup;
 use File::Copy;
 
 # This is the hostname used to connect to the server.
 my $SERVERHOSTADDR = '127.0.0.1';
+
+# Determine whether build supports tls-server-end-point.
+my $supports_tls_server_end_point =
+	check_pg_config("#define HAVE_X509_GET_SIGNATURE_NID 1");
 
 # Allocation of base connection string shared among multiple tests.
 my $common_connstr;
@@ -44,7 +48,19 @@ test_connect_ok($common_connstr,
 	"SCRAM authentication with tls-unique as channel binding");
 test_connect_ok($common_connstr,
 	"scram_channel_binding=''",
-	"SCRAM authentication without channel binding");
+				"SCRAM authentication without channel binding");
+if ($supports_tls_server_end_point)
+{
+	test_connect_ok($common_connstr,
+					"scram_channel_binding=tls-server-end-point",
+					"SCRAM authentication with tls-server-end-point as channel binding");
+}
+else
+{
+	test_connect_fails($common_connstr,
+					"scram_channel_binding=tls-server-end-point",
+					"SCRAM authentication with tls-server-end-point as channel binding");
+}
 test_connect_fails($common_connstr,
 	"scram_channel_binding=not-exists",
 	"SCRAM authentication with invalid channel binding");

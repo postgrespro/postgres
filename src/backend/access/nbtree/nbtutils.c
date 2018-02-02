@@ -3,7 +3,7 @@
  * nbtutils.c
  *	  Utility code for Postgres btree implementation.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1772,7 +1772,7 @@ _bt_killitems(IndexScanDesc scan)
 			return;
 
 		page = BufferGetPage(buf);
-		if (PageGetLSN(page) == so->currPos.lsn)
+		if (BufferGetLSNAtomic(buf) == so->currPos.lsn)
 			so->currPos.buf = buf;
 		else
 		{

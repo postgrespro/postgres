@@ -4,7 +4,7 @@
  *	  support for the POSTGRES executor module
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/executor.h
@@ -17,6 +17,7 @@
 #include "catalog/partition.h"
 #include "executor/execdesc.h"
 #include "nodes/parsenodes.h"
+#include "utils/memutils.h"
 
 
 /*
@@ -187,9 +188,12 @@ extern ResultRelInfo *ExecGetTriggerResultRel(EState *estate, Oid relid);
 extern void ExecCleanUpTriggerState(EState *estate);
 extern bool ExecContextForcesOids(PlanState *planstate, bool *hasoids);
 extern void ExecConstraints(ResultRelInfo *resultRelInfo,
-				TupleTableSlot *slot, EState *estate);
-extern void ExecPartitionCheck(ResultRelInfo *resultRelInfo,
+				TupleTableSlot *slot, EState *estate,
+				bool check_partition_constraint);
+extern bool ExecPartitionCheck(ResultRelInfo *resultRelInfo,
 				   TupleTableSlot *slot, EState *estate);
+extern void ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
+							TupleTableSlot *slot, EState *estate);
 extern void ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
 					 TupleTableSlot *slot, EState *estate);
 extern LockTupleMode ExecUpdateLockMode(EState *estate, ResultRelInfo *relinfo);
@@ -251,6 +255,8 @@ extern ExprState *ExecInitExprWithParams(Expr *node, ParamListInfo ext_params);
 extern ExprState *ExecInitQual(List *qual, PlanState *parent);
 extern ExprState *ExecInitCheck(List *qual, PlanState *parent);
 extern List *ExecInitExprList(List *nodes, PlanState *parent);
+extern ExprState *ExecBuildAggTrans(AggState *aggstate, struct AggStatePerPhaseData *phase,
+				  bool doSort, bool doHash);
 extern ProjectionInfo *ExecBuildProjectionInfo(List *targetList,
 						ExprContext *econtext,
 						TupleTableSlot *slot,
@@ -373,6 +379,22 @@ ExecQual(ExprState *state, ExprContext *econtext)
 	Assert(!isnull);
 
 	return DatumGetBool(ret);
+}
+#endif
+
+/*
+ * ExecQualAndReset() - evaluate qual with ExecQual() and reset expression
+ * context.
+ */
+#ifndef FRONTEND
+static inline bool
+ExecQualAndReset(ExprState *state, ExprContext *econtext)
+{
+	bool		ret = ExecQual(state, econtext);
+
+	/* inline ResetExprContext, to avoid ordering issue in this file */
+	MemoryContextReset(econtext->ecxt_per_tuple_memory);
+	return ret;
 }
 #endif
 

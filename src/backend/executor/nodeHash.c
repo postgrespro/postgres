@@ -3,7 +3,7 @@
  * nodeHash.c
  *	  Routines to hash relations for hashjoin
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -288,8 +288,6 @@ MultiExecParallelHash(HashState *node)
 					ExecParallelHashTableInsert(hashtable, slot, hashvalue);
 				hashtable->partialTuples++;
 			}
-			BarrierDetach(&pstate->grow_buckets_barrier);
-			BarrierDetach(&pstate->grow_batches_barrier);
 
 			/*
 			 * Make sure that any tuples we wrote to disk are visible to
@@ -303,6 +301,9 @@ MultiExecParallelHash(HashState *node)
 			 * to control the empty table optimization.
 			 */
 			ExecParallelHashMergeCounters(hashtable);
+
+			BarrierDetach(&pstate->grow_buckets_barrier);
+			BarrierDetach(&pstate->grow_batches_barrier);
 
 			/*
 			 * Wait for everyone to finish building and flushing files and
@@ -978,7 +979,7 @@ ExecHashIncreaseNumBatches(HashJoinTable hashtable)
 		/* process all tuples stored in this chunk (and then free it) */
 		while (idx < oldchunks->used)
 		{
-			HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 			MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
 			int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 			int			bucketno;
@@ -1275,7 +1276,7 @@ ExecParallelHashRepartitionFirst(HashJoinTable hashtable)
 	dsa_pointer chunk_shared;
 	HashMemoryChunk chunk;
 
-	Assert(hashtable->nbatch = hashtable->parallel_state->nbatch);
+	Assert(hashtable->nbatch == hashtable->parallel_state->nbatch);
 
 	while ((chunk = ExecParallelHashPopChunkQueue(hashtable, &chunk_shared)))
 	{
@@ -1284,7 +1285,7 @@ ExecParallelHashRepartitionFirst(HashJoinTable hashtable)
 		/* Repartition all tuples in this chunk. */
 		while (idx < chunk->used)
 		{
-			HashJoinTuple hashTuple = (HashJoinTuple) (chunk->data + idx);
+			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + idx);
 			MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
 			HashJoinTuple copyTuple;
 			dsa_pointer shared;
@@ -1468,7 +1469,7 @@ ExecHashIncreaseNumBuckets(HashJoinTable hashtable)
 
 		while (idx < chunk->used)
 		{
-			HashJoinTuple hashTuple = (HashJoinTuple) (chunk->data + idx);
+			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + idx);
 			int			bucketno;
 			int			batchno;
 
@@ -1551,7 +1552,7 @@ ExecParallelHashIncreaseNumBuckets(HashJoinTable hashtable)
 
 				while (idx < chunk->used)
 				{
-					HashJoinTuple hashTuple = (HashJoinTuple) (chunk->data + idx);
+					HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + idx);
 					dsa_pointer shared = chunk_s + HASH_CHUNK_HEADER_SIZE + idx;
 					int			bucketno;
 					int			batchno;
@@ -1941,10 +1942,7 @@ ExecScanHashBucket(HashJoinState *hjstate,
 											 false);	/* do not pfree */
 			econtext->ecxt_innertuple = inntuple;
 
-			/* reset temp memory each time to avoid leaks from qual expr */
-			ResetExprContext(econtext);
-
-			if (ExecQual(hjclauses, econtext))
+			if (ExecQualAndReset(hjclauses, econtext))
 			{
 				hjstate->hj_CurTuple = hashTuple;
 				return true;
@@ -2001,10 +1999,7 @@ ExecParallelScanHashBucket(HashJoinState *hjstate,
 											 false);	/* do not pfree */
 			econtext->ecxt_innertuple = inntuple;
 
-			/* reset temp memory each time to avoid leaks from qual expr */
-			ResetExprContext(econtext);
-
-			if (ExecQual(hjclauses, econtext))
+			if (ExecQualAndReset(hjclauses, econtext))
 			{
 				hjstate->hj_CurTuple = hashTuple;
 				return true;
@@ -2650,17 +2645,16 @@ dense_alloc(HashJoinTable hashtable, Size size)
 	size = MAXALIGN(size);
 
 	/*
-	 * If tuple size is larger than of 1/4 of chunk size, allocate a separate
-	 * chunk.
+	 * If tuple size is larger than threshold, allocate a separate chunk.
 	 */
 	if (size > HASH_CHUNK_THRESHOLD)
 	{
 		/* allocate new chunk and put it at the beginning of the list */
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
-														offsetof(HashMemoryChunkData, data) + size);
+														HASH_CHUNK_HEADER_SIZE + size);
 		newChunk->maxlen = size;
-		newChunk->used = 0;
-		newChunk->ntuples = 0;
+		newChunk->used = size;
+		newChunk->ntuples = 1;
 
 		/*
 		 * Add this chunk to the list after the first existing chunk, so that
@@ -2677,10 +2671,7 @@ dense_alloc(HashJoinTable hashtable, Size size)
 			hashtable->chunks = newChunk;
 		}
 
-		newChunk->used += size;
-		newChunk->ntuples += 1;
-
-		return newChunk->data;
+		return HASH_CHUNK_DATA(newChunk);
 	}
 
 	/*
@@ -2692,7 +2683,7 @@ dense_alloc(HashJoinTable hashtable, Size size)
 	{
 		/* allocate new chunk and put it at the beginning of the list */
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
-														offsetof(HashMemoryChunkData, data) + HASH_CHUNK_SIZE);
+														HASH_CHUNK_HEADER_SIZE + HASH_CHUNK_SIZE);
 
 		newChunk->maxlen = HASH_CHUNK_SIZE;
 		newChunk->used = size;
@@ -2701,11 +2692,11 @@ dense_alloc(HashJoinTable hashtable, Size size)
 		newChunk->next.unshared = hashtable->chunks;
 		hashtable->chunks = newChunk;
 
-		return newChunk->data;
+		return HASH_CHUNK_DATA(newChunk);
 	}
 
 	/* There is enough space in the current chunk, let's add the tuple */
-	ptr = hashtable->chunks->data + hashtable->chunks->used;
+	ptr = HASH_CHUNK_DATA(hashtable->chunks) + hashtable->chunks->used;
 	hashtable->chunks->used += size;
 	hashtable->chunks->ntuples += 1;
 
@@ -2743,14 +2734,14 @@ ExecParallelHashTupleAlloc(HashJoinTable hashtable, size_t size,
 	 */
 	chunk = hashtable->current_chunk;
 	if (chunk != NULL &&
-		size < HASH_CHUNK_THRESHOLD &&
+		size <= HASH_CHUNK_THRESHOLD &&
 		chunk->maxlen - chunk->used >= size)
 	{
 
 		chunk_shared = hashtable->current_chunk_shared;
 		Assert(chunk == dsa_get_address(hashtable->area, chunk_shared));
 		*shared = chunk_shared + HASH_CHUNK_HEADER_SIZE + chunk->used;
-		result = (HashJoinTuple) (chunk->data + chunk->used);
+		result = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + chunk->used);
 		chunk->used += size;
 
 		Assert(chunk->used <= chunk->maxlen);
@@ -2858,8 +2849,8 @@ ExecParallelHashTupleAlloc(HashJoinTable hashtable, size_t size,
 	}
 	LWLockRelease(&pstate->lock);
 
-	Assert(chunk->data == dsa_get_address(hashtable->area, *shared));
-	result = (HashJoinTuple) chunk->data;
+	Assert(HASH_CHUNK_DATA(chunk) == dsa_get_address(hashtable->area, *shared));
+	result = (HashJoinTuple) HASH_CHUNK_DATA(chunk);
 
 	return result;
 }
@@ -3089,7 +3080,16 @@ ExecHashTableDetachBatch(HashJoinTable hashtable)
 				batch->buckets = InvalidDsaPointer;
 			}
 		}
-		ExecParallelHashUpdateSpacePeak(hashtable, curbatch);
+
+		/*
+		 * Track the largest batch we've been attached to.  Though each
+		 * backend might see a different subset of batches, explain.c will
+		 * scan the results from all backends to find the largest value.
+		 */
+		hashtable->spacePeak =
+			Max(hashtable->spacePeak,
+				batch->size + sizeof(dsa_pointer_atomic) * hashtable->nbuckets);
+
 		/* Remember that we are not attached to a batch. */
 		hashtable->curbatch = -1;
 	}
@@ -3254,6 +3254,7 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 
 	Assert(batchno > 0);
 	Assert(batchno < hashtable->nbatch);
+	Assert(size == MAXALIGN(size));
 
 	LWLockAcquire(&pstate->lock, LW_EXCLUSIVE);
 
@@ -3274,7 +3275,8 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 
 	if (pstate->growth != PHJ_GROWTH_DISABLED &&
 		batch->at_least_one_chunk &&
-		(batch->shared->estimated_size + size > pstate->space_allowed))
+		(batch->shared->estimated_size + want + HASH_CHUNK_HEADER_SIZE
+		 > pstate->space_allowed))
 	{
 		/*
 		 * We have determined that this batch would exceed the space budget if
@@ -3293,20 +3295,4 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 	LWLockRelease(&pstate->lock);
 
 	return true;
-}
-
-/*
- * Update this backend's copy of hashtable->spacePeak to account for a given
- * batch.  This is called at the end of hashing for batch 0, and then for each
- * batch when it is done or discovered to be already done.  The result is used
- * for EXPLAIN output.
- */
-void
-ExecParallelHashUpdateSpacePeak(HashJoinTable hashtable, int batchno)
-{
-	size_t		size;
-
-	size = hashtable->batches[batchno].shared->size;
-	size += sizeof(dsa_pointer_atomic) * hashtable->nbuckets;
-	hashtable->spacePeak = Max(hashtable->spacePeak, size);
 }

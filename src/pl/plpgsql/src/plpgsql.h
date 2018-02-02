@@ -3,7 +3,7 @@
  * plpgsql.h		- Definitions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -105,7 +105,9 @@ typedef enum PLpgSQL_stmt_type
 	PLPGSQL_STMT_OPEN,
 	PLPGSQL_STMT_FETCH,
 	PLPGSQL_STMT_CLOSE,
-	PLPGSQL_STMT_PERFORM
+	PLPGSQL_STMT_PERFORM,
+	PLPGSQL_STMT_COMMIT,
+	PLPGSQL_STMT_ROLLBACK
 } PLpgSQL_stmt_type;
 
 /*
@@ -432,6 +434,24 @@ typedef struct PLpgSQL_stmt_perform
 	int			lineno;
 	PLpgSQL_expr *expr;
 } PLpgSQL_stmt_perform;
+
+/*
+ * COMMIT statement
+ */
+typedef struct PLpgSQL_stmt_commit
+{
+	PLpgSQL_stmt_type cmd_type;
+	int			lineno;
+} PLpgSQL_stmt_commit;
+
+/*
+ * ROLLBACK statement
+ */
+typedef struct PLpgSQL_stmt_rollback
+{
+	PLpgSQL_stmt_type cmd_type;
+	int			lineno;
+} PLpgSQL_stmt_rollback;
 
 /*
  * GET DIAGNOSTICS item

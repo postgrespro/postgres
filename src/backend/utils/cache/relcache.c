@@ -3,7 +3,7 @@
  * relcache.c
  *	  POSTGRES relation descriptor cache code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -430,18 +430,26 @@ static void
 RelationParseRelOptions(Relation relation, HeapTuple tuple)
 {
 	bytea	   *options;
+	amoptions_function amoptsfn;
 
 	relation->rd_options = NULL;
 
-	/* Fall out if relkind should not have options */
+	/*
+	 * Look up any AM-specific parse function; fall out if relkind should not
+	 * have options.
+	 */
 	switch (relation->rd_rel->relkind)
 	{
 		case RELKIND_RELATION:
 		case RELKIND_TOASTVALUE:
-		case RELKIND_INDEX:
 		case RELKIND_VIEW:
 		case RELKIND_MATVIEW:
 		case RELKIND_PARTITIONED_TABLE:
+			amoptsfn = NULL;
+			break;
+		case RELKIND_INDEX:
+		case RELKIND_PARTITIONED_INDEX:
+			amoptsfn = relation->rd_amroutine->amoptions;
 			break;
 		default:
 			return;
@@ -452,10 +460,7 @@ RelationParseRelOptions(Relation relation, HeapTuple tuple)
 	 * we might not have any other for pg_class yet (consider executing this
 	 * code for pg_class itself)
 	 */
-	options = extractRelOptions(tuple,
-								GetPgClassDescriptor(),
-								relation->rd_rel->relkind == RELKIND_INDEX ?
-								relation->rd_amroutine->amoptions : NULL);
+	options = extractRelOptions(tuple, GetPgClassDescriptor(), amoptsfn);
 
 	/*
 	 * Copy parsed data into CacheMemoryContext.  To guard against the
@@ -807,17 +812,16 @@ RelationBuildRuleLock(Relation relation)
  * RelationBuildPartitionKey
  *		Build and attach to relcache partition key data of relation
  *
- * Partitioning key data is stored in CacheMemoryContext to ensure it survives
- * as long as the relcache.  To avoid leaking memory in that context in case
- * of an error partway through this function, we build the structure in the
- * working context (which must be short-lived) and copy the completed
- * structure into the cache memory.
- *
- * Also, since the structure being created here is sufficiently complex, we
- * make a private child context of CacheMemoryContext for each relation that
- * has associated partition key information.  That means no complicated logic
- * to free individual elements whenever the relcache entry is flushed - just
- * delete the context.
+ * Partitioning key data is a complex structure; to avoid complicated logic to
+ * free individual elements whenever the relcache entry is flushed, we give it
+ * its own memory context, child of CacheMemoryContext, which can easily be
+ * deleted on its own.  To avoid leaking memory in that context in case of an
+ * error partway through this function, the context is initially created as a
+ * child of CurTransactionContext and only re-parented to CacheMemoryContext
+ * at the end, when no further errors are possible.  Also, we don't make this
+ * context the current context except in very brief code sections, out of fear
+ * that some of our callees allocate memory on their own which would be leaked
+ * permanently.
  */
 static void
 RelationBuildPartitionKey(Relation relation)
@@ -850,9 +854,9 @@ RelationBuildPartitionKey(Relation relation)
 											   RelationGetRelationName(relation),
 											   MEMCONTEXT_COPY_NAME,
 											   ALLOCSET_SMALL_SIZES);
-	oldcxt = MemoryContextSwitchTo(partkeycxt);
 
-	key = (PartitionKey) palloc0(sizeof(PartitionKeyData));
+	key = (PartitionKey) MemoryContextAllocZero(partkeycxt,
+												sizeof(PartitionKeyData));
 
 	/* Fixed-length attributes */
 	form = (Form_pg_partitioned_table) GETSTRUCT(tuple);
@@ -894,17 +898,20 @@ RelationBuildPartitionKey(Relation relation)
 		/*
 		 * Run the expressions through const-simplification since the planner
 		 * will be comparing them to similarly-processed qual clause operands,
-		 * and may fail to detect valid matches without this step.  We don't
-		 * need to bother with canonicalize_qual() though, because partition
-		 * expressions are not full-fledged qualification clauses.
+		 * and may fail to detect valid matches without this step; fix
+		 * opfuncids while at it.  We don't need to bother with
+		 * canonicalize_qual() though, because partition expressions are not
+		 * full-fledged qualification clauses.
 		 */
-		expr = eval_const_expressions(NULL, (Node *) expr);
+		expr = eval_const_expressions(NULL, expr);
+		fix_opfuncids(expr);
 
-		/* May as well fix opfuncids too */
-		fix_opfuncids((Node *) expr);
-		key->partexprs = (List *) expr;
+		oldcxt = MemoryContextSwitchTo(partkeycxt);
+		key->partexprs = (List *) copyObject(expr);
+		MemoryContextSwitchTo(oldcxt);
 	}
 
+	oldcxt = MemoryContextSwitchTo(partkeycxt);
 	key->partattrs = (AttrNumber *) palloc0(key->partnatts * sizeof(AttrNumber));
 	key->partopfamily = (Oid *) palloc0(key->partnatts * sizeof(Oid));
 	key->partopcintype = (Oid *) palloc0(key->partnatts * sizeof(Oid));
@@ -919,8 +926,9 @@ RelationBuildPartitionKey(Relation relation)
 	key->parttypbyval = (bool *) palloc0(key->partnatts * sizeof(bool));
 	key->parttypalign = (char *) palloc0(key->partnatts * sizeof(char));
 	key->parttypcoll = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+	MemoryContextSwitchTo(oldcxt);
 
-	/* For the hash partitioning, an extended hash function will be used. */
+	/* determine support function number to search for */
 	procnum = (key->strategy == PARTITION_STRATEGY_HASH) ?
 		HASHEXTENDED_PROC : BTORDER_PROC;
 
@@ -952,7 +960,7 @@ RelationBuildPartitionKey(Relation relation)
 		if (!OidIsValid(funcid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("operator class \"%s\" of access method %s is missing support function %d for data type \"%s\"",
+					 errmsg("operator class \"%s\" of access method %s is missing support function %d for type %s",
 							NameStr(opclassform->opcname),
 							(key->strategy == PARTITION_STRATEGY_HASH) ?
 							"hash" : "btree",
@@ -989,11 +997,13 @@ RelationBuildPartitionKey(Relation relation)
 
 	ReleaseSysCache(tuple);
 
-	/* Success --- make the relcache point to the newly constructed key */
+	/*
+	 * Success --- reparent our context and make the relcache point to the
+	 * newly constructed key
+	 */
 	MemoryContextSetParent(partkeycxt, CacheMemoryContext);
 	relation->rd_partkeycxt = partkeycxt;
 	relation->rd_partkey = key;
-	MemoryContextSwitchTo(oldcxt);
 }
 
 /*
@@ -2048,7 +2058,8 @@ RelationIdGetRelation(Oid relationId)
 			 * and we don't want to use the full-blown procedure because it's
 			 * a headache for indexes that reload itself depends on.
 			 */
-			if (rd->rd_rel->relkind == RELKIND_INDEX)
+			if (rd->rd_rel->relkind == RELKIND_INDEX ||
+				rd->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
 				RelationReloadIndexInfo(rd);
 			else
 				RelationClearRelation(rd, true);
@@ -2162,7 +2173,8 @@ RelationReloadIndexInfo(Relation relation)
 	Form_pg_class relp;
 
 	/* Should be called only for invalidated indexes */
-	Assert(relation->rd_rel->relkind == RELKIND_INDEX &&
+	Assert((relation->rd_rel->relkind == RELKIND_INDEX ||
+			relation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX) &&
 		   !relation->rd_isvalid);
 
 	/* Ensure it's closed at smgr level */
@@ -2382,7 +2394,8 @@ RelationClearRelation(Relation relation, bool rebuild)
 	{
 		RelationInitPhysicalAddr(relation);
 
-		if (relation->rd_rel->relkind == RELKIND_INDEX)
+		if (relation->rd_rel->relkind == RELKIND_INDEX ||
+			relation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
 		{
 			relation->rd_isvalid = false;	/* needs to be revalidated */
 			if (relation->rd_refcnt > 1 && IsTransactionState())
@@ -2398,7 +2411,8 @@ RelationClearRelation(Relation relation, bool rebuild)
 	 * re-read the pg_class row to handle possible physical relocation of the
 	 * index, and we check for pg_index updates too.
 	 */
-	if (relation->rd_rel->relkind == RELKIND_INDEX &&
+	if ((relation->rd_rel->relkind == RELKIND_INDEX ||
+		 relation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX) &&
 		relation->rd_refcnt > 0 &&
 		relation->rd_indexcxt != NULL)
 	{
@@ -2506,7 +2520,7 @@ RelationClearRelation(Relation relation, bool rebuild)
 
 			/*
 			 * This shouldn't happen as dropping a relation is intended to be
-			 * impossible if still referenced (c.f. CheckTableNotInUse()). But
+			 * impossible if still referenced (cf. CheckTableNotInUse()). But
 			 * if we get here anyway, we can't just delete the relcache entry,
 			 * as it possibly could get accessed later (as e.g. the error
 			 * might get trapped and handled via a subtransaction rollback).
@@ -5456,7 +5470,10 @@ load_relcache_init_file(bool shared)
 			rel->rd_att->constr = constr;
 		}
 
-		/* If it's an index, there's more to do */
+		/*
+		 * If it's an index, there's more to do.  Note we explicitly ignore
+		 * partitioned indexes here.
+		 */
 		if (rel->rd_rel->relkind == RELKIND_INDEX)
 		{
 			MemoryContext indexcxt;
@@ -5820,7 +5837,10 @@ write_relcache_init_file(bool shared)
 				   (rel->rd_options ? VARSIZE(rel->rd_options) : 0),
 				   fp);
 
-		/* If it's an index, there's more to do */
+		/*
+		 * If it's an index, there's more to do. Note we explicitly ignore
+		 * partitioned indexes here.
+		 */
 		if (rel->rd_rel->relkind == RELKIND_INDEX)
 		{
 			/* write the pg_index tuple */

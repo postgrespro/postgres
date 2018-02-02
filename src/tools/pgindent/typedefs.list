@@ -604,6 +604,7 @@ ExprContextCallbackFunction
 ExprContext_CB
 ExprDoneCond
 ExprEvalOp
+ExprEvalOpLookup
 ExprEvalStep
 ExprState
 ExprStateEvalFunc
@@ -1589,6 +1590,7 @@ PartitionRangeDatum
 PartitionRangeDatumKind
 PartitionScheme
 PartitionSpec
+PartitionTupleRouting
 PartitionedChildRelInfo
 PasswordType
 Path

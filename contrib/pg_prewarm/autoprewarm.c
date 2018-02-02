@@ -16,7 +16,7 @@
  *		relevant database in turn.  The former keeps running after the
  *		initial prewarm is complete to update the dump file periodically.
  *
- *	Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2016-2018, PostgreSQL Global Development Group
  *
  *	IDENTIFICATION
  *		contrib/pg_prewarm/autoprewarm.c
@@ -368,7 +368,7 @@ apw_load_buffers(void)
 			if (current_db != blkinfo[i].database)
 			{
 				/*
-				 * Combine BlockRecordInfos for global objects withs those of
+				 * Combine BlockRecordInfos for global objects with those of
 				 * the database.
 				 */
 				if (current_db != InvalidOid)
@@ -766,6 +766,8 @@ apw_init_shmem(void)
 		apw_state->pid_using_dumpfile = InvalidPid;
 	}
 	LWLockRelease(AddinShmemInitLock);
+
+	LWLockRegisterTranche(apw_state->lock.tranche, "autoprewarm");
 
 	return found;
 }

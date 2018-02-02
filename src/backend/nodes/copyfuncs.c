@@ -11,7 +11,7 @@
  * be handled easily in a simple depth-first traversal.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -204,6 +204,7 @@ _copyModifyTable(const ModifyTable *from)
 	COPY_SCALAR_FIELD(canSetTag);
 	COPY_SCALAR_FIELD(nominalRelation);
 	COPY_NODE_FIELD(partitioned_rels);
+	COPY_SCALAR_FIELD(partColsUpdated);
 	COPY_NODE_FIELD(resultRelations);
 	COPY_SCALAR_FIELD(resultRelIndex);
 	COPY_SCALAR_FIELD(rootResultRelIndex);
@@ -2263,6 +2264,7 @@ _copyPartitionedChildRelInfo(const PartitionedChildRelInfo *from)
 
 	COPY_SCALAR_FIELD(parent_relid);
 	COPY_NODE_FIELD(child_rels);
+	COPY_SCALAR_FIELD(part_cols_updated);
 
 	return newnode;
 }
@@ -3215,7 +3217,7 @@ _copyClosePortalStmt(const ClosePortalStmt *from)
 static CallStmt *
 _copyCallStmt(const CallStmt *from)
 {
-	CallStmt *newnode = makeNode(CallStmt);
+	CallStmt   *newnode = makeNode(CallStmt);
 
 	COPY_NODE_FIELD(funccall);
 
@@ -3379,6 +3381,7 @@ _copyIndexStmt(const IndexStmt *from)
 
 	COPY_STRING_FIELD(idxname);
 	COPY_NODE_FIELD(relation);
+	COPY_SCALAR_FIELD(relationId);
 	COPY_STRING_FIELD(accessMethod);
 	COPY_STRING_FIELD(tableSpace);
 	COPY_NODE_FIELD(indexParams);
@@ -3419,13 +3422,12 @@ _copyCreateFunctionStmt(const CreateFunctionStmt *from)
 {
 	CreateFunctionStmt *newnode = makeNode(CreateFunctionStmt);
 
+	COPY_SCALAR_FIELD(is_procedure);
 	COPY_SCALAR_FIELD(replace);
 	COPY_NODE_FIELD(funcname);
 	COPY_NODE_FIELD(parameters);
 	COPY_NODE_FIELD(returnType);
-	COPY_SCALAR_FIELD(is_procedure);
 	COPY_NODE_FIELD(options);
-	COPY_NODE_FIELD(withClause);
 
 	return newnode;
 }

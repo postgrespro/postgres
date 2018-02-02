@@ -6074,6 +6074,14 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
          (only supported in <function>to_char</function>)</entry>
        </row>
        <row>
+       <entry><literal>TZH</literal></entry>
+        <entry>time-zone hours</entry>
+       </row>
+       <row>
+       <entry><literal>TZM</literal></entry>
+        <entry>time-zone minutes</entry>
+       </row>
+       <row>
         <entry><literal>OF</literal></entry>
         <entry>time-zone offset from UTC
          (only supported in <function>to_char</function>)</entry>
@@ -19144,6 +19152,25 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         except that changes are returned as <type>bytea</type> and that
         changes are not consumed; that is, they will be returned again
         on future calls.
+       </entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
+         <primary>pg_replication_slot_advance</primary>
+        </indexterm>
+        <literal><function>pg_replication_slot_advance(<parameter>slot_name</parameter> <type>name</type>, <parameter>upto_lsn</parameter> <type>pg_lsn</type>)</function></literal>
+       </entry>
+       <entry>
+        (<parameter>slot_name</parameter> <type>name</type>, <parameter>end_lsn</parameter> <type>pg_lsn</type>)
+        <type>bool</type>
+       </entry>
+       <entry>
+        Advances the current confirmed position of a replication slot named
+        <parameter>slot_name</parameter>. The slot will not be moved backwards,
+        and it will not be moved beyond the current insert location.  Returns
+        name of the slot and real position to which it was advanced to.
        </entry>
       </row>
 

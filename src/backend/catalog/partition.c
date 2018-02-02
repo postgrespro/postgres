@@ -3,7 +3,7 @@
  * partition.c
  *		  Partitioning related data structures and functions.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -46,11 +46,11 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
-#include "utils/memutils.h"
 #include "utils/fmgroids.h"
 #include "utils/hashutils.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
@@ -1446,10 +1446,13 @@ get_qual_from_partbound(Relation rel, Relation parent,
 
 /*
  * map_partition_varattnos - maps varattno of any Vars in expr from the
- * parent attno to partition attno.
+ * attno's of 'from_rel' to the attno's of 'to_rel' partition, each of which
+ * may be either a leaf partition or a partitioned table, but both of which
+ * must be from the same partitioning hierarchy.
  *
- * We must allow for cases where physical attnos of a partition can be
- * different from the parent's.
+ * Even though all of the same column names must be present in all relations
+ * in the hierarchy, and they must also have the same types, the attnos may
+ * be different.
  *
  * If found_whole_row is not NULL, *found_whole_row returns whether a
  * whole-row variable was found in the input expression.
@@ -1459,8 +1462,8 @@ get_qual_from_partbound(Relation rel, Relation parent,
  * are working on Lists, so it's less messy to do the casts internally.
  */
 List *
-map_partition_varattnos(List *expr, int target_varno,
-						Relation partrel, Relation parent,
+map_partition_varattnos(List *expr, int fromrel_varno,
+						Relation to_rel, Relation from_rel,
 						bool *found_whole_row)
 {
 	bool		my_found_whole_row = false;
@@ -1469,14 +1472,14 @@ map_partition_varattnos(List *expr, int target_varno,
 	{
 		AttrNumber *part_attnos;
 
-		part_attnos = convert_tuples_by_name_map(RelationGetDescr(partrel),
-												 RelationGetDescr(parent),
+		part_attnos = convert_tuples_by_name_map(RelationGetDescr(to_rel),
+												 RelationGetDescr(from_rel),
 												 gettext_noop("could not convert row type"));
 		expr = (List *) map_variable_attnos((Node *) expr,
-											target_varno, 0,
+											fromrel_varno, 0,
 											part_attnos,
-											RelationGetDescr(parent)->natts,
-											RelationGetForm(partrel)->reltype,
+											RelationGetDescr(from_rel)->natts,
+											RelationGetForm(to_rel)->reltype,
 											&my_found_whole_row);
 	}
 
@@ -1622,18 +1625,60 @@ make_partition_op_expr(PartitionKey key, int keynum,
 	{
 		case PARTITION_STRATEGY_LIST:
 			{
-				ScalarArrayOpExpr *saopexpr;
+				List	   *elems = (List *) arg2;
+				int			nelems = list_length(elems);
 
-				/* Build leftop = ANY (rightop) */
-				saopexpr = makeNode(ScalarArrayOpExpr);
-				saopexpr->opno = operoid;
-				saopexpr->opfuncid = get_opcode(operoid);
-				saopexpr->useOr = true;
-				saopexpr->inputcollid = key->partcollation[keynum];
-				saopexpr->args = list_make2(arg1, arg2);
-				saopexpr->location = -1;
+				Assert(nelems >= 1);
+				Assert(keynum == 0);
 
-				result = (Expr *) saopexpr;
+				if (nelems > 1 &&
+					!type_is_array(key->parttypid[keynum]))
+				{
+					ArrayExpr  *arrexpr;
+					ScalarArrayOpExpr *saopexpr;
+
+					/* Construct an ArrayExpr for the right-hand inputs */
+					arrexpr = makeNode(ArrayExpr);
+					arrexpr->array_typeid =
+									get_array_type(key->parttypid[keynum]);
+					arrexpr->array_collid = key->parttypcoll[keynum];
+					arrexpr->element_typeid = key->parttypid[keynum];
+					arrexpr->elements = elems;
+					arrexpr->multidims = false;
+					arrexpr->location = -1;
+
+					/* Build leftop = ANY (rightop) */
+					saopexpr = makeNode(ScalarArrayOpExpr);
+					saopexpr->opno = operoid;
+					saopexpr->opfuncid = get_opcode(operoid);
+					saopexpr->useOr = true;
+					saopexpr->inputcollid = key->partcollation[keynum];
+					saopexpr->args = list_make2(arg1, arrexpr);
+					saopexpr->location = -1;
+
+					result = (Expr *) saopexpr;
+				}
+				else
+				{
+					List	   *elemops = NIL;
+					ListCell   *lc;
+
+					foreach (lc, elems)
+					{
+						Expr   *elem = lfirst(lc),
+							   *elemop;
+
+						elemop = make_opclause(operoid,
+											   BOOLOID,
+											   false,
+											   arg1, elem,
+											   InvalidOid,
+											   key->partcollation[keynum]);
+						elemops = lappend(elemops, elemop);
+					}
+
+					result = nelems > 1 ? makeBoolExpr(OR_EXPR, elemops, -1) : linitial(elemops);
+				}
 				break;
 			}
 
@@ -1755,11 +1800,10 @@ get_qual_for_list(Relation parent, PartitionBoundSpec *spec)
 	PartitionKey key = RelationGetPartitionKey(parent);
 	List	   *result;
 	Expr	   *keyCol;
-	ArrayExpr  *arr;
 	Expr	   *opexpr;
 	NullTest   *nulltest;
 	ListCell   *cell;
-	List	   *arrelems = NIL;
+	List	   *elems = NIL;
 	bool		list_has_null = false;
 
 	/*
@@ -1825,7 +1869,7 @@ get_qual_for_list(Relation parent, PartitionBoundSpec *spec)
 							false,	/* isnull */
 							key->parttypbyval[0]);
 
-			arrelems = lappend(arrelems, val);
+			elems = lappend(elems, val);
 		}
 	}
 	else
@@ -1840,30 +1884,25 @@ get_qual_for_list(Relation parent, PartitionBoundSpec *spec)
 			if (val->constisnull)
 				list_has_null = true;
 			else
-				arrelems = lappend(arrelems, copyObject(val));
+				elems = lappend(elems, copyObject(val));
 		}
 	}
 
-	if (arrelems)
+	if (elems)
 	{
-		/* Construct an ArrayExpr for the non-null partition values */
-		arr = makeNode(ArrayExpr);
-		arr->array_typeid = !type_is_array(key->parttypid[0])
-			? get_array_type(key->parttypid[0])
-			: key->parttypid[0];
-		arr->array_collid = key->parttypcoll[0];
-		arr->element_typeid = key->parttypid[0];
-		arr->elements = arrelems;
-		arr->multidims = false;
-		arr->location = -1;
-
-		/* Generate the main expression, i.e., keyCol = ANY (arr) */
+		/*
+		 * Generate the operator expression from the non-null partition
+		 * values.
+		 */
 		opexpr = make_partition_op_expr(key, 0, BTEqualStrategyNumber,
-										keyCol, (Expr *) arr);
+										keyCol, (Expr *) elems);
 	}
 	else
 	{
-		/* If there are no partition values, we don't need an = ANY expr */
+		/*
+		 * If there are no partition values, we don't need an operator
+		 * expression.
+		 */
 		opexpr = NULL;
 	}
 
@@ -2596,6 +2635,70 @@ get_partition_for_tuple(Relation relation, Datum *values, bool *isnull)
 		part_index = partdesc->boundinfo->default_index;
 
 	return part_index;
+}
+
+/*
+ * Checks if any of the 'attnums' is a partition key attribute for rel
+ *
+ * Sets *used_in_expr if any of the 'attnums' is found to be referenced in some
+ * partition key expression.  It's possible for a column to be both used
+ * directly and as part of an expression; if that happens, *used_in_expr may
+ * end up as either true or false.  That's OK for current uses of this
+ * function, because *used_in_expr is only used to tailor the error message
+ * text.
+ */
+bool
+has_partition_attrs(Relation rel, Bitmapset *attnums,
+					bool *used_in_expr)
+{
+	PartitionKey key;
+	int			partnatts;
+	List	   *partexprs;
+	ListCell   *partexprs_item;
+	int			i;
+
+	if (attnums == NULL || rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+		return false;
+
+	key = RelationGetPartitionKey(rel);
+	partnatts = get_partition_natts(key);
+	partexprs = get_partition_exprs(key);
+
+	partexprs_item = list_head(partexprs);
+	for (i = 0; i < partnatts; i++)
+	{
+		AttrNumber	partattno = get_partition_col_attnum(key, i);
+
+		if (partattno != 0)
+		{
+			if (bms_is_member(partattno - FirstLowInvalidHeapAttributeNumber,
+							  attnums))
+			{
+				if (used_in_expr)
+					*used_in_expr = false;
+				return true;
+			}
+		}
+		else
+		{
+			/* Arbitrary expression */
+			Node	   *expr = (Node *) lfirst(partexprs_item);
+			Bitmapset  *expr_attrs = NULL;
+
+			/* Find all attributes referenced */
+			pull_varattnos(expr, 1, &expr_attrs);
+			partexprs_item = lnext(partexprs_item);
+
+			if (bms_overlap(attnums, expr_attrs))
+			{
+				if (used_in_expr)
+					*used_in_expr = true;
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 /*

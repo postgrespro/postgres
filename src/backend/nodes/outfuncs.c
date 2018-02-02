@@ -3,7 +3,7 @@
  * outfuncs.c
  *	  Output functions for Postgres tree nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -372,6 +372,7 @@ _outModifyTable(StringInfo str, const ModifyTable *node)
 	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_UINT_FIELD(nominalRelation);
 	WRITE_NODE_FIELD(partitioned_rels);
+	WRITE_BOOL_FIELD(partColsUpdated);
 	WRITE_NODE_FIELD(resultRelations);
 	WRITE_INT_FIELD(resultRelIndex);
 	WRITE_INT_FIELD(rootResultRelIndex);
@@ -2105,6 +2106,7 @@ _outModifyTablePath(StringInfo str, const ModifyTablePath *node)
 	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_UINT_FIELD(nominalRelation);
 	WRITE_NODE_FIELD(partitioned_rels);
+	WRITE_BOOL_FIELD(partColsUpdated);
 	WRITE_NODE_FIELD(resultRelations);
 	WRITE_NODE_FIELD(subpaths);
 	WRITE_NODE_FIELD(subroots);
@@ -2527,6 +2529,7 @@ _outPartitionedChildRelInfo(StringInfo str, const PartitionedChildRelInfo *node)
 
 	WRITE_UINT_FIELD(parent_relid);
 	WRITE_NODE_FIELD(child_rels);
+	WRITE_BOOL_FIELD(part_cols_updated);
 }
 
 static void
@@ -2650,6 +2653,7 @@ _outIndexStmt(StringInfo str, const IndexStmt *node)
 
 	WRITE_STRING_FIELD(idxname);
 	WRITE_NODE_FIELD(relation);
+	WRITE_OID_FIELD(relationId);
 	WRITE_STRING_FIELD(accessMethod);
 	WRITE_STRING_FIELD(tableSpace);
 	WRITE_NODE_FIELD(indexParams);

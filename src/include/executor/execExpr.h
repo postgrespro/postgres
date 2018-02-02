@@ -4,7 +4,7 @@
  *	  Low level infrastructure related to expression evaluation
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execExpr.h
@@ -14,6 +14,7 @@
 #ifndef EXEC_EXPR_H
 #define EXEC_EXPR_H
 
+#include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
 
 /* forward references to avoid circularity */
@@ -51,12 +52,8 @@ typedef enum ExprEvalOp
 	EEOP_SCAN_FETCHSOME,
 
 	/* compute non-system Var value */
-	/* "FIRST" variants are used only the first time through */
-	EEOP_INNER_VAR_FIRST,
 	EEOP_INNER_VAR,
-	EEOP_OUTER_VAR_FIRST,
 	EEOP_OUTER_VAR,
-	EEOP_SCAN_VAR_FIRST,
 	EEOP_SCAN_VAR,
 
 	/* compute system Var value */
@@ -67,8 +64,11 @@ typedef enum ExprEvalOp
 	/* compute wholerow Var */
 	EEOP_WHOLEROW,
 
-	/* compute non-system Var value, assign it into ExprState's resultslot */
-	/* (these are not used if _FIRST checks would be needed) */
+	/*
+	 * Compute non-system Var value, assign it into ExprState's resultslot.
+	 * These are not used if a CheckVarSlotCompatibility() check would be
+	 * needed.
+	 */
 	EEOP_ASSIGN_INNER_VAR,
 	EEOP_ASSIGN_OUTER_VAR,
 	EEOP_ASSIGN_SCAN_VAR,
@@ -218,6 +218,17 @@ typedef enum ExprEvalOp
 	EEOP_WINDOW_FUNC,
 	EEOP_SUBPLAN,
 	EEOP_ALTERNATIVE_SUBPLAN,
+
+	/* aggregation related nodes */
+	EEOP_AGG_STRICT_DESERIALIZE,
+	EEOP_AGG_DESERIALIZE,
+	EEOP_AGG_STRICT_INPUT_CHECK,
+	EEOP_AGG_INIT_TRANS,
+	EEOP_AGG_STRICT_TRANS_CHECK,
+	EEOP_AGG_PLAIN_TRANS_BYVAL,
+	EEOP_AGG_PLAIN_TRANS,
+	EEOP_AGG_ORDERED_TRANS_DATUM,
+	EEOP_AGG_ORDERED_TRANS_TUPLE,
 
 	/* non-existent operation, used e.g. to check array lengths */
 	EEOP_LAST
@@ -574,6 +585,55 @@ typedef struct ExprEvalStep
 			/* out-of-line state, created by nodeSubplan.c */
 			AlternativeSubPlanState *asstate;
 		}			alternative_subplan;
+
+		/* for EEOP_AGG_*DESERIALIZE */
+		struct
+		{
+			AggState   *aggstate;
+			FunctionCallInfo fcinfo_data;
+			int			jumpnull;
+		}			agg_deserialize;
+
+		/* for EEOP_AGG_STRICT_INPUT_CHECK */
+		struct
+		{
+			bool	   *nulls;
+			int			nargs;
+			int			jumpnull;
+		}			agg_strict_input_check;
+
+		/* for EEOP_AGG_INIT_TRANS */
+		struct
+		{
+			AggState   *aggstate;
+			AggStatePerTrans pertrans;
+			ExprContext *aggcontext;
+			int			setno;
+			int			transno;
+			int			setoff;
+			int			jumpnull;
+		}			agg_init_trans;
+
+		/* for EEOP_AGG_STRICT_TRANS_CHECK */
+		struct
+		{
+			AggState   *aggstate;
+			int			setno;
+			int			transno;
+			int			setoff;
+			int			jumpnull;
+		}			agg_strict_trans_check;
+
+		/* for EEOP_AGG_{PLAIN,ORDERED}_TRANS* */
+		struct
+		{
+			AggState   *aggstate;
+			AggStatePerTrans pertrans;
+			ExprContext *aggcontext;
+			int			setno;
+			int			transno;
+			int			setoff;
+		}			agg_trans;
 	}			d;
 } ExprEvalStep;
 
@@ -621,6 +681,9 @@ extern void ExprEvalPushStep(ExprState *es, const ExprEvalStep *s);
 extern void ExecReadyInterpretedExpr(ExprState *state);
 extern ExprEvalOp ExecEvalStepOp(ExprState *state, ExprEvalStep *op);
 
+extern Datum ExecInterpExprStillValid(ExprState *state, ExprContext *econtext, bool *isNull);
+extern void CheckExprStillValid(ExprState *state, ExprContext *econtext);
+
 /*
  * Non fast-path execution functions. These are externs instead of statics in
  * execExprInterp.c, because that allows them to be used by other methods of
@@ -666,5 +729,14 @@ extern void ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op,
 						   ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,
 					ExprContext *econtext);
+
+extern void ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup);
+extern Datum ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,
+					 Datum newValue, bool newValueIsNull,
+					 Datum oldValue, bool oldValueIsNull);
+extern void ExecEvalAggOrderedTransDatum(ExprState *state, ExprEvalStep *op,
+							 ExprContext *econtext);
+extern void ExecEvalAggOrderedTransTuple(ExprState *state, ExprEvalStep *op,
+							 ExprContext *econtext);
 
 #endif							/* EXEC_EXPR_H */

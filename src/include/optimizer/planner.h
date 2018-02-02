@@ -4,7 +4,7 @@
  *	  prototypes for planner.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/planner.h
@@ -57,7 +57,8 @@ extern Expr *preprocess_phv_expression(PlannerInfo *root, Expr *expr);
 
 extern bool plan_cluster_use_sort(Oid tableOid, Oid indexOid);
 
-extern List *get_partitioned_child_rels(PlannerInfo *root, Index rti);
+extern List *get_partitioned_child_rels(PlannerInfo *root, Index rti,
+						   bool *part_cols_updated);
 extern List *get_partitioned_child_rels_for_join(PlannerInfo *root,
 									Relids join_relids);
 

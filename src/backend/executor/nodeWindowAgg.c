@@ -23,7 +23,7 @@
  * aggregate function over all rows in the current row's window frame.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -1928,7 +1928,7 @@ ExecInitWindowAgg(WindowAgg *node, EState *estate, int eflags)
 		aclresult = pg_proc_aclcheck(wfunc->winfnoid, GetUserId(),
 									 ACL_EXECUTE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_PROC,
+			aclcheck_error(aclresult, OBJECT_FUNCTION,
 						   get_func_name(wfunc->winfnoid));
 		InvokeFunctionExecuteHook(wfunc->winfnoid);
 
@@ -2189,7 +2189,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 		aclresult = pg_proc_aclcheck(transfn_oid, aggOwner,
 									 ACL_EXECUTE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_PROC,
+			aclcheck_error(aclresult, OBJECT_FUNCTION,
 						   get_func_name(transfn_oid));
 		InvokeFunctionExecuteHook(transfn_oid);
 
@@ -2198,7 +2198,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 			aclresult = pg_proc_aclcheck(invtransfn_oid, aggOwner,
 										 ACL_EXECUTE);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_PROC,
+				aclcheck_error(aclresult, OBJECT_FUNCTION,
 							   get_func_name(invtransfn_oid));
 			InvokeFunctionExecuteHook(invtransfn_oid);
 		}
@@ -2208,7 +2208,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 			aclresult = pg_proc_aclcheck(finalfn_oid, aggOwner,
 										 ACL_EXECUTE);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_PROC,
+				aclcheck_error(aclresult, OBJECT_FUNCTION,
 							   get_func_name(finalfn_oid));
 			InvokeFunctionExecuteHook(finalfn_oid);
 		}

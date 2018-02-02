@@ -3,7 +3,7 @@
  * view.c
  *	  use rewrite rules to construct views
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -46,8 +46,8 @@ void
 validateWithCheckOption(const char *value)
 {
 	if (value == NULL ||
-		(pg_strcasecmp(value, "local") != 0 &&
-		 pg_strcasecmp(value, "cascaded") != 0))
+		(strcmp(value, "local") != 0 &&
+		 strcmp(value, "cascaded") != 0))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -485,7 +485,7 @@ DefineView(ViewStmt *stmt, const char *queryString,
 	{
 		DefElem    *defel = (DefElem *) lfirst(cell);
 
-		if (pg_strcasecmp(defel->defname, "check_option") == 0)
+		if (strcmp(defel->defname, "check_option") == 0)
 			check_option = true;
 	}
 

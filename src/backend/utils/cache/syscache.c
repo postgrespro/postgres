@@ -3,7 +3,7 @@
  * syscache.c
  *	  System cache management routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1417,14 +1417,14 @@ GetSysCacheHashValue(int cacheId,
  */
 struct catclist *
 SearchSysCacheList(int cacheId, int nkeys,
-				   Datum key1, Datum key2, Datum key3, Datum key4)
+				   Datum key1, Datum key2, Datum key3)
 {
 	if (cacheId < 0 || cacheId >= SysCacheSize ||
 		!PointerIsValid(SysCache[cacheId]))
 		elog(ERROR, "invalid cache ID: %d", cacheId);
 
 	return SearchCatCacheList(SysCache[cacheId], nkeys,
-							  key1, key2, key3, key4);
+							  key1, key2, key3);
 }
 
 /*

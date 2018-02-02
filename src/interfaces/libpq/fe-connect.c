@@ -3,7 +3,7 @@
  * fe-connect.c
  *	  functions related to setting up a connection to the backend
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -972,7 +972,7 @@ connectOptions2(PGconn *conn)
 		{
 			conn->status = CONNECTION_BAD;
 			printfPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("could not match %d host names to %d hostaddrs\n"),
+							  libpq_gettext("could not match %d host names to %d hostaddr values\n"),
 							  count_comma_separated_elems(conn->pghost), conn->nconnhost);
 			return false;
 		}

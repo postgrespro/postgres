@@ -4,7 +4,7 @@
  *	  definitions for executor state nodes
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/execnodes.h
@@ -21,7 +21,6 @@
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
-#include "storage/spin.h"
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
 #include "utils/reltrigger.h"
@@ -86,6 +85,9 @@ typedef struct ExprState
 
 	/* original expression tree, for debugging only */
 	Expr	   *expr;
+
+	/* private state for an evalfunc */
+	void	   *evalfunc_private;
 
 	/*
 	 * XXX: following fields only needed during "compilation" (ExecInitExpr);
@@ -156,6 +158,7 @@ typedef struct IndexInfo
 	bool		ii_ReadyForInserts;
 	bool		ii_Concurrent;
 	bool		ii_BrokenHotChain;
+	Oid			ii_Am;
 	void	   *ii_AmCache;
 	MemoryContext ii_Context;
 } IndexInfo;
@@ -983,21 +986,14 @@ typedef struct ModifyTableState
 	TupleTableSlot *mt_existing;	/* slot to store existing target tuple in */
 	List	   *mt_excludedtlist;	/* the excluded pseudo relation's tlist  */
 	TupleTableSlot *mt_conflproj;	/* CONFLICT ... SET ... projection target */
-	struct PartitionDispatchData **mt_partition_dispatch_info;
+	struct PartitionTupleRouting *mt_partition_tuple_routing;
 	/* Tuple-routing support info */
-	int			mt_num_dispatch;	/* Number of entries in the above array */
-	int			mt_num_partitions;	/* Number of members in the following
-									 * arrays */
-	ResultRelInfo **mt_partitions;	/* Per partition result relation pointers */
-	TupleConversionMap **mt_partition_tupconv_maps;
-	/* Per partition tuple conversion map */
-	TupleTableSlot *mt_partition_tuple_slot;
 	struct TransitionCaptureState *mt_transition_capture;
 	/* controls transition table population for specified operation */
 	struct TransitionCaptureState *mt_oc_transition_capture;
 	/* controls transition table population for INSERT...ON CONFLICT UPDATE */
-	TupleConversionMap **mt_transition_tupconv_maps;
-	/* Per plan/partition tuple conversion */
+	TupleConversionMap **mt_per_subplan_tupconv_maps;
+	/* Per plan map for tuple conversion from child to root */
 } ModifyTableState;
 
 /* ----------------
@@ -1849,14 +1845,19 @@ typedef struct AggState
 	Tuplesortstate *sort_out;	/* input is copied here for next phase */
 	TupleTableSlot *sort_slot;	/* slot for sort results */
 	/* these fields are used in AGG_PLAIN and AGG_SORTED modes: */
-	AggStatePerGroup pergroup;	/* per-Aggref-per-group working state */
+	AggStatePerGroup *pergroups;	/* grouping set indexed array of per-group
+									 * pointers */
 	HeapTuple	grp_firstTuple; /* copy of first tuple of current group */
 	/* these fields are used in AGG_HASHED and AGG_MIXED modes: */
 	bool		table_filled;	/* hash table filled yet? */
 	int			num_hashes;
-	AggStatePerHash perhash;
-	AggStatePerGroup *hash_pergroup;	/* array of per-group pointers */
+	AggStatePerHash perhash;	/* array of per-hashtable data */
+	AggStatePerGroup *hash_pergroup;	/* grouping set indexed array of
+										 * per-group pointers */
+
 	/* support for evaluation of agg input expressions: */
+	AggStatePerGroup *all_pergroups;	/* array of first ->pergroups, than
+										 * ->hash_pergroup */
 	ProjectionInfo *combinedproj;	/* projection machinery */
 } AggState;
 

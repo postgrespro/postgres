@@ -3,7 +3,7 @@
  * nodeAppend.c
  *	  routines to handle append nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -446,10 +446,9 @@ choose_next_subplan_for_leader(AppendState *node)
  *
  *		We start from the first plan and advance through the list;
  *		when we get back to the end, we loop back to the first
- *		nonpartial plan.  This assigns the non-partial plans first
- *		in order of descending cost and then spreads out the
- *		workers as evenly as possible across the remaining partial
- *		plans.
+ *		partial plan.  This assigns the non-partial plans first in
+ *		order of descending cost and then spreads out the workers
+ *		as evenly as possible across the remaining partial plans.
  * ----------------------------------------------------------------
  */
 static bool

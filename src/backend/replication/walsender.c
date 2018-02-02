@@ -37,7 +37,7 @@
  * record, wait for it to be replicated to the standby, and then exit.
  *
  *
- * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/walsender.c
@@ -56,6 +56,7 @@
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 
+#include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
@@ -1074,6 +1075,7 @@ StartLogicalReplication(StartReplicationCmd *cmd)
 	 * to be shipped from that position.
 	 */
 	logical_decoding_ctx = CreateDecodingContext(cmd->startpoint, cmd->options,
+												 false,
 												 logical_read_xlog_page,
 												 WalSndPrepareWrite,
 												 WalSndWriteData,
@@ -1504,6 +1506,9 @@ exec_replication_command(const char *cmd_string)
 	initStringInfo(&reply_message);
 	initStringInfo(&tmpbuf);
 
+	/* Report to pgstat that this process is running */
+	pgstat_report_activity(STATE_RUNNING, NULL);
+
 	switch (cmd_node->type)
 	{
 		case T_IdentifySystemCmd:
@@ -1555,6 +1560,9 @@ exec_replication_command(const char *cmd_string)
 				ereport(ERROR,
 						(errmsg("cannot execute SQL commands in WAL sender for physical replication")));
 
+			/* Report to pgstat that this process is now idle */
+			pgstat_report_activity(STATE_IDLE, NULL);
+
 			/* Tell the caller that this wasn't a WalSender command. */
 			return false;
 
@@ -1569,6 +1577,9 @@ exec_replication_command(const char *cmd_string)
 
 	/* Send CommandComplete message */
 	EndCommand("SELECT", DestRemote);
+
+	/* Report to pgstat that this process is now idle */
+	pgstat_report_activity(STATE_IDLE, NULL);
 
 	return true;
 }
@@ -2088,9 +2099,6 @@ WalSndLoop(WalSndSendDataCallback send_data)
 	 */
 	last_reply_timestamp = GetCurrentTimestamp();
 	waiting_for_ping_response = false;
-
-	/* Report to pgstat that this process is running */
-	pgstat_report_activity(STATE_RUNNING, NULL);
 
 	/*
 	 * Loop until we reach the end of this timeline or the client requests to
@@ -3236,11 +3244,12 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 		memset(nulls, 0, sizeof(nulls));
 		values[0] = Int32GetDatum(pid);
 
-		if (!superuser())
+		if (!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
 		{
 			/*
-			 * Only superusers can see details. Other users only get the pid
-			 * value to know it's a walsender, but no details.
+			 * Only superusers and members of pg_read_all_stats can see details.
+			 * Other users only get the pid value to know it's a walsender,
+			 * but no details.
 			 */
 			MemSet(&nulls[1], true, PG_STAT_GET_WAL_SENDERS_COLS - 1);
 		}

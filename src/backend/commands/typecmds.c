@@ -3,7 +3,7 @@
  * typecmds.c
  *	  Routines for SQL commands that manipulate types (and domains).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -190,7 +190,7 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(typeNamespace, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(typeNamespace));
 #endif
 
@@ -245,42 +245,42 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 		DefElem    *defel = (DefElem *) lfirst(pl);
 		DefElem   **defelp;
 
-		if (pg_strcasecmp(defel->defname, "like") == 0)
+		if (strcmp(defel->defname, "like") == 0)
 			defelp = &likeTypeEl;
-		else if (pg_strcasecmp(defel->defname, "internallength") == 0)
+		else if (strcmp(defel->defname, "internallength") == 0)
 			defelp = &internalLengthEl;
-		else if (pg_strcasecmp(defel->defname, "input") == 0)
+		else if (strcmp(defel->defname, "input") == 0)
 			defelp = &inputNameEl;
-		else if (pg_strcasecmp(defel->defname, "output") == 0)
+		else if (strcmp(defel->defname, "output") == 0)
 			defelp = &outputNameEl;
-		else if (pg_strcasecmp(defel->defname, "receive") == 0)
+		else if (strcmp(defel->defname, "receive") == 0)
 			defelp = &receiveNameEl;
-		else if (pg_strcasecmp(defel->defname, "send") == 0)
+		else if (strcmp(defel->defname, "send") == 0)
 			defelp = &sendNameEl;
-		else if (pg_strcasecmp(defel->defname, "typmod_in") == 0)
+		else if (strcmp(defel->defname, "typmod_in") == 0)
 			defelp = &typmodinNameEl;
-		else if (pg_strcasecmp(defel->defname, "typmod_out") == 0)
+		else if (strcmp(defel->defname, "typmod_out") == 0)
 			defelp = &typmodoutNameEl;
-		else if (pg_strcasecmp(defel->defname, "analyze") == 0 ||
-				 pg_strcasecmp(defel->defname, "analyse") == 0)
+		else if (strcmp(defel->defname, "analyze") == 0 ||
+				 strcmp(defel->defname, "analyse") == 0)
 			defelp = &analyzeNameEl;
-		else if (pg_strcasecmp(defel->defname, "category") == 0)
+		else if (strcmp(defel->defname, "category") == 0)
 			defelp = &categoryEl;
-		else if (pg_strcasecmp(defel->defname, "preferred") == 0)
+		else if (strcmp(defel->defname, "preferred") == 0)
 			defelp = &preferredEl;
-		else if (pg_strcasecmp(defel->defname, "delimiter") == 0)
+		else if (strcmp(defel->defname, "delimiter") == 0)
 			defelp = &delimiterEl;
-		else if (pg_strcasecmp(defel->defname, "element") == 0)
+		else if (strcmp(defel->defname, "element") == 0)
 			defelp = &elemTypeEl;
-		else if (pg_strcasecmp(defel->defname, "default") == 0)
+		else if (strcmp(defel->defname, "default") == 0)
 			defelp = &defaultValueEl;
-		else if (pg_strcasecmp(defel->defname, "passedbyvalue") == 0)
+		else if (strcmp(defel->defname, "passedbyvalue") == 0)
 			defelp = &byValueEl;
-		else if (pg_strcasecmp(defel->defname, "alignment") == 0)
+		else if (strcmp(defel->defname, "alignment") == 0)
 			defelp = &alignmentEl;
-		else if (pg_strcasecmp(defel->defname, "storage") == 0)
+		else if (strcmp(defel->defname, "storage") == 0)
 			defelp = &storageEl;
-		else if (pg_strcasecmp(defel->defname, "collatable") == 0)
+		else if (strcmp(defel->defname, "collatable") == 0)
 			defelp = &collatableEl;
 		else
 		{
@@ -526,25 +526,25 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 #ifdef NOT_USED
 	/* XXX this is unnecessary given the superuser check above */
 	if (inputOid && !pg_proc_ownercheck(inputOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(inputName));
 	if (outputOid && !pg_proc_ownercheck(outputOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(outputName));
 	if (receiveOid && !pg_proc_ownercheck(receiveOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(receiveName));
 	if (sendOid && !pg_proc_ownercheck(sendOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(sendName));
 	if (typmodinOid && !pg_proc_ownercheck(typmodinOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(typmodinName));
 	if (typmodoutOid && !pg_proc_ownercheck(typmodoutOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(typmodoutName));
 	if (analyzeOid && !pg_proc_ownercheck(analyzeOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 					   NameListToString(analyzeName));
 #endif
 
@@ -772,7 +772,7 @@ DefineDomain(CreateDomainStmt *stmt)
 	aclresult = pg_namespace_aclcheck(domainNamespace, GetUserId(),
 									  ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(domainNamespace));
 
 	/*
@@ -1171,7 +1171,7 @@ DefineEnum(CreateEnumStmt *stmt)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(enumNamespace, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(enumNamespace));
 
 	/*
@@ -1398,7 +1398,7 @@ DefineRange(CreateRangeStmt *stmt)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(typeNamespace, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(typeNamespace));
 
 	/*
@@ -1439,7 +1439,7 @@ DefineRange(CreateRangeStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(lc);
 
-		if (pg_strcasecmp(defel->defname, "subtype") == 0)
+		if (strcmp(defel->defname, "subtype") == 0)
 		{
 			if (OidIsValid(rangeSubtype))
 				ereport(ERROR,
@@ -1448,7 +1448,7 @@ DefineRange(CreateRangeStmt *stmt)
 			/* we can look up the subtype name immediately */
 			rangeSubtype = typenameTypeId(NULL, defGetTypeName(defel));
 		}
-		else if (pg_strcasecmp(defel->defname, "subtype_opclass") == 0)
+		else if (strcmp(defel->defname, "subtype_opclass") == 0)
 		{
 			if (rangeSubOpclassName != NIL)
 				ereport(ERROR,
@@ -1456,7 +1456,7 @@ DefineRange(CreateRangeStmt *stmt)
 						 errmsg("conflicting or redundant options")));
 			rangeSubOpclassName = defGetQualifiedName(defel);
 		}
-		else if (pg_strcasecmp(defel->defname, "collation") == 0)
+		else if (strcmp(defel->defname, "collation") == 0)
 		{
 			if (rangeCollationName != NIL)
 				ereport(ERROR,
@@ -1464,7 +1464,7 @@ DefineRange(CreateRangeStmt *stmt)
 						 errmsg("conflicting or redundant options")));
 			rangeCollationName = defGetQualifiedName(defel);
 		}
-		else if (pg_strcasecmp(defel->defname, "canonical") == 0)
+		else if (strcmp(defel->defname, "canonical") == 0)
 		{
 			if (rangeCanonicalName != NIL)
 				ereport(ERROR,
@@ -1472,7 +1472,7 @@ DefineRange(CreateRangeStmt *stmt)
 						 errmsg("conflicting or redundant options")));
 			rangeCanonicalName = defGetQualifiedName(defel);
 		}
-		else if (pg_strcasecmp(defel->defname, "subtype_diff") == 0)
+		else if (strcmp(defel->defname, "subtype_diff") == 0)
 		{
 			if (rangeSubtypeDiffName != NIL)
 				ereport(ERROR,
@@ -2042,7 +2042,7 @@ findRangeCanonicalFunction(List *procname, Oid typeOid)
 	/* Also, range type's creator must have permission to call function */
 	aclresult = pg_proc_aclcheck(procOid, GetUserId(), ACL_EXECUTE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_PROC, get_func_name(procOid));
+		aclcheck_error(aclresult, OBJECT_FUNCTION, get_func_name(procOid));
 
 	return procOid;
 }
@@ -2085,7 +2085,7 @@ findRangeSubtypeDiffFunction(List *procname, Oid subtype)
 	/* Also, range type's creator must have permission to call function */
 	aclresult = pg_proc_aclcheck(procOid, GetUserId(), ACL_EXECUTE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_PROC, get_func_name(procOid));
+		aclcheck_error(aclresult, OBJECT_FUNCTION, get_func_name(procOid));
 
 	return procOid;
 }
@@ -3380,7 +3380,7 @@ AlterTypeOwner(List *names, Oid newOwnerId, ObjectType objecttype)
 											  newOwnerId,
 											  ACL_CREATE);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+				aclcheck_error(aclresult, OBJECT_SCHEMA,
 							   get_namespace_name(typTup->typnamespace));
 		}
 

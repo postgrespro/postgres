@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -262,7 +262,7 @@ interpretOidsOption(List *defList, bool allowOids)
 		DefElem    *def = (DefElem *) lfirst(cell);
 
 		if (def->defnamespace == NULL &&
-			pg_strcasecmp(def->defname, "oids") == 0)
+			strcmp(def->defname, "oids") == 0)
 		{
 			if (!allowOids)
 				ereport(ERROR,

@@ -9,7 +9,7 @@
  * into a lot of low-level code.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/reloptions.h
@@ -166,7 +166,7 @@ typedef struct
  *	code block.
  */
 #define HAVE_RELOPTION(optname, option) \
-	(pg_strncasecmp(option.gen->name, optname, option.gen->namelen + 1) == 0)
+	(strncmp(option.gen->name, optname, option.gen->namelen + 1) == 0)
 
 #define HANDLE_INT_RELOPTION(optname, var, option, wasset)		\
 	do {														\

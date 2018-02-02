@@ -4,7 +4,7 @@
  *	  prototypes for nodeHash.c
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/nodeHash.h
@@ -33,7 +33,6 @@ extern void ExecHashTableDetach(HashJoinTable hashtable);
 extern void ExecHashTableDetachBatch(HashJoinTable hashtable);
 extern void ExecParallelHashTableSetCurrentBatch(HashJoinTable hashtable,
 									 int batchno);
-void		ExecParallelHashUpdateSpacePeak(HashJoinTable hashtable, int batchno);
 
 extern void ExecHashTableInsert(HashJoinTable hashtable,
 					TupleTableSlot *slot,

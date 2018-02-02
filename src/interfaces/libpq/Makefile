@@ -2,7 +2,7 @@
 #
 # Makefile for src/interfaces/libpq library
 #
-# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/interfaces/libpq/Makefile
@@ -52,7 +52,7 @@ OBJS += encnames.o wchar.o
 OBJS += base64.o ip.o md5.o scram-common.o saslprep.o unicode_norm.o
 
 ifeq ($(with_openssl),yes)
-OBJS += fe-secure-openssl.o sha2_openssl.o
+OBJS += fe-secure-openssl.o fe-secure-common.o sha2_openssl.o
 else
 OBJS += sha2.o
 endif

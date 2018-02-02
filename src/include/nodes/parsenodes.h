@@ -12,7 +12,7 @@
  * identifying statement boundaries in multi-statement source strings.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -839,7 +839,7 @@ typedef struct PartitionRangeDatum
 } PartitionRangeDatum;
 
 /*
- * PartitionCmd - info for ALTER TABLE ATTACH/DETACH PARTITION commands
+ * PartitionCmd - info for ALTER TABLE/INDEX ATTACH/DETACH PARTITION commands
  */
 typedef struct PartitionCmd
 {
@@ -1845,31 +1845,12 @@ typedef enum GrantTargetType
 	ACL_TARGET_DEFAULTS			/* ALTER DEFAULT PRIVILEGES */
 } GrantTargetType;
 
-typedef enum GrantObjectType
-{
-	ACL_OBJECT_COLUMN,			/* column */
-	ACL_OBJECT_RELATION,		/* table, view */
-	ACL_OBJECT_SEQUENCE,		/* sequence */
-	ACL_OBJECT_DATABASE,		/* database */
-	ACL_OBJECT_DOMAIN,			/* domain */
-	ACL_OBJECT_FDW,				/* foreign-data wrapper */
-	ACL_OBJECT_FOREIGN_SERVER,	/* foreign server */
-	ACL_OBJECT_FUNCTION,		/* function */
-	ACL_OBJECT_LANGUAGE,		/* procedural language */
-	ACL_OBJECT_LARGEOBJECT,		/* largeobject */
-	ACL_OBJECT_NAMESPACE,		/* namespace */
-	ACL_OBJECT_PROCEDURE,		/* procedure */
-	ACL_OBJECT_ROUTINE,			/* routine */
-	ACL_OBJECT_TABLESPACE,		/* tablespace */
-	ACL_OBJECT_TYPE				/* type */
-} GrantObjectType;
-
 typedef struct GrantStmt
 {
 	NodeTag		type;
 	bool		is_grant;		/* true = GRANT, false = REVOKE */
 	GrantTargetType targtype;	/* type of the grant target */
-	GrantObjectType objtype;	/* kind of object being operated on */
+	ObjectType	objtype;		/* kind of object being operated on */
 	List	   *objects;		/* list of RangeVar nodes, ObjectWithArgs
 								 * nodes, or plain names (as Value strings) */
 	List	   *privileges;		/* list of AccessPriv nodes */
@@ -2702,6 +2683,10 @@ typedef struct FetchStmt
  * index, just a UNIQUE/PKEY constraint using an existing index.  isconstraint
  * must always be true in this case, and the fields describing the index
  * properties are empty.
+ *
+ * The relation to build the index on can be represented either by name
+ * (in which case the RangeVar indicates whether to recurse or not) or by OID
+ * (in which case the command is always recursive).
  * ----------------------
  */
 typedef struct IndexStmt
@@ -2709,6 +2694,7 @@ typedef struct IndexStmt
 	NodeTag		type;
 	char	   *idxname;		/* name of new index, or NULL for default */
 	RangeVar   *relation;		/* relation to build index on */
+	Oid			relationId;		/* OID of relation to build index on */
 	char	   *accessMethod;	/* name of access method (eg. btree) */
 	char	   *tableSpace;		/* tablespace, or NULL for default */
 	List	   *indexParams;	/* columns to index: a list of IndexElem */
@@ -2749,13 +2735,12 @@ typedef struct CreateStatsStmt
 typedef struct CreateFunctionStmt
 {
 	NodeTag		type;
+	bool		is_procedure;	/* it's really CREATE PROCEDURE */
 	bool		replace;		/* T => replace if already exists */
 	List	   *funcname;		/* qualified name of function to create */
 	List	   *parameters;		/* a list of FunctionParameter */
 	TypeName   *returnType;		/* the return type */
-	bool		is_procedure;
 	List	   *options;		/* a list of DefElem */
-	List	   *withClause;		/* a list of DefElem */
 } CreateFunctionStmt;
 
 typedef enum FunctionParameterMode
@@ -2803,6 +2788,7 @@ typedef struct InlineCodeBlock
 	char	   *source_text;	/* source text of anonymous code block */
 	Oid			langOid;		/* OID of selected language */
 	bool		langIsTrusted;	/* trusted property of the language */
+	bool		atomic;			/* atomic execution context */
 } InlineCodeBlock;
 
 /* ----------------------
@@ -2814,6 +2800,12 @@ typedef struct CallStmt
 	NodeTag		type;
 	FuncCall   *funccall;
 } CallStmt;
+
+typedef struct CallContext
+{
+	NodeTag		type;
+	bool		atomic;
+} CallContext;
 
 /* ----------------------
  *		Alter Object Rename Statement

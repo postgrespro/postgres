@@ -33,7 +33,7 @@
  * specific parts are in the libpqwalreceiver module. It's loaded
  * dynamically to avoid linking the server with libpq.
  *
- * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -1442,7 +1442,8 @@ pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
 	if (!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
 	{
 		/*
-		 * Only superusers can see details. Other users only get the pid value
+		 * Only superusers and members of pg_read_all_stats can see details.
+		 * Other users only get the pid value
 		 * to know whether it is a WAL receiver, but no details.
 		 */
 		MemSet(&nulls[1], true, sizeof(bool) * (tupdesc->natts - 1));

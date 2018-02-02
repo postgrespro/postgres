@@ -3,7 +3,7 @@
  * auth.c
  *	  Routines to handle network authentication
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -873,8 +873,6 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 	int			inputlen;
 	int			result;
 	bool		initial;
-	char	   *tls_finished = NULL;
-	size_t		tls_finished_len = 0;
 
 	/*
 	 * SASL auth is not supported for protocol versions before 3, because it
@@ -896,35 +894,24 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 	 * channel-binding variants go first, if they are supported.  Channel
 	 * binding is only supported in SSL builds.
 	 */
-	sasl_mechs = palloc(strlen(SCRAM_SHA256_PLUS_NAME) +
-						strlen(SCRAM_SHA256_NAME) + 3);
+	sasl_mechs = palloc(strlen(SCRAM_SHA_256_PLUS_NAME) +
+						strlen(SCRAM_SHA_256_NAME) + 3);
 	p = sasl_mechs;
 
 	if (port->ssl_in_use)
 	{
-		strcpy(p, SCRAM_SHA256_PLUS_NAME);
-		p += strlen(SCRAM_SHA256_PLUS_NAME) + 1;
+		strcpy(p, SCRAM_SHA_256_PLUS_NAME);
+		p += strlen(SCRAM_SHA_256_PLUS_NAME) + 1;
 	}
 
-	strcpy(p, SCRAM_SHA256_NAME);
-	p += strlen(SCRAM_SHA256_NAME) + 1;
+	strcpy(p, SCRAM_SHA_256_NAME);
+	p += strlen(SCRAM_SHA_256_NAME) + 1;
 
 	/* Put another '\0' to mark that list is finished. */
 	p[0] = '\0';
 
 	sendAuthRequest(port, AUTH_REQ_SASL, sasl_mechs, p - sasl_mechs + 1);
 	pfree(sasl_mechs);
-
-#ifdef USE_SSL
-
-	/*
-	 * Get data for channel binding.
-	 */
-	if (port->ssl_in_use)
-	{
-		tls_finished = be_tls_get_peer_finished(port, &tls_finished_len);
-	}
-#endif
 
 	/*
 	 * Initialize the status tracker for message exchanges.
@@ -937,11 +924,7 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 	 * This is because we don't want to reveal to an attacker what usernames
 	 * are valid, nor which users have a valid password.
 	 */
-	scram_opaq = pg_be_scram_init(port->user_name,
-								  shadow_pass,
-								  port->ssl_in_use,
-								  tls_finished,
-								  tls_finished_len);
+	scram_opaq = pg_be_scram_init(port, shadow_pass);
 
 	/*
 	 * Loop through SASL message exchange.  This exchange can consist of
@@ -990,8 +973,8 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 			const char *selected_mech;
 
 			selected_mech = pq_getmsgrawstring(&buf);
-			if (strcmp(selected_mech, SCRAM_SHA256_NAME) != 0 &&
-				strcmp(selected_mech, SCRAM_SHA256_PLUS_NAME) != 0)
+			if (strcmp(selected_mech, SCRAM_SHA_256_NAME) != 0 &&
+				strcmp(selected_mech, SCRAM_SHA_256_PLUS_NAME) != 0)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -2355,22 +2338,62 @@ static int	errdetail_for_ldap(LDAP *ldap);
 static int
 InitializeLDAPConnection(Port *port, LDAP **ldap)
 {
+	const char *scheme;
 	int			ldapversion = LDAP_VERSION3;
 	int			r;
 
-	*ldap = ldap_init(port->hba->ldapserver, port->hba->ldapport);
+	scheme = port->hba->ldapscheme;
+	if (scheme == NULL)
+		scheme = "ldap";
+#ifdef WIN32
+	if (strcmp(scheme, "ldaps") == 0)
+		*ldap = ldap_sslinit(port->hba->ldapserver, port->hba->ldapport, 1);
+	else
+		*ldap = ldap_init(port->hba->ldapserver, port->hba->ldapport);
 	if (!*ldap)
 	{
-#ifndef WIN32
-		ereport(LOG,
-				(errmsg("could not initialize LDAP: %m")));
-#else
 		ereport(LOG,
 				(errmsg("could not initialize LDAP: error code %d",
 						(int) LdapGetLastError())));
-#endif
+
 		return STATUS_ERROR;
 	}
+#else
+#ifdef HAVE_LDAP_INITIALIZE
+	{
+		char	   *uri;
+
+		uri = psprintf("%s://%s:%d", scheme, port->hba->ldapserver,
+					   port->hba->ldapport);
+		r = ldap_initialize(ldap, uri);
+		pfree(uri);
+		if (r != LDAP_SUCCESS)
+		{
+			ereport(LOG,
+					(errmsg("could not initialize LDAP: %s",
+							ldap_err2string(r))));
+
+			return STATUS_ERROR;
+		}
+	}
+#else
+	if (strcmp(scheme, "ldaps") == 0)
+	{
+		ereport(LOG,
+				(errmsg("ldaps not supported with this LDAP library")));
+
+		return STATUS_ERROR;
+	}
+	*ldap = ldap_init(port->hba->ldapserver, port->hba->ldapport);
+	if (!*ldap)
+	{
+		ereport(LOG,
+				(errmsg("could not initialize LDAP: %m")));
+
+		return STATUS_ERROR;
+	}
+#endif
+#endif
 
 	if ((r = ldap_set_option(*ldap, LDAP_OPT_PROTOCOL_VERSION, &ldapversion)) != LDAP_SUCCESS)
 	{
@@ -2450,6 +2473,11 @@ InitializeLDAPConnection(Port *port, LDAP **ldap)
 #define LDAP_NO_ATTRS "1.1"
 #endif
 
+/* Not all LDAP implementations define this. */
+#ifndef LDAPS_PORT
+#define LDAPS_PORT 636
+#endif
+
 /*
  * Return a newly allocated C string copied from "pattern" with all
  * occurrences of the placeholder "$username" replaced with "user_name".
@@ -2493,7 +2521,13 @@ CheckLDAPAuth(Port *port)
 	}
 
 	if (port->hba->ldapport == 0)
-		port->hba->ldapport = LDAP_PORT;
+	{
+		if (port->hba->ldapscheme != NULL &&
+			strcmp(port->hba->ldapscheme, "ldaps") == 0)
+			port->hba->ldapport = LDAPS_PORT;
+		else
+			port->hba->ldapport = LDAP_PORT;
+	}
 
 	sendAuthRequest(port, AUTH_REQ_PASSWORD, NULL, 0);
 
