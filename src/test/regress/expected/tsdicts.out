@@ -679,7 +679,6 @@ SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a
  'card':3,10 'invit':2,9 'like':6 'look':5 'order':1,8
 (1 row)
 
-<<<<<<< HEAD
 ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH english_stem UNION simple;
 SELECT to_tsvector('thesaurus_tst', 'The Mysterious Rings of Supernova 1987A');
                                      to_tsvector                                      
