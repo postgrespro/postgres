@@ -587,9 +587,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <ival>		dictionary_map_set_expr_operator
 %type <dmapelem>	dictionary_map_dict dictionary_map_command_expr_paren
 					dictionary_map_set_expr dictionary_map_case
-					dictionary_map_action dictionary_map
-					opt_dictionary_map_case_else dictionary_config
-					dictionary_config_comma
+					dictionary_map_action opt_dictionary_map_case_else
+					dictionary_config dictionary_config_comma
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -10449,7 +10448,7 @@ dictionary_config_comma:
 		;
 
 dictionary_config:
-			dictionary_map { $$ = $1; }
+			dictionary_map_set_expr { $$ = $1; }
 			| dictionary_map_dict ',' dictionary_config_comma
 			{
 				DictMapExprElem *n = makeNode(DictMapExprElem);
@@ -10465,11 +10464,6 @@ dictionary_config:
 			}
 		;
 
-dictionary_map:
-			dictionary_map_case { $$ = $1; }
-			| dictionary_map_set_expr { $$ = $1; }
-		;
-
 dictionary_map_action:
 			KEEP
 			{
@@ -10478,16 +10472,16 @@ dictionary_map_action:
 				n->data = NULL;
 				$$ = n;
 			}
-			| dictionary_map { $$ = $1; }
+			| dictionary_map_set_expr { $$ = $1; }
 		;
 
 opt_dictionary_map_case_else:
-			ELSE dictionary_map { $$ = $2; }
+			ELSE dictionary_map_set_expr { $$ = $2; }
 			| { $$ = NULL; }
 		;
 
 dictionary_map_case:
-			CASE dictionary_map WHEN opt_dictionary_map_no MATCH THEN dictionary_map_action opt_dictionary_map_case_else END_P
+			CASE dictionary_map_set_expr WHEN opt_dictionary_map_no MATCH THEN dictionary_map_action opt_dictionary_map_case_else END_P
 			{
 				DictMapCase *n = makeNode(DictMapCase);
 				DictMapElem *r = makeNode(DictMapElem);
@@ -10512,20 +10506,7 @@ dictionary_map_set_expr_operator:
 
 dictionary_map_set_expr:
 			dictionary_map_command_expr_paren { $$ = $1; }
-			| dictionary_map_case dictionary_map_set_expr_operator dictionary_map_case
-			{
-				DictMapExprElem *n = makeNode(DictMapExprElem);
-				DictMapElem *r = makeNode(DictMapElem);
-
-				n->left = $1;
-				n->oper = $2;
-				n->right = $3;
-
-				r->kind = DICT_MAP_EXPRESSION;
-				r->data = n;
-				$$ = r;
-			}
-			| dictionary_map_command_expr_paren dictionary_map_set_expr_operator dictionary_map_command_expr_paren
+			| dictionary_map_set_expr dictionary_map_set_expr_operator dictionary_map_command_expr_paren
 			{
 				DictMapExprElem *n = makeNode(DictMapExprElem);
 				DictMapElem *r = makeNode(DictMapElem);
@@ -10543,6 +10524,7 @@ dictionary_map_set_expr:
 dictionary_map_command_expr_paren:
 			'(' dictionary_map_set_expr ')'	{ $$ = $2; }
 			| dictionary_map_dict			{ $$ = $1; }
+			| dictionary_map_case			{ $$ = $1; }
 		;
 
 dictionary_map_dict:
