@@ -906,6 +906,81 @@ SELECT count(*) FROM testjsonb WHERE j @? '$.bar';
 RESET enable_seqscan;
 DROP INDEX jidx;
 
+CREATE INDEX jidx ON testjsonb USING gin (j jsonb_path_ops (projection='$.a'));
+
+-- Test projection GIN indexes
+CREATE FUNCTION debug_jsonb_gin_nodes(indexed_path text, query_path text)
+RETURNS TABLE (opclass text, index_mode text, strict_nodes text, lax_nodes text)
+AS
+$$
+SELECT
+  CASE path_ops WHEN true THEN 'jsonb_path_ops' ELSE  'jsonb_ops' END AS opclass,
+  index_mode,
+  gin_debug_jsonpath_query(('strict ' || query_path)::jsonpath,
+                           ('pg ' || index_mode || indexed_path)::jsonpath,
+                           path_ops,
+                           false) AS strict_nodes,
+  gin_debug_jsonpath_query(('lax ' || query_path)::jsonpath,
+                           ('pg ' || index_mode || indexed_path)::jsonpath,
+                           path_ops,
+                           false) AS lax_nodes
+FROM
+  (VALUES (false), (true)) path_ops(path_ops),
+  (VALUES ('strict '), ('lax ')) modes(index_mode)
+$$ LANGUAGE sql;
+
+SELECT
+  opclass, index_mode, index_path, query_path, strict_nodes, lax_nodes
+FROM
+  (SELECT row_number() OVER () AS query_path_id, query_path
+   FROM (VALUES
+    ('$.a == 1'),
+    ('$.b == "2"'),
+    ('$.a == 1 && $.b == "2"'),
+    ('$[0] == 1'),
+    ('$[*] == 1'),
+    ('$[0].a == 1'),
+    ('$[1].a == 1'),
+    ('$[*].a == 1'),
+    ('$[*][*].a == 1'),
+    ('$[*][0].a == 1'),
+    ('$.a == 1 && $.a.b == "2"'),
+    ('$[*] ? (@.a == 1).b == "2"')
+   ) query_paths(query_path)
+  ) query_paths,
+  (VALUES ('$'), ('$.a'), ('$.*') ) index_paths(index_path),
+  LATERAL debug_jsonb_gin_nodes(index_path, query_path)
+ORDER BY 1, 3, 2 DESC, query_path_id;
+
+SELECT
+  opclass, index_mode, index_path, strict_nodes, lax_nodes
+FROM
+  (VALUES
+     ('$'), ('$.a'), ('$.b'), ('$.c'), ('$.a, $.b'), ('$.b, $.c'), ('$.*'),
+     ('$.a[*]'), ('$.b[0]'), ('$.b[*]'), ('$.b[1]'), ('$.c, $[*].c'),
+     ('$.c[*]'), ('$.c[0]'), ('$.c[2]'), ('$.c[0 to 2]'), ('$.c[3 to last]')
+  ) index_paths(index_path),
+  LATERAL debug_jsonb_gin_nodes(index_path, '$.a == 1 && $.b[*] == "2" && $.c[2].d == true')
+ORDER BY 1, 3, 2 DESC;
+
+select * from debug_jsonb_gin_nodes('$[0]', '$[0] == 1');
+select * from debug_jsonb_gin_nodes('$[*]', '$[0] == 1');
+select * from debug_jsonb_gin_nodes('$[*]', '$[1] == 1');
+select * from debug_jsonb_gin_nodes('$[1]', '$[1] == 1');
+select * from debug_jsonb_gin_nodes('$[*][1]', '$[1] == 1');
+
+select * from debug_jsonb_gin_nodes('$', '$.** == 1');
+select * from debug_jsonb_gin_nodes('$.**', '$ == 1');
+select * from debug_jsonb_gin_nodes('$.**', '$.a == 1');
+select * from debug_jsonb_gin_nodes('$.**.a', '$.a == 1');
+select * from debug_jsonb_gin_nodes('$.**', '$.** == 1');
+select * from debug_jsonb_gin_nodes('$.**', '$.**.a == 1');
+select * from debug_jsonb_gin_nodes('$.**.a', '$.** == 1');
+
+select * from debug_jsonb_gin_nodes('$.**{1}.a', '$[*].a == 1');
+select * from debug_jsonb_gin_nodes('$.**{1}.a', '$[*][*].a == 1');
+
+
 -- nested tests
 SELECT '{"ff":{"a":12,"b":16}}'::jsonb;
 SELECT '{"ff":{"a":12,"b":16},"qq":123}'::jsonb;

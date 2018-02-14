@@ -10938,4 +10938,17 @@
   proname => 'is_normalized', prorettype => 'bool',
   proargtypes => 'text text', prosrc => 'unicode_is_normalized' },
 
+# GIN opclass options for jsonb
+{ oid => '6103', descr => 'GIN support', proname => 'gin_options_jsonb',
+  prorettype => 'void', proargtypes => 'internal',
+  prosrc => 'gin_options_jsonb' },
+{ oid => '6105',
+  descr => 'is the first jsonpath returns a subset of the second',
+  proname => 'jsonpath_is_subset', prorettype => 'bool',
+  proargtypes => 'jsonpath jsonpath', prosrc => 'jsonpath_is_subset' },
+{ oid => '6116', descr => 'print extracted GIN jsonpath query',
+  proname => 'gin_debug_jsonpath_query', prorettype => 'text',
+  proargtypes => 'jsonpath jsonpath bool bool',
+  prosrc => 'gin_debug_jsonpath_query' },
+
 ]

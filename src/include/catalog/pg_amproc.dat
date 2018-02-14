@@ -643,6 +643,8 @@
 { amprocfamily => 'gin/jsonb_ops', amproclefttype => 'jsonb',
   amprocrighttype => 'jsonb', amprocnum => '6',
   amproc => 'gin_triconsistent_jsonb' },
+{ amprocfamily => 'gin/jsonb_ops', amproclefttype => 'jsonb',
+  amprocrighttype => 'jsonb', amprocnum => '7', amproc => 'gin_options_jsonb' },
 { amprocfamily => 'gin/jsonb_path_ops', amproclefttype => 'jsonb',
   amprocrighttype => 'jsonb', amprocnum => '1', amproc => 'btint4cmp' },
 { amprocfamily => 'gin/jsonb_path_ops', amproclefttype => 'jsonb',
@@ -657,6 +659,8 @@
 { amprocfamily => 'gin/jsonb_path_ops', amproclefttype => 'jsonb',
   amprocrighttype => 'jsonb', amprocnum => '6',
   amproc => 'gin_triconsistent_jsonb_path' },
+{ amprocfamily => 'gin/jsonb_path_ops', amproclefttype => 'jsonb',
+  amprocrighttype => 'jsonb', amprocnum => '7', amproc => 'gin_options_jsonb' },
 
 # sp-gist
 { amprocfamily => 'spgist/range_ops', amproclefttype => 'anyrange',
