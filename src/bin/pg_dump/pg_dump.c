@@ -14209,7 +14209,7 @@ dumpTSConfig(Archive *fout, TSConfigInfo *cfginfo)
 	PQclear(res);
 
 	resetPQExpBuffer(query);
-	
+
 	if (fout->remoteVersion >= 110000)
 		appendPQExpBuffer(query,
 						  "SELECT\n"
