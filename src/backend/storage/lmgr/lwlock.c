@@ -380,10 +380,10 @@ LWLockShmemSize(void)
 void
 CreateLWLocks(void)
 {
-	StaticAssertExpr(LW_VAL_EXCLUSIVE > (uint32) MAX_BACKENDS,
+	StaticAssertStmt(LW_VAL_EXCLUSIVE > (uint32) MAX_BACKENDS,
 					 "MAX_BACKENDS too big for lwlock.c");
 
-	StaticAssertExpr(sizeof(LWLock) <= LWLOCK_MINIMAL_SIZE &&
+	StaticAssertStmt(sizeof(LWLock) <= LWLOCK_MINIMAL_SIZE &&
 					 sizeof(LWLock) <= LWLOCK_PADDED_SIZE,
 					 "Miscalculated LWLock padding");
 
@@ -520,6 +520,7 @@ RegisterLWLockTranches(void)
 						  "shared_tuplestore");
 	LWLockRegisterTranche(LWTRANCHE_TBM, "tbm");
 	LWLockRegisterTranche(LWTRANCHE_PARALLEL_APPEND, "parallel_append");
+	LWLockRegisterTranche(LWTRANCHE_PARALLEL_HASH_JOIN, "parallel_hash_join");
 
 	/* Register named tranches. */
 	for (i = 0; i < NamedLWLockTrancheRequests; i++)

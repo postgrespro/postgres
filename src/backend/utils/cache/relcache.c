@@ -983,9 +983,14 @@ RelationBuildPartitionKey(Relation relation)
 		}
 		else
 		{
+			if (partexprs_item == NULL)
+				elog(ERROR, "wrong number of partition key expressions");
+
 			key->parttypid[i] = exprType(lfirst(partexprs_item));
 			key->parttypmod[i] = exprTypmod(lfirst(partexprs_item));
 			key->parttypcoll[i] = exprCollation(lfirst(partexprs_item));
+
+			partexprs_item = lnext(partexprs_item);
 		}
 		get_typlenbyvalalign(key->parttypid[i],
 							 &key->parttyplen[i],
@@ -1842,11 +1847,7 @@ LookupOpclassInfo(Oid operatorClassOid,
  *		quite a lot since we only need to work for a few basic system
  *		catalogs.
  *
- * formrdesc is currently used for: pg_database, pg_authid, pg_auth_members,
- * pg_shseclabel, pg_class, pg_attribute, pg_proc, and pg_type
- * (see RelationCacheInitializePhase2/3).
- *
- * Note that these catalogs can't have constraints (except attnotnull),
+ * The catalogs this is used for can't have constraints (except attnotnull),
  * default values, rules, or triggers, since we don't cope with any of that.
  * (Well, actually, this only matters for properties that need to be valid
  * during bootstrap or before RelationCacheInitializePhase3 runs, and none of
@@ -5245,7 +5246,7 @@ errtablecol(Relation rel, int attnum)
 	if (attnum > 0 && attnum <= reldesc->natts)
 		colname = NameStr(TupleDescAttr(reldesc, attnum - 1)->attname);
 	else
-		colname = get_relid_attribute_name(RelationGetRelid(rel), attnum);
+		colname = get_attname(RelationGetRelid(rel), attnum, false);
 
 	return errtablecolname(rel, colname);
 }

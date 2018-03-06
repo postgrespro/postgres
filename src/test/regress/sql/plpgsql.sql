@@ -3735,29 +3735,6 @@ select scope_test();
 
 drop function scope_test();
 
--- Check that variables are reinitialized on block re-entry.
-
-\set VERBOSITY terse   \\ -- needed for output stability
-do $$
-begin
-  for i in 1..3 loop
-    declare
-      x int;
-      y int := i;
-      r record;
-    begin
-      if i = 1 then
-        x := 42;
-        r := row(i, i+1);
-      end if;
-      raise notice 'x = %', x;
-      raise notice 'y = %', y;
-      raise notice 'r = %', r;
-    end;
-  end loop;
-end$$;
-\set VERBOSITY default
-
 -- Check handling of conflicts between plpgsql vars and table columns.
 
 set plpgsql.variable_conflict = error;
@@ -4525,6 +4502,32 @@ ALTER TABLE alter_table_under_transition_tables
   DROP column name;
 UPDATE alter_table_under_transition_tables
   SET id = id;
+
+--
+-- Test multiple reference to a transition table
+--
+
+CREATE TABLE multi_test (i int);
+INSERT INTO multi_test VALUES (1);
+
+CREATE OR REPLACE FUNCTION multi_test_trig() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE NOTICE 'count = %', (SELECT COUNT(*) FROM new_test);
+    RAISE NOTICE 'count union = %',
+      (SELECT COUNT(*)
+       FROM (SELECT * FROM new_test UNION ALL SELECT * FROM new_test) ss);
+    RETURN NULL;
+END$$;
+
+CREATE TRIGGER my_trigger AFTER UPDATE ON multi_test
+  REFERENCING NEW TABLE AS new_test OLD TABLE as old_test
+  FOR EACH STATEMENT EXECUTE PROCEDURE multi_test_trig();
+
+UPDATE multi_test SET i = i;
+
+DROP TABLE multi_test;
+DROP FUNCTION multi_test_trig();
 
 --
 -- Check type parsing and record fetching from partitioned tables

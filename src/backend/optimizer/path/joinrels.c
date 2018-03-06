@@ -39,7 +39,7 @@ static bool restriction_is_constant_false(List *restrictlist,
 static void populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 							RelOptInfo *rel2, RelOptInfo *joinrel,
 							SpecialJoinInfo *sjinfo, List *restrictlist);
-static void try_partition_wise_join(PlannerInfo *root, RelOptInfo *rel1,
+static void try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1,
 						RelOptInfo *rel2, RelOptInfo *joinrel,
 						SpecialJoinInfo *parent_sjinfo,
 						List *parent_restrictlist);
@@ -903,8 +903,8 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 	}
 
-	/* Apply partition-wise join technique, if possible. */
-	try_partition_wise_join(root, rel1, rel2, joinrel, sjinfo, restrictlist);
+	/* Apply partitionwise join technique, if possible. */
+	try_partitionwise_join(root, rel1, rel2, joinrel, sjinfo, restrictlist);
 }
 
 
@@ -1286,25 +1286,25 @@ restriction_is_constant_false(List *restrictlist, bool only_pushed_down)
 /*
  * Assess whether join between given two partitioned relations can be broken
  * down into joins between matching partitions; a technique called
- * "partition-wise join"
+ * "partitionwise join"
  *
- * Partition-wise join is possible when a. Joining relations have same
+ * Partitionwise join is possible when a. Joining relations have same
  * partitioning scheme b. There exists an equi-join between the partition keys
  * of the two relations.
  *
- * Partition-wise join is planned as follows (details: optimizer/README.)
+ * Partitionwise join is planned as follows (details: optimizer/README.)
  *
  * 1. Create the RelOptInfos for joins between matching partitions i.e
  * child-joins and add paths to them.
  *
  * 2. Construct Append or MergeAppend paths across the set of child joins.
- * This second phase is implemented by generate_partition_wise_join_paths().
+ * This second phase is implemented by generate_partitionwise_join_paths().
  *
  * The RelOptInfo, SpecialJoinInfo and restrictlist for each child join are
  * obtained by translating the respective parent join structures.
  */
 static void
-try_partition_wise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
+try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 						RelOptInfo *joinrel, SpecialJoinInfo *parent_sjinfo,
 						List *parent_restrictlist)
 {
@@ -1316,17 +1316,6 @@ try_partition_wise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 
 	/* Nothing to do, if the join relation is not partitioned. */
 	if (!IS_PARTITIONED_REL(joinrel))
-		return;
-
-	/*
-	 * set_rel_pathlist() may not create paths in children of an empty
-	 * partitioned table and so we can not add paths to child-joins. So, deem
-	 * such a join as unpartitioned. When a partitioned relation is deemed
-	 * empty because all its children are empty, dummy path will be set in
-	 * each of the children.  In such a case we could still consider the join
-	 * as partitioned, but it might not help much.
-	 */
-	if (IS_DUMMY_REL(rel1) || IS_DUMMY_REL(rel2))
 		return;
 
 	/*
@@ -1345,7 +1334,7 @@ try_partition_wise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		   joinrel->part_scheme == rel2->part_scheme);
 
 	/*
-	 * Since we allow partition-wise join only when the partition bounds of
+	 * Since we allow partitionwise join only when the partition bounds of
 	 * the joining relations exactly match, the partition bounds of the join
 	 * should match those of the joining relations.
 	 */
@@ -1359,11 +1348,6 @@ try_partition_wise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 								  joinrel->boundinfo, rel2->boundinfo));
 
 	nparts = joinrel->nparts;
-
-	/* Allocate space to hold child-joins RelOptInfos, if not already done. */
-	if (!joinrel->part_rels)
-		joinrel->part_rels =
-			(RelOptInfo **) palloc0(sizeof(RelOptInfo *) * nparts);
 
 	/*
 	 * Create child-join relations for this partitioned join, if those don't
@@ -1494,7 +1478,7 @@ have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
 
 		/*
 		 * Only clauses referencing the partition keys are useful for
-		 * partition-wise join.
+		 * partitionwise join.
 		 */
 		ipk1 = match_expr_to_partition_keys(expr1, rel1, strict_op);
 		if (ipk1 < 0)
@@ -1505,13 +1489,13 @@ have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
 
 		/*
 		 * If the clause refers to keys at different ordinal positions, it can
-		 * not be used for partition-wise join.
+		 * not be used for partitionwise join.
 		 */
 		if (ipk1 != ipk2)
 			continue;
 
 		/*
-		 * The clause allows partition-wise join if only it uses the same
+		 * The clause allows partitionwise join if only it uses the same
 		 * operator family as that specified by the partition key.
 		 */
 		if (rel1->part_scheme->strategy == PARTITION_STRATEGY_HASH)

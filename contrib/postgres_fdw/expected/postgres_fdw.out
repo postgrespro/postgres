@@ -52,6 +52,11 @@ CREATE TABLE "S 1"."T 4" (
 	c3 text,
 	CONSTRAINT t4_pkey PRIMARY KEY (c1)
 );
+-- Disable autovacuum for these tables to avoid unexpected effects of that
+ALTER TABLE "S 1"."T 1" SET (autovacuum_enabled = 'false');
+ALTER TABLE "S 1"."T 2" SET (autovacuum_enabled = 'false');
+ALTER TABLE "S 1"."T 3" SET (autovacuum_enabled = 'false');
+ALTER TABLE "S 1"."T 4" SET (autovacuum_enabled = 'false');
 INSERT INTO "S 1"."T 1"
 	SELECT id,
 	       id % 10,
@@ -4399,27 +4404,13 @@ UPDATE ft2 SET c2 = c2 + 400, c3 = c3 || '_update7' WHERE c1 % 10 = 7 RETURNING 
 
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c2 = ft2.c2 + 500, c3 = ft2.c3 || '_update9', c7 = DEFAULT
-  FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;                               -- can't be pushed down
-                                                                                                                                                        QUERY PLAN                                                                                                                                                         
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;                               -- can be pushed down
+                                                                                                   QUERY PLAN                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Update on public.ft2
-   Remote SQL: UPDATE "S 1"."T 1" SET c2 = $2, c3 = $3, c7 = $4 WHERE ctid = $1
-   ->  Foreign Scan
-         Output: ft2.c1, (ft2.c2 + 500), NULL::integer, (ft2.c3 || '_update9'::text), ft2.c4, ft2.c5, ft2.c6, 'ft2       '::character(10), ft2.c8, ft2.ctid, ft1.*
-         Relations: (public.ft2) INNER JOIN (public.ft1)
-         Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c8, r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 9)))) FOR UPDATE OF r1
-         ->  Hash Join
-               Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c8, ft2.ctid, ft1.*
-               Hash Cond: (ft2.c2 = ft1.c1)
-               ->  Foreign Scan on public.ft2
-                     Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c8, ft2.ctid
-                     Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c8, ctid FROM "S 1"."T 1" FOR UPDATE
-               ->  Hash
-                     Output: ft1.*, ft1.c1
-                     ->  Foreign Scan on public.ft1
-                           Output: ft1.*, ft1.c1
-                           Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE ((("C 1" % 10) = 9))
-(17 rows)
+   ->  Foreign Update
+         Remote SQL: UPDATE "S 1"."T 1" r1 SET c2 = (r1.c2 + 500), c3 = (r1.c3 || '_update9'::text), c7 = 'ft2       '::character(10) FROM "S 1"."T 1" r2 WHERE ((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 9))
+(3 rows)
 
 UPDATE ft2 SET c2 = ft2.c2 + 500, c3 = ft2.c3 || '_update9', c7 = DEFAULT
   FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;
@@ -4542,27 +4533,13 @@ DELETE FROM ft2 WHERE c1 % 10 = 5 RETURNING c1, c4;
 (103 rows)
 
 EXPLAIN (verbose, costs off)
-DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;                -- can't be pushed down
-                                                                                                                              QUERY PLAN                                                                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;                -- can be pushed down
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Delete on public.ft2
-   Remote SQL: DELETE FROM "S 1"."T 1" WHERE ctid = $1
-   ->  Foreign Scan
-         Output: ft2.ctid, ft1.*
-         Relations: (public.ft2) INNER JOIN (public.ft1)
-         Remote SQL: SELECT r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 2)))) FOR UPDATE OF r1
-         ->  Hash Join
-               Output: ft2.ctid, ft1.*
-               Hash Cond: (ft2.c2 = ft1.c1)
-               ->  Foreign Scan on public.ft2
-                     Output: ft2.ctid, ft2.c2
-                     Remote SQL: SELECT c2, ctid FROM "S 1"."T 1" FOR UPDATE
-               ->  Hash
-                     Output: ft1.*, ft1.c1
-                     ->  Foreign Scan on public.ft1
-                           Output: ft1.*, ft1.c1
-                           Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE ((("C 1" % 10) = 2))
-(17 rows)
+   ->  Foreign Delete
+         Remote SQL: DELETE FROM "S 1"."T 1" r1 USING "S 1"."T 1" r2 WHERE ((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 2))
+(3 rows)
 
 DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;
 SELECT c1,c2,c3,c4 FROM ft2 ORDER BY c1;
@@ -5438,6 +5415,195 @@ DELETE FROM ft2 WHERE c1 = 9999 RETURNING tableoid::regclass;
  ft2
 (1 row)
 
+-- Test UPDATE/DELETE with RETURNING on a three-table join
+INSERT INTO ft2 (c1,c2,c3)
+  SELECT id, id - 1200, to_char(id, 'FM00000') FROM generate_series(1201, 1300) id;
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'foo'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+  RETURNING ft2, ft2.*, ft4, ft4.*;       -- can be pushed down
+                                                                                                                                                                          QUERY PLAN                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: ft2.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.*, ft4.c1, ft4.c2, ft4.c3
+   ->  Foreign Update
+         Remote SQL: UPDATE "S 1"."T 1" r1 SET c3 = 'foo'::text FROM ("S 1"."T 3" r2 INNER JOIN "S 1"."T 4" r3 ON (TRUE)) WHERE ((r2.c1 = r3.c1)) AND ((r1.c2 = r2.c1)) AND ((r1."C 1" > 1200)) RETURNING r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, r2.c1, r2.c2, r2.c3
+(4 rows)
+
+UPDATE ft2 SET c3 = 'foo'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+  RETURNING ft2, ft2.*, ft4, ft4.*;
+              ft2               |  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 |      ft4       | c1 | c2 |   c3   
+--------------------------------+------+----+-----+----+----+----+------------+----+----------------+----+----+--------
+ (1206,6,foo,,,,"ft2       ",)  | 1206 |  6 | foo |    |    |    | ft2        |    | (6,7,AAA006)   |  6 |  7 | AAA006
+ (1212,12,foo,,,,"ft2       ",) | 1212 | 12 | foo |    |    |    | ft2        |    | (12,13,AAA012) | 12 | 13 | AAA012
+ (1218,18,foo,,,,"ft2       ",) | 1218 | 18 | foo |    |    |    | ft2        |    | (18,19,AAA018) | 18 | 19 | AAA018
+ (1224,24,foo,,,,"ft2       ",) | 1224 | 24 | foo |    |    |    | ft2        |    | (24,25,AAA024) | 24 | 25 | AAA024
+ (1230,30,foo,,,,"ft2       ",) | 1230 | 30 | foo |    |    |    | ft2        |    | (30,31,AAA030) | 30 | 31 | AAA030
+ (1236,36,foo,,,,"ft2       ",) | 1236 | 36 | foo |    |    |    | ft2        |    | (36,37,AAA036) | 36 | 37 | AAA036
+ (1242,42,foo,,,,"ft2       ",) | 1242 | 42 | foo |    |    |    | ft2        |    | (42,43,AAA042) | 42 | 43 | AAA042
+ (1248,48,foo,,,,"ft2       ",) | 1248 | 48 | foo |    |    |    | ft2        |    | (48,49,AAA048) | 48 | 49 | AAA048
+ (1254,54,foo,,,,"ft2       ",) | 1254 | 54 | foo |    |    |    | ft2        |    | (54,55,AAA054) | 54 | 55 | AAA054
+ (1260,60,foo,,,,"ft2       ",) | 1260 | 60 | foo |    |    |    | ft2        |    | (60,61,AAA060) | 60 | 61 | AAA060
+ (1266,66,foo,,,,"ft2       ",) | 1266 | 66 | foo |    |    |    | ft2        |    | (66,67,AAA066) | 66 | 67 | AAA066
+ (1272,72,foo,,,,"ft2       ",) | 1272 | 72 | foo |    |    |    | ft2        |    | (72,73,AAA072) | 72 | 73 | AAA072
+ (1278,78,foo,,,,"ft2       ",) | 1278 | 78 | foo |    |    |    | ft2        |    | (78,79,AAA078) | 78 | 79 | AAA078
+ (1284,84,foo,,,,"ft2       ",) | 1284 | 84 | foo |    |    |    | ft2        |    | (84,85,AAA084) | 84 | 85 | AAA084
+ (1290,90,foo,,,,"ft2       ",) | 1290 | 90 | foo |    |    |    | ft2        |    | (90,91,AAA090) | 90 | 91 | AAA090
+ (1296,96,foo,,,,"ft2       ",) | 1296 | 96 | foo |    |    |    | ft2        |    | (96,97,AAA096) | 96 | 97 | AAA096
+(16 rows)
+
+EXPLAIN (verbose, costs off)
+DELETE FROM ft2
+  USING ft4 LEFT JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c1 % 10 = 0 AND ft2.c2 = ft4.c1
+  RETURNING 100;                          -- can be pushed down
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Delete on public.ft2
+   Output: 100
+   ->  Foreign Delete
+         Remote SQL: DELETE FROM "S 1"."T 1" r1 USING ("S 1"."T 3" r2 LEFT JOIN "S 1"."T 4" r3 ON (((r2.c1 = r3.c1)))) WHERE ((r1.c2 = r2.c1)) AND ((r1."C 1" > 1200)) AND (((r1."C 1" % 10) = 0))
+(4 rows)
+
+DELETE FROM ft2
+  USING ft4 LEFT JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c1 % 10 = 0 AND ft2.c2 = ft4.c1
+  RETURNING 100;
+ ?column? 
+----------
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+(10 rows)
+
+DELETE FROM ft2 WHERE ft2.c1 > 1200;
+-- Test UPDATE/DELETE with WHERE or JOIN/ON conditions containing
+-- user-defined operators/functions
+ALTER SERVER loopback OPTIONS (DROP extensions);
+INSERT INTO ft2 (c1,c2,c3)
+  SELECT id, id % 10, to_char(id, 'FM00000') FROM generate_series(2001, 2010) id;
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;            -- can't be pushed down
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: c1, c2, c3, c4, c5, c6, c7, c8
+   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Foreign Scan on public.ft2
+         Output: c1, c2, NULL::integer, 'bar'::text, c4, c5, c6, c7, c8, ctid
+         Filter: (postgres_fdw_abs(ft2.c1) > 2000)
+         Remote SQL: SELECT "C 1", c2, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" FOR UPDATE
+(7 rows)
+
+UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;
+  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 
+------+----+-----+----+----+----+------------+----
+ 2001 |  1 | bar |    |    |    | ft2        | 
+ 2002 |  2 | bar |    |    |    | ft2        | 
+ 2003 |  3 | bar |    |    |    | ft2        | 
+ 2004 |  4 | bar |    |    |    | ft2        | 
+ 2005 |  5 | bar |    |    |    | ft2        | 
+ 2006 |  6 | bar |    |    |    | ft2        | 
+ 2007 |  7 | bar |    |    |    | ft2        | 
+ 2008 |  8 | bar |    |    |    | ft2        | 
+ 2009 |  9 | bar |    |    |    | ft2        | 
+ 2010 |  0 | bar |    |    |    | ft2        | 
+(10 rows)
+
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'baz'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 === ft4.c1
+  RETURNING ft2.*, ft4.*, ft5.*;                                                    -- can't be pushed down
+                                                                                                                                          QUERY PLAN                                                                                                                                          
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3
+   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Nested Loop
+         Output: ft2.c1, ft2.c2, NULL::integer, 'baz'::text, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid, ft4.*, ft5.*, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3
+         Join Filter: (ft2.c2 === ft4.c1)
+         ->  Foreign Scan on public.ft2
+               Output: ft2.c1, ft2.c2, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid
+               Remote SQL: SELECT "C 1", c2, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" WHERE (("C 1" > 2000)) FOR UPDATE
+         ->  Foreign Scan
+               Output: ft4.*, ft4.c1, ft4.c2, ft4.c3, ft5.*, ft5.c1, ft5.c2, ft5.c3
+               Relations: (public.ft4) INNER JOIN (public.ft5)
+               Remote SQL: SELECT CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, r2.c1, r2.c2, r2.c3, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END, r3.c1, r3.c2, r3.c3 FROM ("S 1"."T 3" r2 INNER JOIN "S 1"."T 4" r3 ON (((r2.c1 = r3.c1))))
+               ->  Hash Join
+                     Output: ft4.*, ft4.c1, ft4.c2, ft4.c3, ft5.*, ft5.c1, ft5.c2, ft5.c3
+                     Hash Cond: (ft4.c1 = ft5.c1)
+                     ->  Foreign Scan on public.ft4
+                           Output: ft4.*, ft4.c1, ft4.c2, ft4.c3
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3"
+                     ->  Hash
+                           Output: ft5.*, ft5.c1, ft5.c2, ft5.c3
+                           ->  Foreign Scan on public.ft5
+                                 Output: ft5.*, ft5.c1, ft5.c2, ft5.c3
+                                 Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4"
+(24 rows)
+
+UPDATE ft2 SET c3 = 'baz'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 === ft4.c1
+  RETURNING ft2.*, ft4.*, ft5.*;
+  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 | c1 | c2 |   c3   | c1 | c2 |   c3   
+------+----+-----+----+----+----+------------+----+----+----+--------+----+----+--------
+ 2006 |  6 | baz |    |    |    | ft2        |    |  6 |  7 | AAA006 |  6 |  7 | AAA006
+(1 row)
+
+EXPLAIN (verbose, costs off)
+DELETE FROM ft2
+  USING ft4 INNER JOIN ft5 ON (ft4.c1 === ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 = ft4.c1
+  RETURNING ft2.c1, ft2.c2, ft2.c3;       -- can't be pushed down
+                                                                                                                                                                     QUERY PLAN                                                                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Delete on public.ft2
+   Output: ft2.c1, ft2.c2, ft2.c3
+   Remote SQL: DELETE FROM "S 1"."T 1" WHERE ctid = $1 RETURNING "C 1", c2, c3
+   ->  Foreign Scan
+         Output: ft2.ctid, ft4.*, ft5.*
+         Filter: (ft4.c1 === ft5.c1)
+         Relations: ((public.ft2) INNER JOIN (public.ft4)) INNER JOIN (public.ft5)
+         Remote SQL: SELECT r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END, r2.c1, r3.c1 FROM (("S 1"."T 1" r1 INNER JOIN "S 1"."T 3" r2 ON (((r1.c2 = r2.c1)) AND ((r1."C 1" > 2000)))) INNER JOIN "S 1"."T 4" r3 ON (TRUE)) FOR UPDATE OF r1
+         ->  Nested Loop
+               Output: ft2.ctid, ft4.*, ft5.*, ft4.c1, ft5.c1
+               ->  Nested Loop
+                     Output: ft2.ctid, ft4.*, ft4.c1
+                     Join Filter: (ft2.c2 = ft4.c1)
+                     ->  Foreign Scan on public.ft2
+                           Output: ft2.ctid, ft2.c2
+                           Remote SQL: SELECT c2, ctid FROM "S 1"."T 1" WHERE (("C 1" > 2000)) FOR UPDATE
+                     ->  Foreign Scan on public.ft4
+                           Output: ft4.*, ft4.c1
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3"
+               ->  Foreign Scan on public.ft5
+                     Output: ft5.*, ft5.c1
+                     Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4"
+(22 rows)
+
+DELETE FROM ft2
+  USING ft4 INNER JOIN ft5 ON (ft4.c1 === ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 = ft4.c1
+  RETURNING ft2.c1, ft2.c2, ft2.c3;
+  c1  | c2 | c3  
+------+----+-----
+ 2006 |  6 | baz
+(1 row)
+
+DELETE FROM ft2 WHERE ft2.c1 > 2000;
+ALTER SERVER loopback OPTIONS (ADD extensions 'postgres_fdw');
 -- Test that trigger on remote table works as expected
 CREATE OR REPLACE FUNCTION "S 1".F_BRTRIG() RETURNS trigger AS $$
 BEGIN
@@ -5838,6 +6004,7 @@ select c2, count(*) from "S 1"."T 1" where c2 < 500 group by 1 order by 1;
  407 |   100
 (13 rows)
 
+VACUUM ANALYZE "S 1"."T 1";
 -- Above DMLs add data with c6 as NULL in ft1, so test ORDER BY NULLS LAST and NULLs
 -- FIRST behavior here.
 -- ORDER BY DESC NULLS LAST options
@@ -6007,6 +6174,7 @@ ALTER FOREIGN TABLE ft1 DROP CONSTRAINT ft1_c2negative;
 -- test WITH CHECK OPTION constraints
 -- ===================================================================
 CREATE TABLE base_tbl (a int, b int);
+ALTER TABLE base_tbl SET (autovacuum_enabled = 'false');
 CREATE FOREIGN TABLE foreign_tbl (a int, b int)
   SERVER loopback OPTIONS(table_name 'base_tbl');
 CREATE VIEW rw_view AS SELECT * FROM foreign_tbl
@@ -6067,6 +6235,7 @@ DROP TABLE base_tbl;
 -- test serial columns (ie, sequence-based defaults)
 -- ===================================================================
 create table loc1 (f1 serial, f2 text);
+alter table loc1 set (autovacuum_enabled = 'false');
 create foreign table rem1 (f1 serial, f2 text)
   server loopback options(table_name 'loc1');
 select pg_catalog.setval('rem1_f1_seq', 10, false);
@@ -6614,6 +6783,8 @@ DROP TRIGGER trig_row_after_delete ON rem1;
 -- ===================================================================
 CREATE TABLE a (aa TEXT);
 CREATE TABLE loct (aa TEXT, bb TEXT);
+ALTER TABLE a SET (autovacuum_enabled = 'false');
+ALTER TABLE loct SET (autovacuum_enabled = 'false');
 CREATE FOREIGN TABLE b (bb TEXT) INHERITS (a)
   SERVER loopback OPTIONS (table_name 'loct');
 INSERT INTO a(aa) VALUES('aaa');
@@ -6755,12 +6926,16 @@ DROP TABLE loct;
 -- Check SELECT FOR UPDATE/SHARE with an inherited source table
 create table loct1 (f1 int, f2 int, f3 int);
 create table loct2 (f1 int, f2 int, f3 int);
+alter table loct1 set (autovacuum_enabled = 'false');
+alter table loct2 set (autovacuum_enabled = 'false');
 create table foo (f1 int, f2 int);
 create foreign table foo2 (f3 int) inherits (foo)
   server loopback options (table_name 'loct1');
 create table bar (f1 int, f2 int);
 create foreign table bar2 (f3 int) inherits (bar)
   server loopback options (table_name 'loct2');
+alter table foo set (autovacuum_enabled = 'false');
+alter table bar set (autovacuum_enabled = 'false');
 insert into foo values(1,1);
 insert into foo values(3,3);
 insert into foo2 values(2,2,2);
@@ -7514,12 +7689,14 @@ AND ftoptions @> array['fetch_size=60000'];
 
 ROLLBACK;
 -- ===================================================================
--- test partition-wise-joins
+-- test partitionwise joins
 -- ===================================================================
-SET enable_partition_wise_join=on;
+SET enable_partitionwise_join=on;
 CREATE TABLE fprt1 (a int, b int, c varchar) PARTITION BY RANGE(a);
 CREATE TABLE fprt1_p1 (LIKE fprt1);
 CREATE TABLE fprt1_p2 (LIKE fprt1);
+ALTER TABLE fprt1_p1 SET (autovacuum_enabled = 'false');
+ALTER TABLE fprt1_p2 SET (autovacuum_enabled = 'false');
 INSERT INTO fprt1_p1 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(0, 249, 2) i;
 INSERT INTO fprt1_p2 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(250, 499, 2) i;
 CREATE FOREIGN TABLE ftprt1_p1 PARTITION OF fprt1 FOR VALUES FROM (0) TO (250)
@@ -7532,6 +7709,8 @@ ANALYZE fprt1_p2;
 CREATE TABLE fprt2 (a int, b int, c varchar) PARTITION BY RANGE(b);
 CREATE TABLE fprt2_p1 (LIKE fprt2);
 CREATE TABLE fprt2_p2 (LIKE fprt2);
+ALTER TABLE fprt2_p1 SET (autovacuum_enabled = 'false');
+ALTER TABLE fprt2_p2 SET (autovacuum_enabled = 'false');
 INSERT INTO fprt2_p1 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(0, 249, 3) i;
 INSERT INTO fprt2_p2 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(250, 499, 3) i;
 CREATE FOREIGN TABLE ftprt2_p1 PARTITION OF fprt2 FOR VALUES FROM (0) TO (250)
@@ -7632,4 +7811,44 @@ SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t
  400 | 400
 (4 rows)
 
-RESET enable_partition_wise_join;
+-- with PHVs, partition-wise join selected but no join pushdown
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Sort
+   Sort Key: ftprt1_p1.a, ftprt2_p1.b
+   ->  Result
+         ->  Append
+               ->  Hash Full Join
+                     Hash Cond: (ftprt1_p1.a = ftprt2_p1.b)
+                     ->  Foreign Scan on ftprt1_p1
+                     ->  Hash
+                           ->  Foreign Scan on ftprt2_p1
+               ->  Hash Full Join
+                     Hash Cond: (ftprt1_p2.a = ftprt2_p2.b)
+                     ->  Foreign Scan on ftprt1_p2
+                     ->  Hash
+                           ->  Foreign Scan on ftprt2_p2
+(14 rows)
+
+SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
+  a  |  phv   |  b  |  phv   
+-----+--------+-----+--------
+   0 | t1_phv |   0 | t2_phv
+  50 | t1_phv |     | 
+ 100 | t1_phv |     | 
+ 150 | t1_phv | 150 | t2_phv
+ 200 | t1_phv |     | 
+ 250 | t1_phv | 250 | t2_phv
+ 300 | t1_phv |     | 
+ 350 | t1_phv |     | 
+ 400 | t1_phv | 400 | t2_phv
+ 450 | t1_phv |     | 
+     |        |  75 | t2_phv
+     |        | 225 | t2_phv
+     |        | 325 | t2_phv
+     |        | 475 | t2_phv
+(14 rows)
+
+RESET enable_partitionwise_join;

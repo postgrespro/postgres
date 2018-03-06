@@ -1206,6 +1206,7 @@ static bool
 _equalCallStmt(const CallStmt *a, const CallStmt *b)
 {
 	COMPARE_NODE_FIELD(funccall);
+	COMPARE_NODE_FIELD(funcexpr);
 
 	return true;
 }
@@ -2594,6 +2595,7 @@ _equalColumnDef(const ColumnDef *a, const ColumnDef *b)
 	COMPARE_NODE_FIELD(raw_default);
 	COMPARE_NODE_FIELD(cooked_default);
 	COMPARE_SCALAR_FIELD(identity);
+	COMPARE_NODE_FIELD(identitySequence);
 	COMPARE_NODE_FIELD(collClause);
 	COMPARE_SCALAR_FIELD(collOid);
 	COMPARE_NODE_FIELD(constraints);
@@ -2764,6 +2766,11 @@ _equalWindowClause(const WindowClause *a, const WindowClause *b)
 	COMPARE_SCALAR_FIELD(frameOptions);
 	COMPARE_NODE_FIELD(startOffset);
 	COMPARE_NODE_FIELD(endOffset);
+	COMPARE_SCALAR_FIELD(startInRangeFunc);
+	COMPARE_SCALAR_FIELD(endInRangeFunc);
+	COMPARE_SCALAR_FIELD(inRangeColl);
+	COMPARE_SCALAR_FIELD(inRangeAsc);
+	COMPARE_SCALAR_FIELD(inRangeNullsFirst);
 	COMPARE_SCALAR_FIELD(winref);
 	COMPARE_SCALAR_FIELD(copiedOrder);
 

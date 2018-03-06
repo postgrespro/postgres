@@ -59,7 +59,6 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 {
 	GatherState *gatherstate;
 	Plan	   *outerNode;
-	bool		hasoid;
 	TupleDesc	tupDesc;
 
 	/* Gather node doesn't have innerPlan node. */
@@ -86,36 +85,28 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &gatherstate->ps);
 
 	/*
-	 * Gather doesn't support checking a qual (it's always more efficient to
-	 * do it in the child node).
-	 */
-	Assert(!node->plan.qual);
-
-	/*
-	 * tuple table initialization
-	 */
-	gatherstate->funnel_slot = ExecInitExtraTupleSlot(estate);
-	ExecInitResultTupleSlot(estate, &gatherstate->ps);
-
-	/*
 	 * now initialize outer plan
 	 */
 	outerNode = outerPlan(node);
 	outerPlanState(gatherstate) = ExecInitNode(outerNode, estate, eflags);
+	tupDesc = ExecGetResultType(outerPlanState(gatherstate));
+
+	/*
+	 * Initialize result slot, type and projection.
+	 */
+	ExecInitResultTupleSlotTL(estate, &gatherstate->ps);
+	ExecConditionalAssignProjectionInfo(&gatherstate->ps, tupDesc, OUTER_VAR);
 
 	/*
 	 * Initialize funnel slot to same tuple descriptor as outer plan.
 	 */
-	if (!ExecContextForcesOids(outerPlanState(gatherstate), &hasoid))
-		hasoid = false;
-	tupDesc = ExecTypeFromTL(outerNode->targetlist, hasoid);
-	ExecSetSlotDescriptor(gatherstate->funnel_slot, tupDesc);
+	gatherstate->funnel_slot = ExecInitExtraTupleSlot(estate, tupDesc);
 
 	/*
-	 * Initialize result tuple type and projection info.
+	 * Gather doesn't support checking a qual (it's always more efficient to
+	 * do it in the child node).
 	 */
-	ExecAssignResultTypeFromTL(&gatherstate->ps);
-	ExecConditionalAssignProjectionInfo(&gatherstate->ps, tupDesc, OUTER_VAR);
+	Assert(!node->plan.qual);
 
 	return gatherstate;
 }
@@ -312,7 +303,14 @@ gather_readnext(GatherState *gatherstate)
 		/* Check for async events, particularly messages from workers. */
 		CHECK_FOR_INTERRUPTS();
 
-		/* Attempt to read a tuple, but don't block if none is available. */
+		/*
+		 * Attempt to read a tuple, but don't block if none is available.
+		 *
+		 * Note that TupleQueueReaderNext will just return NULL for a worker
+		 * which fails to initialize.  We'll treat that worker as having
+		 * produced no tuples; WaitForParallelWorkersToFinish will error out
+		 * when we get there.
+		 */
 		Assert(gatherstate->nextreader < gatherstate->nreaders);
 		reader = gatherstate->reader[gatherstate->nextreader];
 		tup = TupleQueueReaderNext(reader, true, &readerdone);

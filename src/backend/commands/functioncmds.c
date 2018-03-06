@@ -1003,9 +1003,12 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 
 	if (stmt->is_procedure)
 	{
+		/*
+		 * Sometime in the future, procedures might be allowed to return
+		 * results; for now, they all return VOID.
+		 */
 		Assert(!stmt->returnType);
-
-		prorettype = InvalidOid;
+		prorettype = VOIDOID;
 		returnsSet = false;
 	}
 	else if (stmt->returnType)
@@ -1097,8 +1100,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 						   languageValidator,
 						   prosrc_str,	/* converted to text later */
 						   probin_str,	/* converted to text later */
-						   false,	/* not an aggregate */
-						   isWindowFunc,
+						   stmt->is_procedure ? PROKIND_PROCEDURE : (isWindowFunc ? PROKIND_WINDOW : PROKIND_FUNCTION),
 						   security,
 						   isLeakProof,
 						   isStrict,
@@ -1126,7 +1128,7 @@ RemoveFunctionById(Oid funcOid)
 {
 	Relation	relation;
 	HeapTuple	tup;
-	bool		isagg;
+	char		prokind;
 
 	/*
 	 * Delete the pg_proc tuple.
@@ -1137,7 +1139,7 @@ RemoveFunctionById(Oid funcOid)
 	if (!HeapTupleIsValid(tup)) /* should not happen */
 		elog(ERROR, "cache lookup failed for function %u", funcOid);
 
-	isagg = ((Form_pg_proc) GETSTRUCT(tup))->proisagg;
+	prokind = ((Form_pg_proc) GETSTRUCT(tup))->prokind;
 
 	CatalogTupleDelete(relation, &tup->t_self);
 
@@ -1148,7 +1150,7 @@ RemoveFunctionById(Oid funcOid)
 	/*
 	 * If there's a pg_aggregate tuple, delete that too.
 	 */
-	if (isagg)
+	if (prokind == PROKIND_AGGREGATE)
 	{
 		relation = heap_open(AggregateRelationId, RowExclusiveLock);
 
@@ -1203,13 +1205,13 @@ AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 		aclcheck_error(ACLCHECK_NOT_OWNER, stmt->objtype,
 					   NameListToString(stmt->func->objname));
 
-	if (procForm->proisagg)
+	if (procForm->prokind == PROKIND_AGGREGATE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is an aggregate function",
 						NameListToString(stmt->func->objname))));
 
-	is_procedure = (procForm->prorettype == InvalidOid);
+	is_procedure = (procForm->prokind == PROKIND_PROCEDURE);
 
 	/* Examine requested actions. */
 	foreach(l, stmt->actions)
@@ -1525,14 +1527,10 @@ CreateCast(CreateCastStmt *stmt)
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("cast function must not be volatile")));
 #endif
-		if (procstruct->proisagg)
+		if (procstruct->prokind != PROKIND_FUNCTION)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("cast function must not be an aggregate function")));
-		if (procstruct->proiswindow)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("cast function must not be a window function")));
+					 errmsg("cast function must be a normal function")));
 		if (procstruct->proretset)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -1777,14 +1775,10 @@ check_transform_function(Form_pg_proc procstruct)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("transform function must not be volatile")));
-	if (procstruct->proisagg)
+	if (procstruct->prokind != PROKIND_FUNCTION)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("transform function must not be an aggregate function")));
-	if (procstruct->proiswindow)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("transform function must not be a window function")));
+				 errmsg("transform function must be a normal function")));
 	if (procstruct->proretset)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -2204,13 +2198,17 @@ ExecuteDoStmt(DoStmt *stmt, bool atomic)
  * transaction commands based on that information, e.g., call
  * SPI_connect_ext(SPI_OPT_NONATOMIC).  The language should also pass on the
  * atomic flag to any nested invocations to CALL.
+ *
+ * The expression data structures and execution context that we create
+ * within this function are children of the portalContext of the Portal
+ * that the CALL utility statement runs in.  Therefore, any pass-by-ref
+ * values that we're passing to the procedure will survive transaction
+ * commits that might occur inside the procedure.
  */
 void
-ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic)
+ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
 {
-	List	   *targs;
 	ListCell   *lc;
-	Node	   *node;
 	FuncExpr   *fexpr;
 	int			nargs;
 	int			i;
@@ -2218,30 +2216,16 @@ ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic)
 	FmgrInfo	flinfo;
 	FunctionCallInfoData fcinfo;
 	CallContext *callcontext;
+	EState	   *estate;
+	ExprContext *econtext;
 	HeapTuple	tp;
 
-	targs = NIL;
-	foreach(lc, stmt->funccall->args)
-	{
-		targs = lappend(targs, transformExpr(pstate,
-											 (Node *) lfirst(lc),
-											 EXPR_KIND_CALL));
-	}
-
-	node = ParseFuncOrColumn(pstate,
-							 stmt->funccall->funcname,
-							 targs,
-							 pstate->p_last_srf,
-							 stmt->funccall,
-							 true,
-							 stmt->funccall->location);
-
-	fexpr = castNode(FuncExpr, node);
+	fexpr = stmt->funcexpr;
+	Assert(fexpr);
 
 	aclresult = pg_proc_aclcheck(fexpr->funcid, GetUserId(), ACL_EXECUTE);
 	if (aclresult != ACLCHECK_OK)
 		aclcheck_error(aclresult, OBJECT_PROCEDURE, get_func_name(fexpr->funcid));
-	InvokeFunctionExecuteHook(fexpr->funcid);
 
 	nargs = list_length(fexpr->args);
 
@@ -2254,6 +2238,7 @@ ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic)
 							   FUNC_MAX_ARGS,
 							   FUNC_MAX_ARGS)));
 
+	/* Prep the context object we'll pass to the procedure */
 	callcontext = makeNode(CallContext);
 	callcontext->atomic = atomic;
 
@@ -2270,23 +2255,29 @@ ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic)
 		callcontext->atomic = true;
 	ReleaseSysCache(tp);
 
+	/* Initialize function call structure */
+	InvokeFunctionExecuteHook(fexpr->funcid);
 	fmgr_info(fexpr->funcid, &flinfo);
 	InitFunctionCallInfoData(fcinfo, &flinfo, nargs, fexpr->inputcollid, (Node *) callcontext, NULL);
+
+	/*
+	 * Evaluate procedure arguments inside a suitable execution context.  Note
+	 * we can't free this context till the procedure returns.
+	 */
+	estate = CreateExecutorState();
+	estate->es_param_list_info = params;
+	econtext = CreateExprContext(estate);
 
 	i = 0;
 	foreach(lc, fexpr->args)
 	{
-		EState	   *estate;
 		ExprState  *exprstate;
-		ExprContext *econtext;
 		Datum		val;
 		bool		isnull;
 
-		estate = CreateExecutorState();
 		exprstate = ExecPrepareExpr(lfirst(lc), estate);
-		econtext = CreateStandaloneExprContext();
+
 		val = ExecEvalExprSwitchContext(exprstate, econtext, &isnull);
-		FreeExecutorState(estate);
 
 		fcinfo.arg[i] = val;
 		fcinfo.argnull[i] = isnull;
@@ -2295,4 +2286,6 @@ ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic)
 	}
 
 	FunctionCallInvoke(&fcinfo);
+
+	FreeExecutorState(estate);
 }

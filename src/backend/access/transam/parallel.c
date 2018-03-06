@@ -14,6 +14,7 @@
 
 #include "postgres.h"
 
+#include "access/nbtree.h"
 #include "access/parallel.h"
 #include "access/session.h"
 #include "access/xact.h"
@@ -129,6 +130,9 @@ static const struct
 {
 	{
 		"ParallelQueryMain", ParallelQueryMain
+	},
+	{
+		"_bt_parallel_build_main", _bt_parallel_build_main
 	}
 };
 
@@ -146,7 +150,7 @@ static void ParallelWorkerShutdown(int code, Datum arg);
  */
 ParallelContext *
 CreateParallelContext(const char *library_name, const char *function_name,
-					  int nworkers)
+					  int nworkers, bool serializable_okay)
 {
 	MemoryContext oldcontext;
 	ParallelContext *pcxt;
@@ -167,9 +171,11 @@ CreateParallelContext(const char *library_name, const char *function_name,
 	/*
 	 * If we are running under serializable isolation, we can't use parallel
 	 * workers, at least not until somebody enhances that mechanism to be
-	 * parallel-aware.
+	 * parallel-aware.  Utility statement callers may ask us to ignore this
+	 * restriction because they're always able to safely ignore the fact that
+	 * SIREAD locks do not work with parallelism.
 	 */
-	if (IsolationIsSerializable())
+	if (IsolationIsSerializable() && !serializable_okay)
 		nworkers = 0;
 
 	/* We might be running in a short-lived memory context. */
@@ -428,8 +434,6 @@ void
 ReinitializeParallelDSM(ParallelContext *pcxt)
 {
 	FixedParallelState *fps;
-	char	   *error_queue_space;
-	int			i;
 
 	/* Wait for any old workers to exit. */
 	if (pcxt->nworkers_launched > 0)
@@ -437,10 +441,11 @@ ReinitializeParallelDSM(ParallelContext *pcxt)
 		WaitForParallelWorkersToFinish(pcxt);
 		WaitForParallelWorkersToExit(pcxt);
 		pcxt->nworkers_launched = 0;
-		if (pcxt->any_message_received)
+		if (pcxt->known_attached_workers)
 		{
-			pfree(pcxt->any_message_received);
-			pcxt->any_message_received = NULL;
+			pfree(pcxt->known_attached_workers);
+			pcxt->known_attached_workers = NULL;
+			pcxt->nknown_attached_workers = 0;
 		}
 	}
 
@@ -449,18 +454,23 @@ ReinitializeParallelDSM(ParallelContext *pcxt)
 	fps->last_xlog_end = 0;
 
 	/* Recreate error queues (if they exist). */
-	error_queue_space =
-		shm_toc_lookup(pcxt->toc, PARALLEL_KEY_ERROR_QUEUE, true);
-	Assert(pcxt->nworkers == 0 || error_queue_space != NULL);
-	for (i = 0; i < pcxt->nworkers; ++i)
+	if (pcxt->nworkers > 0)
 	{
-		char	   *start;
-		shm_mq	   *mq;
+		char	   *error_queue_space;
+		int			i;
 
-		start = error_queue_space + i * PARALLEL_ERROR_QUEUE_SIZE;
-		mq = shm_mq_create(start, PARALLEL_ERROR_QUEUE_SIZE);
-		shm_mq_set_receiver(mq, MyProc);
-		pcxt->worker[i].error_mqh = shm_mq_attach(mq, pcxt->seg, NULL);
+		error_queue_space =
+			shm_toc_lookup(pcxt->toc, PARALLEL_KEY_ERROR_QUEUE, false);
+		for (i = 0; i < pcxt->nworkers; ++i)
+		{
+			char	   *start;
+			shm_mq	   *mq;
+
+			start = error_queue_space + i * PARALLEL_ERROR_QUEUE_SIZE;
+			mq = shm_mq_create(start, PARALLEL_ERROR_QUEUE_SIZE);
+			shm_mq_set_receiver(mq, MyProc);
+			pcxt->worker[i].error_mqh = shm_mq_attach(mq, pcxt->seg, NULL);
+		}
 	}
 }
 
@@ -542,14 +552,145 @@ LaunchParallelWorkers(ParallelContext *pcxt)
 
 	/*
 	 * Now that nworkers_launched has taken its final value, we can initialize
-	 * any_message_received.
+	 * known_attached_workers.
 	 */
 	if (pcxt->nworkers_launched > 0)
-		pcxt->any_message_received =
+	{
+		pcxt->known_attached_workers =
 			palloc0(sizeof(bool) * pcxt->nworkers_launched);
+		pcxt->nknown_attached_workers = 0;
+	}
 
 	/* Restore previous memory context. */
 	MemoryContextSwitchTo(oldcontext);
+}
+
+/*
+ * Wait for all workers to attach to their error queues, and throw an error if
+ * any worker fails to do this.
+ *
+ * Callers can assume that if this function returns successfully, then the
+ * number of workers given by pcxt->nworkers_launched have initialized and
+ * attached to their error queues.  Whether or not these workers are guaranteed
+ * to still be running depends on what code the caller asked them to run;
+ * this function does not guarantee that they have not exited.  However, it
+ * does guarantee that any workers which exited must have done so cleanly and
+ * after successfully performing the work with which they were tasked.
+ *
+ * If this function is not called, then some of the workers that were launched
+ * may not have been started due to a fork() failure, or may have exited during
+ * early startup prior to attaching to the error queue, so nworkers_launched
+ * cannot be viewed as completely reliable.  It will never be less than the
+ * number of workers which actually started, but it might be more.  Any workers
+ * that failed to start will still be discovered by
+ * WaitForParallelWorkersToFinish and an error will be thrown at that time,
+ * provided that function is eventually reached.
+ *
+ * In general, the leader process should do as much work as possible before
+ * calling this function.  fork() failures and other early-startup failures
+ * are very uncommon, and having the leader sit idle when it could be doing
+ * useful work is undesirable.  However, if the leader needs to wait for
+ * all of its workers or for a specific worker, it may want to call this
+ * function before doing so.  If not, it must make some other provision for
+ * the failure-to-start case, lest it wait forever.  On the other hand, a
+ * leader which never waits for a worker that might not be started yet, or
+ * at least never does so prior to WaitForParallelWorkersToFinish(), need not
+ * call this function at all.
+ */
+void
+WaitForParallelWorkersToAttach(ParallelContext *pcxt)
+{
+	int			i;
+
+	/* Skip this if we have no launched workers. */
+	if (pcxt->nworkers_launched == 0)
+		return;
+
+	for (;;)
+	{
+		/*
+		 * This will process any parallel messages that are pending and it may
+		 * also throw an error propagated from a worker.
+		 */
+		CHECK_FOR_INTERRUPTS();
+
+		for (i = 0; i < pcxt->nworkers_launched; ++i)
+		{
+			BgwHandleStatus status;
+			shm_mq	   *mq;
+			int			rc;
+			pid_t		pid;
+
+			if (pcxt->known_attached_workers[i])
+				continue;
+
+			/*
+			 * If error_mqh is NULL, then the worker has already exited
+			 * cleanly.
+			 */
+			if (pcxt->worker[i].error_mqh == NULL)
+			{
+				pcxt->known_attached_workers[i] = true;
+				++pcxt->nknown_attached_workers;
+				continue;
+			}
+
+			status = GetBackgroundWorkerPid(pcxt->worker[i].bgwhandle, &pid);
+			if (status == BGWH_STARTED)
+			{
+				/* Has the worker attached to the error queue? */
+				mq = shm_mq_get_queue(pcxt->worker[i].error_mqh);
+				if (shm_mq_get_sender(mq) != NULL)
+				{
+					/* Yes, so it is known to be attached. */
+					pcxt->known_attached_workers[i] = true;
+					++pcxt->nknown_attached_workers;
+				}
+			}
+			else if (status == BGWH_STOPPED)
+			{
+				/*
+				 * If the worker stopped without attaching to the error queue,
+				 * throw an error.
+				 */
+				mq = shm_mq_get_queue(pcxt->worker[i].error_mqh);
+				if (shm_mq_get_sender(mq) == NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+							 errmsg("parallel worker failed to initialize"),
+							 errhint("More details may be available in the server log.")));
+
+				pcxt->known_attached_workers[i] = true;
+				++pcxt->nknown_attached_workers;
+			}
+			else
+			{
+				/*
+				 * Worker not yet started, so we must wait.  The postmaster
+				 * will notify us if the worker's state changes.  Our latch
+				 * might also get set for some other reason, but if so we'll
+				 * just end up waiting for the same worker again.
+				 */
+				rc = WaitLatch(MyLatch,
+							   WL_LATCH_SET | WL_POSTMASTER_DEATH,
+							   -1, WAIT_EVENT_BGWORKER_STARTUP);
+
+				/* emergency bailout if postmaster has died */
+				if (rc & WL_POSTMASTER_DEATH)
+					proc_exit(1);
+
+				if (rc & WL_LATCH_SET)
+					ResetLatch(MyLatch);
+			}
+		}
+
+		/* If all workers are known to have started, we're done. */
+		if (pcxt->nknown_attached_workers >= pcxt->nworkers_launched)
+		{
+			Assert(pcxt->nknown_attached_workers == pcxt->nworkers_launched);
+			break;
+		}
+	}
 }
 
 /*
@@ -589,7 +730,7 @@ WaitForParallelWorkersToFinish(ParallelContext *pcxt)
 			 */
 			if (pcxt->worker[i].error_mqh == NULL)
 				++nfinished;
-			else if (pcxt->any_message_received[i])
+			else if (pcxt->known_attached_workers[i])
 			{
 				anyone_alive = true;
 				break;
@@ -909,8 +1050,12 @@ HandleParallelMessage(ParallelContext *pcxt, int i, StringInfo msg)
 {
 	char		msgtype;
 
-	if (pcxt->any_message_received != NULL)
-		pcxt->any_message_received[i] = true;
+	if (pcxt->known_attached_workers != NULL &&
+		!pcxt->known_attached_workers[i])
+	{
+		pcxt->known_attached_workers[i] = true;
+		pcxt->nknown_attached_workers++;
+	}
 
 	msgtype = pq_getmsgbyte(msg);
 

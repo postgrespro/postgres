@@ -132,11 +132,12 @@ typedef struct ExprState
  *		ReadyForInserts		is it valid for inserts?
  *		Concurrent			are we doing a concurrent index build?
  *		BrokenHotChain		did we detect any broken HOT chains?
+ *		ParallelWorkers		# of workers requested (excludes leader)
  *		AmCache				private cache area for index AM
  *		Context				memory context holding this IndexInfo
  *
- * ii_Concurrent and ii_BrokenHotChain are used only during index build;
- * they're conventionally set to false otherwise.
+ * ii_Concurrent, ii_BrokenHotChain, and ii_ParallelWorkers are used only
+ * during index build; they're conventionally zeroed otherwise.
  * ----------------
  */
 typedef struct IndexInfo
@@ -158,6 +159,7 @@ typedef struct IndexInfo
 	bool		ii_ReadyForInserts;
 	bool		ii_Concurrent;
 	bool		ii_BrokenHotChain;
+	int			ii_ParallelWorkers;
 	Oid			ii_Am;
 	void	   *ii_AmCache;
 	MemoryContext ii_Context;
@@ -464,8 +466,11 @@ typedef struct EState
 	ResultRelInfo *es_root_result_relations;	/* array of ResultRelInfos */
 	int			es_num_root_result_relations;	/* length of the array */
 
-	/* Info about leaf partitions of partitioned table(s) for insert queries: */
-	List	   *es_leaf_result_relations;	/* List of ResultRelInfos */
+	/*
+	 * The following list contains ResultRelInfos created by the tuple
+	 * routing code for partitions that don't already have one.
+	 */
+	List	   *es_tuple_routing_result_relations;
 
 	/* Stuff used for firing triggers: */
 	List	   *es_trig_target_relations;	/* trigger-only ResultRelInfos */
@@ -589,10 +594,10 @@ typedef struct ExecAuxRowMark
  * Normally these are the only functions used, but FindTupleHashEntry()
  * supports searching a hashtable using cross-data-type hashing.  For that,
  * the caller must supply hash functions for the LHS datatype as well as
- * the cross-type equality operators to use.  in_hash_funcs and cur_eq_funcs
+ * the cross-type equality operators to use.  in_hash_funcs and cur_eq_func
  * are set to point to the caller's function arrays while doing such a search.
  * During LookupTupleHashEntry(), they point to tab_hash_funcs and
- * tab_eq_funcs respectively.
+ * tab_eq_func respectively.
  * ----------------------------------------------------------------
  */
 typedef struct TupleHashEntryData *TupleHashEntry;
@@ -620,7 +625,7 @@ typedef struct TupleHashTableData
 	int			numCols;		/* number of columns in lookup key */
 	AttrNumber *keyColIdx;		/* attr numbers of key columns */
 	FmgrInfo   *tab_hash_funcs; /* hash functions for table datatype(s) */
-	FmgrInfo   *tab_eq_funcs;	/* equality functions for table datatype(s) */
+	ExprState  *tab_eq_func;	/* comparator for table datatype(s) */
 	MemoryContext tablecxt;		/* memory context containing table */
 	MemoryContext tempcxt;		/* context for function evaluations */
 	Size		entrysize;		/* actual size to make each hash entry */
@@ -628,8 +633,9 @@ typedef struct TupleHashTableData
 	/* The following fields are set transiently for each table search: */
 	TupleTableSlot *inputslot;	/* current input tuple's slot */
 	FmgrInfo   *in_hash_funcs;	/* hash functions for input datatype(s) */
-	FmgrInfo   *cur_eq_funcs;	/* equality functions for input vs. table */
+	ExprState  *cur_eq_func;	/* comparator for for input vs. table */
 	uint32		hash_iv;		/* hash-function IV */
+	ExprContext *exprcontext;	/* expression context */
 }			TupleHashTableData;
 
 typedef tuplehash_iterator TupleHashIterator;
@@ -776,6 +782,7 @@ typedef struct SubPlanState
 	HeapTuple	curTuple;		/* copy of most recent tuple from subplan */
 	Datum		curArray;		/* most recent array from ARRAY() subplan */
 	/* these are used when hashing the subselect's output: */
+	TupleDesc	descRight;		/* subselect desc after projection */
 	ProjectionInfo *projLeft;	/* for projecting lefthand exprs */
 	ProjectionInfo *projRight;	/* for projecting subselect output */
 	TupleHashTable hashtable;	/* hash table for no-nulls subselect rows */
@@ -786,10 +793,12 @@ typedef struct SubPlanState
 	MemoryContext hashtempcxt;	/* temp memory context for hash tables */
 	ExprContext *innerecontext; /* econtext for computing inner tuples */
 	AttrNumber *keyColIdx;		/* control data for hash tables */
+	Oid		   *tab_eq_funcoids;/* equality func oids for table datatype(s) */
 	FmgrInfo   *tab_hash_funcs; /* hash functions for table datatype(s) */
 	FmgrInfo   *tab_eq_funcs;	/* equality functions for table datatype(s) */
 	FmgrInfo   *lhs_hash_funcs; /* hash functions for lefthand datatype(s) */
 	FmgrInfo   *cur_eq_funcs;	/* equality functions for LHS vs. table */
+	ExprState  *cur_eq_comp;	/* equality comparator for LHS vs. table */
 } SubPlanState;
 
 /* ----------------
@@ -1062,7 +1071,7 @@ typedef struct RecursiveUnionState
 	Tuplestorestate *working_table;
 	Tuplestorestate *intermediate_table;
 	/* Remaining fields are unused in UNION ALL case */
-	FmgrInfo   *eqfunctions;	/* per-grouping-field equality fns */
+	Oid		   *eqfuncoids;		/* per-grouping-field equality fns */
 	FmgrInfo   *hashfunctions;	/* per-grouping-field hash fns */
 	MemoryContext tempContext;	/* short-term context for comparisons */
 	TupleHashTable hashtable;	/* hash table for tuples already seen */
@@ -1790,7 +1799,7 @@ typedef struct SortState
 typedef struct GroupState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	FmgrInfo   *eqfunctions;	/* per-field lookup data for equality fns */
+	ExprState  *eqfunction;		/* equality function */
 	bool		grp_done;		/* indicates completion of Group scan */
 } GroupState;
 
@@ -1880,14 +1889,17 @@ typedef struct WindowAggState
 
 	WindowStatePerFunc perfunc; /* per-window-function information */
 	WindowStatePerAgg peragg;	/* per-plain-aggregate information */
-	FmgrInfo   *partEqfunctions;	/* equality funcs for partition columns */
-	FmgrInfo   *ordEqfunctions; /* equality funcs for ordering columns */
+	ExprState  *partEqfunction;	/* equality funcs for partition columns */
+	ExprState  *ordEqfunction; /* equality funcs for ordering columns */
 	Tuplestorestate *buffer;	/* stores rows of current partition */
-	int			current_ptr;	/* read pointer # for current */
+	int			current_ptr;	/* read pointer # for current row */
+	int			framehead_ptr;	/* read pointer # for frame head, if used */
+	int			frametail_ptr;	/* read pointer # for frame tail, if used */
+	int			grouptail_ptr;	/* read pointer # for group tail, if used */
 	int64		spooled_rows;	/* total # of rows in buffer */
 	int64		currentpos;		/* position of current row in partition */
 	int64		frameheadpos;	/* current frame head position */
-	int64		frametailpos;	/* current frame tail position */
+	int64		frametailpos;	/* current frame tail position (frame end+1) */
 	/* use struct pointer to avoid including windowapi.h here */
 	struct WindowObjectData *agg_winobj;	/* winobj for aggregate fetches */
 	int64		aggregatedbase; /* start row for current aggregates */
@@ -1898,6 +1910,20 @@ typedef struct WindowAggState
 	ExprState  *endOffset;		/* expression for ending bound offset */
 	Datum		startOffsetValue;	/* result of startOffset evaluation */
 	Datum		endOffsetValue; /* result of endOffset evaluation */
+
+	/* these fields are used with RANGE offset PRECEDING/FOLLOWING: */
+	FmgrInfo	startInRangeFunc;	/* in_range function for startOffset */
+	FmgrInfo	endInRangeFunc; /* in_range function for endOffset */
+	Oid			inRangeColl;	/* collation for in_range tests */
+	bool		inRangeAsc;		/* use ASC sort order for in_range tests? */
+	bool		inRangeNullsFirst;	/* nulls sort first for in_range tests? */
+
+	/* these fields are used in GROUPS mode: */
+	int64		currentgroup;	/* peer group # of current row in partition */
+	int64		frameheadgroup; /* peer group # of frame head row */
+	int64		frametailgroup; /* peer group # of frame tail row */
+	int64		groupheadpos;	/* current row's peer group head position */
+	int64		grouptailpos;	/* " " " " tail position (group end+1) */
 
 	MemoryContext partcontext;	/* context for partition-lifespan data */
 	MemoryContext aggcontext;	/* shared context for aggregate working data */
@@ -1914,9 +1940,13 @@ typedef struct WindowAggState
 									 * date for current row */
 	bool		frametail_valid;	/* true if frametailpos is known up to
 									 * date for current row */
+	bool		grouptail_valid;	/* true if grouptailpos is known up to
+									 * date for current row */
 
 	TupleTableSlot *first_part_slot;	/* first tuple of current or next
 										 * partition */
+	TupleTableSlot *framehead_slot; /* first tuple of current frame */
+	TupleTableSlot *frametail_slot; /* first tuple after current frame */
 
 	/* temporary slots for tuples fetched back from tuplestore */
 	TupleTableSlot *agg_row_slot;
@@ -1938,8 +1968,7 @@ typedef struct WindowAggState
 typedef struct UniqueState
 {
 	PlanState	ps;				/* its first field is NodeTag */
-	FmgrInfo   *eqfunctions;	/* per-field lookup data for equality fns */
-	MemoryContext tempContext;	/* short-term context for comparisons */
+	ExprState   *eqfunction;		/* tuple equality qual */
 } UniqueState;
 
 /* ----------------
@@ -2053,11 +2082,11 @@ typedef struct SetOpStatePerGroupData *SetOpStatePerGroup;
 typedef struct SetOpState
 {
 	PlanState	ps;				/* its first field is NodeTag */
-	FmgrInfo   *eqfunctions;	/* per-grouping-field equality fns */
+	ExprState  *eqfunction;		/* equality comparator */
+	Oid		   *eqfuncoids;		/* per-grouping-field equality fns */
 	FmgrInfo   *hashfunctions;	/* per-grouping-field hash fns */
 	bool		setop_done;		/* indicates completion of output scan */
 	long		numOutput;		/* number of dups left to output */
-	MemoryContext tempContext;	/* short-term context for comparisons */
 	/* these fields are used in SETOP_SORTED mode: */
 	SetOpStatePerGroup pergroup;	/* per-group working state */
 	HeapTuple	grp_firstTuple; /* copy of first tuple of current group */

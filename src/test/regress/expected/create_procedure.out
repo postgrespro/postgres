@@ -21,6 +21,8 @@ LINE 1: SELECT ptest1('x');
                ^
 HINT:  To call a procedure, use CALL.
 CALL ptest1('a');  -- ok
+CALL ptest1('xy' || 'zzy');  -- ok, constant-folded arg
+CALL ptest1(substring(random()::text, 1, 1));  -- ok, volatile arg
 \df ptest1
                         List of functions
  Schema |  Name  | Result data type | Argument data types | Type 
@@ -28,11 +30,24 @@ CALL ptest1('a');  -- ok
  public | ptest1 |                  | x text              | proc
 (1 row)
 
-SELECT * FROM cp_test ORDER BY a;
- a | b 
----+---
- 1 | a
+SELECT pg_get_functiondef('ptest1'::regproc);
+                pg_get_functiondef                 
+---------------------------------------------------
+ CREATE OR REPLACE PROCEDURE public.ptest1(x text)+
+  LANGUAGE sql                                    +
+ AS $procedure$                                   +
+ INSERT INTO cp_test VALUES (1, x);               +
+ $procedure$                                      +
+ 
 (1 row)
+
+SELECT * FROM cp_test ORDER BY b COLLATE "C";
+ a |   b   
+---+-------
+ 1 | 0
+ 1 | a
+ 1 | xyzzy
+(3 rows)
 
 CREATE PROCEDURE ptest2()
 LANGUAGE SQL
@@ -40,6 +55,22 @@ AS $$
 SELECT 5;
 $$;
 CALL ptest2();
+-- nested CALL
+TRUNCATE cp_test;
+CREATE PROCEDURE ptest3(y text)
+LANGUAGE SQL
+AS $$
+CALL ptest1(y);
+CALL ptest1($1);
+$$;
+CALL ptest3('b');
+SELECT * FROM cp_test;
+ a | b 
+---+---
+ 1 | b
+ 1 | b
+(2 rows)
+
 -- various error cases
 CALL version();  -- error: not a procedure
 ERROR:  version() is not a procedure

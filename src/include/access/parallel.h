@@ -43,7 +43,8 @@ typedef struct ParallelContext
 	void	   *private_memory;
 	shm_toc    *toc;
 	ParallelWorkerInfo *worker;
-	bool	   *any_message_received;
+	int			nknown_attached_workers;
+	bool	   *known_attached_workers;
 } ParallelContext;
 
 typedef struct ParallelWorkerContext
@@ -58,10 +59,13 @@ extern PGDLLIMPORT bool InitializingParallelWorker;
 
 #define		IsParallelWorker()		(ParallelWorkerNumber >= 0)
 
-extern ParallelContext *CreateParallelContext(const char *library_name, const char *function_name, int nworkers);
+extern ParallelContext *CreateParallelContext(const char *library_name,
+					  const char *function_name, int nworkers,
+					  bool serializable_okay);
 extern void InitializeParallelDSM(ParallelContext *pcxt);
 extern void ReinitializeParallelDSM(ParallelContext *pcxt);
 extern void LaunchParallelWorkers(ParallelContext *pcxt);
+extern void WaitForParallelWorkersToAttach(ParallelContext *pcxt);
 extern void WaitForParallelWorkersToFinish(ParallelContext *pcxt);
 extern void DestroyParallelContext(ParallelContext *pcxt);
 extern bool ParallelContextActive(void);

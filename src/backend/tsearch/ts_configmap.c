@@ -22,6 +22,8 @@
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_ts_dict.h"
+#include "catalog/pg_namespace.h"
+#include "catalog/namespace.h"
 #include "tsearch/ts_cache.h"
 #include "tsearch/ts_configmap.h"
 #include "utils/builtins.h"
@@ -70,6 +72,41 @@ static JsonbValue *TSMapElementToJsonbValue(TSMapElement *element, JsonbParseSta
 static TSMapElement * JsonbToTSMapElement(JsonbContainer *root);
 
 /*
+ * Print name of the namespace into StringInfo variable result
+ */
+static void
+TSMapPrintNamespace(Oid  namespaceId, StringInfo result)
+{
+	Relation	maprel;
+	Relation	mapidx;
+	ScanKeyData mapskey;
+	SysScanDesc mapscan;
+	HeapTuple	maptup;
+	Form_pg_namespace namespace;
+
+	if (false)
+		return;
+
+	maprel = heap_open(NamespaceRelationId, AccessShareLock);
+	mapidx = index_open(NamespaceOidIndexId, AccessShareLock);
+
+	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(namespaceId));
+	mapscan = systable_beginscan_ordered(maprel, mapidx,
+										 NULL, 1, &mapskey);
+
+	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
+	namespace = (Form_pg_namespace) GETSTRUCT(maptup);
+	appendStringInfoString(result, namespace->nspname.data);
+	appendStringInfoChar(result, '.');
+
+	systable_endscan_ordered(mapscan);
+	index_close(mapidx, AccessShareLock);
+	heap_close(maprel, AccessShareLock);
+}
+
+/*
  * Print name of the dictionary into StringInfo variable result
  */
 void
@@ -84,8 +121,7 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 
 	if (false)
 		return;
-
-	maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
+maprel = heap_open(TSDictionaryRelationId, AccessShareLock);
 	mapidx = index_open(TSDictionaryOidIndexId, AccessShareLock);
 
 	ScanKeyInit(&mapskey, ObjectIdAttributeNumber,
@@ -96,6 +132,10 @@ TSMapPrintDictName(Oid dictId, StringInfo result)
 
 	maptup = systable_getnext_ordered(mapscan, ForwardScanDirection);
 	dict = (Form_pg_ts_dict) GETSTRUCT(maptup);
+	if (!TSDictionaryIsVisible(dictId))
+	{
+		TSMapPrintNamespace(dict->dictnamespace, result);
+	}
 	appendStringInfoString(result, dict->dictname.data);
 
 	systable_endscan_ordered(mapscan);

@@ -186,23 +186,20 @@ static PathTarget *make_sort_input_target(PlannerInfo *root,
 static void adjust_paths_for_srfs(PlannerInfo *root, RelOptInfo *rel,
 					  List *targets, List *targets_contain_srfs);
 static void add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
-						  RelOptInfo *grouped_rel, PathTarget *target,
-						  PathTarget *partial_grouping_target,
+						  RelOptInfo *grouped_rel,
+						  PathTarget *target,
+						  RelOptInfo *partially_grouped_rel,
 						  const AggClauseCosts *agg_costs,
 						  const AggClauseCosts *agg_final_costs,
 						  grouping_sets_data *gd, bool can_sort, bool can_hash,
 						  double dNumGroups, List *havingQual);
-static void add_partial_paths_to_grouping_rel(PlannerInfo *root,
+static void add_paths_to_partial_grouping_rel(PlannerInfo *root,
 								  RelOptInfo *input_rel,
-								  RelOptInfo *grouped_rel,
-								  PathTarget *target,
-								  PathTarget *partial_grouping_target,
+								  RelOptInfo *partially_grouped_rel,
 								  AggClauseCosts *agg_partial_costs,
-								  AggClauseCosts *agg_final_costs,
 								  grouping_sets_data *gd,
 								  bool can_sort,
-								  bool can_hash,
-								  List *havingQual);
+								  bool can_hash);
 static bool can_parallel_agg(PlannerInfo *root, RelOptInfo *input_rel,
 				 RelOptInfo *grouped_rel, const AggClauseCosts *agg_costs);
 
@@ -3601,6 +3598,11 @@ estimate_hashagg_tablesize(Path *path, const AggClauseCosts *agg_costs,
  * create_grouping_paths
  *
  * Build a new upperrel containing Paths for grouping and/or aggregation.
+ * Along the way, we also build an upperrel for Paths which are partially
+ * grouped and/or aggregated.  A partially grouped and/or aggregated path
+ * needs a FinalizeAggregate node to complete the aggregation.  Currently,
+ * the only partially grouped paths we build are also partial paths; that
+ * is, they need a Gather and then a FinalizeAggregate.
  *
  * input_rel: contains the source-data Paths
  * target: the pathtarget for the result Paths to compute
@@ -3627,7 +3629,7 @@ create_grouping_paths(PlannerInfo *root,
 	Query	   *parse = root->parse;
 	Path	   *cheapest_path = input_rel->cheapest_total_path;
 	RelOptInfo *grouped_rel;
-	PathTarget *partial_grouping_target = NULL;
+	RelOptInfo *partially_grouped_rel;
 	AggClauseCosts agg_partial_costs;	/* parallel only */
 	AggClauseCosts agg_final_costs; /* parallel only */
 	double		dNumGroups;
@@ -3635,26 +3637,41 @@ create_grouping_paths(PlannerInfo *root,
 	bool		can_sort;
 	bool		try_parallel_aggregation;
 
-	/* For now, do all work in the (GROUP_AGG, NULL) upperrel */
+	/*
+	 * For now, all aggregated paths are added to the (GROUP_AGG, NULL)
+	 * upperrel.  Paths that are only partially aggregated go into the
+	 * (UPPERREL_PARTIAL_GROUP_AGG, NULL) upperrel.
+	 */
 	grouped_rel = fetch_upper_rel(root, UPPERREL_GROUP_AGG, NULL);
+	partially_grouped_rel = fetch_upper_rel(root, UPPERREL_PARTIAL_GROUP_AGG,
+											NULL);
 
 	/*
 	 * If the input relation is not parallel-safe, then the grouped relation
 	 * can't be parallel-safe, either.  Otherwise, it's parallel-safe if the
-	 * target list and HAVING quals are parallel-safe.
+	 * target list and HAVING quals are parallel-safe.  The partially grouped
+	 * relation obeys the same rules.
 	 */
 	if (input_rel->consider_parallel &&
 		is_parallel_safe(root, (Node *) target->exprs) &&
 		is_parallel_safe(root, (Node *) parse->havingQual))
+	{
 		grouped_rel->consider_parallel = true;
+		partially_grouped_rel->consider_parallel = true;
+	}
 
 	/*
-	 * If the input rel belongs to a single FDW, so does the grouped rel.
+	 * If the input rel belongs to a single FDW, so does the grouped rel. Same
+	 * for the partially_grouped_rel.
 	 */
 	grouped_rel->serverid = input_rel->serverid;
 	grouped_rel->userid = input_rel->userid;
 	grouped_rel->useridiscurrent = input_rel->useridiscurrent;
 	grouped_rel->fdwroutine = input_rel->fdwroutine;
+	partially_grouped_rel->serverid = input_rel->serverid;
+	partially_grouped_rel->userid = input_rel->userid;
+	partially_grouped_rel->useridiscurrent = input_rel->useridiscurrent;
+	partially_grouped_rel->fdwroutine = input_rel->fdwroutine;
 
 	/*
 	 * Check for degenerate grouping.
@@ -3778,14 +3795,13 @@ create_grouping_paths(PlannerInfo *root,
 
 	/*
 	 * Before generating paths for grouped_rel, we first generate any possible
-	 * partial paths; that way, later code can easily consider both parallel
-	 * and non-parallel approaches to grouping.  Note that the partial paths
-	 * we generate here are also partially aggregated, so simply pushing a
-	 * Gather node on top is insufficient to create a final path, as would be
-	 * the case for a scan/join rel.
+	 * partial paths for partially_grouped_rel; that way, later code can
+	 * easily consider both parallel and non-parallel approaches to grouping.
 	 */
 	if (try_parallel_aggregation)
 	{
+		PathTarget *partial_grouping_target;
+
 		/*
 		 * Build target list for partial aggregate paths.  These paths cannot
 		 * just emit the same tlist as regular aggregate paths, because (1) we
@@ -3794,6 +3810,7 @@ create_grouping_paths(PlannerInfo *root,
 		 * partial mode.
 		 */
 		partial_grouping_target = make_partial_grouping_target(root, target);
+		partially_grouped_rel->reltarget = partial_grouping_target;
 
 		/*
 		 * Collect statistics about aggregates for estimating costs of
@@ -3817,16 +3834,15 @@ create_grouping_paths(PlannerInfo *root,
 								 &agg_final_costs);
 		}
 
-		add_partial_paths_to_grouping_rel(root, input_rel, grouped_rel, target,
-										  partial_grouping_target,
-										  &agg_partial_costs, &agg_final_costs,
-										  gd, can_sort, can_hash,
-										  (List *) parse->havingQual);
+		add_paths_to_partial_grouping_rel(root, input_rel,
+										  partially_grouped_rel,
+										  &agg_partial_costs,
+										  gd, can_sort, can_hash);
 	}
 
 	/* Build final grouping paths */
 	add_paths_to_grouping_rel(root, input_rel, grouped_rel, target,
-							  partial_grouping_target, agg_costs,
+							  partially_grouped_rel, agg_costs,
 							  &agg_final_costs, gd, can_sort, can_hash,
 							  dNumGroups, (List *) parse->havingQual);
 
@@ -3853,16 +3869,6 @@ create_grouping_paths(PlannerInfo *root,
 
 	/* Now choose the best path(s) */
 	set_cheapest(grouped_rel);
-
-	/*
-	 * We've been using the partial pathlist for the grouped relation to hold
-	 * partially aggregated paths, but that's actually a little bit bogus
-	 * because it's unsafe for later planning stages -- like ordered_rel ---
-	 * to get the idea that they can use these partial paths as if they didn't
-	 * need a FinalizeAggregate step.  Zap the partial pathlist at this stage
-	 * so we don't get confused.
-	 */
-	grouped_rel->partial_pathlist = NIL;
 
 	return grouped_rel;
 }
@@ -5794,6 +5800,143 @@ plan_cluster_use_sort(Oid tableOid, Oid indexOid)
 }
 
 /*
+ * plan_create_index_workers
+ *		Use the planner to decide how many parallel worker processes
+ *		CREATE INDEX should request for use
+ *
+ * tableOid is the table on which the index is to be built.  indexOid is the
+ * OID of an index to be created or reindexed (which must be a btree index).
+ *
+ * Return value is the number of parallel worker processes to request.  It
+ * may be unsafe to proceed if this is 0.  Note that this does not include the
+ * leader participating as a worker (value is always a number of parallel
+ * worker processes).
+ *
+ * Note: caller had better already hold some type of lock on the table and
+ * index.
+ */
+int
+plan_create_index_workers(Oid tableOid, Oid indexOid)
+{
+	PlannerInfo *root;
+	Query	   *query;
+	PlannerGlobal *glob;
+	RangeTblEntry *rte;
+	Relation	heap;
+	Relation	index;
+	RelOptInfo *rel;
+	int			parallel_workers;
+	BlockNumber heap_blocks;
+	double		reltuples;
+	double		allvisfrac;
+
+	/* Return immediately when parallelism disabled */
+	if (dynamic_shared_memory_type == DSM_IMPL_NONE ||
+		max_parallel_maintenance_workers == 0)
+		return 0;
+
+	/* Set up largely-dummy planner state */
+	query = makeNode(Query);
+	query->commandType = CMD_SELECT;
+
+	glob = makeNode(PlannerGlobal);
+
+	root = makeNode(PlannerInfo);
+	root->parse = query;
+	root->glob = glob;
+	root->query_level = 1;
+	root->planner_cxt = CurrentMemoryContext;
+	root->wt_param_id = -1;
+
+	/*
+	 * Build a minimal RTE.
+	 *
+	 * Set the target's table to be an inheritance parent.  This is a kludge
+	 * that prevents problems within get_relation_info(), which does not
+	 * expect that any IndexOptInfo is currently undergoing REINDEX.
+	 */
+	rte = makeNode(RangeTblEntry);
+	rte->rtekind = RTE_RELATION;
+	rte->relid = tableOid;
+	rte->relkind = RELKIND_RELATION;	/* Don't be too picky. */
+	rte->lateral = false;
+	rte->inh = true;
+	rte->inFromCl = true;
+	query->rtable = list_make1(rte);
+
+	/* Set up RTE/RelOptInfo arrays */
+	setup_simple_rel_arrays(root);
+
+	/* Build RelOptInfo */
+	rel = build_simple_rel(root, 1, NULL);
+
+	heap = heap_open(tableOid, NoLock);
+	index = index_open(indexOid, NoLock);
+
+	/*
+	 * Determine if it's safe to proceed.
+	 *
+	 * Currently, parallel workers can't access the leader's temporary tables.
+	 * Furthermore, any index predicate or index expressions must be parallel
+	 * safe.
+	 */
+	if (heap->rd_rel->relpersistence == RELPERSISTENCE_TEMP ||
+		!is_parallel_safe(root, (Node *) RelationGetIndexExpressions(index)) ||
+		!is_parallel_safe(root, (Node *) RelationGetIndexPredicate(index)))
+	{
+		parallel_workers = 0;
+		goto done;
+	}
+
+	/*
+	 * If parallel_workers storage parameter is set for the table, accept that
+	 * as the number of parallel worker processes to launch (though still cap
+	 * at max_parallel_maintenance_workers).  Note that we deliberately do not
+	 * consider any other factor when parallel_workers is set. (e.g., memory
+	 * use by workers.)
+	 */
+	if (rel->rel_parallel_workers != -1)
+	{
+		parallel_workers = Min(rel->rel_parallel_workers,
+							   max_parallel_maintenance_workers);
+		goto done;
+	}
+
+	/*
+	 * Estimate heap relation size ourselves, since rel->pages cannot be
+	 * trusted (heap RTE was marked as inheritance parent)
+	 */
+	estimate_rel_size(heap, NULL, &heap_blocks, &reltuples, &allvisfrac);
+
+	/*
+	 * Determine number of workers to scan the heap relation using generic
+	 * model
+	 */
+	parallel_workers = compute_parallel_worker(rel, heap_blocks, -1,
+											   max_parallel_maintenance_workers);
+
+	/*
+	 * Cap workers based on available maintenance_work_mem as needed.
+	 *
+	 * Note that each tuplesort participant receives an even share of the
+	 * total maintenance_work_mem budget.  Aim to leave participants
+	 * (including the leader as a participant) with no less than 32MB of
+	 * memory.  This leaves cases where maintenance_work_mem is set to 64MB
+	 * immediately past the threshold of being capable of launching a single
+	 * parallel worker to sort.
+	 */
+	while (parallel_workers > 0 &&
+		   maintenance_work_mem / (parallel_workers + 1) < 32768L)
+		parallel_workers--;
+
+done:
+	index_close(index, NoLock);
+	heap_close(heap, NoLock);
+
+	return parallel_workers;
+}
+
+/*
  * get_partitioned_child_rels
  *		Returns a list of the RT indexes of the partitioned child relations
  *		with rti as the root parent RT index. Also sets
@@ -5859,8 +6002,9 @@ get_partitioned_child_rels_for_join(PlannerInfo *root, Relids join_relids)
  */
 static void
 add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
-						  RelOptInfo *grouped_rel, PathTarget *target,
-						  PathTarget *partial_grouping_target,
+						  RelOptInfo *grouped_rel,
+						  PathTarget *target,
+						  RelOptInfo *partially_grouped_rel,
 						  const AggClauseCosts *agg_costs,
 						  const AggClauseCosts *agg_final_costs,
 						  grouping_sets_data *gd, bool can_sort, bool can_hash,
@@ -5942,32 +6086,27 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 		}
 
 		/*
-		 * Now generate a complete GroupAgg Path atop of the cheapest partial
-		 * path.  We can do this using either Gather or Gather Merge.
+		 * Instead of operating directly on the input relation, we can
+		 * consider finalizing a partially aggregated path.
 		 */
-		if (grouped_rel->partial_pathlist)
+		foreach(lc, partially_grouped_rel->pathlist)
 		{
-			Path	   *path = (Path *) linitial(grouped_rel->partial_pathlist);
-			double		total_groups = path->rows * path->parallel_workers;
-
-			path = (Path *) create_gather_path(root,
-											   grouped_rel,
-											   path,
-											   partial_grouping_target,
-											   NULL,
-											   &total_groups);
+			Path	   *path = (Path *) lfirst(lc);
 
 			/*
-			 * Since Gather's output is always unsorted, we'll need to sort,
-			 * unless there's no GROUP BY clause or a degenerate (constant)
-			 * one, in which case there will only be a single group.
+			 * Insert a Sort node, if required.  But there's no point in
+			 * sorting anything but the cheapest path.
 			 */
-			if (root->group_pathkeys)
+			if (!pathkeys_contained_in(root->group_pathkeys, path->pathkeys))
+			{
+				if (path != partially_grouped_rel->cheapest_total_path)
+					continue;
 				path = (Path *) create_sort_path(root,
 												 grouped_rel,
 												 path,
 												 root->group_pathkeys,
 												 -1.0);
+			}
 
 			if (parse->hasAggs)
 				add_path(grouped_rel, (Path *)
@@ -5990,70 +6129,6 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 										   parse->groupClause,
 										   havingQual,
 										   dNumGroups));
-
-			/*
-			 * The point of using Gather Merge rather than Gather is that it
-			 * can preserve the ordering of the input path, so there's no
-			 * reason to try it unless (1) it's possible to produce more than
-			 * one output row and (2) we want the output path to be ordered.
-			 */
-			if (parse->groupClause != NIL && root->group_pathkeys != NIL)
-			{
-				foreach(lc, grouped_rel->partial_pathlist)
-				{
-					Path	   *subpath = (Path *) lfirst(lc);
-					Path	   *gmpath;
-					double		total_groups;
-
-					/*
-					 * It's useful to consider paths that are already properly
-					 * ordered for Gather Merge, because those don't need a
-					 * sort. It's also useful to consider the cheapest path,
-					 * because sorting it in parallel and then doing Gather
-					 * Merge may be better than doing an unordered Gather
-					 * followed by a sort. But there's no point in considering
-					 * non-cheapest paths that aren't already sorted
-					 * correctly.
-					 */
-					if (path != subpath &&
-						!pathkeys_contained_in(root->group_pathkeys,
-											   subpath->pathkeys))
-						continue;
-
-					total_groups = subpath->rows * subpath->parallel_workers;
-
-					gmpath = (Path *)
-						create_gather_merge_path(root,
-												 grouped_rel,
-												 subpath,
-												 partial_grouping_target,
-												 root->group_pathkeys,
-												 NULL,
-												 &total_groups);
-
-					if (parse->hasAggs)
-						add_path(grouped_rel, (Path *)
-								 create_agg_path(root,
-												 grouped_rel,
-												 gmpath,
-												 target,
-												 parse->groupClause ? AGG_SORTED : AGG_PLAIN,
-												 AGGSPLIT_FINAL_DESERIAL,
-												 parse->groupClause,
-												 havingQual,
-												 agg_final_costs,
-												 dNumGroups));
-					else
-						add_path(grouped_rel, (Path *)
-								 create_group_path(root,
-												   grouped_rel,
-												   gmpath,
-												   target,
-												   parse->groupClause,
-												   havingQual,
-												   dNumGroups));
-				}
-			}
 		}
 	}
 
@@ -6103,29 +6178,19 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 		}
 
 		/*
-		 * Generate a HashAgg Path atop of the cheapest partial path. Once
-		 * again, we'll only do this if it looks as though the hash table
-		 * won't exceed work_mem.
+		 * Generate a Finalize HashAgg Path atop of the cheapest partially
+		 * grouped path. Once again, we'll only do this if it looks as though
+		 * the hash table won't exceed work_mem.
 		 */
-		if (grouped_rel->partial_pathlist)
+		if (partially_grouped_rel->pathlist)
 		{
-			Path	   *path = (Path *) linitial(grouped_rel->partial_pathlist);
+			Path	   *path = partially_grouped_rel->cheapest_total_path;
 
 			hashaggtablesize = estimate_hashagg_tablesize(path,
 														  agg_final_costs,
 														  dNumGroups);
 
 			if (hashaggtablesize < work_mem * 1024L)
-			{
-				double		total_groups = path->rows * path->parallel_workers;
-
-				path = (Path *) create_gather_path(root,
-												   grouped_rel,
-												   path,
-												   partial_grouping_target,
-												   NULL,
-												   &total_groups);
-
 				add_path(grouped_rel, (Path *)
 						 create_agg_path(root,
 										 grouped_rel,
@@ -6137,29 +6202,27 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 										 havingQual,
 										 agg_final_costs,
 										 dNumGroups));
-			}
 		}
 	}
 }
 
 /*
- * add_partial_paths_to_grouping_rel
+ * add_paths_to_partial_grouping_rel
  *
- * Add partial paths to grouping relation.  These paths are not fully
- * aggregated; a FinalizeAggregate step is still required.
+ * First, generate partially aggregated partial paths from the partial paths
+ * for the input relation, and then generate partially aggregated non-partial
+ * paths using Gather or Gather Merge.  All paths for this relation -- both
+ * partial and non-partial -- have been partially aggregated but require a
+ * subsequent FinalizeAggregate step.
  */
 static void
-add_partial_paths_to_grouping_rel(PlannerInfo *root,
+add_paths_to_partial_grouping_rel(PlannerInfo *root,
 								  RelOptInfo *input_rel,
-								  RelOptInfo *grouped_rel,
-								  PathTarget *target,
-								  PathTarget *partial_grouping_target,
+								  RelOptInfo *partially_grouped_rel,
 								  AggClauseCosts *agg_partial_costs,
-								  AggClauseCosts *agg_final_costs,
 								  grouping_sets_data *gd,
 								  bool can_sort,
-								  bool can_hash,
-								  List *havingQual)
+								  bool can_hash)
 {
 	Query	   *parse = root->parse;
 	Path	   *cheapest_partial_path = linitial(input_rel->partial_pathlist);
@@ -6193,17 +6256,17 @@ add_partial_paths_to_grouping_rel(PlannerInfo *root,
 				/* Sort the cheapest partial path, if it isn't already */
 				if (!is_sorted)
 					path = (Path *) create_sort_path(root,
-													 grouped_rel,
+													 partially_grouped_rel,
 													 path,
 													 root->group_pathkeys,
 													 -1.0);
 
 				if (parse->hasAggs)
-					add_partial_path(grouped_rel, (Path *)
+					add_partial_path(partially_grouped_rel, (Path *)
 									 create_agg_path(root,
-													 grouped_rel,
+													 partially_grouped_rel,
 													 path,
-													 partial_grouping_target,
+													 partially_grouped_rel->reltarget,
 													 parse->groupClause ? AGG_SORTED : AGG_PLAIN,
 													 AGGSPLIT_INITIAL_SERIAL,
 													 parse->groupClause,
@@ -6211,11 +6274,11 @@ add_partial_paths_to_grouping_rel(PlannerInfo *root,
 													 agg_partial_costs,
 													 dNumPartialGroups));
 				else
-					add_partial_path(grouped_rel, (Path *)
+					add_partial_path(partially_grouped_rel, (Path *)
 									 create_group_path(root,
-													   grouped_rel,
+													   partially_grouped_rel,
 													   path,
-													   partial_grouping_target,
+													   partially_grouped_rel->reltarget,
 													   parse->groupClause,
 													   NIL,
 													   dNumPartialGroups));
@@ -6239,11 +6302,11 @@ add_partial_paths_to_grouping_rel(PlannerInfo *root,
 		 */
 		if (hashaggtablesize < work_mem * 1024L)
 		{
-			add_partial_path(grouped_rel, (Path *)
+			add_partial_path(partially_grouped_rel, (Path *)
 							 create_agg_path(root,
-											 grouped_rel,
+											 partially_grouped_rel,
 											 cheapest_partial_path,
-											 partial_grouping_target,
+											 partially_grouped_rel->reltarget,
 											 AGG_HASHED,
 											 AGGSPLIT_INITIAL_SERIAL,
 											 parse->groupClause,
@@ -6252,6 +6315,61 @@ add_partial_paths_to_grouping_rel(PlannerInfo *root,
 											 dNumPartialGroups));
 		}
 	}
+
+	/*
+	 * If there is an FDW that's responsible for all baserels of the query,
+	 * let it consider adding partially grouped ForeignPaths.
+	 */
+	if (partially_grouped_rel->fdwroutine &&
+		partially_grouped_rel->fdwroutine->GetForeignUpperPaths)
+	{
+		FdwRoutine *fdwroutine = partially_grouped_rel->fdwroutine;
+
+		fdwroutine->GetForeignUpperPaths(root,
+										 UPPERREL_PARTIAL_GROUP_AGG,
+										 input_rel, partially_grouped_rel);
+	}
+
+	/*
+	 * Try adding Gather or Gather Merge to partial paths to produce
+	 * non-partial paths.
+	 */
+	generate_gather_paths(root, partially_grouped_rel, true);
+
+	/* Get cheapest partial path from partially_grouped_rel */
+	cheapest_partial_path = linitial(partially_grouped_rel->partial_pathlist);
+
+	/*
+	 * generate_gather_paths won't consider sorting the cheapest path to match
+	 * the group keys and then applying a Gather Merge node to the result;
+	 * that might be a winning strategy.
+	 */
+	if (!pathkeys_contained_in(root->group_pathkeys,
+							   cheapest_partial_path->pathkeys))
+	{
+		Path	   *path;
+		double		total_groups;
+
+		total_groups =
+			cheapest_partial_path->rows * cheapest_partial_path->parallel_workers;
+		path = (Path *) create_sort_path(root, partially_grouped_rel,
+										 cheapest_partial_path,
+										 root->group_pathkeys,
+										 -1.0);
+		path = (Path *)
+			create_gather_merge_path(root,
+									 partially_grouped_rel,
+									 path,
+									 partially_grouped_rel->reltarget,
+									 root->group_pathkeys,
+									 NULL,
+									 &total_groups);
+
+		add_path(partially_grouped_rel, path);
+	}
+
+	/* Now choose the best path(s) */
+	set_cheapest(partially_grouped_rel);
 }
 
 /*

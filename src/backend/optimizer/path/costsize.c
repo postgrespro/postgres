@@ -100,6 +100,13 @@
 
 #define LOG2(x)  (log(x) / 0.693147180559945)
 
+/*
+ * Append and MergeAppend nodes are less expensive than some other operations
+ * which use cpu_tuple_cost; instead of adding a separate GUC, estimate the
+ * per-tuple cost as cpu_tuple_cost multiplied by this value.
+ */
+#define APPEND_CPU_COST_MULTIPLIER 0.5
+
 
 double		seq_page_cost = DEFAULT_SEQ_PAGE_COST;
 double		random_page_cost = DEFAULT_RANDOM_PAGE_COST;
@@ -127,7 +134,7 @@ bool		enable_material = true;
 bool		enable_mergejoin = true;
 bool		enable_hashjoin = true;
 bool		enable_gathermerge = true;
-bool		enable_partition_wise_join = false;
+bool		enable_partitionwise_join = false;
 bool		enable_parallel_append = true;
 bool		enable_parallel_hash = true;
 
@@ -682,7 +689,9 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		 * order.
 		 */
 		path->path.parallel_workers = compute_parallel_worker(baserel,
-															  rand_heap_pages, index_pages);
+															  rand_heap_pages,
+															  index_pages,
+															  max_parallel_workers_per_gather);
 
 		/*
 		 * Fall out if workers can't be assigned for parallel scan, because in
@@ -1826,10 +1835,6 @@ append_nonpartial_cost(List *subpaths, int numpaths, int parallel_workers)
 /*
  * cost_append
  *	  Determines and returns the cost of an Append node.
- *
- * We charge nothing extra for the Append itself, which perhaps is too
- * optimistic, but since it doesn't do any selection or projection, it is a
- * pretty cheap node.
  */
 void
 cost_append(AppendPath *apath)
@@ -1912,6 +1917,13 @@ cost_append(AppendPath *apath)
 								   apath->first_partial_path,
 								   apath->path.parallel_workers);
 	}
+
+	/*
+	 * Although Append does not do any selection or projection, it's not free;
+	 * add a small per-tuple overhead.
+	 */
+	apath->path.total_cost +=
+		cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * apath->path.rows;
 }
 
 /*
@@ -1966,12 +1978,10 @@ cost_merge_append(Path *path, PlannerInfo *root,
 	run_cost += tuples * comparison_cost * logN;
 
 	/*
-	 * Also charge a small amount (arbitrarily set equal to operator cost) per
-	 * extracted tuple.  We don't charge cpu_tuple_cost because a MergeAppend
-	 * node doesn't do qual-checking or projection, so it has less overhead
-	 * than most plan nodes.
+	 * Although MergeAppend does not do any selection or projection, it's not
+	 * free; add a small per-tuple overhead.
 	 */
-	run_cost += cpu_operator_cost * tuples;
+	run_cost += cpu_tuple_cost * APPEND_CPU_COST_MULTIPLIER * tuples;
 
 	path->startup_cost = startup_cost + input_startup_cost;
 	path->total_cost = startup_cost + run_cost + input_total_cost;

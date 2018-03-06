@@ -96,43 +96,55 @@ CONTEXT:  SQL statement "delete from fkeys2 where fkey21 = $1 and fkey22 = $2 "
 update pkeys set pkey1 = 7, pkey2 = '70' where pkey1 = 10 and pkey2 = '1';
 NOTICE:  check_pkeys_fkey_cascade: 1 tuple(s) of fkeys are deleted
 NOTICE:  check_pkeys_fkey_cascade: 1 tuple(s) of fkeys2 are deleted
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table in ('pkeys', 'fkeys', 'fkeys2')
+  ORDER BY trigger_name COLLATE "C", 2;
+        trigger_name        | event_manipulation | event_object_schema | event_object_table | action_order | action_condition | action_orientation | action_timing | action_reference_old_table | action_reference_new_table 
+----------------------------+--------------------+---------------------+--------------------+--------------+------------------+--------------------+---------------+----------------------------+----------------------------
+ check_fkeys2_fkey_restrict | DELETE             | public              | fkeys2             |            1 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys2_fkey_restrict | UPDATE             | public              | fkeys2             |            1 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys2_pkey_exist    | INSERT             | public              | fkeys2             |            1 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys2_pkey_exist    | UPDATE             | public              | fkeys2             |            2 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys_pkey2_exist    | INSERT             | public              | fkeys              |            1 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys_pkey2_exist    | UPDATE             | public              | fkeys              |            1 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys_pkey_exist     | INSERT             | public              | fkeys              |            2 |                  | ROW                | BEFORE        |                            | 
+ check_fkeys_pkey_exist     | UPDATE             | public              | fkeys              |            2 |                  | ROW                | BEFORE        |                            | 
+ check_pkeys_fkey_cascade   | DELETE             | public              | pkeys              |            1 |                  | ROW                | BEFORE        |                            | 
+ check_pkeys_fkey_cascade   | UPDATE             | public              | pkeys              |            1 |                  | ROW                | BEFORE        |                            | 
+(10 rows)
+
 DROP TABLE pkeys;
 DROP TABLE fkeys;
 DROP TABLE fkeys2;
--- -- I've disabled the funny_dup17 test because the new semantics
--- -- of AFTER ROW triggers, which get now fired at the end of a
--- -- query always, cause funny_dup17 to enter an endless loop.
--- --
--- --      Jan
---
--- create table dup17 (x int4);
---
--- create trigger dup17_before
--- 	before insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
---
--- insert into dup17 values (17);
--- select count(*) from dup17;
--- insert into dup17 values (17);
--- select count(*) from dup17;
---
--- drop trigger dup17_before on dup17;
---
--- create trigger dup17_after
--- 	after insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
---
--- DROP TABLE dup17;
+-- Check behavior when trigger returns unmodified trigtuple
+create table trigtest (f1 int, f2 text);
+create trigger trigger_return_old
+	before insert or delete or update on trigtest
+	for each row execute procedure trigger_return_old();
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+ f1 | f2  
+----+-----
+  1 | foo
+(1 row)
+
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+ f1 | f2  
+----+-----
+  1 | foo
+(1 row)
+
+delete from trigtest;
+select * from trigtest;
+ f1 | f2 
+----+----
+(0 rows)
+
+drop table trigtest;
 create sequence ttdummy_seq increment 10 start 0 minvalue 0;
 create table tttest (
 	price_id	int4,
@@ -347,6 +359,26 @@ CREATE TRIGGER insert_when BEFORE INSERT ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('insert_when');
 CREATE TRIGGER delete_when AFTER DELETE ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('delete_when');
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('main_table')
+  ORDER BY trigger_name COLLATE "C", 2;
+     trigger_name     | event_manipulation | event_object_schema | event_object_table | action_order |        action_condition        | action_orientation | action_timing | action_reference_old_table | action_reference_new_table 
+----------------------+--------------------+---------------------+--------------------+--------------+--------------------------------+--------------------+---------------+----------------------------+----------------------------
+ after_ins_stmt_trig  | INSERT             | public              | main_table         |            1 |                                | STATEMENT          | AFTER         |                            | 
+ after_upd_row_trig   | UPDATE             | public              | main_table         |            1 |                                | ROW                | AFTER         |                            | 
+ after_upd_stmt_trig  | UPDATE             | public              | main_table         |            1 |                                | STATEMENT          | AFTER         |                            | 
+ before_ins_stmt_trig | INSERT             | public              | main_table         |            1 |                                | STATEMENT          | BEFORE        |                            | 
+ delete_a             | DELETE             | public              | main_table         |            1 | (old.a = 123)                  | ROW                | AFTER         |                            | 
+ delete_when          | DELETE             | public              | main_table         |            1 | true                           | STATEMENT          | AFTER         |                            | 
+ insert_a             | INSERT             | public              | main_table         |            1 | (new.a = 123)                  | ROW                | AFTER         |                            | 
+ insert_when          | INSERT             | public              | main_table         |            2 | true                           | STATEMENT          | BEFORE        |                            | 
+ modified_a           | UPDATE             | public              | main_table         |            1 | (old.a <> new.a)               | ROW                | BEFORE        |                            | 
+ modified_any         | UPDATE             | public              | main_table         |            2 | (old.* IS DISTINCT FROM new.*) | ROW                | BEFORE        |                            | 
+(10 rows)
+
 INSERT INTO main_table (a) VALUES (123), (456);
 NOTICE:  trigger_func(before_ins_stmt) called: action = INSERT, when = BEFORE, level = STATEMENT
 NOTICE:  trigger_func(insert_when) called: action = INSERT, when = BEFORE, level = STATEMENT
@@ -391,9 +423,9 @@ SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = 'main_table'
 (1 row)
 
 SELECT pg_get_triggerdef(oid, false) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_a';
-                                                              pg_get_triggerdef                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------
- CREATE TRIGGER modified_a BEFORE UPDATE OF a ON main_table FOR EACH ROW WHEN ((old.a <> new.a)) EXECUTE PROCEDURE trigger_func('modified_a')
+                                                                  pg_get_triggerdef                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE TRIGGER modified_a BEFORE UPDATE OF a ON public.main_table FOR EACH ROW WHEN ((old.a <> new.a)) EXECUTE PROCEDURE trigger_func('modified_a')
 (1 row)
 
 SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_any';
@@ -421,9 +453,9 @@ FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func('before_upd_a_stmt');
 CREATE TRIGGER after_upd_b_stmt_trig AFTER UPDATE OF b ON main_table
 FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func('after_upd_b_stmt');
 SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'after_upd_a_b_row_trig';
-                                                             pg_get_triggerdef                                                             
--------------------------------------------------------------------------------------------------------------------------------------------
- CREATE TRIGGER after_upd_a_b_row_trig AFTER UPDATE OF a, b ON main_table FOR EACH ROW EXECUTE PROCEDURE trigger_func('after_upd_a_b_row')
+                                                                pg_get_triggerdef                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE TRIGGER after_upd_a_b_row_trig AFTER UPDATE OF a, b ON public.main_table FOR EACH ROW EXECUTE PROCEDURE trigger_func('after_upd_a_b_row')
 (1 row)
 
 UPDATE main_table SET a = 50;
@@ -1825,7 +1857,7 @@ create table parted2_stmt_trig1 partition of parted2_stmt_trig for values in (1)
 create table parted2_stmt_trig2 partition of parted2_stmt_trig for values in (2);
 create or replace function trigger_notice() returns trigger as $$
   begin
-    raise notice 'trigger on % % % for %', TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
+    raise notice 'trigger % on % % % for %', TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
     if TG_LEVEL = 'ROW' then
        return NEW;
     end if;
@@ -1870,12 +1902,12 @@ create trigger trig_del_after after delete on parted2_stmt_trig
 with ins (a) as (
   insert into parted2_stmt_trig values (1), (2) returning a
 ) insert into parted_stmt_trig select a from ins returning tableoid::regclass, a;
-NOTICE:  trigger on parted_stmt_trig BEFORE INSERT for STATEMENT
-NOTICE:  trigger on parted2_stmt_trig BEFORE INSERT for STATEMENT
-NOTICE:  trigger on parted_stmt_trig1 BEFORE INSERT for ROW
-NOTICE:  trigger on parted_stmt_trig1 AFTER INSERT for ROW
-NOTICE:  trigger on parted2_stmt_trig AFTER INSERT for STATEMENT
-NOTICE:  trigger on parted_stmt_trig AFTER INSERT for STATEMENT
+NOTICE:  trigger trig_ins_before on parted_stmt_trig BEFORE INSERT for STATEMENT
+NOTICE:  trigger trig_ins_before on parted2_stmt_trig BEFORE INSERT for STATEMENT
+NOTICE:  trigger trig_ins_before on parted_stmt_trig1 BEFORE INSERT for ROW
+NOTICE:  trigger trig_ins_after on parted_stmt_trig1 AFTER INSERT for ROW
+NOTICE:  trigger trig_ins_after on parted2_stmt_trig AFTER INSERT for STATEMENT
+NOTICE:  trigger trig_ins_after on parted_stmt_trig AFTER INSERT for STATEMENT
      tableoid      | a 
 -------------------+---
  parted_stmt_trig1 | 1
@@ -1885,25 +1917,25 @@ NOTICE:  trigger on parted_stmt_trig AFTER INSERT for STATEMENT
 with upd as (
   update parted2_stmt_trig set a = a
 ) update parted_stmt_trig  set a = a;
-NOTICE:  trigger on parted_stmt_trig BEFORE UPDATE for STATEMENT
-NOTICE:  trigger on parted_stmt_trig1 BEFORE UPDATE for ROW
-NOTICE:  trigger on parted2_stmt_trig BEFORE UPDATE for STATEMENT
-NOTICE:  trigger on parted_stmt_trig1 AFTER UPDATE for ROW
-NOTICE:  trigger on parted_stmt_trig AFTER UPDATE for STATEMENT
-NOTICE:  trigger on parted2_stmt_trig AFTER UPDATE for STATEMENT
+NOTICE:  trigger trig_upd_before on parted_stmt_trig BEFORE UPDATE for STATEMENT
+NOTICE:  trigger trig_upd_before on parted_stmt_trig1 BEFORE UPDATE for ROW
+NOTICE:  trigger trig_upd_before on parted2_stmt_trig BEFORE UPDATE for STATEMENT
+NOTICE:  trigger trig_upd_after on parted_stmt_trig1 AFTER UPDATE for ROW
+NOTICE:  trigger trig_upd_after on parted_stmt_trig AFTER UPDATE for STATEMENT
+NOTICE:  trigger trig_upd_after on parted2_stmt_trig AFTER UPDATE for STATEMENT
 delete from parted_stmt_trig;
-NOTICE:  trigger on parted_stmt_trig BEFORE DELETE for STATEMENT
-NOTICE:  trigger on parted_stmt_trig AFTER DELETE for STATEMENT
+NOTICE:  trigger trig_del_before on parted_stmt_trig BEFORE DELETE for STATEMENT
+NOTICE:  trigger trig_del_after on parted_stmt_trig AFTER DELETE for STATEMENT
 -- insert via copy on the parent
 copy parted_stmt_trig(a) from stdin;
-NOTICE:  trigger on parted_stmt_trig BEFORE INSERT for STATEMENT
-NOTICE:  trigger on parted_stmt_trig1 BEFORE INSERT for ROW
-NOTICE:  trigger on parted_stmt_trig1 AFTER INSERT for ROW
-NOTICE:  trigger on parted_stmt_trig AFTER INSERT for STATEMENT
+NOTICE:  trigger trig_ins_before on parted_stmt_trig BEFORE INSERT for STATEMENT
+NOTICE:  trigger trig_ins_before on parted_stmt_trig1 BEFORE INSERT for ROW
+NOTICE:  trigger trig_ins_after on parted_stmt_trig1 AFTER INSERT for ROW
+NOTICE:  trigger trig_ins_after on parted_stmt_trig AFTER INSERT for STATEMENT
 -- insert via copy on the first partition
 copy parted_stmt_trig1(a) from stdin;
-NOTICE:  trigger on parted_stmt_trig1 BEFORE INSERT for ROW
-NOTICE:  trigger on parted_stmt_trig1 AFTER INSERT for ROW
+NOTICE:  trigger trig_ins_before on parted_stmt_trig1 BEFORE INSERT for ROW
+NOTICE:  trigger trig_ins_after on parted_stmt_trig1 AFTER INSERT for ROW
 drop table parted_stmt_trig, parted2_stmt_trig;
 --
 -- Test the interaction between transition tables and both kinds of
@@ -1991,6 +2023,28 @@ create trigger child3_update_trig
 create trigger child3_delete_trig
   after delete on child3 referencing old table as old_table
   for each statement execute procedure dump_delete();
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('parent', 'child1', 'child2', 'child3')
+  ORDER BY trigger_name COLLATE "C", 2;
+    trigger_name    | event_manipulation | event_object_schema | event_object_table | action_order | action_condition | action_orientation | action_timing | action_reference_old_table | action_reference_new_table 
+--------------------+--------------------+---------------------+--------------------+--------------+------------------+--------------------+---------------+----------------------------+----------------------------
+ child1_delete_trig | DELETE             | public              | child1             |            1 |                  | STATEMENT          | AFTER         | old_table                  | 
+ child1_insert_trig | INSERT             | public              | child1             |            1 |                  | STATEMENT          | AFTER         |                            | new_table
+ child1_update_trig | UPDATE             | public              | child1             |            1 |                  | STATEMENT          | AFTER         | old_table                  | new_table
+ child2_delete_trig | DELETE             | public              | child2             |            1 |                  | STATEMENT          | AFTER         | old_table                  | 
+ child2_insert_trig | INSERT             | public              | child2             |            1 |                  | STATEMENT          | AFTER         |                            | new_table
+ child2_update_trig | UPDATE             | public              | child2             |            1 |                  | STATEMENT          | AFTER         | old_table                  | new_table
+ child3_delete_trig | DELETE             | public              | child3             |            1 |                  | STATEMENT          | AFTER         | old_table                  | 
+ child3_insert_trig | INSERT             | public              | child3             |            1 |                  | STATEMENT          | AFTER         |                            | new_table
+ child3_update_trig | UPDATE             | public              | child3             |            1 |                  | STATEMENT          | AFTER         | old_table                  | new_table
+ parent_delete_trig | DELETE             | public              | parent             |            1 |                  | STATEMENT          | AFTER         | old_table                  | 
+ parent_insert_trig | INSERT             | public              | parent             |            1 |                  | STATEMENT          | AFTER         |                            | new_table
+ parent_update_trig | UPDATE             | public              | parent             |            1 |                  | STATEMENT          | AFTER         | old_table                  | new_table
+(12 rows)
+
 -- insert directly into children sees respective child-format tuples
 insert into child1 values ('AAA', 42);
 NOTICE:  trigger = child1_insert_trig, new table = (AAA,42)

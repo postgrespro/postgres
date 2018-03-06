@@ -914,11 +914,11 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"enable_partition_wise_join", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Enables partition-wise join."),
+		{"enable_partitionwise_join", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables partitionwise join."),
 			NULL
 		},
-		&enable_partition_wise_join,
+		&enable_partitionwise_join,
 		false,
 		NULL, NULL, NULL
 	},
@@ -2732,6 +2732,16 @@ static struct config_int ConfigureNamesInt[] =
 		&autovacuum_max_workers,
 		3, 1, MAX_BACKENDS,
 		check_autovacuum_max_workers, NULL, NULL
+	},
+
+	{
+		{"max_parallel_maintenance_workers", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
+			gettext_noop("Sets the maximum number of parallel processes per maintenance operation."),
+			NULL
+		},
+		&max_parallel_maintenance_workers,
+		2, 0, 1024,
+		NULL, NULL, NULL
 	},
 
 	{

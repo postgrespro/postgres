@@ -1614,14 +1614,27 @@ func_get_detail(List *funcname,
 				*argdefaults = defaults;
 			}
 		}
-		if (pform->proisagg)
-			result = FUNCDETAIL_AGGREGATE;
-		else if (pform->proiswindow)
-			result = FUNCDETAIL_WINDOWFUNC;
-		else if (pform->prorettype == InvalidOid)
-			result = FUNCDETAIL_PROCEDURE;
-		else
-			result = FUNCDETAIL_NORMAL;
+
+		switch (pform->prokind)
+		{
+			case PROKIND_AGGREGATE:
+				result = FUNCDETAIL_AGGREGATE;
+				break;
+			case PROKIND_FUNCTION:
+				result = FUNCDETAIL_NORMAL;
+				break;
+			case PROKIND_PROCEDURE:
+				result = FUNCDETAIL_PROCEDURE;
+				break;
+			case PROKIND_WINDOW:
+				result = FUNCDETAIL_WINDOWFUNC;
+				break;
+			default:
+				elog(ERROR, "unrecognized prokind: %c", pform->prokind);
+				result = FUNCDETAIL_NORMAL; /* keep compiler quiet */
+				break;
+		}
+
 		ReleaseSysCache(ftup);
 		return result;
 	}
@@ -2067,7 +2080,7 @@ LookupFuncWithArgs(ObjectType objtype, ObjectWithArgs *func, bool noError)
 	if (objtype == OBJECT_FUNCTION)
 	{
 		/* Make sure it's a function, not a procedure */
-		if (oid && get_func_rettype(oid) == InvalidOid)
+		if (oid && get_func_prokind(oid) == PROKIND_PROCEDURE)
 		{
 			if (noError)
 				return InvalidOid;
@@ -2098,7 +2111,7 @@ LookupFuncWithArgs(ObjectType objtype, ObjectWithArgs *func, bool noError)
 		}
 
 		/* Make sure it's a procedure */
-		if (get_func_rettype(oid) != InvalidOid)
+		if (get_func_prokind(oid) != PROKIND_PROCEDURE)
 		{
 			if (noError)
 				return InvalidOid;
@@ -2134,7 +2147,7 @@ LookupFuncWithArgs(ObjectType objtype, ObjectWithArgs *func, bool noError)
 		}
 
 		/* Make sure it's an aggregate */
-		if (!get_func_isagg(oid))
+		if (get_func_prokind(oid) != PROKIND_AGGREGATE)
 		{
 			if (noError)
 				return InvalidOid;
@@ -2227,6 +2240,7 @@ check_srf_call_placement(ParseState *pstate, Node *last_srf, int location)
 			break;
 		case EXPR_KIND_WINDOW_FRAME_RANGE:
 		case EXPR_KIND_WINDOW_FRAME_ROWS:
+		case EXPR_KIND_WINDOW_FRAME_GROUPS:
 			err = _("set-returning functions are not allowed in window definitions");
 			break;
 		case EXPR_KIND_SELECT_TARGET:
@@ -2289,7 +2303,7 @@ check_srf_call_placement(ParseState *pstate, Node *last_srf, int location)
 		case EXPR_KIND_PARTITION_EXPRESSION:
 			err = _("set-returning functions are not allowed in partition key expressions");
 			break;
-		case EXPR_KIND_CALL:
+		case EXPR_KIND_CALL_ARGUMENT:
 			err = _("set-returning functions are not allowed in CALL arguments");
 			break;
 

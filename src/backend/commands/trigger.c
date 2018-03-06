@@ -2815,7 +2815,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 			return NULL;		/* "do nothing" */
 		}
 	}
-	if (trigtuple != fdw_trigtuple)
+	if (trigtuple != fdw_trigtuple && trigtuple != newtuple)
 		heap_freetuple(trigtuple);
 
 	if (newtuple != slottuple)
@@ -3251,7 +3251,8 @@ TriggerEnabled(EState *estate, ResultRelInfo *relinfo,
 			if (estate->es_trig_oldtup_slot == NULL)
 			{
 				oldContext = MemoryContextSwitchTo(estate->es_query_cxt);
-				estate->es_trig_oldtup_slot = ExecInitExtraTupleSlot(estate);
+				estate->es_trig_oldtup_slot =
+					ExecInitExtraTupleSlot(estate, NULL);
 				MemoryContextSwitchTo(oldContext);
 			}
 			oldslot = estate->es_trig_oldtup_slot;
@@ -3264,7 +3265,8 @@ TriggerEnabled(EState *estate, ResultRelInfo *relinfo,
 			if (estate->es_trig_newtup_slot == NULL)
 			{
 				oldContext = MemoryContextSwitchTo(estate->es_query_cxt);
-				estate->es_trig_newtup_slot = ExecInitExtraTupleSlot(estate);
+				estate->es_trig_newtup_slot =
+					ExecInitExtraTupleSlot(estate, NULL);
 				MemoryContextSwitchTo(oldContext);
 			}
 			newslot = estate->es_trig_newtup_slot;

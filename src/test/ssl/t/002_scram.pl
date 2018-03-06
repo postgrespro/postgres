@@ -4,9 +4,18 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 5;
+use Test::More;
 use ServerSetup;
 use File::Copy;
+
+if ($ENV{with_openssl} eq 'yes')
+{
+	plan tests => 6;
+}
+else
+{
+	plan skip_all => 'SSL not supported by this build';
+}
 
 # This is the hostname used to connect to the server.
 my $SERVERHOSTADDR = '127.0.0.1';
@@ -59,8 +68,10 @@ else
 {
 	test_connect_fails($common_connstr,
 					"scram_channel_binding=tls-server-end-point",
+					qr/unsupported SCRAM channel-binding type/,
 					"SCRAM authentication with tls-server-end-point as channel binding");
 }
 test_connect_fails($common_connstr,
 	"scram_channel_binding=not-exists",
+	qr/unsupported SCRAM channel-binding type/,
 	"SCRAM authentication with invalid channel binding");

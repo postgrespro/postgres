@@ -1332,9 +1332,10 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
    <para>
     The <literal>random</literal> function generates values using a uniform
     distribution, that is all the values are drawn within the specified
-    range with equal probability. The <literal>random_exponential</literal> and
-    <literal>random_gaussian</literal> functions require an additional double
-    parameter which determines the precise shape of the distribution.
+    range with equal probability. The <literal>random_exponential</literal>, 
+    <literal>random_gaussian</literal> and <literal>random_zipfian</literal>
+    functions require an additional double parameter which determines the precise
+    shape of the distribution.
    </para>
 
    <itemizedlist>
@@ -1686,6 +1687,17 @@ statement latencies in milliseconds:
    essential.  It might even be useful to run several <application>pgbench</application>
    instances concurrently, on several client machines, against the same
    database server.
+  </para>
+ </refsect2>
+ <refsect2>
+  <title>Security</title>
+
+  <para>
+    If untrusted users have access to a database that has not adopted a
+    <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
+    do not run <application>pgbench</application> in that
+    database.  <application>pgbench</application> uses unqualified names and
+    does not manipulate the search path.
   </para>
  </refsect2>
  </refsect1>

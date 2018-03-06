@@ -77,6 +77,10 @@ main(int argc, char **argv)
 	bool		live_check = false;
 
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
+
+	/* Ensure that all files created by pg_upgrade are non-world-readable */
+	umask(S_IRWXG | S_IRWXO);
+
 	parseCommandLine(argc, argv);
 
 	get_restricted_token(os_info.progname);
@@ -274,13 +278,13 @@ static void
 prepare_new_globals(void)
 {
 	/*
-	 * We set autovacuum_freeze_max_age to its maximum value so autovacuum
-	 * does not launch here and delete clog files, before the frozen xids are
-	 * set.
+	 * Before we restore anything, set frozenxids of initdb-created tables.
 	 */
-
 	set_frozenxids(false);
 
+	/*
+	 * Now restore global objects (roles and tablespaces).
+	 */
 	prep_status("Restoring global objects in the new cluster");
 
 	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
@@ -298,13 +302,21 @@ create_new_objects(void)
 
 	prep_status("Restoring database schemas in the new cluster\n");
 
+	/*
+	 * We cannot process the template1 database concurrently with others,
+	 * because when it's transiently dropped, connection attempts would fail.
+	 * So handle it in a separate non-parallelized pass.
+	 */
 	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
 	{
 		char		sql_file_name[MAXPGPATH],
 					log_file_name[MAXPGPATH];
 		DbInfo	   *old_db = &old_cluster.dbarr.dbs[dbnum];
 		const char *create_opts;
-		const char *starting_db;
+
+		/* Process only template1 in this pass */
+		if (strcmp(old_db->db_name, "template1") != 0)
+			continue;
 
 		pg_log(PG_STATUS, "%s", old_db->db_name);
 		snprintf(sql_file_name, sizeof(sql_file_name), DB_DUMP_FILE_MASK, old_db->db_oid);
@@ -316,26 +328,55 @@ create_new_objects(void)
 		 * otherwise we would fail to propagate their database-level
 		 * properties.
 		 */
-		if (strcmp(old_db->db_name, "template1") == 0 ||
-			strcmp(old_db->db_name, "postgres") == 0)
+		create_opts = "--clean --create";
+
+		exec_prog(log_file_name,
+				  NULL,
+				  true,
+				  true,
+				  "\"%s/pg_restore\" %s %s --exit-on-error --verbose "
+				  "--dbname postgres \"%s\"",
+				  new_cluster.bindir,
+				  cluster_conn_opts(&new_cluster),
+				  create_opts,
+				  sql_file_name);
+
+		break;					/* done once we've processed template1 */
+	}
+
+	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+	{
+		char		sql_file_name[MAXPGPATH],
+					log_file_name[MAXPGPATH];
+		DbInfo	   *old_db = &old_cluster.dbarr.dbs[dbnum];
+		const char *create_opts;
+
+		/* Skip template1 in this pass */
+		if (strcmp(old_db->db_name, "template1") == 0)
+			continue;
+
+		pg_log(PG_STATUS, "%s", old_db->db_name);
+		snprintf(sql_file_name, sizeof(sql_file_name), DB_DUMP_FILE_MASK, old_db->db_oid);
+		snprintf(log_file_name, sizeof(log_file_name), DB_DUMP_LOG_FILE_MASK, old_db->db_oid);
+
+		/*
+		 * template1 and postgres databases will already exist in the target
+		 * installation, so tell pg_restore to drop and recreate them;
+		 * otherwise we would fail to propagate their database-level
+		 * properties.
+		 */
+		if (strcmp(old_db->db_name, "postgres") == 0)
 			create_opts = "--clean --create";
 		else
 			create_opts = "--create";
 
-		/* When processing template1, we can't connect there to start with */
-		if (strcmp(old_db->db_name, "template1") == 0)
-			starting_db = "postgres";
-		else
-			starting_db = "template1";
-
 		parallel_exec_prog(log_file_name,
 						   NULL,
 						   "\"%s/pg_restore\" %s %s --exit-on-error --verbose "
-						   "--dbname %s \"%s\"",
+						   "--dbname template1 \"%s\"",
 						   new_cluster.bindir,
 						   cluster_conn_opts(&new_cluster),
 						   create_opts,
-						   starting_db,
 						   sql_file_name);
 	}
 
@@ -502,14 +543,25 @@ copy_xact_xlog_xid(void)
 /*
  *	set_frozenxids()
  *
- *	We have frozen all xids, so set datfrozenxid, relfrozenxid, and
- *	relminmxid to be the old cluster's xid counter, which we just set
- *	in the new cluster.  User-table frozenxid and minmxid values will
- *	be set by pg_dump --binary-upgrade, but objects not set by the pg_dump
- *	must have proper frozen counters.
+ * This is called on the new cluster before we restore anything, with
+ * minmxid_only = false.  Its purpose is to ensure that all initdb-created
+ * vacuumable tables have relfrozenxid/relminmxid matching the old cluster's
+ * xid/mxid counters.  We also initialize the datfrozenxid/datminmxid of the
+ * built-in databases to match.
+ *
+ * As we create user tables later, their relfrozenxid/relminmxid fields will
+ * be restored properly by the binary-upgrade restore script.  Likewise for
+ * user-database datfrozenxid/datminmxid.  However, if we're upgrading from a
+ * pre-9.3 database, which does not store per-table or per-DB minmxid, then
+ * the relminmxid/datminmxid values filled in by the restore script will just
+ * be zeroes.
+ *
+ * Hence, with a pre-9.3 source database, a second call occurs after
+ * everything is restored, with minmxid_only = true.  This pass will
+ * initialize all tables and databases, both those made by initdb and user
+ * objects, with the desired minmxid value.  frozenxid values are left alone.
  */
-static
-void
+static void
 set_frozenxids(bool minmxid_only)
 {
 	int			dbnum;

@@ -36,6 +36,8 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
+#include "parser/parse_expr.h"
+#include "parser/parse_func.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_param.h"
 #include "parser/parse_relation.h"
@@ -74,6 +76,8 @@ static Query *transformExplainStmt(ParseState *pstate,
 					 ExplainStmt *stmt);
 static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
+static Query *transformCallStmt(ParseState *pstate,
+					 CallStmt *stmt);
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
@@ -317,6 +321,10 @@ transformStmt(ParseState *pstate, Node *parseTree)
 			result = transformCreateTableAsStmt(pstate,
 												(CreateTableAsStmt *) parseTree);
 			break;
+
+		case T_CallStmt:
+			result = transformCallStmt(pstate,
+									   (CallStmt *) parseTree);
 
 		default:
 
@@ -1016,6 +1024,13 @@ transformOnConflictClause(ParseState *pstate,
 		Var		   *var;
 		TargetEntry *te;
 		int			attno;
+
+		if (targetrel->rd_partdesc)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("%s cannot be applied to partitioned table \"%s\"",
+							"ON CONFLICT DO UPDATE",
+							RelationGetRelationName(targetrel))));
 
 		/*
 		 * All INSERT expressions have been parsed, get ready for potentially
@@ -2564,6 +2579,43 @@ transformCreateTableAsStmt(ParseState *pstate, CreateTableAsStmt *stmt)
 	return result;
 }
 
+/*
+ * transform a CallStmt
+ *
+ * We need to do parse analysis on the procedure call and its arguments.
+ */
+static Query *
+transformCallStmt(ParseState *pstate, CallStmt *stmt)
+{
+	List	   *targs;
+	ListCell   *lc;
+	Node	   *node;
+	Query	   *result;
+
+	targs = NIL;
+	foreach(lc, stmt->funccall->args)
+	{
+		targs = lappend(targs, transformExpr(pstate,
+											 (Node *) lfirst(lc),
+											 EXPR_KIND_CALL_ARGUMENT));
+	}
+
+	node = ParseFuncOrColumn(pstate,
+							 stmt->funccall->funcname,
+							 targs,
+							 pstate->p_last_srf,
+							 stmt->funccall,
+							 true,
+							 stmt->funccall->location);
+
+	stmt->funcexpr = castNode(FuncExpr, node);
+
+	result = makeNode(Query);
+	result->commandType = CMD_UTILITY;
+	result->utilityStmt = (Node *) stmt;
+
+	return result;
+}
 
 /*
  * Produce a string representation of a LockClauseStrength value.

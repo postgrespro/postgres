@@ -22,7 +22,6 @@
  *		ReScanExprContext
  *
  *		ExecAssignExprContext	Common code for plan node init routines.
- *		ExecAssignResultType
  *		etc
  *
  *		ExecOpenScanRelation	Common code for scan node init routines.
@@ -119,7 +118,7 @@ CreateExecutorState(void)
 	estate->es_root_result_relations = NULL;
 	estate->es_num_root_result_relations = 0;
 
-	estate->es_leaf_result_relations = NIL;
+	estate->es_tuple_routing_result_relations = NIL;
 
 	estate->es_trig_target_relations = NIL;
 	estate->es_trig_tuple_slot = NULL;
@@ -429,47 +428,6 @@ ExecAssignExprContext(EState *estate, PlanState *planstate)
 }
 
 /* ----------------
- *		ExecAssignResultType
- * ----------------
- */
-void
-ExecAssignResultType(PlanState *planstate, TupleDesc tupDesc)
-{
-	TupleTableSlot *slot = planstate->ps_ResultTupleSlot;
-
-	ExecSetSlotDescriptor(slot, tupDesc);
-}
-
-/* ----------------
- *		ExecAssignResultTypeFromTL
- * ----------------
- */
-void
-ExecAssignResultTypeFromTL(PlanState *planstate)
-{
-	bool		hasoid;
-	TupleDesc	tupDesc;
-
-	if (ExecContextForcesOids(planstate, &hasoid))
-	{
-		/* context forces OID choice; hasoid is now set correctly */
-	}
-	else
-	{
-		/* given free choice, don't leave space for OIDs in result tuples */
-		hasoid = false;
-	}
-
-	/*
-	 * ExecTypeFromTL needs the parse-time representation of the tlist, not a
-	 * list of ExprStates.  This is good because some plan nodes don't bother
-	 * to set up planstate->targetlist ...
-	 */
-	tupDesc = ExecTypeFromTL(planstate->plan->targetlist, hasoid);
-	ExecAssignResultType(planstate, tupDesc);
-}
-
-/* ----------------
  *		ExecGetResultType
  * ----------------
  */
@@ -609,13 +567,9 @@ ExecFreeExprContext(PlanState *planstate)
 	planstate->ps_ExprContext = NULL;
 }
 
+
 /* ----------------------------------------------------------------
- *		the following scan type support functions are for
- *		those nodes which are stubborn and return tuples in
- *		their Scan tuple slot instead of their Result tuple
- *		slot..  luck fur us, these nodes do not do projections
- *		so we don't have to worry about getting the ProjectionInfo
- *		right for them...  -cim 6/3/91
+ *				  Scan node support
  * ----------------------------------------------------------------
  */
 
@@ -632,11 +586,11 @@ ExecAssignScanType(ScanState *scanstate, TupleDesc tupDesc)
 }
 
 /* ----------------
- *		ExecAssignScanTypeFromOuterPlan
+ *		ExecCreateSlotFromOuterPlan
  * ----------------
  */
 void
-ExecAssignScanTypeFromOuterPlan(ScanState *scanstate)
+ExecCreateScanSlotFromOuterPlan(EState *estate, ScanState *scanstate)
 {
 	PlanState  *outerPlan;
 	TupleDesc	tupDesc;
@@ -644,14 +598,8 @@ ExecAssignScanTypeFromOuterPlan(ScanState *scanstate)
 	outerPlan = outerPlanState(scanstate);
 	tupDesc = ExecGetResultType(outerPlan);
 
-	ExecAssignScanType(scanstate, tupDesc);
+	ExecInitScanTupleSlot(estate, scanstate, tupDesc);
 }
-
-
-/* ----------------------------------------------------------------
- *				  Scan node support
- * ----------------------------------------------------------------
- */
 
 /* ----------------------------------------------------------------
  *		ExecRelationIsTargetRelation

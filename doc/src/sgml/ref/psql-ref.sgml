@@ -283,10 +283,16 @@ EOF
       <listitem>
       <para>
       List all available databases, then exit. Other non-connection
-      options are ignored. If an explicit database name is not
-      found the <literal>postgres</literal> database, not the user's,
-      will be targeted for connection. This is similar to the meta-command
+      options are ignored. This is similar to the meta-command
       <command>\list</command>.
+      </para>
+
+      <para>
+      When this option is used, <application>psql</application> will connect
+      to the database <literal>postgres</literal>, unless a different database
+      is named on the command line (option <option>-d</option> or non-option
+      argument, possibly via a service entry, but not via an environment
+      variable).
       </para>
       </listitem>
     </varlistentry>
@@ -727,6 +733,18 @@ testdb=&gt;
     terminate a command.  Thus commands can be spread over several lines for
     clarity. If the command was sent and executed without error, the results
     of the command are displayed on the screen.
+    </para>
+
+    <para>
+    If untrusted users have access to a database that has not adopted a
+    <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
+    begin your session by removing publicly-writable schemas
+    from <varname>search_path</varname>.  One can
+    add <literal>options=-csearch_path=</literal> to the connection string or
+    issue <literal>SELECT pg_catalog.set_config('search_path', '',
+    false)</literal> before other SQL commands.  This consideration is not
+    specific to <application>psql</application>; it applies to every interface
+    for executing arbitrary SQL commands.
     </para>
 
     <para>
@@ -1809,8 +1827,9 @@ Tue Oct 26 21:40:57 CEST 1999
 
         <listitem>
         <para>
-         This command fetches and edits the definition of the named function,
-         in the form of a <command>CREATE OR REPLACE FUNCTION</command> command.
+         This command fetches and edits the definition of the named function or procedure,
+         in the form of a <command>CREATE OR REPLACE FUNCTION</command> or
+         <command>CREATE OR REPLACE PROCEDURE</command> command.
          Editing is done in the same way as for <literal>\edit</literal>.
          After the editor exits, the updated command waits in the query buffer;
          type semicolon or <literal>\g</literal> to send it, or <literal>\r</literal>
@@ -2964,8 +2983,9 @@ testdb=&gt; <userinput>\setenv LESS -imx4F</userinput>
 
         <listitem>
         <para>
-         This command fetches and shows the definition of the named function,
-         in the form of a <command>CREATE OR REPLACE FUNCTION</command> command.
+         This command fetches and shows the definition of the named function or procedure,
+         in the form of a <command>CREATE OR REPLACE FUNCTION</command> or
+         <command>CREATE OR REPLACE PROCEDURE</command> command.
          The definition is printed to the current query output channel,
          as set by <command>\o</command>.
         </para>

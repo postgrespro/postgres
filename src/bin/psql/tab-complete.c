@@ -349,7 +349,7 @@ static const SchemaQuery Query_for_list_of_aggregates = {
 	/* catname */
 	"pg_catalog.pg_proc p",
 	/* selcondition */
-	"p.proisagg",
+	"p.prokind = 'a'",
 	/* viscondition */
 	"pg_catalog.pg_function_is_visible(p.oid)",
 	/* namespace */
@@ -397,7 +397,7 @@ static const SchemaQuery Query_for_list_of_functions = {
 	/* catname */
 	"pg_catalog.pg_proc p",
 	/* selcondition */
-	"p.prorettype <> 0",
+	"p.prokind IN ('f', 'w')",
 	/* viscondition */
 	"pg_catalog.pg_function_is_visible(p.oid)",
 	/* namespace */
@@ -428,7 +428,7 @@ static const SchemaQuery Query_for_list_of_procedures = {
 	/* catname */
 	"pg_catalog.pg_proc p",
 	/* selcondition */
-	"p.prorettype = 0",
+	"p.prokind = 'p'",
 	/* viscondition */
 	"pg_catalog.pg_function_is_visible(p.oid)",
 	/* namespace */
@@ -1711,11 +1711,17 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_CONST("(");
 	/* ALTER INDEX <foo> SET|RESET ( */
 	else if (Matches5("ALTER", "INDEX", MatchAny, "RESET", "("))
-		COMPLETE_WITH_LIST3("fillfactor", "fastupdate",
-							"gin_pending_list_limit");
+		COMPLETE_WITH_LIST6("fillfactor",
+							"fastupdate", "gin_pending_list_limit",	/* GIN */
+							"buffering",	/* GiST */
+							"pages_per_range", "autosummarize"	/* BRIN */
+			);
 	else if (Matches5("ALTER", "INDEX", MatchAny, "SET", "("))
-		COMPLETE_WITH_LIST3("fillfactor =", "fastupdate =",
-							"gin_pending_list_limit =");
+		COMPLETE_WITH_LIST6("fillfactor =",
+							"fastupdate =", "gin_pending_list_limit =",	/* GIN */
+							"buffering =",	/* GiST */
+							"pages_per_range =", "autosummarize ="	/* BRIN */
+			);
 
 	/* ALTER LANGUAGE <name> */
 	else if (Matches3("ALTER", "LANGUAGE", MatchAny))

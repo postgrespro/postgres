@@ -21,6 +21,7 @@
 #include "catalog/pg_index.h"
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
+#include "storage/shm_toc.h"
 
 /* There's room for a 16-bit vacuum cycle ID in BTPageOpaqueData */
 typedef uint16 BTCycleId;
@@ -224,11 +225,17 @@ typedef struct BTMetaPageData
  *	To facilitate accelerated sorting, an operator class may choose to
  *	offer a second procedure (BTSORTSUPPORT_PROC).  For full details, see
  *	src/include/utils/sortsupport.h.
+ *
+ *	To support window frames defined by "RANGE offset PRECEDING/FOLLOWING",
+ *	an operator class may choose to offer a third amproc procedure
+ *	(BTINRANGE_PROC), independently of whether it offers sortsupport.
+ *	For full details, see doc/src/sgml/btree.sgml.
  */
 
 #define BTORDER_PROC		1
 #define BTSORTSUPPORT_PROC	2
-#define BTNProcs			2
+#define BTINRANGE_PROC		3
+#define BTNProcs			3
 
 /*
  *	We need to be able to tell the difference between read and write
@@ -430,8 +437,6 @@ typedef BTScanOpaqueData *BTScanOpaque;
 /*
  * external entry points for btree, in nbtree.c
  */
-extern IndexBuildResult *btbuild(Relation heap, Relation index,
-		struct IndexInfo *indexInfo);
 extern void btbuildempty(Relation index);
 extern bool btinsert(Relation rel, Datum *values, bool *isnull,
 		 ItemPointer ht_ctid, Relation heapRel,
@@ -547,13 +552,8 @@ extern bool btvalidate(Oid opclassoid);
 /*
  * prototypes for functions in nbtsort.c
  */
-typedef struct BTSpool BTSpool; /* opaque type known only within nbtsort.c */
-
-extern BTSpool *_bt_spoolinit(Relation heap, Relation index,
-			  bool isunique, bool isdead);
-extern void _bt_spooldestroy(BTSpool *btspool);
-extern void _bt_spool(BTSpool *btspool, ItemPointer self,
-		  Datum *values, bool *isnull);
-extern void _bt_leafbuild(BTSpool *btspool, BTSpool *spool2);
+extern IndexBuildResult *btbuild(Relation heap, Relation index,
+		struct IndexInfo *indexInfo);
+extern void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc);
 
 #endif							/* NBTREE_H */

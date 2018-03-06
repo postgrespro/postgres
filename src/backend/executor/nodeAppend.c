@@ -129,17 +129,9 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	appendstate->as_nplans = nplans;
 
 	/*
-	 * Miscellaneous initialization
-	 *
-	 * Append plans don't have expression contexts because they never call
-	 * ExecQual or ExecProject.
+	 * Initialize result tuple type and slot.
 	 */
-
-	/*
-	 * append nodes still have Result slots, which hold pointers to tuples, so
-	 * we have to initialize them.
-	 */
-	ExecInitResultTupleSlot(estate, &appendstate->ps);
+	ExecInitResultTupleSlotTL(estate, &appendstate->ps);
 
 	/*
 	 * call ExecInitNode on each of the plans to be executed and save the
@@ -155,9 +147,11 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	}
 
 	/*
-	 * initialize output tuple type
+	 * Miscellaneous initialization
+	 *
+	 * Append plans don't have expression contexts because they never call
+	 * ExecQual or ExecProject.
 	 */
-	ExecAssignResultTypeFromTL(&appendstate->ps);
 	appendstate->ps.ps_ProjInfo = NULL;
 
 	/*
@@ -168,7 +162,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	appendstate->as_whichplan =
 		appendstate->ps.plan->parallel_aware ? INVALID_SUBPLAN_INDEX : 0;
 
-	/* If parallel-aware, this will be overridden later. */
+	/* For parallel query, this will be overridden later. */
 	appendstate->choose_next_subplan = choose_next_subplan_locally;
 
 	return appendstate;
@@ -367,14 +361,21 @@ choose_next_subplan_locally(AppendState *node)
 {
 	int			whichplan = node->as_whichplan;
 
-	/* We should never see INVALID_SUBPLAN_INDEX in this case. */
-	Assert(whichplan >= 0 && whichplan <= node->as_nplans);
-
 	if (ScanDirectionIsForward(node->ps.state->es_direction))
 	{
-		if (whichplan >= node->as_nplans - 1)
-			return false;
-		node->as_whichplan++;
+		/*
+		 * We won't normally see INVALID_SUBPLAN_INDEX in this case, but we
+		 * might if a plan intended to be run in parallel ends up being run
+		 * serially.
+		 */
+		if (whichplan == INVALID_SUBPLAN_INDEX)
+			node->as_whichplan = 0;
+		else
+		{
+			if (whichplan >= node->as_nplans - 1)
+				return false;
+			node->as_whichplan++;
+		}
 	}
 	else
 	{
@@ -473,6 +474,9 @@ choose_next_subplan_for_worker(AppendState *node)
 		return false;
 	}
 
+	/* Save the plan from which we are starting the search. */
+	node->as_whichplan = pstate->pa_next_plan;
+
 	/* Loop until we find a subplan to execute. */
 	while (pstate->pa_finished[pstate->pa_next_plan])
 	{
@@ -481,14 +485,17 @@ choose_next_subplan_for_worker(AppendState *node)
 			/* Advance to next plan. */
 			pstate->pa_next_plan++;
 		}
-		else if (append->first_partial_plan < node->as_nplans)
+		else if (node->as_whichplan > append->first_partial_plan)
 		{
 			/* Loop back to first partial plan. */
 			pstate->pa_next_plan = append->first_partial_plan;
 		}
 		else
 		{
-			/* At last plan, no partial plans, arrange to bail out. */
+			/*
+			 * At last plan, and either there are no partial plans or we've
+			 * tried them all.  Arrange to bail out.
+			 */
 			pstate->pa_next_plan = node->as_whichplan;
 		}
 

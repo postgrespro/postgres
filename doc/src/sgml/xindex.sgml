@@ -35,7 +35,7 @@
    <productname>PostgreSQL</productname>, but all index methods are
    described in <classname>pg_am</classname>.  It is possible to add a
    new index access method by writing the necessary code and
-   then creating a row in <classname>pg_am</classname> &mdash; but that is
+   then creating an entry in <classname>pg_am</classname> &mdash; but that is
    beyond the scope of this chapter (see <xref linkend="indexam"/>).
   </para>
 
@@ -401,9 +401,12 @@
   </para>
 
   <para>
-   B-trees require a single support function, and allow a second one to be
+   B-trees require a comparison support function,
+   and allow two additional support functions to be
    supplied at the operator class author's option, as shown in <xref
    linkend="xindex-btree-support-table"/>.
+   The requirements for these support functions are explained further in
+   <xref linkend="btree-support-funcs"/>.
   </para>
 
    <table tocentry="1" id="xindex-btree-support-table">
@@ -426,10 +429,17 @@
       </row>
       <row>
        <entry>
-        Return the addresses of C-callable sort support function(s),
-        as documented in <filename>utils/sortsupport.h</filename> (optional)
+        Return the addresses of C-callable sort support function(s)
+        (optional)
        </entry>
        <entry>2</entry>
+      </row>
+      <row>
+       <entry>
+        Compare a test value to a base value plus/minus an offset, and return
+        true or false according to the comparison result (optional)
+       </entry>
+       <entry>3</entry>
       </row>
      </tbody>
     </tgroup>
@@ -458,8 +468,9 @@
       <row>
        <entry>
          Compute the 64-bit hash value for a key given a 64-bit salt; if
-         the salt is 0, the low 32 bits will match the value that would
-         have been computed by function 1
+         the salt is 0, the low 32 bits of the result must match the value
+         that would have been computed by function 1
+         (optional)
        </entry>
        <entry>2</entry>
       </row>
@@ -968,7 +979,8 @@ DEFAULT FOR TYPE int8 USING btree FAMILY integer_ops AS
   OPERATOR 4 >= ,
   OPERATOR 5 > ,
   FUNCTION 1 btint8cmp(int8, int8) ,
-  FUNCTION 2 btint8sortsupport(internal) ;
+  FUNCTION 2 btint8sortsupport(internal) ,
+  FUNCTION 3 in_range(int8, int8, int8, boolean, boolean) ;
 
 CREATE OPERATOR CLASS int4_ops
 DEFAULT FOR TYPE int4 USING btree FAMILY integer_ops AS
@@ -979,7 +991,8 @@ DEFAULT FOR TYPE int4 USING btree FAMILY integer_ops AS
   OPERATOR 4 >= ,
   OPERATOR 5 > ,
   FUNCTION 1 btint4cmp(int4, int4) ,
-  FUNCTION 2 btint4sortsupport(internal) ;
+  FUNCTION 2 btint4sortsupport(internal) ,
+  FUNCTION 3 in_range(int4, int4, int4, boolean, boolean) ;
 
 CREATE OPERATOR CLASS int2_ops
 DEFAULT FOR TYPE int2 USING btree FAMILY integer_ops AS
@@ -990,7 +1003,8 @@ DEFAULT FOR TYPE int2 USING btree FAMILY integer_ops AS
   OPERATOR 4 >= ,
   OPERATOR 5 > ,
   FUNCTION 1 btint2cmp(int2, int2) ,
-  FUNCTION 2 btint2sortsupport(internal) ;
+  FUNCTION 2 btint2sortsupport(internal) ,
+  FUNCTION 3 in_range(int2, int2, int2, boolean, boolean) ;
 
 ALTER OPERATOR FAMILY integer_ops USING btree ADD
   -- cross-type comparisons int8 vs int2
@@ -1039,7 +1053,13 @@ ALTER OPERATOR FAMILY integer_ops USING btree ADD
   OPERATOR 3 = (int2, int4) ,
   OPERATOR 4 >= (int2, int4) ,
   OPERATOR 5 > (int2, int4) ,
-  FUNCTION 1 btint24cmp(int2, int4) ;
+  FUNCTION 1 btint24cmp(int2, int4) ,
+
+  -- cross-type in_range functions
+  FUNCTION 3 in_range(int4, int4, int8, boolean, boolean) ,
+  FUNCTION 3 in_range(int4, int4, int2, boolean, boolean) ,
+  FUNCTION 3 in_range(int2, int2, int8, boolean, boolean) ,
+  FUNCTION 3 in_range(int2, int2, int4, boolean, boolean) ;
 ]]>
 </programlisting>
 
@@ -1055,11 +1075,8 @@ ALTER OPERATOR FAMILY integer_ops USING btree ADD
 
   <para>
    In a B-tree operator family, all the operators in the family must sort
-   compatibly, meaning that the transitive laws hold across all the data types
-   supported by the family: <quote>if A = B and B = C, then A = C</quote>,
-   and <quote>if A &lt; B and B &lt; C, then A &lt; C</quote>.  Moreover, implicit
-   or binary coercion casts between types represented in the operator family
-   must not change the associated sort ordering.  For each
+   compatibly, as is specified in detail in <xref linkend="btree-behavior"/>.
+   For each
    operator in the family there must be a support function having the same
    two input data types as the operator.  It is recommended that a family be
    complete, i.e., for each combination of data types, all operators are
@@ -1140,15 +1157,10 @@ ALTER OPERATOR FAMILY integer_ops USING btree ADD
   </para>
 
   <para>
-   Comparison of arrays of user-defined types also relies on the semantics
-   defined by the default B-tree operator class.
-  </para>
-
-  <para>
    If there is no default B-tree operator class for a data type, the system
    will look for a default hash operator class.  But since that kind of
-   operator class only provides equality, in practice it is only enough
-   to support array equality.
+   operator class only provides equality, it is only able to support grouping
+   not sorting.
   </para>
 
   <para>
@@ -1168,7 +1180,58 @@ ALTER OPERATOR FAMILY integer_ops USING btree ADD
    </note>
 
   <para>
-   Another important point is that an operator that
+   Sorting by a non-default B-tree operator class is possible by specifying
+   the class's less-than operator in a <literal>USING</literal> option,
+   for example
+<programlisting>
+SELECT * FROM mytable ORDER BY somecol USING ~&lt;~;
+</programlisting>
+   Alternatively, specifying the class's greater-than operator
+   in <literal>USING</literal> selects a descending-order sort.
+  </para>
+
+  <para>
+   Comparison of arrays of a user-defined type also relies on the semantics
+   defined by the type's default B-tree operator class.  If there is no
+   default B-tree operator class, but there is a default hash operator class,
+   then array equality is supported, but not ordering comparisons.
+  </para>
+
+  <para>
+   Another SQL feature that requires even more data-type-specific knowledge
+   is the <literal>RANGE</literal> <replaceable>offset</replaceable>
+   <literal>PRECEDING</literal>/<literal>FOLLOWING</literal> framing option
+   for window functions (see <xref linkend="syntax-window-functions"/>).
+   For a query such as
+<programlisting>
+SELECT sum(x) OVER (ORDER BY x RANGE BETWEEN 5 PRECEDING AND 10 FOLLOWING)
+  FROM mytable;
+</programlisting>
+   it is not sufficient to know how to order by <literal>x</literal>;
+   the database must also understand how to <quote>subtract 5</quote> or
+   <quote>add 10</quote> to the current row's value of <literal>x</literal>
+   to identify the bounds of the current window frame.  Comparing the
+   resulting bounds to other rows' values of <literal>x</literal> is
+   possible using the comparison operators provided by the B-tree operator
+   class that defines the <literal>ORDER BY</literal> ordering &mdash; but
+   addition and subtraction operators are not part of the operator class, so
+   which ones should be used?  Hard-wiring that choice would be undesirable,
+   because different sort orders (different B-tree operator classes) might
+   need different behavior.  Therefore, a B-tree operator class can specify
+   an <firstterm>in_range</firstterm> support function that encapsulates the
+   addition and subtraction behaviors that make sense for its sort order.
+   It can even provide more than one in_range support function, in case
+   there is more than one data type that makes sense to use as the offset
+   in <literal>RANGE</literal> clauses.
+   If the B-tree operator class associated with the window's <literal>ORDER
+   BY</literal> clause does not have a matching in_range support function,
+   the <literal>RANGE</literal> <replaceable>offset</replaceable>
+   <literal>PRECEDING</literal>/<literal>FOLLOWING</literal>
+   option is not supported.
+  </para>
+
+  <para>
+   Another important point is that an equality operator that
    appears in a hash operator family is a candidate for hash joins,
    hash aggregation, and related optimizations.  The hash operator family
    is essential here since it identifies the hash function(s) to use.

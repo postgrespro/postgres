@@ -15,6 +15,7 @@
 #define DEFREM_H
 
 #include "catalog/objectaddress.h"
+#include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "utils/array.h"
 
@@ -26,6 +27,7 @@ extern ObjectAddress DefineIndex(Oid relationId,
 			IndexStmt *stmt,
 			Oid indexRelationId,
 			Oid parentIndexId,
+			Oid parentConstraintId,
 			bool is_alter_table,
 			bool check_rights,
 			bool check_not_in_use,
@@ -60,7 +62,7 @@ extern void DropTransformById(Oid transformOid);
 extern void IsThereFunctionInNamespace(const char *proname, int pronargs,
 						   oidvector *proargtypes, Oid nspOid);
 extern void ExecuteDoStmt(DoStmt *stmt, bool atomic);
-extern void ExecuteCallStmt(ParseState *pstate, CallStmt *stmt, bool atomic);
+extern void ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic);
 extern Oid	get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok);
 extern Oid	get_transform_oid(Oid type_id, Oid lang_id, bool missing_ok);
 extern void interpret_function_parameter_list(ParseState *pstate,

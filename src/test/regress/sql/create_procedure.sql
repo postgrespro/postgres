@@ -13,10 +13,13 @@ $$;
 
 SELECT ptest1('x');  -- error
 CALL ptest1('a');  -- ok
+CALL ptest1('xy' || 'zzy');  -- ok, constant-folded arg
+CALL ptest1(substring(random()::text, 1, 1));  -- ok, volatile arg
 
 \df ptest1
+SELECT pg_get_functiondef('ptest1'::regproc);
 
-SELECT * FROM cp_test ORDER BY a;
+SELECT * FROM cp_test ORDER BY b COLLATE "C";
 
 
 CREATE PROCEDURE ptest2()
@@ -26,6 +29,21 @@ SELECT 5;
 $$;
 
 CALL ptest2();
+
+
+-- nested CALL
+TRUNCATE cp_test;
+
+CREATE PROCEDURE ptest3(y text)
+LANGUAGE SQL
+AS $$
+CALL ptest1(y);
+CALL ptest1($1);
+$$;
+
+CALL ptest3('b');
+
+SELECT * FROM cp_test;
 
 
 -- various error cases

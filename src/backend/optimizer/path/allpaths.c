@@ -488,7 +488,7 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * we'll consider gathering partial paths for the parent appendrel.)
 	 */
 	if (rel->reloptkind == RELOPT_BASEREL)
-		generate_gather_paths(root, rel);
+		generate_gather_paths(root, rel, false);
 
 	/*
 	 * Allow a plugin to editorialize on the set of Paths for this base
@@ -720,7 +720,8 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 {
 	int			parallel_workers;
 
-	parallel_workers = compute_parallel_worker(rel, rel->pages, -1);
+	parallel_workers = compute_parallel_worker(rel, rel->pages, -1,
+											   max_parallel_workers_per_gather);
 
 	/* If any limit was set to zero, the user doesn't want a parallel scan. */
 	if (parallel_workers <= 0)
@@ -928,7 +929,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 			/*
 			 * We need attr_needed data for building targetlist of a join
 			 * relation representing join between matching partitions for
-			 * partition-wise join. A given attribute of a child will be
+			 * partitionwise join. A given attribute of a child will be
 			 * needed in the same highest joinrel where the corresponding
 			 * attribute of parent is needed. Hence it suffices to use the
 			 * same Relids set for parent and child.
@@ -972,7 +973,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		/*
 		 * Copy/Modify targetlist. Even if this child is deemed empty, we need
 		 * its targetlist in case it falls on nullable side in a child-join
-		 * because of partition-wise join.
+		 * because of partitionwise join.
 		 *
 		 * NB: the resulting childrel->reltarget->exprs may contain arbitrary
 		 * expressions, which otherwise would not occur in a rel's targetlist.
@@ -2443,17 +2444,30 @@ set_worktable_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
  * This must not be called until after we're done creating all partial paths
  * for the specified relation.  (Otherwise, add_partial_path might delete a
  * path that some GatherPath or GatherMergePath has a reference to.)
+ *
+ * If we're generating paths for a scan or join relation, override_rows will
+ * be false, and we'll just use the relation's size estimate.  When we're
+ * being called for a partially-grouped path, though, we need to override
+ * the rowcount estimate.  (It's not clear that the particular value we're
+ * using here is actually best, but the underlying rel has no estimate so
+ * we must do something.)
  */
 void
-generate_gather_paths(PlannerInfo *root, RelOptInfo *rel)
+generate_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_rows)
 {
 	Path	   *cheapest_partial_path;
 	Path	   *simple_gather_path;
 	ListCell   *lc;
+	double		rows;
+	double	   *rowsp = NULL;
 
 	/* If there are no partial paths, there's nothing to do here. */
 	if (rel->partial_pathlist == NIL)
 		return;
+
+	/* Should we override the rel's rowcount estimate? */
+	if (override_rows)
+		rowsp = &rows;
 
 	/*
 	 * The output of Gather is always unsorted, so there's only one partial
@@ -2461,9 +2475,11 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel)
 	 * of partial_pathlist because of the way add_partial_path works.
 	 */
 	cheapest_partial_path = linitial(rel->partial_pathlist);
+	rows =
+		cheapest_partial_path->rows * cheapest_partial_path->parallel_workers;
 	simple_gather_path = (Path *)
 		create_gather_path(root, rel, cheapest_partial_path, rel->reltarget,
-						   NULL, NULL);
+						   NULL, rowsp);
 	add_path(rel, simple_gather_path);
 
 	/*
@@ -2478,8 +2494,9 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel)
 		if (subpath->pathkeys == NIL)
 			continue;
 
+		rows = subpath->rows * subpath->parallel_workers;
 		path = create_gather_merge_path(root, rel, subpath, rel->reltarget,
-										subpath->pathkeys, NULL, NULL);
+										subpath->pathkeys, NULL, rowsp);
 		add_path(rel, &path->path);
 	}
 }
@@ -2635,7 +2652,7 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 		join_search_one_level(root, lev);
 
 		/*
-		 * Run generate_partition_wise_join_paths() and
+		 * Run generate_partitionwise_join_paths() and
 		 * generate_gather_paths() for each just-processed joinrel.  We could
 		 * not do this earlier because both regular and partial paths can get
 		 * added to a particular joinrel at multiple times within
@@ -2648,11 +2665,11 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 		{
 			rel = (RelOptInfo *) lfirst(lc);
 
-			/* Create paths for partition-wise joins. */
-			generate_partition_wise_join_paths(root, rel);
+			/* Create paths for partitionwise joins. */
+			generate_partitionwise_join_paths(root, rel);
 
 			/* Create GatherPaths for any useful partial paths for rel */
-			generate_gather_paths(root, rel);
+			generate_gather_paths(root, rel, false);
 
 			/* Find and save the cheapest paths for this rel */
 			set_cheapest(rel);
@@ -3299,7 +3316,8 @@ create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 	pages_fetched = compute_bitmap_pages(root, rel, bitmapqual, 1.0,
 										 NULL, NULL);
 
-	parallel_workers = compute_parallel_worker(rel, pages_fetched, -1);
+	parallel_workers = compute_parallel_worker(rel, pages_fetched, -1,
+											   max_parallel_workers_per_gather);
 
 	if (parallel_workers <= 0)
 		return;
@@ -3319,9 +3337,13 @@ create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
  *
  * "index_pages" is the number of pages from the index that we expect to scan, or
  * -1 if we don't expect to scan any.
+ *
+ * "max_workers" is caller's limit on the number of workers.  This typically
+ * comes from a GUC.
  */
 int
-compute_parallel_worker(RelOptInfo *rel, double heap_pages, double index_pages)
+compute_parallel_worker(RelOptInfo *rel, double heap_pages, double index_pages,
+						int max_workers)
 {
 	int			parallel_workers = 0;
 
@@ -3392,17 +3414,15 @@ compute_parallel_worker(RelOptInfo *rel, double heap_pages, double index_pages)
 		}
 	}
 
-	/*
-	 * In no case use more than max_parallel_workers_per_gather workers.
-	 */
-	parallel_workers = Min(parallel_workers, max_parallel_workers_per_gather);
+	/* In no case use more than caller supplied maximum number of workers */
+	parallel_workers = Min(parallel_workers, max_workers);
 
 	return parallel_workers;
 }
 
 /*
- * generate_partition_wise_join_paths
- * 		Create paths representing partition-wise join for given partitioned
+ * generate_partitionwise_join_paths
+ * 		Create paths representing partitionwise join for given partitioned
  * 		join relation.
  *
  * This must not be called until after we are done adding paths for all
@@ -3410,7 +3430,7 @@ compute_parallel_worker(RelOptInfo *rel, double heap_pages, double index_pages)
  * generated here has a reference.
  */
 void
-generate_partition_wise_join_paths(PlannerInfo *root, RelOptInfo *rel)
+generate_partitionwise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 {
 	List	   *live_children = NIL;
 	int			cnt_parts;
@@ -3421,20 +3441,8 @@ generate_partition_wise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	if (!IS_JOIN_REL(rel))
 		return;
 
-	/*
-	 * If we've already proven this join is empty, we needn't consider any
-	 * more paths for it.
-	 */
-	if (IS_DUMMY_REL(rel))
-		return;
-
-	/*
-	 * We've nothing to do if the relation is not partitioned. An outer join
-	 * relation which had an empty inner relation in every pair will have the
-	 * rest of the partitioning properties set except the child-join
-	 * RelOptInfos. See try_partition_wise_join() for more details.
-	 */
-	if (rel->nparts <= 0 || rel->part_rels == NULL)
+	/* We've nothing to do if the relation is not partitioned. */
+	if (!IS_PARTITIONED_REL(rel))
 		return;
 
 	/* Guard against stack overflow due to overly deep partition hierarchy. */
@@ -3448,8 +3456,10 @@ generate_partition_wise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	{
 		RelOptInfo *child_rel = part_rels[cnt_parts];
 
-		/* Add partition-wise join paths for partitioned child-joins. */
-		generate_partition_wise_join_paths(root, child_rel);
+		Assert(child_rel != NULL);
+
+		/* Add partitionwise join paths for partitioned child-joins. */
+		generate_partitionwise_join_paths(root, child_rel);
 
 		/* Dummy children will not be scanned, so ignore those. */
 		if (IS_DUMMY_REL(child_rel))

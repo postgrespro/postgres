@@ -1012,6 +1012,11 @@ _copyWindowAgg(const WindowAgg *from)
 	COPY_SCALAR_FIELD(frameOptions);
 	COPY_NODE_FIELD(startOffset);
 	COPY_NODE_FIELD(endOffset);
+	COPY_SCALAR_FIELD(startInRangeFunc);
+	COPY_SCALAR_FIELD(endInRangeFunc);
+	COPY_SCALAR_FIELD(inRangeColl);
+	COPY_SCALAR_FIELD(inRangeAsc);
+	COPY_SCALAR_FIELD(inRangeNullsFirst);
 
 	return newnode;
 }
@@ -2412,6 +2417,11 @@ _copyWindowClause(const WindowClause *from)
 	COPY_SCALAR_FIELD(frameOptions);
 	COPY_NODE_FIELD(startOffset);
 	COPY_NODE_FIELD(endOffset);
+	COPY_SCALAR_FIELD(startInRangeFunc);
+	COPY_SCALAR_FIELD(endInRangeFunc);
+	COPY_SCALAR_FIELD(inRangeColl);
+	COPY_SCALAR_FIELD(inRangeAsc);
+	COPY_SCALAR_FIELD(inRangeNullsFirst);
 	COPY_SCALAR_FIELD(winref);
 	COPY_SCALAR_FIELD(copiedOrder);
 
@@ -2819,6 +2829,7 @@ _copyColumnDef(const ColumnDef *from)
 	COPY_NODE_FIELD(raw_default);
 	COPY_NODE_FIELD(cooked_default);
 	COPY_SCALAR_FIELD(identity);
+	COPY_NODE_FIELD(identitySequence);
 	COPY_NODE_FIELD(collClause);
 	COPY_SCALAR_FIELD(collOid);
 	COPY_NODE_FIELD(constraints);
@@ -3220,6 +3231,7 @@ _copyCallStmt(const CallStmt *from)
 	CallStmt   *newnode = makeNode(CallStmt);
 
 	COPY_NODE_FIELD(funccall);
+	COPY_NODE_FIELD(funcexpr);
 
 	return newnode;
 }

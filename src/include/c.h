@@ -36,9 +36,10 @@
  *		8)		random stuff
  *		9)		system-specific hacks
  *
- * NOTE: since this file is included by both frontend and backend modules, it's
- * almost certainly wrong to put an "extern" declaration here.  typedefs and
- * macros are the kind of thing that might go here.
+ * NOTE: since this file is included by both frontend and backend modules,
+ * it's usually wrong to put an "extern" declaration here, unless it's
+ * ifdef'd so that it's seen in only one case or the other.
+ * typedefs and macros are the kind of thing that might go here.
  *
  *----------------------------------------------------------------
  */
@@ -748,6 +749,18 @@ typedef NameData *Name;
 #endif							/* USE_ASSERT_CHECKING && !FRONTEND */
 
 /*
+ * ExceptionalCondition is compiled into the backend whether or not
+ * USE_ASSERT_CHECKING is defined, so as to support use of extensions
+ * that are built with that #define with a backend that isn't.  Hence,
+ * we should declare it as long as !FRONTEND.
+ */
+#ifndef FRONTEND
+extern void ExceptionalCondition(const char *conditionName,
+					 const char *errorType,
+					 const char *fileName, int lineNumber) pg_attribute_noreturn();
+#endif
+
+/*
  * Macros to support compile-time assertion checks.
  *
  * If the "condition" (a compile-time-constant expression) evaluates to false,
@@ -766,7 +779,7 @@ typedef NameData *Name;
 #define StaticAssertStmt(condition, errmessage) \
 	do { _Static_assert(condition, errmessage); } while(0)
 #define StaticAssertExpr(condition, errmessage) \
-	({ StaticAssertStmt(condition, errmessage); true; })
+	((void) ({ StaticAssertStmt(condition, errmessage); true; }))
 #else							/* !HAVE__STATIC_ASSERT */
 #define StaticAssertStmt(condition, errmessage) \
 	((void) sizeof(struct { int static_assert_failure : (condition) ? 1 : -1; }))
@@ -778,12 +791,12 @@ typedef NameData *Name;
 #define StaticAssertStmt(condition, errmessage) \
 	static_assert(condition, errmessage)
 #define StaticAssertExpr(condition, errmessage) \
-	StaticAssertStmt(condition, errmessage)
+	({ static_assert(condition, errmessage); })
 #else
 #define StaticAssertStmt(condition, errmessage) \
 	do { struct static_assert_struct { int static_assert_failure : (condition) ? 1 : -1; }; } while(0)
 #define StaticAssertExpr(condition, errmessage) \
-	({ StaticAssertStmt(condition, errmessage); })
+	((void) ({ StaticAssertStmt(condition, errmessage); }))
 #endif
 #endif							/* C++ */
 
@@ -804,14 +817,14 @@ typedef NameData *Name;
 	StaticAssertStmt(__builtin_types_compatible_p(__typeof__(varname), typename), \
 	CppAsString(varname) " does not have type " CppAsString(typename))
 #define AssertVariableIsOfTypeMacro(varname, typename) \
-	((void) StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
 	 CppAsString(varname) " does not have type " CppAsString(typename)))
 #else							/* !HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 #define AssertVariableIsOfType(varname, typename) \
 	StaticAssertStmt(sizeof(varname) == sizeof(typename), \
 	CppAsString(varname) " does not have type " CppAsString(typename))
 #define AssertVariableIsOfTypeMacro(varname, typename) \
-	((void) StaticAssertExpr(sizeof(varname) == sizeof(typename),		\
+	(StaticAssertExpr(sizeof(varname) == sizeof(typename), \
 	 CppAsString(varname) " does not have type " CppAsString(typename)))
 #endif							/* HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 

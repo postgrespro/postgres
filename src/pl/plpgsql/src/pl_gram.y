@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "catalog/namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "parser/parser.h"
 #include "parser/parse_type.h"
@@ -505,37 +506,20 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 
 						var = plpgsql_build_variable($1.name, $1.lineno,
 													 $3, true);
-						if ($2)
-						{
-							if (var->dtype == PLPGSQL_DTYPE_VAR)
-								((PLpgSQL_var *) var)->isconst = $2;
-							else
-								ereport(ERROR,
-										(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-										 errmsg("row or record variable cannot be CONSTANT"),
-										 parser_errposition(@2)));
-						}
-						if ($5)
-						{
-							if (var->dtype == PLPGSQL_DTYPE_VAR)
-								((PLpgSQL_var *) var)->notnull = $5;
-							else
-								ereport(ERROR,
-										(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-										 errmsg("row or record variable cannot be NOT NULL"),
-										 parser_errposition(@4)));
+						var->isconst = $2;
+						var->notnull = $5;
+						var->default_val = $6;
 
-						}
-						if ($6 != NULL)
-						{
-							if (var->dtype == PLPGSQL_DTYPE_VAR)
-								((PLpgSQL_var *) var)->default_val = $6;
-							else
-								ereport(ERROR,
-										(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-										 errmsg("default value for row or record variable is not supported"),
-										 parser_errposition(@5)));
-						}
+						/*
+						 * The combination of NOT NULL without an initializer
+						 * can't work, so let's reject it at compile time.
+						 */
+						if (var->notnull && var->default_val == NULL)
+							ereport(ERROR,
+									(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+									 errmsg("variable \"%s\" must have a default value, since it's declared NOT NULL",
+											var->refname),
+									 parser_errposition(@5)));
 					}
 				| decl_varname K_ALIAS K_FOR decl_aliasitem ';'
 					{
@@ -564,7 +548,6 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 
 						curname_def = palloc0(sizeof(PLpgSQL_expr));
 
-						curname_def->dtype = PLPGSQL_DTYPE_EXPR;
 						strcpy(buf, "SELECT ");
 						cp1 = new->refname;
 						cp2 = buf + strlen(buf);
@@ -636,6 +619,7 @@ decl_cursor_args :
 						foreach (l, $2)
 						{
 							PLpgSQL_variable *arg = (PLpgSQL_variable *) lfirst(l);
+							Assert(!arg->isconst);
 							new->fieldnames[i] = arg->refname;
 							new->varnos[i] = arg->dno;
 							i++;
@@ -1333,7 +1317,7 @@ for_control		: for_variable K_IN
 							{
 								ereport(ERROR,
 										(errcode(ERRCODE_DATATYPE_MISMATCH),
-										 errmsg("loop variable of loop over rows must be a record or row variable or list of scalar variables"),
+										 errmsg("loop variable of loop over rows must be a record variable or list of scalar variables"),
 										 parser_errposition(@1)));
 							}
 							new->query = expr;
@@ -1386,6 +1370,8 @@ for_control		: for_variable K_IN
 							new->var = (PLpgSQL_variable *)
 								plpgsql_build_record($1.name,
 													 $1.lineno,
+													 NULL,
+													 RECORDOID,
 													 true);
 
 							$$ = (PLpgSQL_stmt *) new;
@@ -1524,7 +1510,7 @@ for_control		: for_variable K_IN
 								{
 									ereport(ERROR,
 											(errcode(ERRCODE_SYNTAX_ERROR),
-											 errmsg("loop variable of loop over rows must be a record or row variable or list of scalar variables"),
+											 errmsg("loop variable of loop over rows must be a record variable or list of scalar variables"),
 											 parser_errposition(@1)));
 								}
 
@@ -2237,7 +2223,7 @@ exception_sect	:
 																			-1,
 																			plpgsql_curr_compile->fn_input_collation),
 													 true);
-						((PLpgSQL_var *) var)->isconst = true;
+						var->isconst = true;
 						new->sqlstate_varno = var->dno;
 
 						var = plpgsql_build_variable("sqlerrm", lineno,
@@ -2245,7 +2231,7 @@ exception_sect	:
 																			-1,
 																			plpgsql_curr_compile->fn_input_collation),
 													 true);
-						((PLpgSQL_var *) var)->isconst = true;
+						var->isconst = true;
 						new->sqlerrm_varno = var->dno;
 
 						$<exception_block>$ = new;
@@ -2696,7 +2682,6 @@ read_sql_construct(int until,
 	}
 
 	expr = palloc0(sizeof(PLpgSQL_expr));
-	expr->dtype			= PLPGSQL_DTYPE_EXPR;
 	expr->query			= pstrdup(ds.data);
 	expr->plan			= NULL;
 	expr->paramnos		= NULL;
@@ -2943,7 +2928,6 @@ make_execsql_stmt(int firsttoken, int location)
 		ds.data[--ds.len] = '\0';
 
 	expr = palloc0(sizeof(PLpgSQL_expr));
-	expr->dtype			= PLPGSQL_DTYPE_EXPR;
 	expr->query			= pstrdup(ds.data);
 	expr->plan			= NULL;
 	expr->paramnos		= NULL;
@@ -3157,10 +3141,18 @@ make_return_stmt(int location)
 	else if (plpgsql_curr_compile->fn_rettype == VOIDOID)
 	{
 		if (yylex() != ';')
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("RETURN cannot have a parameter in function returning void"),
-					 parser_errposition(yylloc)));
+		{
+			if (plpgsql_curr_compile->fn_prokind == PROKIND_PROCEDURE)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("RETURN cannot have a parameter in a procedure"),
+						 parser_errposition(yylloc)));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("RETURN cannot have a parameter in function returning void"),
+						 parser_errposition(yylloc)));
+		}
 	}
 	else
 	{
@@ -3172,6 +3164,7 @@ make_return_stmt(int location)
 
 		if (tok == T_DATUM && plpgsql_peek() == ';' &&
 			(yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_VAR ||
+			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_PROMISE ||
 			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_ROW ||
 			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC))
 		{
@@ -3233,6 +3226,7 @@ make_return_next_stmt(int location)
 
 		if (tok == T_DATUM && plpgsql_peek() == ';' &&
 			(yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_VAR ||
+			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_PROMISE ||
 			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_ROW ||
 			 yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC))
 		{
@@ -3320,24 +3314,27 @@ check_assignable(PLpgSQL_datum *datum, int location)
 	switch (datum->dtype)
 	{
 		case PLPGSQL_DTYPE_VAR:
-			if (((PLpgSQL_var *) datum)->isconst)
+		case PLPGSQL_DTYPE_PROMISE:
+		case PLPGSQL_DTYPE_REC:
+			if (((PLpgSQL_variable *) datum)->isconst)
 				ereport(ERROR,
 						(errcode(ERRCODE_ERROR_IN_ASSIGNMENT),
-						 errmsg("\"%s\" is declared CONSTANT",
-								((PLpgSQL_var *) datum)->refname),
+						 errmsg("variable \"%s\" is declared CONSTANT",
+								((PLpgSQL_variable *) datum)->refname),
 						 parser_errposition(location)));
 			break;
 		case PLPGSQL_DTYPE_ROW:
-			/* always assignable? */
-			break;
-		case PLPGSQL_DTYPE_REC:
-			/* always assignable?  What about NEW/OLD? */
+			/* always assignable; member vars were checked at compile time */
 			break;
 		case PLPGSQL_DTYPE_RECFIELD:
-			/* always assignable? */
+			/* assignable if parent record is */
+			check_assignable(plpgsql_Datums[((PLpgSQL_recfield *) datum)->recparentno],
+							 location);
 			break;
 		case PLPGSQL_DTYPE_ARRAYELEM:
-			/* always assignable? */
+			/* assignable if parent array is */
+			check_assignable(plpgsql_Datums[((PLpgSQL_arrayelem *) datum)->arrayparentno],
+							 location);
 			break;
 		default:
 			elog(ERROR, "unrecognized dtype: %d", datum->dtype);
@@ -3385,7 +3382,7 @@ read_into_target(PLpgSQL_variable **target, bool *strict)
 				if ((tok = yylex()) == ',')
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("record or row variable cannot be part of multiple-item INTO list"),
+							 errmsg("record variable cannot be part of multiple-item INTO list"),
 							 parser_errposition(yylloc)));
 				plpgsql_push_back_token(tok);
 			}
@@ -3462,9 +3459,8 @@ read_into_scalar_list(char *initial_name,
 	 */
 	plpgsql_push_back_token(tok);
 
-	row = palloc(sizeof(PLpgSQL_row));
+	row = palloc0(sizeof(PLpgSQL_row));
 	row->dtype = PLPGSQL_DTYPE_ROW;
-	row->refname = pstrdup("*internal*");
 	row->lineno = plpgsql_location_to_lineno(initial_location);
 	row->rowtupdesc = NULL;
 	row->nfields = nfields;
@@ -3497,9 +3493,8 @@ make_scalar_list1(char *initial_name,
 
 	check_assignable(initial_datum, location);
 
-	row = palloc(sizeof(PLpgSQL_row));
+	row = palloc0(sizeof(PLpgSQL_row));
 	row->dtype = PLPGSQL_DTYPE_ROW;
-	row->refname = pstrdup("*internal*");
 	row->lineno = lineno;
 	row->rowtupdesc = NULL;
 	row->nfields = 1;
@@ -3815,7 +3810,6 @@ read_cursor_args(PLpgSQL_var *cursor, int until, const char *expected)
 	appendStringInfoChar(&ds, ';');
 
 	expr = palloc0(sizeof(PLpgSQL_expr));
-	expr->dtype			= PLPGSQL_DTYPE_EXPR;
 	expr->query			= pstrdup(ds.data);
 	expr->plan			= NULL;
 	expr->paramnos		= NULL;

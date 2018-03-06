@@ -1601,15 +1601,15 @@ build_joinrel_partition_info(RelOptInfo *joinrel, RelOptInfo *outer_rel,
 	int			cnt;
 	PartitionScheme part_scheme;
 
-	/* Nothing to do if partition-wise join technique is disabled. */
-	if (!enable_partition_wise_join)
+	/* Nothing to do if partitionwise join technique is disabled. */
+	if (!enable_partitionwise_join)
 	{
 		Assert(!IS_PARTITIONED_REL(joinrel));
 		return;
 	}
 
 	/*
-	 * We can only consider this join as an input to further partition-wise
+	 * We can only consider this join as an input to further partitionwise
 	 * joins if (a) the input relations are partitioned, (b) the partition
 	 * schemes match, and (c) we can identify an equi-join between the
 	 * partition keys.  Note that if it were possible for
@@ -1662,11 +1662,14 @@ build_joinrel_partition_info(RelOptInfo *joinrel, RelOptInfo *outer_rel,
 	 */
 	joinrel->part_scheme = part_scheme;
 	joinrel->boundinfo = outer_rel->boundinfo;
-	joinrel->nparts = outer_rel->nparts;
 	partnatts = joinrel->part_scheme->partnatts;
 	joinrel->partexprs = (List **) palloc0(sizeof(List *) * partnatts);
 	joinrel->nullable_partexprs =
 		(List **) palloc0(sizeof(List *) * partnatts);
+	joinrel->nparts = outer_rel->nparts;
+	joinrel->part_rels =
+		(RelOptInfo **) palloc0(sizeof(RelOptInfo *) * joinrel->nparts);
+
 
 	/*
 	 * Construct partition keys for the join.

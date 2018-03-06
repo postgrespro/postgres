@@ -92,44 +92,32 @@ delete from pkeys where pkey1 = 40 and pkey2 = '4';
 update pkeys set pkey1 = 7, pkey2 = '70' where pkey1 = 50 and pkey2 = '5';
 update pkeys set pkey1 = 7, pkey2 = '70' where pkey1 = 10 and pkey2 = '1';
 
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table in ('pkeys', 'fkeys', 'fkeys2')
+  ORDER BY trigger_name COLLATE "C", 2;
+
 DROP TABLE pkeys;
 DROP TABLE fkeys;
 DROP TABLE fkeys2;
 
--- -- I've disabled the funny_dup17 test because the new semantics
--- -- of AFTER ROW triggers, which get now fired at the end of a
--- -- query always, cause funny_dup17 to enter an endless loop.
--- --
--- --      Jan
---
--- create table dup17 (x int4);
---
--- create trigger dup17_before
--- 	before insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
---
--- insert into dup17 values (17);
--- select count(*) from dup17;
--- insert into dup17 values (17);
--- select count(*) from dup17;
---
--- drop trigger dup17_before on dup17;
---
--- create trigger dup17_after
--- 	after insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
---
--- DROP TABLE dup17;
+-- Check behavior when trigger returns unmodified trigtuple
+create table trigtest (f1 int, f2 text);
+
+create trigger trigger_return_old
+	before insert or delete or update on trigtest
+	for each row execute procedure trigger_return_old();
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+drop table trigtest;
 
 create sequence ttdummy_seq increment 10 start 0 minvalue 0;
 
@@ -279,6 +267,12 @@ CREATE TRIGGER insert_when BEFORE INSERT ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('insert_when');
 CREATE TRIGGER delete_when AFTER DELETE ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('delete_when');
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('main_table')
+  ORDER BY trigger_name COLLATE "C", 2;
 INSERT INTO main_table (a) VALUES (123), (456);
 COPY main_table FROM stdin;
 123	999
@@ -1304,7 +1298,7 @@ create table parted2_stmt_trig2 partition of parted2_stmt_trig for values in (2)
 
 create or replace function trigger_notice() returns trigger as $$
   begin
-    raise notice 'trigger on % % % for %', TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
+    raise notice 'trigger % on % % % for %', TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
     if TG_LEVEL = 'ROW' then
        return NEW;
     end if;
@@ -1471,6 +1465,13 @@ create trigger child3_update_trig
 create trigger child3_delete_trig
   after delete on child3 referencing old table as old_table
   for each statement execute procedure dump_delete();
+
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('parent', 'child1', 'child2', 'child3')
+  ORDER BY trigger_name COLLATE "C", 2;
 
 -- insert directly into children sees respective child-format tuples
 insert into child1 values ('AAA', 42);

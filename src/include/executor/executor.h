@@ -113,26 +113,19 @@ extern bool execCurrentOf(CurrentOfExpr *cexpr,
 /*
  * prototypes from functions in execGrouping.c
  */
-extern bool execTuplesMatch(TupleTableSlot *slot1,
-				TupleTableSlot *slot2,
-				int numCols,
-				AttrNumber *matchColIdx,
-				FmgrInfo *eqfunctions,
-				MemoryContext evalContext);
-extern bool execTuplesUnequal(TupleTableSlot *slot1,
-				  TupleTableSlot *slot2,
-				  int numCols,
-				  AttrNumber *matchColIdx,
-				  FmgrInfo *eqfunctions,
-				  MemoryContext evalContext);
-extern FmgrInfo *execTuplesMatchPrepare(int numCols,
-					   Oid *eqOperators);
+extern ExprState *execTuplesMatchPrepare(TupleDesc desc,
+					   int numCols,
+					   AttrNumber *keyColIdx,
+					   Oid *eqOperators,
+					   PlanState *parent);
 extern void execTuplesHashPrepare(int numCols,
 					  Oid *eqOperators,
-					  FmgrInfo **eqFunctions,
+					  Oid **eqFuncOids,
 					  FmgrInfo **hashFunctions);
-extern TupleHashTable BuildTupleHashTable(int numCols, AttrNumber *keyColIdx,
-					FmgrInfo *eqfunctions,
+extern TupleHashTable BuildTupleHashTable(PlanState *parent,
+					TupleDesc inputDesc,
+					int numCols, AttrNumber *keyColIdx,
+					Oid *eqfuncoids,
 					FmgrInfo *hashfunctions,
 					long nbuckets, Size additionalsize,
 					MemoryContext tablecxt,
@@ -142,7 +135,7 @@ extern TupleHashEntry LookupTupleHashEntry(TupleHashTable hashtable,
 					 bool *isnew);
 extern TupleHashEntry FindTupleHashEntry(TupleHashTable hashtable,
 				   TupleTableSlot *slot,
-				   FmgrInfo *eqfunctions,
+				   ExprState *eqcomp,
 				   FmgrInfo *hashfunctions);
 
 /*
@@ -257,6 +250,11 @@ extern ExprState *ExecInitCheck(List *qual, PlanState *parent);
 extern List *ExecInitExprList(List *nodes, PlanState *parent);
 extern ExprState *ExecBuildAggTrans(AggState *aggstate, struct AggStatePerPhaseData *phase,
 				  bool doSort, bool doHash);
+extern ExprState *ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
+					   int numCols,
+					   AttrNumber *keyColIdx,
+					   Oid *eqfunctions,
+					   PlanState *parent);
 extern ProjectionInfo *ExecBuildProjectionInfo(List *targetList,
 						ExprContext *econtext,
 						TupleTableSlot *slot,
@@ -433,9 +431,10 @@ extern void ExecScanReScan(ScanState *node);
 /*
  * prototypes from functions in execTuples.c
  */
-extern void ExecInitResultTupleSlot(EState *estate, PlanState *planstate);
-extern void ExecInitScanTupleSlot(EState *estate, ScanState *scanstate);
-extern TupleTableSlot *ExecInitExtraTupleSlot(EState *estate);
+extern void ExecInitResultTupleSlotTL(EState *estate, PlanState *planstate);
+extern void ExecInitScanTupleSlot(EState *estate, ScanState *scanstate, TupleDesc tupleDesc);
+extern TupleTableSlot *ExecInitExtraTupleSlot(EState *estate,
+					  TupleDesc tupleDesc);
 extern TupleTableSlot *ExecInitNullTupleSlot(EState *estate,
 					  TupleDesc tupType);
 extern TupleDesc ExecTypeFromTL(List *targetList, bool hasoid);
@@ -504,8 +503,6 @@ extern ExprContext *MakePerTupleExprContext(EState *estate);
 	} while (0)
 
 extern void ExecAssignExprContext(EState *estate, PlanState *planstate);
-extern void ExecAssignResultType(PlanState *planstate, TupleDesc tupDesc);
-extern void ExecAssignResultTypeFromTL(PlanState *planstate);
 extern TupleDesc ExecGetResultType(PlanState *planstate);
 extern void ExecAssignProjectionInfo(PlanState *planstate,
 						 TupleDesc inputDesc);
@@ -513,7 +510,7 @@ extern void ExecConditionalAssignProjectionInfo(PlanState *planstate,
 									TupleDesc inputDesc, Index varno);
 extern void ExecFreeExprContext(PlanState *planstate);
 extern void ExecAssignScanType(ScanState *scanstate, TupleDesc tupDesc);
-extern void ExecAssignScanTypeFromOuterPlan(ScanState *scanstate);
+extern void ExecCreateScanSlotFromOuterPlan(EState *estate, ScanState *scanstate);
 
 extern bool ExecRelationIsTargetRelation(EState *estate, Index scanrelid);
 

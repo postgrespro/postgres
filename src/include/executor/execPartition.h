@@ -58,10 +58,15 @@ typedef struct PartitionDispatchData *PartitionDispatch;
  *								partition tree.
  * num_dispatch					number of partitioned tables in the partition
  *								tree (= length of partition_dispatch_info[])
+ * partition_oids				Array of leaf partitions OIDs with one entry
+ *								for every leaf partition in the partition tree,
+ *								initialized in full by
+ *								ExecSetupPartitionTupleRouting.
  * partitions					Array of ResultRelInfo* objects with one entry
- *								for every leaf partition in the partition tree.
+ *								for every leaf partition in the partition tree,
+ *								initialized lazily by ExecInitPartitionInfo.
  * num_partitions				Number of leaf partitions in the partition tree
- *								(= 'partitions' array length)
+ *								(= 'partitions_oid'/'partitions' array length)
  * parent_child_tupconv_maps	Array of TupleConversionMap objects with one
  *								entry for every leaf partition (required to
  *								convert tuple from the root table's rowtype to
@@ -91,6 +96,7 @@ typedef struct PartitionTupleRouting
 {
 	PartitionDispatch *partition_dispatch_info;
 	int			num_dispatch;
+	Oid		   *partition_oids;
 	ResultRelInfo **partitions;
 	int			num_partitions;
 	TupleConversionMap **parent_child_tupconv_maps;
@@ -103,12 +109,15 @@ typedef struct PartitionTupleRouting
 } PartitionTupleRouting;
 
 extern PartitionTupleRouting *ExecSetupPartitionTupleRouting(ModifyTableState *mtstate,
-							   Relation rel, Index resultRTindex,
-							   EState *estate);
+							   Relation rel);
 extern int ExecFindPartition(ResultRelInfo *resultRelInfo,
 				  PartitionDispatch *pd,
 				  TupleTableSlot *slot,
 				  EState *estate);
+extern ResultRelInfo *ExecInitPartitionInfo(ModifyTableState *mtstate,
+					ResultRelInfo *resultRelInfo,
+					PartitionTupleRouting *proute,
+					EState *estate, int partidx);
 extern void ExecSetupChildParentMapForLeaf(PartitionTupleRouting *proute);
 extern TupleConversionMap *TupConvMapForLeaf(PartitionTupleRouting *proute,
 				  ResultRelInfo *rootRelInfo, int leaf_index);

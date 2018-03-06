@@ -27,7 +27,6 @@ use Test::More;
 use Exporter 'import';
 our @EXPORT = qw(
   configure_test_server_for_ssl
-  run_test_psql
   switch_server_cert
   test_connect_fails
   test_connect_ok
@@ -35,43 +34,28 @@ our @EXPORT = qw(
 
 # Define a couple of helper functions to test connecting to the server.
 
-# Attempt connection to server with given connection string.
-sub run_test_psql
+# The first argument is a base connection string to use for connection.
+# The second argument is a complementary connection string.
+sub test_connect_ok
 {
-	my $connstr   = $_[0];
-	my $logstring = $_[1];
+	my ($common_connstr, $connstr, $test_name) = @_;
 
 	my $cmd = [
 		'psql', '-X', '-A', '-t', '-c', "SELECT \$\$connected with $connstr\$\$",
-		'-d', "$connstr" ];
+		'-d', "$common_connstr $connstr" ];
 
-	my $result = run_log($cmd);
-	return $result;
-}
-
-#
-# The first argument is a base connection string to use for connection.
-# The second argument is a complementary connection string, and it's also
-# printed out as the test case name.
-sub test_connect_ok
-{
-	my $common_connstr = $_[0];
-	my $connstr = $_[1];
-	my $test_name = $_[2];
-
-	my $result =
-	  run_test_psql("$common_connstr $connstr", "(should succeed)");
-	ok($result, $test_name || $connstr);
+	command_ok($cmd, $test_name);
 }
 
 sub test_connect_fails
 {
-	my $common_connstr = $_[0];
-	my $connstr = $_[1];
-	my $test_name = $_[2];
+	my ($common_connstr, $connstr, $expected_stderr, $test_name) = @_;
 
-	my $result = run_test_psql("$common_connstr $connstr", "(should fail)");
-	ok(!$result, $test_name || "$connstr (should fail)");
+	my $cmd = [
+		'psql', '-X', '-A', '-t', '-c', "SELECT \$\$connected with $connstr\$\$",
+		'-d', "$common_connstr $connstr" ];
+
+	command_fails_like($cmd, $expected_stderr, $test_name);
 }
 
 # Copy a set of files, taking into account wildcards
@@ -151,9 +135,6 @@ sub switch_server_cert
 	my $cafile   = $_[2] || "root+client_ca";
 	my $pgdata   = $node->data_dir;
 
-	note
-	  "reloading server with certfile \"$certfile\" and cafile \"$cafile\"";
-
 	open my $sslconf, '>', "$pgdata/sslconfig.conf";
 	print $sslconf "ssl=on\n";
 	print $sslconf "ssl_ca_file='$cafile.crt'\n";
@@ -162,7 +143,7 @@ sub switch_server_cert
 	print $sslconf "ssl_crl_file='root+client.crl'\n";
 	close $sslconf;
 
-	$node->reload;
+	$node->restart;
 }
 
 sub configure_hba_for_ssl
@@ -178,12 +159,12 @@ sub configure_hba_for_ssl
 	print $hba
 "# TYPE  DATABASE        USER            ADDRESS                 METHOD\n";
 	print $hba
-"hostssl trustdb         ssltestuser     $serverhost/32            $authmethod\n";
+"hostssl trustdb         all             $serverhost/32            $authmethod\n";
 	print $hba
-"hostssl trustdb         ssltestuser     ::1/128                 $authmethod\n";
+"hostssl trustdb         all             ::1/128                 $authmethod\n";
 	print $hba
-"hostssl certdb          ssltestuser     $serverhost/32            cert\n";
+"hostssl certdb          all             $serverhost/32            cert\n";
 	print $hba
-"hostssl certdb          ssltestuser     ::1/128                 cert\n";
+"hostssl certdb          all             ::1/128                 cert\n";
 	close $hba;
 }

@@ -473,6 +473,14 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 	cxt->blist = lappend(cxt->blist, seqstmt);
 
 	/*
+	 * Store the identity sequence name that we decided on.  ALTER TABLE
+	 * ... ADD COLUMN ... IDENTITY needs this so that it can fill the new
+	 * column with values from the sequence, while the association of the
+	 * sequence with the table is not set until after the ALTER TABLE.
+	 */
+	column->identitySequence = seqstmt->sequence;
+
+	/*
 	 * Build an ALTER SEQUENCE ... OWNED BY command to mark the sequence as
 	 * owned by this column, and add it to the list of things to be done after
 	 * this CREATE/ALTER TABLE.
@@ -704,12 +712,6 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 							 errmsg("primary key constraints are not supported on foreign tables"),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
-				if (cxt->ispartitioned)
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("primary key constraints are not supported on partitioned tables"),
-							 parser_errposition(cxt->pstate,
-												constraint->location)));
 				/* FALL THRU */
 
 			case CONSTR_UNIQUE:
@@ -717,12 +719,6 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("unique constraints are not supported on foreign tables"),
-							 parser_errposition(cxt->pstate,
-												constraint->location)));
-				if (cxt->ispartitioned)
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("unique constraints are not supported on partitioned tables"),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
 				if (constraint->keys == NIL)
@@ -821,12 +817,6 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 						 errmsg("primary key constraints are not supported on foreign tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
-			if (cxt->ispartitioned)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("primary key constraints are not supported on partitioned tables"),
-						 parser_errposition(cxt->pstate,
-											constraint->location)));
 			cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
 			break;
 
@@ -835,12 +825,6 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("unique constraints are not supported on foreign tables"),
-						 parser_errposition(cxt->pstate,
-											constraint->location)));
-			if (cxt->ispartitioned)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("unique constraints are not supported on partitioned tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
 			cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
@@ -1184,7 +1168,7 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 			/* Build CREATE INDEX statement to recreate the parent_index */
 			index_stmt = generateClonedIndexStmt(cxt->relation, InvalidOid,
 												 parent_index,
-												 attmap, tupleDesc->natts);
+												 attmap, tupleDesc->natts, NULL);
 
 			/* Copy comment on index, if requested */
 			if (table_like_clause->options & CREATE_TABLE_LIKE_COMMENTS)
@@ -1267,7 +1251,7 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
  */
 IndexStmt *
 generateClonedIndexStmt(RangeVar *heapRel, Oid heapRelid, Relation source_idx,
-						const AttrNumber *attmap, int attmap_length)
+						const AttrNumber *attmap, int attmap_length, Oid *constraintOid)
 {
 	Oid			source_relid = RelationGetRelid(source_idx);
 	HeapTuple	ht_idxrel;
@@ -1364,6 +1348,9 @@ generateClonedIndexStmt(RangeVar *heapRel, Oid heapRelid, Relation source_idx,
 		{
 			HeapTuple	ht_constr;
 			Form_pg_constraint conrec;
+
+			if (constraintOid)
+				*constraintOid = constraintId;
 
 			ht_constr = SearchSysCache1(CONSTROID,
 										ObjectIdGetDatum(constraintId));
@@ -1462,7 +1449,7 @@ generateClonedIndexStmt(RangeVar *heapRel, Oid heapRelid, Relation source_idx,
 			/* Simple index column */
 			char	   *attname;
 
-			attname = get_relid_attribute_name(indrelid, attnum);
+			attname = get_attname(indrelid, attnum, false);
 			keycoltype = get_atttype(indrelid, attnum);
 
 			iparam->name = attname;
@@ -3398,8 +3385,8 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 
 		/* Get the only column's name in case we need to output an error */
 		if (key->partattrs[0] != 0)
-			colname = get_relid_attribute_name(RelationGetRelid(parent),
-											   key->partattrs[0]);
+			colname = get_attname(RelationGetRelid(parent),
+								  key->partattrs[0], false);
 		else
 			colname = deparse_expression((Node *) linitial(partexprs),
 										 deparse_context_for(RelationGetRelationName(parent),
@@ -3483,8 +3470,8 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 
 			/* Get the column's name in case we need to output an error */
 			if (key->partattrs[i] != 0)
-				colname = get_relid_attribute_name(RelationGetRelid(parent),
-												   key->partattrs[i]);
+				colname = get_attname(RelationGetRelid(parent),
+									  key->partattrs[i], false);
 			else
 			{
 				colname = deparse_expression((Node *) list_nth(partexprs, j),

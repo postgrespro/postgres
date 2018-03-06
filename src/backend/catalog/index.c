@@ -56,6 +56,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
+#include "optimizer/planner.h"
 #include "parser/parser.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/bufmgr.h"
@@ -690,6 +691,8 @@ UpdateIndexRelation(Oid indexoid,
  *		nonzero to specify a preselected OID.
  * parentIndexRelid: if creating an index partition, the OID of the
  *		parent index; otherwise InvalidOid.
+ * parentConstraintId: if creating a constraint on a partition, the OID
+ *		of the constraint in the parent; otherwise InvalidOid.
  * relFileNode: normally, pass InvalidOid to get new storage.  May be
  *		nonzero to attach an existing valid build.
  * indexInfo: same info executor uses to insert into the index
@@ -721,6 +724,7 @@ UpdateIndexRelation(Oid indexoid,
  *		(only if INDEX_CREATE_ADD_CONSTRAINT is set)
  * allow_system_table_mods: allow table to be a system catalog
  * is_internal: if true, post creation hook for new index
+ * constraintId: if not NULL, receives OID of created constraint
  *
  * Returns the OID of the created index.
  */
@@ -729,6 +733,7 @@ index_create(Relation heapRelation,
 			 const char *indexRelationName,
 			 Oid indexRelationId,
 			 Oid parentIndexRelid,
+			 Oid parentConstraintId,
 			 Oid relFileNode,
 			 IndexInfo *indexInfo,
 			 List *indexColNames,
@@ -741,7 +746,8 @@ index_create(Relation heapRelation,
 			 bits16 flags,
 			 bits16 constr_flags,
 			 bool allow_system_table_mods,
-			 bool is_internal)
+			 bool is_internal,
+			 Oid *constraintId)
 {
 	Oid			heapRelationId = RelationGetRelid(heapRelation);
 	Relation	pg_class;
@@ -902,7 +908,7 @@ index_create(Relation heapRelation,
 	Assert(indexRelationId == RelationGetRelid(indexRelation));
 
 	/*
-	 * Obtain exclusive lock on it.  Although no other backends can see it
+	 * Obtain exclusive lock on it.  Although no other transactions can see it
 	 * until we commit, this prevents deadlock-risk complaints from lock
 	 * manager in cases such as CLUSTER.
 	 */
@@ -988,6 +994,7 @@ index_create(Relation heapRelation,
 		if ((flags & INDEX_CREATE_ADD_CONSTRAINT) != 0)
 		{
 			char		constraintType;
+			ObjectAddress localaddr;
 
 			if (isprimary)
 				constraintType = CONSTRAINT_PRIMARY;
@@ -1001,14 +1008,17 @@ index_create(Relation heapRelation,
 				constraintType = 0; /* keep compiler quiet */
 			}
 
-			index_constraint_create(heapRelation,
+			localaddr = index_constraint_create(heapRelation,
 									indexRelationId,
+									parentConstraintId,
 									indexInfo,
 									indexRelationName,
 									constraintType,
 									constr_flags,
 									allow_system_table_mods,
 									is_internal);
+			if (constraintId)
+				*constraintId = localaddr.objectId;
 		}
 		else
 		{
@@ -1159,7 +1169,8 @@ index_create(Relation heapRelation,
 	}
 	else
 	{
-		index_build(heapRelation, indexRelation, indexInfo, isprimary, false);
+		index_build(heapRelation, indexRelation, indexInfo, isprimary, false,
+					true);
 	}
 
 	/*
@@ -1179,6 +1190,8 @@ index_create(Relation heapRelation,
  *
  * heapRelation: table owning the index (must be suitably locked by caller)
  * indexRelationId: OID of the index
+ * parentConstraintId: if constraint is on a partition, the OID of the
+ *		constraint in the parent.
  * indexInfo: same info executor uses to insert into the index
  * constraintName: what it say (generally, should match name of index)
  * constraintType: one of CONSTRAINT_PRIMARY, CONSTRAINT_UNIQUE, or
@@ -1196,6 +1209,7 @@ index_create(Relation heapRelation,
 ObjectAddress
 index_constraint_create(Relation heapRelation,
 						Oid indexRelationId,
+						Oid parentConstraintId,
 						IndexInfo *indexInfo,
 						const char *constraintName,
 						char constraintType,
@@ -1210,6 +1224,9 @@ index_constraint_create(Relation heapRelation,
 	bool		deferrable;
 	bool		initdeferred;
 	bool		mark_as_primary;
+	bool		islocal;
+	bool		noinherit;
+	int			inhcount;
 
 	deferrable = (constr_flags & INDEX_CONSTR_CREATE_DEFERRABLE) != 0;
 	initdeferred = (constr_flags & INDEX_CONSTR_CREATE_INIT_DEFERRED) != 0;
@@ -1244,6 +1261,19 @@ index_constraint_create(Relation heapRelation,
 		deleteDependencyRecordsForClass(RelationRelationId, indexRelationId,
 										RelationRelationId, DEPENDENCY_AUTO);
 
+	if (OidIsValid(parentConstraintId))
+	{
+		islocal = false;
+		inhcount = 1;
+		noinherit = false;
+	}
+	else
+	{
+		islocal = true;
+		inhcount = 0;
+		noinherit = true;
+	}
+
 	/*
 	 * Construct a pg_constraint entry.
 	 */
@@ -1271,9 +1301,9 @@ index_constraint_create(Relation heapRelation,
 								   NULL,	/* no check constraint */
 								   NULL,
 								   NULL,
-								   true,	/* islocal */
-								   0,	/* inhcount */
-								   true,	/* noinherit */
+								   islocal,
+								   inhcount,
+								   noinherit,
 								   is_internal);
 
 	/*
@@ -1291,6 +1321,18 @@ index_constraint_create(Relation heapRelation,
 	referenced.objectSubId = 0;
 
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_INTERNAL);
+
+	/*
+	 * Also, if this is a constraint on a partition, mark it as depending
+	 * on the constraint in the parent.
+	 */
+	if (OidIsValid(parentConstraintId))
+	{
+		ObjectAddress	parentConstr;
+
+		ObjectAddressSet(parentConstr, ConstraintRelationId, parentConstraintId);
+		recordDependencyOn(&referenced, &parentConstr, DEPENDENCY_INTERNAL_AUTO);
+	}
 
 	/*
 	 * If the constraint is deferrable, create the deferred uniqueness
@@ -1746,6 +1788,7 @@ BuildIndexInfo(Relation index)
 	/* initialize index-build state to default */
 	ii->ii_Concurrent = false;
 	ii->ii_BrokenHotChain = false;
+	ii->ii_ParallelWorkers = 0;
 
 	/* set up for possible use by index AM */
 	ii->ii_Am = index->rd_rel->relam;
@@ -2164,6 +2207,7 @@ index_update_stats(Relation rel,
  *
  * isprimary tells whether to mark the index as a primary-key index.
  * isreindex indicates we are recreating a previously-existing index.
+ * parallel indicates if parallelism may be useful.
  *
  * Note: when reindexing an existing index, isprimary can be false even if
  * the index is a PK; it's already properly marked and need not be re-marked.
@@ -2177,7 +2221,8 @@ index_build(Relation heapRelation,
 			Relation indexRelation,
 			IndexInfo *indexInfo,
 			bool isprimary,
-			bool isreindex)
+			bool isreindex,
+			bool parallel)
 {
 	IndexBuildResult *stats;
 	Oid			save_userid;
@@ -2192,10 +2237,31 @@ index_build(Relation heapRelation,
 	Assert(PointerIsValid(indexRelation->rd_amroutine->ambuild));
 	Assert(PointerIsValid(indexRelation->rd_amroutine->ambuildempty));
 
-	ereport(DEBUG1,
-			(errmsg("building index \"%s\" on table \"%s\"",
-					RelationGetRelationName(indexRelation),
-					RelationGetRelationName(heapRelation))));
+	/*
+	 * Determine worker process details for parallel CREATE INDEX.  Currently,
+	 * only btree has support for parallel builds.
+	 *
+	 * Note that planner considers parallel safety for us.
+	 */
+	if (parallel && IsNormalProcessingMode() &&
+		indexRelation->rd_rel->relam == BTREE_AM_OID)
+		indexInfo->ii_ParallelWorkers =
+			plan_create_index_workers(RelationGetRelid(heapRelation),
+									  RelationGetRelid(indexRelation));
+
+	if (indexInfo->ii_ParallelWorkers == 0)
+		ereport(DEBUG1,
+				(errmsg("building index \"%s\" on table \"%s\" serially",
+						RelationGetRelationName(indexRelation),
+						RelationGetRelationName(heapRelation))));
+	else
+		ereport(DEBUG1,
+				(errmsg_plural("building index \"%s\" on table \"%s\" with request for %d parallel worker",
+							   "building index \"%s\" on table \"%s\" with request for %d parallel workers",
+							   indexInfo->ii_ParallelWorkers,
+							   RelationGetRelationName(indexRelation),
+							   RelationGetRelationName(heapRelation),
+							   indexInfo->ii_ParallelWorkers)));
 
 	/*
 	 * Switch to the table owner's userid, so that any index functions are run
@@ -2347,13 +2413,14 @@ IndexBuildHeapScan(Relation heapRelation,
 				   IndexInfo *indexInfo,
 				   bool allow_sync,
 				   IndexBuildCallback callback,
-				   void *callback_state)
+				   void *callback_state,
+				   HeapScanDesc scan)
 {
 	return IndexBuildHeapRangeScan(heapRelation, indexRelation,
 								   indexInfo, allow_sync,
 								   false,
 								   0, InvalidBlockNumber,
-								   callback, callback_state);
+								   callback, callback_state, scan);
 }
 
 /*
@@ -2375,11 +2442,11 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 						BlockNumber start_blockno,
 						BlockNumber numblocks,
 						IndexBuildCallback callback,
-						void *callback_state)
+						void *callback_state,
+						HeapScanDesc scan)
 {
 	bool		is_system_catalog;
 	bool		checking_uniqueness;
-	HeapScanDesc scan;
 	HeapTuple	heapTuple;
 	Datum		values[INDEX_MAX_KEYS];
 	bool		isnull[INDEX_MAX_KEYS];
@@ -2389,6 +2456,7 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 	EState	   *estate;
 	ExprContext *econtext;
 	Snapshot	snapshot;
+	bool		need_unregister_snapshot = false;
 	TransactionId OldestXmin;
 	BlockNumber root_blkno = InvalidBlockNumber;
 	OffsetNumber root_offsets[MaxHeapTuplesPerPage];
@@ -2432,27 +2500,59 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 	 * concurrent build, or during bootstrap, we take a regular MVCC snapshot
 	 * and index whatever's live according to that.
 	 */
-	if (IsBootstrapProcessingMode() || indexInfo->ii_Concurrent)
-	{
-		snapshot = RegisterSnapshot(GetTransactionSnapshot());
-		OldestXmin = InvalidTransactionId;	/* not used */
+	OldestXmin = InvalidTransactionId;
 
-		/* "any visible" mode is not compatible with this */
-		Assert(!anyvisible);
+	/* okay to ignore lazy VACUUMs here */
+	if (!IsBootstrapProcessingMode() && !indexInfo->ii_Concurrent)
+		OldestXmin = GetOldestXmin(heapRelation, PROCARRAY_FLAGS_VACUUM);
+
+	if (!scan)
+	{
+		/*
+		 * Serial index build.
+		 *
+		 * Must begin our own heap scan in this case.  We may also need to
+		 * register a snapshot whose lifetime is under our direct control.
+		 */
+		if (!TransactionIdIsValid(OldestXmin))
+		{
+			snapshot = RegisterSnapshot(GetTransactionSnapshot());
+			need_unregister_snapshot = true;
+		}
+		else
+			snapshot = SnapshotAny;
+
+		scan = heap_beginscan_strat(heapRelation,	/* relation */
+									snapshot,	/* snapshot */
+									0,	/* number of keys */
+									NULL,	/* scan key */
+									true,	/* buffer access strategy OK */
+									allow_sync);	/* syncscan OK? */
 	}
 	else
 	{
-		snapshot = SnapshotAny;
-		/* okay to ignore lazy VACUUMs here */
-		OldestXmin = GetOldestXmin(heapRelation, PROCARRAY_FLAGS_VACUUM);
+		/*
+		 * Parallel index build.
+		 *
+		 * Parallel case never registers/unregisters own snapshot.  Snapshot
+		 * is taken from parallel heap scan, and is SnapshotAny or an MVCC
+		 * snapshot, based on same criteria as serial case.
+		 */
+		Assert(!IsBootstrapProcessingMode());
+		Assert(allow_sync);
+		snapshot = scan->rs_snapshot;
 	}
 
-	scan = heap_beginscan_strat(heapRelation,	/* relation */
-								snapshot,	/* snapshot */
-								0,	/* number of keys */
-								NULL,	/* scan key */
-								true,	/* buffer access strategy OK */
-								allow_sync);	/* syncscan OK? */
+	/*
+	 * Must call GetOldestXmin() with SnapshotAny.  Should never call
+	 * GetOldestXmin() with MVCC snapshot. (It's especially worth checking
+	 * this for parallel builds, since ambuild routines that support parallel
+	 * builds must work these details out for themselves.)
+	 */
+	Assert(snapshot == SnapshotAny || IsMVCCSnapshot(snapshot));
+	Assert(snapshot == SnapshotAny ? TransactionIdIsValid(OldestXmin) :
+		   !TransactionIdIsValid(OldestXmin));
+	Assert(snapshot == SnapshotAny || !anyvisible);
 
 	/* set our scan endpoints */
 	if (!allow_sync)
@@ -2762,9 +2862,12 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 			offnum = ItemPointerGetOffsetNumber(&heapTuple->t_self);
 
 			if (!OffsetNumberIsValid(root_offsets[offnum - 1]))
-				elog(ERROR, "failed to find parent tuple for heap-only tuple at (%u,%u) in table \"%s\"",
-					 ItemPointerGetBlockNumber(&heapTuple->t_self),
-					 offnum, RelationGetRelationName(heapRelation));
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg_internal("failed to find parent tuple for heap-only tuple at (%u,%u) in table \"%s\"",
+										 ItemPointerGetBlockNumber(&heapTuple->t_self),
+										 offnum,
+										 RelationGetRelationName(heapRelation))));
 
 			ItemPointerSetOffsetNumber(&rootTuple.t_self,
 									   root_offsets[offnum - 1]);
@@ -2783,8 +2886,8 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 
 	heap_endscan(scan);
 
-	/* we can now forget our snapshot, if set */
-	if (IsBootstrapProcessingMode() || indexInfo->ii_Concurrent)
+	/* we can now forget our snapshot, if set and registered by us */
+	if (need_unregister_snapshot)
 		UnregisterSnapshot(snapshot);
 
 	ExecDropSingleTupleTableSlot(slot);
@@ -3027,7 +3130,7 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 	state.tuplesort = tuplesort_begin_datum(INT8OID, Int8LessOperator,
 											InvalidOid, false,
 											maintenance_work_mem,
-											false);
+											NULL, false);
 	state.htups = state.itups = state.tups_inserted = 0;
 
 	(void) index_bulk_delete(&ivinfo, NULL,
@@ -3227,10 +3330,12 @@ validate_index_heapscan(Relation heapRelation,
 		{
 			root_offnum = root_offsets[root_offnum - 1];
 			if (!OffsetNumberIsValid(root_offnum))
-				elog(ERROR, "failed to find parent tuple for heap-only tuple at (%u,%u) in table \"%s\"",
-					 ItemPointerGetBlockNumber(heapcursor),
-					 ItemPointerGetOffsetNumber(heapcursor),
-					 RelationGetRelationName(heapRelation));
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg_internal("failed to find parent tuple for heap-only tuple at (%u,%u) in table \"%s\"",
+										 ItemPointerGetBlockNumber(heapcursor),
+										 ItemPointerGetOffsetNumber(heapcursor),
+										 RelationGetRelationName(heapRelation))));
 			ItemPointerSetOffsetNumber(&rootTuple, root_offnum);
 		}
 
@@ -3552,7 +3657,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 
 		/* Initialize the index and rebuild */
 		/* Note: we do not need to re-establish pkey setting */
-		index_build(heapRelation, iRel, indexInfo, false, true);
+		index_build(heapRelation, iRel, indexInfo, false, true, true);
 	}
 	PG_CATCH();
 	{
@@ -3911,8 +4016,7 @@ SetReindexProcessing(Oid heapOid, Oid indexOid)
 static void
 ResetReindexProcessing(void)
 {
-	if (IsInParallelMode())
-		elog(ERROR, "cannot modify reindex state during a parallel operation");
+	/* This may be called in leader error path */
 	currentlyReindexedHeap = InvalidOid;
 	currentlyReindexedIndex = InvalidOid;
 }
@@ -3964,7 +4068,7 @@ ResetReindexPending(void)
  * EstimateReindexStateSpace
  *		Estimate space needed to pass reindex state to parallel workers.
  */
-extern Size
+Size
 EstimateReindexStateSpace(void)
 {
 	return offsetof(SerializedReindexState, pendingReindexedIndexes)
@@ -3975,7 +4079,7 @@ EstimateReindexStateSpace(void)
  * SerializeReindexState
  *		Serialize reindex state for parallel workers.
  */
-extern void
+void
 SerializeReindexState(Size maxsize, char *start_address)
 {
 	SerializedReindexState *sistate = (SerializedReindexState *) start_address;
@@ -3993,7 +4097,7 @@ SerializeReindexState(Size maxsize, char *start_address)
  * RestoreReindexState
  *		Restore reindex state in a parallel worker.
  */
-extern void
+void
 RestoreReindexState(void *reindexstate)
 {
 	SerializedReindexState *sistate = (SerializedReindexState *) reindexstate;

@@ -729,6 +729,7 @@ plpgsql_free_function_memory(PLpgSQL_function *func)
 		switch (d->dtype)
 		{
 			case PLPGSQL_DTYPE_VAR:
+			case PLPGSQL_DTYPE_PROMISE:
 				{
 					PLpgSQL_var *var = (PLpgSQL_var *) d;
 
@@ -739,6 +740,11 @@ plpgsql_free_function_memory(PLpgSQL_function *func)
 			case PLPGSQL_DTYPE_ROW:
 				break;
 			case PLPGSQL_DTYPE_REC:
+				{
+					PLpgSQL_rec *rec = (PLpgSQL_rec *) d;
+
+					free_expr(rec->default_val);
+				}
 				break;
 			case PLPGSQL_DTYPE_RECFIELD:
 				break;
@@ -1582,6 +1588,7 @@ plpgsql_dumptree(PLpgSQL_function *func)
 		switch (d->dtype)
 		{
 			case PLPGSQL_DTYPE_VAR:
+			case PLPGSQL_DTYPE_PROMISE:
 				{
 					PLpgSQL_var *var = (PLpgSQL_var *) d;
 
@@ -1608,6 +1615,9 @@ plpgsql_dumptree(PLpgSQL_function *func)
 						dump_expr(var->cursor_explicit_expr);
 						printf("\n");
 					}
+					if (var->promise != PLPGSQL_PROMISE_NONE)
+						printf("                                  PROMISE %d\n",
+							   (int) var->promise);
 				}
 				break;
 			case PLPGSQL_DTYPE_ROW:
@@ -1618,15 +1628,26 @@ plpgsql_dumptree(PLpgSQL_function *func)
 					printf("ROW %-16s fields", row->refname);
 					for (i = 0; i < row->nfields; i++)
 					{
-						if (row->fieldnames[i])
-							printf(" %s=var %d", row->fieldnames[i],
-								   row->varnos[i]);
+						printf(" %s=var %d", row->fieldnames[i],
+							   row->varnos[i]);
 					}
 					printf("\n");
 				}
 				break;
 			case PLPGSQL_DTYPE_REC:
-				printf("REC %s\n", ((PLpgSQL_rec *) d)->refname);
+				printf("REC %-16s typoid %u\n",
+					   ((PLpgSQL_rec *) d)->refname,
+					   ((PLpgSQL_rec *) d)->rectypeid);
+				if (((PLpgSQL_rec *) d)->isconst)
+					printf("                                  CONSTANT\n");
+				if (((PLpgSQL_rec *) d)->notnull)
+					printf("                                  NOT NULL\n");
+				if (((PLpgSQL_rec *) d)->default_val != NULL)
+				{
+					printf("                                  DEFAULT ");
+					dump_expr(((PLpgSQL_rec *) d)->default_val);
+					printf("\n");
+				}
 				break;
 			case PLPGSQL_DTYPE_RECFIELD:
 				printf("RECFIELD %-16s of REC %d\n",

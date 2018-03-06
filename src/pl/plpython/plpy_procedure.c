@@ -47,9 +47,7 @@ init_procedure_caches(void)
 }
 
 /*
- * Get the name of the last procedure called by the backend (the
- * innermost, if a plpython procedure call calls the backend and the
- * backend calls another plpython procedure).
+ * PLy_procedure_name: get the name of the specified procedure.
  *
  * NB: this returns the SQL name, not the internal Python procedure name
  */
@@ -190,7 +188,7 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 		proc->fn_tid = procTup->t_self;
 		proc->fn_readonly = (procStruct->provolatile != PROVOLATILE_VOLATILE);
 		proc->is_setof = procStruct->proretset;
-		proc->is_procedure = (procStruct->prorettype == InvalidOid);
+		proc->is_procedure = (procStruct->prokind == PROKIND_PROCEDURE);
 		proc->src = NULL;
 		proc->argnames = NULL;
 		proc->args = NULL;
@@ -210,7 +208,7 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 		 * get information required for output conversion of the return value,
 		 * but only if this isn't a trigger or procedure.
 		 */
-		if (!is_trigger && procStruct->prorettype)
+		if (!is_trigger && procStruct->prokind != PROKIND_PROCEDURE)
 		{
 			Oid			rettype = procStruct->prorettype;
 			HeapTuple	rvTypeTup;

@@ -20,10 +20,10 @@
 /*
  * allpaths.c
  */
-extern bool enable_geqo;
-extern int	geqo_threshold;
-extern int	min_parallel_table_scan_size;
-extern int	min_parallel_index_scan_size;
+extern PGDLLIMPORT bool enable_geqo;
+extern PGDLLIMPORT int	geqo_threshold;
+extern PGDLLIMPORT int	min_parallel_table_scan_size;
+extern PGDLLIMPORT int	min_parallel_index_scan_size;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 typedef void (*set_rel_pathlist_hook_type) (PlannerInfo *root,
@@ -53,12 +53,13 @@ extern void set_dummy_rel_pathlist(RelOptInfo *rel);
 extern RelOptInfo *standard_join_search(PlannerInfo *root, int levels_needed,
 					 List *initial_rels);
 
-extern void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel);
+extern void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel,
+					  bool override_rows);
 extern int compute_parallel_worker(RelOptInfo *rel, double heap_pages,
-						double index_pages);
+						double index_pages, int max_workers);
 extern void create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 							Path *bitmapqual);
-extern void generate_partition_wise_join_paths(PlannerInfo *root,
+extern void generate_partitionwise_join_paths(PlannerInfo *root,
 								   RelOptInfo *rel);
 
 #ifdef OPTIMIZER_DEBUG
@@ -216,16 +217,18 @@ extern void initialize_mergeclause_eclasses(PlannerInfo *root,
 								RestrictInfo *restrictinfo);
 extern void update_mergeclause_eclasses(PlannerInfo *root,
 							RestrictInfo *restrictinfo);
-extern List *find_mergeclauses_for_pathkeys(PlannerInfo *root,
-							   List *pathkeys,
-							   bool outer_keys,
-							   List *restrictinfos);
+extern List *find_mergeclauses_for_outer_pathkeys(PlannerInfo *root,
+									 List *pathkeys,
+									 List *restrictinfos);
 extern List *select_outer_pathkeys_for_merge(PlannerInfo *root,
 								List *mergeclauses,
 								RelOptInfo *joinrel);
 extern List *make_inner_pathkeys_for_merge(PlannerInfo *root,
 							  List *mergeclauses,
 							  List *outer_pathkeys);
+extern List *trim_mergeclauses_for_inner_pathkeys(PlannerInfo *root,
+									 List *mergeclauses,
+									 List *pathkeys);
 extern List *truncate_useless_pathkeys(PlannerInfo *root,
 						  RelOptInfo *rel,
 						  List *pathkeys);

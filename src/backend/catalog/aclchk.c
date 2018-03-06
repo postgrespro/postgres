@@ -830,21 +830,17 @@ objectsInSchemaToOids(ObjectType objtype, List *nspnames)
 								BTEqualStrategyNumber, F_OIDEQ,
 								ObjectIdGetDatum(namespaceId));
 
-					/*
-					 * When looking for functions, check for return type <>0.
-					 * When looking for procedures, check for return type ==0.
-					 * When looking for routines, don't check the return type.
-					 */
 					if (objtype == OBJECT_FUNCTION)
+						/* includes aggregates and window functions */
 						ScanKeyInit(&key[keycount++],
-									Anum_pg_proc_prorettype,
-									BTEqualStrategyNumber, F_OIDNE,
-									InvalidOid);
+									Anum_pg_proc_prokind,
+									BTEqualStrategyNumber, F_CHARNE,
+									CharGetDatum(PROKIND_PROCEDURE));
 					else if (objtype == OBJECT_PROCEDURE)
 						ScanKeyInit(&key[keycount++],
-									Anum_pg_proc_prorettype,
-									BTEqualStrategyNumber, F_OIDEQ,
-									InvalidOid);
+									Anum_pg_proc_prokind,
+									BTEqualStrategyNumber, F_CHAREQ,
+									CharGetDatum(PROKIND_PROCEDURE));
 
 					rel = heap_open(ProcedureRelationId, AccessShareLock);
 					scan = heap_beginscan_catalog(rel, keycount, key);
@@ -5973,8 +5969,8 @@ recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid, Acl *new_a
 			MemSet(nulls, false, sizeof(nulls));
 			MemSet(replace, false, sizeof(replace));
 
-			values[Anum_pg_init_privs_privs - 1] = PointerGetDatum(new_acl);
-			replace[Anum_pg_init_privs_privs - 1] = true;
+			values[Anum_pg_init_privs_initprivs - 1] = PointerGetDatum(new_acl);
+			replace[Anum_pg_init_privs_initprivs - 1] = true;
 
 			oldtuple = heap_modify_tuple(oldtuple, RelationGetDescr(relation),
 										 values, nulls, replace);
@@ -6011,7 +6007,7 @@ recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid, Acl *new_a
 			values[Anum_pg_init_privs_privtype - 1] =
 				CharGetDatum(INITPRIVS_EXTENSION);
 
-			values[Anum_pg_init_privs_privs - 1] = PointerGetDatum(new_acl);
+			values[Anum_pg_init_privs_initprivs - 1] = PointerGetDatum(new_acl);
 
 			tuple = heap_form_tuple(RelationGetDescr(relation), values, nulls);
 

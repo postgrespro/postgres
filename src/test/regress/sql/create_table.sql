@@ -298,10 +298,6 @@ CREATE TABLE partitioned (
 ) PARTITION BY LIST (a1, a2);	-- fail
 
 -- unsupported constraint type for partitioned tables
-CREATE TABLE partitioned (
-	a int PRIMARY KEY
-) PARTITION BY RANGE (a);
-
 CREATE TABLE pkrel (
 	a int PRIMARY KEY
 );
@@ -309,10 +305,6 @@ CREATE TABLE partitioned (
 	a int REFERENCES pkrel(a)
 ) PARTITION BY RANGE (a);
 DROP TABLE pkrel;
-
-CREATE TABLE partitioned (
-	a int UNIQUE
-) PARTITION BY RANGE (a);
 
 CREATE TABLE partitioned (
 	a int,
@@ -419,13 +411,18 @@ DROP FUNCTION plusone(int);
 
 -- partitioned table cannot participate in regular inheritance
 CREATE TABLE partitioned2 (
-	a int
-) PARTITION BY LIST ((a+1));
+	a int,
+	b text
+) PARTITION BY RANGE ((a+1), substr(b, 1, 5));
 CREATE TABLE fail () INHERITS (partitioned2);
 
 -- Partition key in describe output
 \d partitioned
 \d+ partitioned2
+
+INSERT INTO partitioned2 VALUES (1, 'hello');
+CREATE TABLE part2_1 PARTITION OF partitioned2 FOR VALUES FROM (-1, 'aaaaa') TO (100, 'ccccc');
+\d+ part2_1
 
 DROP TABLE partitioned, partitioned2;
 

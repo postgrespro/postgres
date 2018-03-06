@@ -281,12 +281,6 @@ CREATE TABLE partitioned (
 ) PARTITION BY LIST (a1, a2);	-- fail
 ERROR:  cannot use "list" partition strategy with more than one column
 -- unsupported constraint type for partitioned tables
-CREATE TABLE partitioned (
-	a int PRIMARY KEY
-) PARTITION BY RANGE (a);
-ERROR:  primary key constraints are not supported on partitioned tables
-LINE 2:  a int PRIMARY KEY
-               ^
 CREATE TABLE pkrel (
 	a int PRIMARY KEY
 );
@@ -297,12 +291,6 @@ ERROR:  foreign key constraints are not supported on partitioned tables
 LINE 2:  a int REFERENCES pkrel(a)
                ^
 DROP TABLE pkrel;
-CREATE TABLE partitioned (
-	a int UNIQUE
-) PARTITION BY RANGE (a);
-ERROR:  unique constraints are not supported on partitioned tables
-LINE 2:  a int UNIQUE
-               ^
 CREATE TABLE partitioned (
 	a int,
 	EXCLUDE USING gist (a WITH &&)
@@ -325,12 +313,12 @@ DROP FUNCTION retset(int);
 CREATE TABLE partitioned (
 	a int
 ) PARTITION BY RANGE ((avg(a)));
-ERROR:  aggregate functions are not allowed in partition key expression
+ERROR:  aggregate functions are not allowed in partition key expressions
 CREATE TABLE partitioned (
 	a int,
 	b int
 ) PARTITION BY RANGE ((avg(a) OVER (PARTITION BY b)));
-ERROR:  window functions are not allowed in partition key expression
+ERROR:  window functions are not allowed in partition key expressions
 CREATE TABLE partitioned (
 	a int
 ) PARTITION BY LIST ((a LIKE (SELECT 1)));
@@ -419,8 +407,9 @@ DETAIL:  table partitioned depends on function plusone(integer)
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 -- partitioned table cannot participate in regular inheritance
 CREATE TABLE partitioned2 (
-	a int
-) PARTITION BY LIST ((a+1));
+	a int,
+	b text
+) PARTITION BY RANGE ((a+1), substr(b, 1, 5));
 CREATE TABLE fail () INHERITS (partitioned2);
 ERROR:  cannot inherit from partitioned table "partitioned2"
 -- Partition key in describe output
@@ -436,12 +425,26 @@ Partition key: RANGE (a oid_ops, plusone(b), c, d COLLATE "C")
 Number of partitions: 0
 
 \d+ partitioned2
-                               Table "public.partitioned2"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           |          |         | plain   |              | 
-Partition key: LIST (((a + 1)))
+                                Table "public.partitioned2"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ a      | integer |           |          |         | plain    |              | 
+ b      | text    |           |          |         | extended |              | 
+Partition key: RANGE (((a + 1)), substr(b, 1, 5))
 Number of partitions: 0
+
+INSERT INTO partitioned2 VALUES (1, 'hello');
+ERROR:  no partition of relation "partitioned2" found for row
+DETAIL:  Partition key of the failing row contains ((a + 1), substr(b, 1, 5)) = (2, hello).
+CREATE TABLE part2_1 PARTITION OF partitioned2 FOR VALUES FROM (-1, 'aaaaa') TO (100, 'ccccc');
+\d+ part2_1
+                                  Table "public.part2_1"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ a      | integer |           |          |         | plain    |              | 
+ b      | text    |           |          |         | extended |              | 
+Partition of: partitioned2 FOR VALUES FROM ('-1', 'aaaaa') TO (100, 'ccccc')
+Partition constraint: (((a + 1) IS NOT NULL) AND (substr(b, 1, 5) IS NOT NULL) AND (((a + 1) > '-1'::integer) OR (((a + 1) = '-1'::integer) AND (substr(b, 1, 5) >= 'aaaaa'::text))) AND (((a + 1) < 100) OR (((a + 1) = 100) AND (substr(b, 1, 5) < 'ccccc'::text))))
 
 DROP TABLE partitioned, partitioned2;
 --

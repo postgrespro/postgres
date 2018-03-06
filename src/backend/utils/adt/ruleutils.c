@@ -86,15 +86,17 @@
 #define PRETTYINDENT_LIMIT		40	/* wrap limit */
 
 /* Pretty flags */
-#define PRETTYFLAG_PAREN		1
-#define PRETTYFLAG_INDENT		2
+#define PRETTYFLAG_PAREN		0x0001
+#define PRETTYFLAG_INDENT		0x0002
+#define PRETTYFLAG_SCHEMA		0x0004
 
 /* Default line length for pretty-print wrapping: 0 means wrap always */
 #define WRAP_COLUMN_DEFAULT		0
 
-/* macro to test if pretty action needed */
+/* macros to test if pretty action needed */
 #define PRETTY_PAREN(context)	((context)->prettyFlags & PRETTYFLAG_PAREN)
 #define PRETTY_INDENT(context)	((context)->prettyFlags & PRETTYFLAG_INDENT)
+#define PRETTY_SCHEMA(context)	((context)->prettyFlags & PRETTYFLAG_SCHEMA)
 
 
 /* ----------
@@ -499,7 +501,7 @@ pg_get_ruledef_ext(PG_FUNCTION_ARGS)
 	int			prettyFlags;
 	char	   *res;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	res = pg_get_ruledef_worker(ruleoid, prettyFlags);
 
@@ -620,7 +622,7 @@ pg_get_viewdef_ext(PG_FUNCTION_ARGS)
 	int			prettyFlags;
 	char	   *res;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	res = pg_get_viewdef_worker(viewoid, prettyFlags, WRAP_COLUMN_DEFAULT);
 
@@ -640,7 +642,7 @@ pg_get_viewdef_wrap(PG_FUNCTION_ARGS)
 	char	   *res;
 
 	/* calling this implies we want pretty printing */
-	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
+	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA;
 
 	res = pg_get_viewdef_worker(viewoid, prettyFlags, wrap);
 
@@ -686,7 +688,7 @@ pg_get_viewdef_name_ext(PG_FUNCTION_ARGS)
 	Oid			viewoid;
 	char	   *res;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	/* Look up view name.  Can't lock it - we might not have privileges. */
 	viewrel = makeRangeVarFromNameList(textToQualifiedNameList(viewname));
@@ -908,8 +910,8 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 
 				if (i > 0)
 					appendStringInfoString(&buf, ", ");
-				attname = get_relid_attribute_name(trigrec->tgrelid,
-												   trigrec->tgattr.values[i]);
+				attname = get_attname(trigrec->tgrelid,
+									  trigrec->tgattr.values[i], false);
 				appendStringInfoString(&buf, quote_identifier(attname));
 			}
 		}
@@ -922,8 +924,15 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 			appendStringInfoString(&buf, " TRUNCATE");
 		findx++;
 	}
+
+	/*
+	 * In non-pretty mode, always schema-qualify the target table name for
+	 * safety.  In pretty mode, schema-qualify only if not visible.
+	 */
 	appendStringInfo(&buf, " ON %s ",
-					 generate_relation_name(trigrec->tgrelid, NIL));
+					 pretty ?
+					 generate_relation_name(trigrec->tgrelid, NIL) :
+					 generate_qualified_relation_name(trigrec->tgrelid));
 
 	if (OidIsValid(trigrec->tgconstraint))
 	{
@@ -1017,7 +1026,7 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 		context.windowClause = NIL;
 		context.windowTList = NIL;
 		context.varprefix = true;
-		context.prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+		context.prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 		context.wrapColumn = WRAP_COLUMN_DEFAULT;
 		context.indentLevel = PRETTYINDENT_STD;
 		context.special_exprkind = EXPR_KIND_NONE;
@@ -1104,7 +1113,7 @@ pg_get_indexdef_ext(PG_FUNCTION_ARGS)
 	int			prettyFlags;
 	char	   *res;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	res = pg_get_indexdef_worker(indexrelid, colno, NULL, colno != 0, false,
 								 false, prettyFlags, true);
@@ -1132,7 +1141,8 @@ pg_get_indexdef_columns(Oid indexrelid, bool pretty)
 {
 	int			prettyFlags;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
+
 	return pg_get_indexdef_worker(indexrelid, 0, NULL, true, false, false,
 								  prettyFlags, false);
 }
@@ -1264,7 +1274,9 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 							 quote_identifier(NameStr(idxrelrec->relname)),
 							 idxrelrec->relkind == RELKIND_PARTITIONED_INDEX
 							 && !inherits ? "ONLY " : "",
-							 generate_relation_name(indrelid, NIL),
+							 (prettyFlags & PRETTYFLAG_SCHEMA) ?
+							 generate_relation_name(indrelid, NIL) :
+							 generate_qualified_relation_name(indrelid),
 							 quote_identifier(NameStr(amrec->amname)));
 		else					/* currently, must be EXCLUDE constraint */
 			appendStringInfo(&buf, "EXCLUDE USING %s (",
@@ -1292,7 +1304,7 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 			char	   *attname;
 			int32		keycoltypmod;
 
-			attname = get_relid_attribute_name(indrelid, attnum);
+			attname = get_attname(indrelid, attnum, false);
 			if (!colno || colno == keyno + 1)
 				appendStringInfoString(&buf, quote_identifier(attname));
 			get_atttypetypmodcoll(indrelid, attnum,
@@ -1535,7 +1547,7 @@ pg_get_statisticsobj_worker(Oid statextid, bool missing_ok)
 		if (colno > 0)
 			appendStringInfoString(&buf, ", ");
 
-		attname = get_relid_attribute_name(statextrec->stxrelid, attnum);
+		attname = get_attname(statextrec->stxrelid, attnum, false);
 
 		appendStringInfoString(&buf, quote_identifier(attname));
 	}
@@ -1575,7 +1587,8 @@ pg_get_partkeydef_columns(Oid relid, bool pretty)
 {
 	int			prettyFlags;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
+
 	return pg_get_partkeydef_worker(relid, prettyFlags, true, false);
 }
 
@@ -1692,7 +1705,7 @@ pg_get_partkeydef_worker(Oid relid, int prettyFlags,
 			char	   *attname;
 			int32		keycoltypmod;
 
-			attname = get_relid_attribute_name(relid, attnum);
+			attname = get_attname(relid, attnum, false);
 			appendStringInfoString(&buf, quote_identifier(attname));
 			get_atttypetypmodcoll(relid, attnum,
 								  &keycoltype, &keycoltypmod,
@@ -1803,7 +1816,7 @@ pg_get_constraintdef_ext(PG_FUNCTION_ARGS)
 	int			prettyFlags;
 	char	   *res;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	res = pg_get_constraintdef_worker(constraintId, false, prettyFlags, true);
 
@@ -2196,7 +2209,7 @@ decompile_column_index_array(Datum column_index_array, Oid relId,
 	{
 		char	   *colName;
 
-		colName = get_relid_attribute_name(relId, DatumGetInt16(keys[j]));
+		colName = get_attname(relId, DatumGetInt16(keys[j]), false);
 
 		if (j == 0)
 			appendStringInfoString(buf, quote_identifier(colName));
@@ -2258,7 +2271,7 @@ pg_get_expr_ext(PG_FUNCTION_ARGS)
 	int			prettyFlags;
 	char	   *relname;
 
-	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : PRETTYFLAG_INDENT;
+	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
 	if (OidIsValid(relid))
 	{
@@ -2449,6 +2462,7 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 	StringInfoData dq;
 	HeapTuple	proctup;
 	Form_pg_proc proc;
+	bool		isfunction;
 	Datum		tmp;
 	bool		isnull;
 	const char *prosrc;
@@ -2467,31 +2481,39 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 	proc = (Form_pg_proc) GETSTRUCT(proctup);
 	name = NameStr(proc->proname);
 
-	if (proc->proisagg)
+	if (proc->prokind == PROKIND_AGGREGATE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is an aggregate function", name)));
+
+	isfunction = (proc->prokind != PROKIND_PROCEDURE);
 
 	/*
 	 * We always qualify the function name, to ensure the right function gets
 	 * replaced.
 	 */
 	nsp = get_namespace_name(proc->pronamespace);
-	appendStringInfo(&buf, "CREATE OR REPLACE FUNCTION %s(",
+	appendStringInfo(&buf, "CREATE OR REPLACE %s %s(",
+					 isfunction ? "FUNCTION" : "PROCEDURE",
 					 quote_qualified_identifier(nsp, name));
 	(void) print_function_arguments(&buf, proctup, false, true);
-	appendStringInfoString(&buf, ")\n RETURNS ");
-	print_function_rettype(&buf, proctup);
+	appendStringInfoString(&buf, ")\n");
+	if (isfunction)
+	{
+		appendStringInfoString(&buf, " RETURNS ");
+		print_function_rettype(&buf, proctup);
+		appendStringInfoChar(&buf, '\n');
+	}
 
 	print_function_trftypes(&buf, proctup);
 
-	appendStringInfo(&buf, "\n LANGUAGE %s\n",
+	appendStringInfo(&buf, " LANGUAGE %s\n",
 					 quote_identifier(get_language_name(proc->prolang, false)));
 
 	/* Emit some miscellaneous options on one line */
 	oldlen = buf.len;
 
-	if (proc->proiswindow)
+	if (proc->prokind == PROKIND_WINDOW)
 		appendStringInfoString(&buf, " WINDOW");
 	switch (proc->provolatile)
 	{
@@ -2607,10 +2629,11 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 	 *
 	 * Since the user is likely to be editing the function body string, we
 	 * shouldn't use a short delimiter that he might easily create a conflict
-	 * with.  Hence prefer "$function$", but extend if needed.
+	 * with.  Hence prefer "$function$"/"$procedure$", but extend if needed.
 	 */
 	initStringInfo(&dq);
-	appendStringInfoString(&dq, "$function");
+	appendStringInfoChar(&dq, '$');
+	appendStringInfoString(&dq, (isfunction ? "function" : "procedure"));
 	while (strstr(prosrc, dq.data) != NULL)
 		appendStringInfoChar(&dq, 'x');
 	appendStringInfoChar(&dq, '$');
@@ -2694,7 +2717,7 @@ pg_get_function_result(PG_FUNCTION_ARGS)
 	if (!HeapTupleIsValid(proctup))
 		PG_RETURN_NULL();
 
-	if (((Form_pg_proc) GETSTRUCT(proctup))->prorettype == InvalidOid)
+	if (((Form_pg_proc) GETSTRUCT(proctup))->prokind == PROKIND_PROCEDURE)
 	{
 		ReleaseSysCache(proctup);
 		PG_RETURN_NULL();
@@ -2794,7 +2817,7 @@ print_function_arguments(StringInfo buf, HeapTuple proctup,
 	}
 
 	/* Check for special treatment of ordered-set aggregates */
-	if (proc->proisagg)
+	if (proc->prokind == PROKIND_AGGREGATE)
 	{
 		HeapTuple	aggtup;
 		Form_pg_aggregate agg;
@@ -4699,7 +4722,10 @@ make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 	}
 
 	/* The relation the rule is fired on */
-	appendStringInfo(buf, " TO %s", generate_relation_name(ev_class, NIL));
+	appendStringInfo(buf, " TO %s",
+					 (prettyFlags & PRETTYFLAG_SCHEMA) ?
+					 generate_relation_name(ev_class, NIL) :
+					 generate_qualified_relation_name(ev_class));
 
 	/* If the rule has an event qualification, add it */
 	if (ev_qual == NULL)
@@ -5877,6 +5903,8 @@ get_rule_windowspec(WindowClause *wc, List *targetList,
 			appendStringInfoString(buf, "RANGE ");
 		else if (wc->frameOptions & FRAMEOPTION_ROWS)
 			appendStringInfoString(buf, "ROWS ");
+		else if (wc->frameOptions & FRAMEOPTION_GROUPS)
+			appendStringInfoString(buf, "GROUPS ");
 		else
 			Assert(false);
 		if (wc->frameOptions & FRAMEOPTION_BETWEEN)
@@ -5885,12 +5913,12 @@ get_rule_windowspec(WindowClause *wc, List *targetList,
 			appendStringInfoString(buf, "UNBOUNDED PRECEDING ");
 		else if (wc->frameOptions & FRAMEOPTION_START_CURRENT_ROW)
 			appendStringInfoString(buf, "CURRENT ROW ");
-		else if (wc->frameOptions & FRAMEOPTION_START_VALUE)
+		else if (wc->frameOptions & FRAMEOPTION_START_OFFSET)
 		{
 			get_rule_expr(wc->startOffset, context, false);
-			if (wc->frameOptions & FRAMEOPTION_START_VALUE_PRECEDING)
+			if (wc->frameOptions & FRAMEOPTION_START_OFFSET_PRECEDING)
 				appendStringInfoString(buf, " PRECEDING ");
-			else if (wc->frameOptions & FRAMEOPTION_START_VALUE_FOLLOWING)
+			else if (wc->frameOptions & FRAMEOPTION_START_OFFSET_FOLLOWING)
 				appendStringInfoString(buf, " FOLLOWING ");
 			else
 				Assert(false);
@@ -5904,12 +5932,12 @@ get_rule_windowspec(WindowClause *wc, List *targetList,
 				appendStringInfoString(buf, "UNBOUNDED FOLLOWING ");
 			else if (wc->frameOptions & FRAMEOPTION_END_CURRENT_ROW)
 				appendStringInfoString(buf, "CURRENT ROW ");
-			else if (wc->frameOptions & FRAMEOPTION_END_VALUE)
+			else if (wc->frameOptions & FRAMEOPTION_END_OFFSET)
 			{
 				get_rule_expr(wc->endOffset, context, false);
-				if (wc->frameOptions & FRAMEOPTION_END_VALUE_PRECEDING)
+				if (wc->frameOptions & FRAMEOPTION_END_OFFSET_PRECEDING)
 					appendStringInfoString(buf, " PRECEDING ");
-				else if (wc->frameOptions & FRAMEOPTION_END_VALUE_FOLLOWING)
+				else if (wc->frameOptions & FRAMEOPTION_END_OFFSET_FOLLOWING)
 					appendStringInfoString(buf, " FOLLOWING ");
 				else
 					Assert(false);
@@ -5917,6 +5945,12 @@ get_rule_windowspec(WindowClause *wc, List *targetList,
 			else
 				Assert(false);
 		}
+		if (wc->frameOptions & FRAMEOPTION_EXCLUDE_CURRENT_ROW)
+			appendStringInfoString(buf, "EXCLUDE CURRENT ROW ");
+		else if (wc->frameOptions & FRAMEOPTION_EXCLUDE_GROUP)
+			appendStringInfoString(buf, "EXCLUDE GROUP ");
+		else if (wc->frameOptions & FRAMEOPTION_EXCLUDE_TIES)
+			appendStringInfoString(buf, "EXCLUDE TIES ");
 		/* we will now have a trailing space; remove it */
 		buf->len--;
 	}
@@ -6007,8 +6041,9 @@ get_insert_query_def(Query *query, deparse_context *context)
 		 * tle->resname, since resname will fail to track RENAME.
 		 */
 		appendStringInfoString(buf,
-							   quote_identifier(get_relid_attribute_name(rte->relid,
-																		 tle->resno)));
+							   quote_identifier(get_attname(rte->relid,
+															tle->resno,
+															false)));
 
 		/*
 		 * Print any indirection needed (subfields or subscripts), and strip
@@ -6311,8 +6346,9 @@ get_update_query_targetlist_def(Query *query, List *targetList,
 		 * tle->resname, since resname will fail to track RENAME.
 		 */
 		appendStringInfoString(buf,
-							   quote_identifier(get_relid_attribute_name(rte->relid,
-																		 tle->resno)));
+							   quote_identifier(get_attname(rte->relid,
+															tle->resno,
+															false)));
 
 		/*
 		 * Print any indirection needed (subfields or subscripts), and strip
@@ -10332,8 +10368,8 @@ processIndirection(Node *node, deparse_context *context)
 			 * target lists, but this function cannot be used for that case.
 			 */
 			Assert(list_length(fstore->fieldnums) == 1);
-			fieldname = get_relid_attribute_name(typrelid,
-												 linitial_int(fstore->fieldnums));
+			fieldname = get_attname(typrelid,
+									linitial_int(fstore->fieldnums), false);
 			appendStringInfo(buf, ".%s", quote_identifier(fieldname));
 
 			/*
