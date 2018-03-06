@@ -308,6 +308,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 %type <ival>	opt_lock lock_type cast_context
 %type <ival>	vacuum_option_list vacuum_option_elem
+				analyze_option_list analyze_option_elem
 %type <boolean>	opt_or_replace
 				opt_grant_grant_option opt_grant_admin_option
 				opt_nowait opt_if_exists opt_with_data opt_dictionary_map_no
@@ -3645,12 +3646,13 @@ TableLikeOptionList:
 		;
 
 TableLikeOption:
-				DEFAULTS			{ $$ = CREATE_TABLE_LIKE_DEFAULTS; }
+				COMMENTS			{ $$ = CREATE_TABLE_LIKE_COMMENTS; }
 				| CONSTRAINTS		{ $$ = CREATE_TABLE_LIKE_CONSTRAINTS; }
+				| DEFAULTS			{ $$ = CREATE_TABLE_LIKE_DEFAULTS; }
 				| IDENTITY_P		{ $$ = CREATE_TABLE_LIKE_IDENTITY; }
 				| INDEXES			{ $$ = CREATE_TABLE_LIKE_INDEXES; }
+				| STATISTICS		{ $$ = CREATE_TABLE_LIKE_STATISTICS; }
 				| STORAGE			{ $$ = CREATE_TABLE_LIKE_STORAGE; }
-				| COMMENTS			{ $$ = CREATE_TABLE_LIKE_COMMENTS; }
 				| ALL				{ $$ = CREATE_TABLE_LIKE_ALL; }
 		;
 
@@ -3989,6 +3991,7 @@ CreateStatsStmt:
 					n->stat_types = $4;
 					n->exprs = $6;
 					n->relations = $8;
+					n->stxcomment = NULL;
 					n->if_not_exists = false;
 					$$ = (Node *)n;
 				}
@@ -4000,6 +4003,7 @@ CreateStatsStmt:
 					n->stat_types = $7;
 					n->exprs = $9;
 					n->relations = $11;
+					n->stxcomment = NULL;
 					n->if_not_exists = true;
 					$$ = (Node *)n;
 				}
@@ -10670,6 +10674,22 @@ AnalyzeStmt: analyze_keyword opt_verbose opt_vacuum_relation_list
 					n->rels = $3;
 					$$ = (Node *)n;
 				}
+			| analyze_keyword '(' analyze_option_list ')' opt_vacuum_relation_list
+				{
+					VacuumStmt *n = makeNode(VacuumStmt);
+					n->options = VACOPT_ANALYZE | $3;
+					n->rels = $5;
+					$$ = (Node *) n;
+				}
+		;
+
+analyze_option_list:
+			analyze_option_elem								{ $$ = $1; }
+			| analyze_option_list ',' analyze_option_elem	{ $$ = $1 | $3; }
+		;
+
+analyze_option_elem:
+			VERBOSE				{ $$ = VACOPT_VERBOSE; }
 		;
 
 analyze_keyword:
