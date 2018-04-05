@@ -2962,9 +2962,8 @@ VALUES ('Albany', NULL, NULL, 'NY');
     Partitions may themselves be defined as partitioned tables, using what is
     called <firstterm>sub-partitioning</firstterm>.  Partitions may have their
     own indexes, constraints and default values, distinct from those of other
-    partitions.  Indexes must be created separately for each partition.  See
-    <xref linkend="sql-createtable"/> for more details on creating partitioned
-    tables and partitions.
+    partitions.  See <xref linkend="sql-createtable"/> for more details on
+    creating partitioned tables and partitions.
    </para>
 
    <para>
@@ -3309,7 +3308,7 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
     <itemizedlist>
      <listitem>
       <para>
-       There is no way to create a
+       There is no way to create an
        exclusion constraint spanning all partitions; it is only possible
        to constrain each leaf partition individually.
       </para>
@@ -3320,21 +3319,6 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
        While primary keys are supported on partitioned tables, foreign
        keys referencing partitioned tables are not supported, nor are foreign
        key references from a partitioned table to some other table.
-      </para>
-     </listitem>
-
-     <listitem>
-      <para>
-       Using the <literal>ON CONFLICT</literal> clause with partitioned tables
-       will cause an error if the conflict target is specified (see
-       <xref linkend="sql-on-conflict" /> for more details on how the clause
-       works).  Therefore, it is not possible to specify
-       <literal>DO UPDATE</literal> as the alternative action, because
-       specifying the conflict target is mandatory in that case.  On the other
-       hand, specifying <literal>DO NOTHING</literal> as the alternative action
-       works fine provided the conflict target is not specified.  In that case,
-       unique constraints (or exclusion constraints) of the individual leaf
-       partitions are considered.
       </para>
      </listitem>
 

@@ -710,7 +710,7 @@ adjustJoinTreeList(Query *parsetree, bool removert, int rt_index)
  * using the parent relation as reference.  It must not do anything that
  * will not be correct when transposed to the child relation(s).  (Step 4
  * is incorrect by this light, since child relations might have different
- * colun ordering, but the planner will fix things by re-sorting the tlist
+ * column ordering, but the planner will fix things by re-sorting the tlist
  * for each child.)
  */
 static List *
@@ -1126,7 +1126,8 @@ build_column_default(Relation rel, int attrno)
 	/*
 	 * Scan to see if relation has a default for this column.
 	 */
-	if (rd_att->constr && rd_att->constr->num_defval > 0)
+	if (att_tup->atthasdef && rd_att->constr &&
+		rd_att->constr->num_defval > 0)
 	{
 		AttrDefault *defval = rd_att->constr->defval;
 		int			ndef = rd_att->constr->num_defval;
@@ -1376,6 +1377,57 @@ rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
 	}
 }
 
+void
+rewriteTargetListMerge(Query *parsetree, Relation target_relation)
+{
+	Var		   *var = NULL;
+	const char *attrname;
+	TargetEntry *tle;
+
+	Assert(target_relation->rd_rel->relkind == RELKIND_RELATION ||
+		   target_relation->rd_rel->relkind == RELKIND_MATVIEW ||
+		   target_relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
+
+	/*
+	 * Emit CTID so that executor can find the row to update or delete.
+	 */
+	var = makeVar(parsetree->mergeTarget_relation,
+				  SelfItemPointerAttributeNumber,
+				  TIDOID,
+				  -1,
+				  InvalidOid,
+				  0);
+
+	attrname = "ctid";
+	tle = makeTargetEntry((Expr *) var,
+						  list_length(parsetree->targetList) + 1,
+						  pstrdup(attrname),
+						  true);
+
+	parsetree->targetList = lappend(parsetree->targetList, tle);
+
+	/*
+	 * If we are dealing with partitioned table, then emit TABLEOID so that
+	 * executor can find the partition the row belongs to.
+	 */
+	if (target_relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		var = makeVar(parsetree->mergeTarget_relation,
+				TableOidAttributeNumber,
+				OIDOID,
+				-1,
+				InvalidOid,
+				0);
+
+		attrname = "tableoid";
+		tle = makeTargetEntry((Expr *) var,
+				list_length(parsetree->targetList) + 1,
+				pstrdup(attrname),
+				true);
+
+		parsetree->targetList = lappend(parsetree->targetList, tle);
+	}
+}
 
 /*
  * matchLocks -
@@ -3330,12 +3382,57 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 		}
 		else if (event == CMD_UPDATE)
 		{
+			Assert(parsetree->override == OVERRIDING_NOT_SET);
 			parsetree->targetList =
 				rewriteTargetListIU(parsetree->targetList,
 									parsetree->commandType,
 									parsetree->override,
 									rt_entry_relation,
 									parsetree->resultRelation, NULL);
+		}
+		else if (event == CMD_MERGE)
+		{
+			Assert(parsetree->override == OVERRIDING_NOT_SET);
+
+			/*
+			 * Rewrite each action targetlist separately
+			 */
+			foreach(lc1, parsetree->mergeActionList)
+			{
+				MergeAction *action = (MergeAction *) lfirst(lc1);
+
+				switch (action->commandType)
+				{
+					case CMD_NOTHING:
+					case CMD_DELETE:	/* Nothing to do here */
+						break;
+					case CMD_UPDATE:
+						action->targetList =
+							rewriteTargetListIU(action->targetList,
+												action->commandType,
+												parsetree->override,
+												rt_entry_relation,
+												parsetree->resultRelation,
+												NULL);
+						break;
+					case CMD_INSERT:
+						{
+							InsertStmt *istmt = (InsertStmt *) action->stmt;
+
+							action->targetList =
+								rewriteTargetListIU(action->targetList,
+													action->commandType,
+													istmt->override,
+													rt_entry_relation,
+													parsetree->resultRelation,
+													NULL);
+						}
+						break;
+					default:
+						elog(ERROR, "unrecognized commandType: %d", action->commandType);
+						break;
+				}
+			}
 		}
 		else if (event == CMD_DELETE)
 		{
@@ -3350,13 +3447,20 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 		locks = matchLocks(event, rt_entry_relation->rd_rules,
 						   result_relation, parsetree, &hasUpdate);
 
-		product_queries = fireRules(parsetree,
-									result_relation,
-									event,
-									locks,
-									&instead,
-									&returning,
-									&qual_product);
+		/*
+		 * XXX MERGE doesn't support write rules because they would violate
+		 * the SQL Standard spec and would be unclear how they should work.
+		 */
+		if (event == CMD_MERGE)
+			product_queries = NIL;
+		else
+			product_queries = fireRules(parsetree,
+										result_relation,
+										event,
+										locks,
+										&instead,
+										&returning,
+										&qual_product);
 
 		/*
 		 * If there were no INSTEAD rules, and the target relation is a view

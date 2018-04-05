@@ -26,6 +26,7 @@
 #include "access/amapi.h"
 #include "access/multixact.h"
 #include "access/relscan.h"
+#include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
 #include "access/visibilitymap.h"
@@ -125,7 +126,7 @@ static void UpdateIndexRelation(Oid indexoid, Oid heapoid,
 					bool isvalid,
 					bool isready);
 static void index_update_stats(Relation rel,
-				   bool hasindex, bool isprimary,
+				   bool hasindex,
 				   double reltuples);
 static void IndexCheckExclusion(Relation heapRelation,
 					Relation indexRelation,
@@ -371,6 +372,7 @@ ConstructTupleDescriptor(Relation heapRelation,
 			to->attcacheoff = -1;
 			to->attnotnull = false;
 			to->atthasdef = false;
+			to->atthasmissing = false;
 			to->attidentity = '\0';
 			to->attislocal = true;
 			to->attinhcount = 0;
@@ -1162,7 +1164,6 @@ index_create(Relation heapRelation,
 		 */
 		index_update_stats(heapRelation,
 						   true,
-						   isprimary,
 						   -1.0);
 		/* Make the above update visible */
 		CommandCounterIncrement();
@@ -1283,6 +1284,7 @@ index_constraint_create(Relation heapRelation,
 								   deferrable,
 								   initdeferred,
 								   true,
+								   parentConstraintId,
 								   RelationGetRelid(heapRelation),
 								   indexInfo->ii_KeyAttrNumbers,
 								   indexInfo->ii_NumIndexAttrs,
@@ -1361,23 +1363,9 @@ index_constraint_create(Relation heapRelation,
 		trigger->constrrel = NULL;
 
 		(void) CreateTrigger(trigger, NULL, RelationGetRelid(heapRelation),
-							 InvalidOid, conOid, indexRelationId, true);
+							 InvalidOid, conOid, indexRelationId, InvalidOid,
+							 InvalidOid, NULL, true, false);
 	}
-
-	/*
-	 * If needed, mark the table as having a primary key.  We assume it can't
-	 * have been so marked already, so no need to clear the flag in the other
-	 * case.
-	 *
-	 * Note: this might better be done by callers.  We do it here to avoid
-	 * exposing index_update_stats() globally, but that wouldn't be necessary
-	 * if relhaspkey went away.
-	 */
-	if (mark_as_primary)
-		index_update_stats(heapRelation,
-						   true,
-						   true,
-						   -1.0);
 
 	/*
 	 * If needed, mark the index as primary and/or deferred in pg_index.
@@ -1668,7 +1656,8 @@ index_drop(Oid indexId, bool concurrent)
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for index %u", indexId);
 
-	hasexprs = !heap_attisnull(tuple, Anum_pg_index_indexprs);
+	hasexprs = !heap_attisnull(tuple, Anum_pg_index_indexprs,
+							   RelationGetDescr(indexRelation));
 
 	CatalogTupleDelete(indexRelation, &tuple->t_self);
 
@@ -2041,7 +2030,6 @@ FormIndexDatum(IndexInfo *indexInfo,
  * to ensure we can do all the necessary work in just one update.
  *
  * hasindex: set relhasindex to this value
- * isprimary: if true, set relhaspkey true; else no change
  * reltuples: if >= 0, set reltuples to this value; else no change
  *
  * If reltuples >= 0, relpages and relallvisible are also updated (using
@@ -2058,7 +2046,6 @@ FormIndexDatum(IndexInfo *indexInfo,
 static void
 index_update_stats(Relation rel,
 				   bool hasindex,
-				   bool isprimary,
 				   double reltuples)
 {
 	Oid			relid = RelationGetRelid(rel);
@@ -2088,7 +2075,7 @@ index_update_stats(Relation rel,
 	 * It is safe to use a non-transactional update even though our
 	 * transaction could still fail before committing.  Setting relhasindex
 	 * true is safe even if there are no indexes (VACUUM will eventually fix
-	 * it), likewise for relhaspkey.  And of course the new relpages and
+	 * it).  And of course the new relpages and
 	 * reltuples counts are correct regardless.  However, we don't want to
 	 * change relpages (or relallvisible) if the caller isn't providing an
 	 * updated reltuples count, because that would bollix the
@@ -2139,14 +2126,6 @@ index_update_stats(Relation rel,
 	{
 		rd_rel->relhasindex = hasindex;
 		dirty = true;
-	}
-	if (isprimary)
-	{
-		if (!rd_rel->relhaspkey)
-		{
-			rd_rel->relhaspkey = true;
-			dirty = true;
-		}
 	}
 
 	if (reltuples >= 0)
@@ -2356,11 +2335,9 @@ index_build(Relation heapRelation,
 	 */
 	index_update_stats(heapRelation,
 					   true,
-					   isprimary,
 					   stats->heap_tuples);
 
 	index_update_stats(indexRelation,
-					   false,
 					   false,
 					   stats->index_tuples);
 
@@ -2394,12 +2371,12 @@ index_build(Relation heapRelation,
  * things to add it to the new index.  After we return, the AM's index
  * build procedure does whatever cleanup it needs.
  *
- * The total count of heap tuples is returned.  This is for updating pg_class
- * statistics.  (It's annoying not to be able to do that here, but we want
- * to merge that update with others; see index_update_stats.)  Note that the
- * index AM itself must keep track of the number of index tuples; we don't do
- * so here because the AM might reject some of the tuples for its own reasons,
- * such as being unable to store NULLs.
+ * The total count of live heap tuples is returned.  This is for updating
+ * pg_class statistics.  (It's annoying not to be able to do that here, but we
+ * want to merge that update with others; see index_update_stats.)  Note that
+ * the index AM itself must keep track of the number of index tuples; we don't
+ * do so here because the AM might reject some of the tuples for its own
+ * reasons, such as being unable to store NULLs.
  *
  * A side effect is to set indexInfo->ii_BrokenHotChain to true if we detect
  * any potentially broken HOT chains.  Currently, we set this if there are
@@ -2430,8 +2407,8 @@ IndexBuildHeapScan(Relation heapRelation,
  * to scan cannot be done when requesting syncscan.
  *
  * When "anyvisible" mode is requested, all tuples visible to any transaction
- * are considered, including those inserted or deleted by transactions that are
- * still in progress.
+ * are indexed and counted as live, including those inserted or deleted by
+ * transactions that are still in progress.
  */
 double
 IndexBuildHeapRangeScan(Relation heapRelation,
@@ -2627,6 +2604,12 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 			 */
 			LockBuffer(scan->rs_cbuf, BUFFER_LOCK_SHARE);
 
+			/*
+			 * The criteria for counting a tuple as live in this block need to
+			 * match what analyze.c's acquire_sample_rows() does, otherwise
+			 * CREATE INDEX and ANALYZE may produce wildly different reltuples
+			 * values, e.g. when there are many recently-dead tuples.
+			 */
 			switch (HeapTupleSatisfiesVacuum(heapTuple, OldestXmin,
 											 scan->rs_cbuf))
 			{
@@ -2639,6 +2622,8 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					/* Normal case, index and unique-check it */
 					indexIt = true;
 					tupleIsAlive = true;
+					/* Count it as live, too */
+					reltuples += 1;
 					break;
 				case HEAPTUPLE_RECENTLY_DEAD:
 
@@ -2652,6 +2637,9 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					 * the live tuple at the end of the HOT-chain.  Since this
 					 * breaks semantics for pre-existing snapshots, mark the
 					 * index as unusable for them.
+					 *
+					 * We don't count recently-dead tuples in reltuples, even
+					 * if we index them; see acquire_sample_rows().
 					 */
 					if (HeapTupleIsHotUpdated(heapTuple))
 					{
@@ -2674,6 +2662,7 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					{
 						indexIt = true;
 						tupleIsAlive = true;
+						reltuples += 1;
 						break;
 					}
 
@@ -2711,6 +2700,15 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 							goto recheck;
 						}
 					}
+					else
+					{
+						/*
+						 * For consistency with acquire_sample_rows(), count
+						 * HEAPTUPLE_INSERT_IN_PROGRESS tuples as live only
+						 * when inserted by our own transaction.
+						 */
+						reltuples += 1;
+					}
 
 					/*
 					 * We must index such tuples, since if the index build
@@ -2730,6 +2728,7 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					{
 						indexIt = true;
 						tupleIsAlive = false;
+						reltuples += 1;
 						break;
 					}
 
@@ -2773,6 +2772,14 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 						 * the same as a RECENTLY_DEAD tuple.
 						 */
 						indexIt = true;
+
+						/*
+						 * Count HEAPTUPLE_DELETE_IN_PROGRESS tuples as live,
+						 * if they were not deleted by the current
+						 * transaction.  That's what acquire_sample_rows()
+						 * does, and we want the behavior to be consistent.
+						 */
+						reltuples += 1;
 					}
 					else if (HeapTupleIsHotUpdated(heapTuple))
 					{
@@ -2790,8 +2797,8 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					{
 						/*
 						 * It's a regular tuple deleted by our own xact. Index
-						 * it but don't check for uniqueness, the same as a
-						 * RECENTLY_DEAD tuple.
+						 * it, but don't check for uniqueness nor count in
+						 * reltuples, the same as a RECENTLY_DEAD tuple.
 						 */
 						indexIt = true;
 					}
@@ -2814,8 +2821,6 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 			/* heap_getnext did the time qual check */
 			tupleIsAlive = true;
 		}
-
-		reltuples += 1;
 
 		MemoryContextReset(econtext->ecxt_per_tuple_memory);
 
@@ -3861,7 +3866,7 @@ reindex_relation(Oid relid, int flags, int options)
 
 	/* Ensure rd_indexattr is valid; see comments for RelationSetIndexList */
 	if (is_pg_class)
-		(void) RelationGetIndexAttrBitmap(rel, INDEX_ATTR_BITMAP_ALL);
+		(void) RelationGetIndexAttrBitmap(rel, INDEX_ATTR_BITMAP_HOT);
 
 	PG_TRY();
 	{

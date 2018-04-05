@@ -518,6 +518,14 @@ INSERT INTO <replaceable class="parameter">table_name</replaceable> [ AS <replac
     not duplicate each other in terms of attributes constrained by an
     arbiter index or constraint.
    </para>
+
+   <para>
+    Note that it is currently not supported for the
+    <literal>ON CONFLICT DO UPDATE</literal> clause of an
+    <command>INSERT</command> applied to a partitioned table to update the
+    partition key of a conflicting row such that it requires the row be moved
+    to a new partition.
+   </para>
    <tip>
     <para>
      It is often preferable to use unique index inference rather than
@@ -570,6 +578,13 @@ INSERT <replaceable>oid</replaceable> <replaceable class="parameter">count</repl
    the appropriate partition and inserted into it.  If the specified table
    is a partition, an error will occur if one of the input rows violates
    the partition constraint.
+  </para>
+
+  <para>
+   You may also wish to consider using <command>MERGE</command>, since that
+   allows mixed <command>INSERT</command>, <command>UPDATE</command> and
+   <command>DELETE</command> within a single statement.
+   See <xref linkend="sql-merge"/>.
   </para>
  </refsect1>
 
@@ -741,7 +756,9 @@ INSERT INTO distributors (did, dname) VALUES (10, 'Conrad International')
    Also, the case in
    which a column name list is omitted, but not all the columns are
    filled from the <literal>VALUES</literal> clause or <replaceable>query</replaceable>,
-   is disallowed by the standard.
+   is disallowed by the standard. If you prefer a more SQL Standard
+   conforming statement than <literal>ON CONFLICT</literal>, see
+   <xref linkend="sql-merge"/>.
   </para>
 
   <para>

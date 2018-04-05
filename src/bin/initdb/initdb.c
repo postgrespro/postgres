@@ -915,7 +915,7 @@ test_config_settings(void)
 #define MIN_BUFS_FOR_CONNS(nconns)	((nconns) * 10)
 
 	static const int trial_conns[] = {
-		100, 50, 40, 30, 20, 10
+		100, 50, 40, 30, 20
 	};
 	static const int trial_bufs[] = {
 		16384, 8192, 4096, 3584, 3072, 2560, 2048, 1536,
@@ -1009,12 +1009,12 @@ static char *
 pretty_wal_size(int segment_count)
 {
 	int			sz = wal_segment_size_mb * segment_count;
-	char	   *result = pg_malloc(11);
+	char	   *result = pg_malloc(14);
 
 	if ((sz % 1024) == 0)
-		snprintf(result, 11, "%dGB", sz / 1024);
+		snprintf(result, 14, "%dGB", sz / 1024);
 	else
-		snprintf(result, 11, "%dMB", sz);
+		snprintf(result, 14, "%dMB", sz);
 
 	return result;
 }
@@ -2323,7 +2323,7 @@ usage(const char *progname)
 	printf(_("  -U, --username=NAME       database superuser name\n"));
 	printf(_("  -W, --pwprompt            prompt for a password for the new superuser\n"));
 	printf(_("  -X, --waldir=WALDIR       location for the write-ahead log directory\n"));
-	printf(_("      --wal-segsize=SIZE    size of wal segment size\n"));
+	printf(_("      --wal-segsize=SIZE    size of WAL segments, in megabytes\n"));
 	printf(_("\nLess commonly used options:\n"));
 	printf(_("  -d, --debug               generate lots of debugging output\n"));
 	printf(_("  -k, --data-checksums      use data page checksums\n"));
@@ -3224,11 +3224,17 @@ main(int argc, char *argv[])
 		wal_segment_size_mb = strtol(str_wal_segment_size_mb, &endptr, 10);
 
 		/* verify that wal segment size is valid */
-		if (*endptr != '\0' ||
-			!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
+		if (endptr == str_wal_segment_size_mb || *endptr != '\0')
 		{
 			fprintf(stderr,
-					_("%s: --wal-segsize must be a power of two between 1 and 1024\n"),
+					_("%s: argument of --wal-segsize must be a number\n"),
+					progname);
+			exit(1);
+		}
+		if (!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
+		{
+			fprintf(stderr,
+					_("%s: argument of --wal-segsize must be a power of 2 between 1 and 1024\n"),
 					progname);
 			exit(1);
 		}

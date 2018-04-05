@@ -95,15 +95,6 @@ ANALYZE "S 1"."T 2";
 ANALYZE "S 1"."T 3";
 ANALYZE "S 1"."T 4";
 
--- record relpages for T 1
-create temp table save_t_1_relpages as
-  select relpages as old_relpages from pg_class where relname = 'T 1';
-
-select relpages - (select old_relpages from save_t_1_relpages) as pg_delta,
-  reltuples from pg_class where relname = 'T 1';
-select (histogram_bounds::text::int[])[array_length(histogram_bounds,1)]
-  from pg_stats where tablename = 'T 1' and attname = 'C 1';
-
 -- ===================================================================
 -- create foreign tables
 -- ===================================================================
@@ -1148,10 +1139,6 @@ INSERT INTO ft2 (c1,c2,c3)
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;            -- can't be pushed down
 UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;
-select relpages - (select old_relpages from save_t_1_relpages) as pg_delta,
-  reltuples from pg_class where relname = 'T 1';
-select (histogram_bounds::text::int[])[array_length(histogram_bounds,1)]
-  from pg_stats where tablename = 'T 1' and attname = 'C 1';
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c3 = 'baz'
   FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
@@ -1945,3 +1932,54 @@ SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE 
 SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
 
 RESET enable_partitionwise_join;
+
+
+-- ===================================================================
+-- test partitionwise aggregates
+-- ===================================================================
+
+CREATE TABLE pagg_tab (a int, b int, c text) PARTITION BY RANGE(a);
+
+CREATE TABLE pagg_tab_p1 (LIKE pagg_tab);
+CREATE TABLE pagg_tab_p2 (LIKE pagg_tab);
+CREATE TABLE pagg_tab_p3 (LIKE pagg_tab);
+
+INSERT INTO pagg_tab_p1 SELECT i % 30, i % 50, to_char(i/30, 'FM0000') FROM generate_series(1, 3000) i WHERE (i % 30) < 10;
+INSERT INTO pagg_tab_p2 SELECT i % 30, i % 50, to_char(i/30, 'FM0000') FROM generate_series(1, 3000) i WHERE (i % 30) < 20 and (i % 30) >= 10;
+INSERT INTO pagg_tab_p3 SELECT i % 30, i % 50, to_char(i/30, 'FM0000') FROM generate_series(1, 3000) i WHERE (i % 30) < 30 and (i % 30) >= 20;
+
+-- Create foreign partitions
+CREATE FOREIGN TABLE fpagg_tab_p1 PARTITION OF pagg_tab FOR VALUES FROM (0) TO (10) SERVER loopback OPTIONS (table_name 'pagg_tab_p1');
+CREATE FOREIGN TABLE fpagg_tab_p2 PARTITION OF pagg_tab FOR VALUES FROM (10) TO (20) SERVER loopback OPTIONS (table_name 'pagg_tab_p2');;
+CREATE FOREIGN TABLE fpagg_tab_p3 PARTITION OF pagg_tab FOR VALUES FROM (20) TO (30) SERVER loopback OPTIONS (table_name 'pagg_tab_p3');;
+
+ANALYZE pagg_tab;
+ANALYZE fpagg_tab_p1;
+ANALYZE fpagg_tab_p2;
+ANALYZE fpagg_tab_p3;
+
+-- When GROUP BY clause matches with PARTITION KEY.
+-- Plan with partitionwise aggregates is disabled
+SET enable_partitionwise_aggregate TO false;
+EXPLAIN (COSTS OFF)
+SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
+
+-- Plan with partitionwise aggregates is enabled
+SET enable_partitionwise_aggregate TO true;
+EXPLAIN (COSTS OFF)
+SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
+SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
+
+-- Check with whole-row reference
+-- Should have all the columns in the target list for the given relation
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT a, count(t1) FROM pagg_tab t1 GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
+SELECT a, count(t1) FROM pagg_tab t1 GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
+
+-- When GROUP BY clause does not match with PARTITION KEY.
+EXPLAIN (COSTS OFF)
+SELECT b, avg(a), max(a), count(*) FROM pagg_tab GROUP BY b HAVING sum(a) < 700 ORDER BY 1;
+
+
+-- Clean-up
+RESET enable_partitionwise_aggregate;

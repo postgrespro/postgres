@@ -326,6 +326,7 @@ sub subdircheck
 	# Makefile for more details regarding Python-version specific
 	# dependencies.
 	if (   $module eq "hstore_plpython"
+		|| $module eq "jsonb_plpython"
 		|| $module eq "ltree_plpython")
 	{
 		die "Python not enabled in configuration"
@@ -375,7 +376,9 @@ sub contribcheck
 		next if ($module eq "sslinfo"       && !defined($config->{openssl}));
 		next if ($module eq "xml2"          && !defined($config->{xml}));
 		next if ($module eq "hstore_plperl" && !defined($config->{perl}));
+		next if ($module eq "jsonb_plperl"  && !defined($config->{perl}));
 		next if ($module eq "hstore_plpython" && !defined($config->{python}));
+		next if ($module eq "jsonb_plpython"  && !defined($config->{python}));
 		next if ($module eq "ltree_plpython"  && !defined($config->{python}));
 		next if ($module eq "sepgsql");
 

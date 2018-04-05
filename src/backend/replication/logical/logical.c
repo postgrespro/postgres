@@ -317,6 +317,8 @@ CreateInitDecodingContext(char *plugin,
 		startup_cb_wrapper(ctx, &ctx->options, true);
 	MemoryContextSwitchTo(old_context);
 
+	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
+
 	return ctx;
 }
 
@@ -410,10 +412,12 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 		startup_cb_wrapper(ctx, &ctx->options, false);
 	MemoryContextSwitchTo(old_context);
 
+	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
+
 	ereport(LOG,
 			(errmsg("starting logical decoding for slot \"%s\"",
 					NameStr(slot->data.name)),
-			 errdetail("streaming transactions committing after %X/%X, reading WAL from %X/%X",
+			 errdetail("Streaming transactions committing after %X/%X, reading WAL from %X/%X.",
 					   (uint32) (slot->data.confirmed_flush >> 32),
 					   (uint32) slot->data.confirmed_flush,
 					   (uint32) (slot->data.restart_lsn >> 32),

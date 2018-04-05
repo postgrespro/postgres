@@ -29,6 +29,12 @@ sub pgbench
 			$filename =~ s/\@\d+$//;
 
 			#push @filenames, $filename;
+			# filenames are expected to be unique on a test
+			if (-e $filename)
+			{
+				ok(0, "$filename must not already exists");
+				unlink $filename or die "cannot unlink $filename: $!";
+			}
 			append_to_file($filename, $$files{$fn});
 		}
 	}
@@ -210,14 +216,18 @@ COMMIT;
 } });
 
 # test expressions
+# command 1..3 and 23 depend on random seed which is used to call srandom.
 pgbench(
-	'-t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dminint=-9223372036854775808 -Dn=null -Dt=t -Df=of -Dd=1.0',
+	'--random-seed=5432 -t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dminint=-9223372036854775808 -Dn=null -Dt=t -Df=of -Dd=1.0',
 	0,
 	[ qr{type: .*/001_pgbench_expressions}, qr{processed: 1/1} ],
-	[   qr{command=1.: int 1\d\b},
-	    qr{command=2.: int 1\d\d\b},
-	    qr{command=3.: int 1\d\d\d\b},
-	    qr{command=4.: int 4\b},
+	[   qr{setting random seed to 5432\b},
+		# After explicit seeding, the four * random checks (1-3,20) should be
+		# deterministic, but not necessarily portable.
+		qr{command=1.: int 1\d\b}, # uniform random: 12 on linux
+		qr{command=2.: int 1\d\d\b}, # exponential random: 106 on linux
+		qr{command=3.: int 1\d\d\d\b}, # gaussian random: 1462 on linux
+		qr{command=4.: int 4\b},
 		qr{command=5.: int 5\b},
 		qr{command=6.: int 6\b},
 		qr{command=7.: int 7\b},
@@ -230,7 +240,7 @@ pgbench(
 		qr{command=16.: double 16\b},
 		qr{command=17.: double 17\b},
 		qr{command=18.: int 9223372036854775807\b},
-		qr{command=20.: int [1-9]\b},
+		qr{command=20.: int \d\b}, # zipfian random: 1 on linux
 		qr{command=21.: double -27\b},
 		qr{command=22.: double 1024\b},
 		qr{command=23.: double 1\b},
@@ -259,6 +269,20 @@ pgbench(
 		qr{command=46.: int 46\b},
 		qr{command=47.: boolean true\b},
 		qr{command=48.: boolean true\b},
+		qr{command=49.: int -5817877081768721676\b},
+		qr{command=50.: boolean true\b},
+		qr{command=51.: int -7793829335365542153\b},
+		qr{command=52.: int -?\d+\b},
+		qr{command=53.: boolean true\b},
+		qr{command=65.: int 65\b},
+		qr{command=74.: int 74\b},
+		qr{command=83.: int 83\b},
+		qr{command=86.: int 86\b},
+		qr{command=93.: int 93\b},
+		qr{command=95.: int 0\b},
+		qr{command=96.: int 1\b},    # :scale
+		qr{command=97.: int 0\b},    # :client_id
+		qr{command=98.: int 5432\b}, # :random_seed
 	],
 	'pgbench expressions',
 	{   '001_pgbench_expressions' => q{-- integer functions
@@ -327,6 +351,12 @@ pgbench(
 \set n6 debug(:n IS NULL AND NOT :f AND :t)
 -- conditional truth
 \set cs debug(CASE WHEN 1 THEN TRUE END AND CASE WHEN 1.0 THEN TRUE END AND CASE WHEN :n THEN NULL ELSE TRUE END)
+-- hash functions
+\set h0 debug(hash(10, 5432))
+\set h1 debug(:h0 = hash_murmur2(10, 5432))
+\set h3 debug(hash_fnv1a(10, 5432))
+\set h4 debug(hash(10))
+\set h5 debug(hash(10) = hash(10, :default_seed))
 -- lazy evaluation
 \set zy 0
 \set yz debug(case when :zy = 0 then -1 else (1 / :zy) end)
@@ -338,7 +368,86 @@ pgbench(
 \set v2 5432
 \set v3 -54.21E-2
 SELECT :v0, :v1, :v2, :v3;
+-- if tests
+\set nope 0
+\if 1 > 0
+\set id debug(65)
+\elif 0
+\set nope 1
+\else
+\set nope 1
+\endif
+\if 1 < 0
+\set nope 1
+\elif 1 > 0
+\set ie debug(74)
+\else
+\set nope 1
+\endif
+\if 1 < 0
+\set nope 1
+\elif 1 < 0
+\set nope 1
+\else
+\set if debug(83)
+\endif
+\if 1 = 1
+\set ig debug(86)
+\elif 0
+\set nope 1
+\endif
+\if 1 = 0
+\set nope 1
+\elif 1 <> 0
+\set ih debug(93)
+\endif
+-- must be zero if false branches where skipped
+\set nope debug(:nope)
+-- check automatic variables
+\set sc debug(:scale)
+\set ci debug(:client_id)
+\set rs debug(:random_seed)
 } });
+
+# random determinism when seeded
+$node->safe_psql('postgres',
+	'CREATE UNLOGGED TABLE seeded_random(seed INT8 NOT NULL, rand TEXT NOT NULL, val INTEGER NOT NULL);');
+
+# same value to check for determinism
+my $seed = int(rand(1000000000));
+for my $i (1, 2)
+{
+    pgbench("--random-seed=$seed -t 1",
+	0,
+	[qr{processed: 1/1}],
+	[qr{setting random seed to $seed\b}],
+	"random seeded with $seed",
+	{ "001_pgbench_random_seed_$i" => q{-- test random functions
+\set ur random(1000, 1999)
+\set er random_exponential(2000, 2999, 2.0)
+\set gr random_gaussian(3000, 3999, 3.0)
+\set zr random_zipfian(4000, 4999, 2.5)
+INSERT INTO seeded_random(seed, rand, val) VALUES
+  (:random_seed, 'uniform', :ur),
+  (:random_seed, 'exponential', :er),
+  (:random_seed, 'gaussian', :gr),
+  (:random_seed, 'zipfian', :zr);
+} });
+}
+
+# check that all runs generated the same 4 values
+my ($ret, $out, $err) =
+  $node->psql('postgres',
+	'SELECT seed, rand, val, COUNT(*) FROM seeded_random GROUP BY seed, rand, val');
+
+ok($ret == 0, "psql seeded_random count ok");
+ok($err eq '', "psql seeded_random count stderr is empty");
+ok($out =~ /\b$seed\|uniform\|1\d\d\d\|2/, "psql seeded_random count uniform");
+ok($out =~ /\b$seed\|exponential\|2\d\d\d\|2/, "psql seeded_random count exponential");
+ok($out =~ /\b$seed\|gaussian\|3\d\d\d\|2/, "psql seeded_random count gaussian");
+ok($out =~ /\b$seed\|zipfian\|4\d\d\d\|2/, "psql seeded_random count zipfian");
+
+$node->safe_psql('postgres', 'DROP TABLE seeded_random;');
 
 # backslash commands
 pgbench(
@@ -385,7 +494,7 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 
 	# SHELL
 	[   'shell bad command',               0,
-		[qr{meta-command 'shell' failed}], q{\shell no-such-command} ],
+		[qr{\(shell\) .* meta-command failed}], q{\shell no-such-command} ],
 	[   'shell undefined variable', 0,
 		[qr{undefined variable ":nosuchvariable"}],
 		q{-- undefined variable in shell
@@ -474,7 +583,7 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 		0,
 		[ qr{cannot coerce boolean to int} ],
 		q{\set i TRUE + 2} ],
-	[ 'set not an double',
+	[ 'set not a double',
 		0,
 		[ qr{cannot coerce boolean to double} ],
 		q{\set d ln(TRUE)} ],

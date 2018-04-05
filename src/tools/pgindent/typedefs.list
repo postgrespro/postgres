@@ -363,6 +363,7 @@ CommitTimestampShared
 CommonEntry
 CommonTableExpr
 CompareScalarsContext
+CompiledExprState
 CompositeIOData
 CompositeTypeStmt
 CompoundAffixFlag
@@ -884,6 +885,7 @@ GrantStmt
 GrantTargetType
 Group
 GroupPath
+GroupPathExtraData
 GroupState
 GroupVarInfo
 GroupingFunc
@@ -1055,6 +1057,8 @@ IterateForeignScan_function
 IterateJsonStringValuesState
 JEntry
 JHashState
+JitContext
+JitProviderCallbacks
 JOBOBJECTINFOCLASS
 JOBOBJECT_BASIC_LIMIT_INFORMATION
 JOBOBJECT_BASIC_UI_RESTRICTIONS
@@ -1099,6 +1103,11 @@ LDAPMessage
 LDAPURLDesc
 LDAP_TIMEVAL
 LINE
+LLVMBuilderRef
+LLVMJitContext
+LLVMJitHandle
+LLVMTypeRef
+LLVMValueRef
 LOCALLOCK
 LOCALLOCKOWNER
 LOCALLOCKTAG
@@ -1219,6 +1228,8 @@ MemoryContextCallbackFunction
 MemoryContextCounters
 MemoryContextData
 MemoryContextMethods
+MergeAction
+MergeActionState
 MergeAppend
 MergeAppendPath
 MergeAppendState
@@ -1226,6 +1237,7 @@ MergeJoin
 MergeJoinClause
 MergeJoinState
 MergePath
+MergeStmt
 MergeScanSelCache
 MetaCommand
 MinMaxAggInfo
@@ -1594,6 +1606,7 @@ PartitionScheme
 PartitionSpec
 PartitionTupleRouting
 PartitionedChildRelInfo
+PartitionwiseAggregateType
 PasswordType
 Path
 PathClauseUsage
@@ -2580,6 +2593,7 @@ bitmapword
 bits16
 bits32
 bits8
+bloom_filter
 bool
 brin_column_state
 bytea

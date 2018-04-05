@@ -22,8 +22,10 @@
 #include "access/tupconvert.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
+#include "commands/defrem.h"
 #include "executor/execExpr.h"
 #include "executor/spi.h"
+#include "executor/spi_priv.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -32,6 +34,7 @@
 #include "parser/scansup.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
+#include "tcop/utility.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -40,6 +43,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
 #include "utils/typcache.h"
 
 #include "plpgsql.h"
@@ -253,6 +257,8 @@ static int exec_stmt_assign(PLpgSQL_execstate *estate,
 				 PLpgSQL_stmt_assign *stmt);
 static int exec_stmt_perform(PLpgSQL_execstate *estate,
 				  PLpgSQL_stmt_perform *stmt);
+static int exec_stmt_call(PLpgSQL_execstate *estate,
+				  PLpgSQL_stmt_call *stmt);
 static int exec_stmt_getdiag(PLpgSQL_execstate *estate,
 				  PLpgSQL_stmt_getdiag *stmt);
 static int exec_stmt_if(PLpgSQL_execstate *estate,
@@ -307,7 +313,8 @@ static void plpgsql_estate_setup(PLpgSQL_execstate *estate,
 static void exec_eval_cleanup(PLpgSQL_execstate *estate);
 
 static void exec_prepare_plan(PLpgSQL_execstate *estate,
-				  PLpgSQL_expr *expr, int cursorOptions);
+							  PLpgSQL_expr *expr, int cursorOptions,
+							  bool keepplan);
 static void exec_simple_check_plan(PLpgSQL_execstate *estate, PLpgSQL_expr *expr);
 static void exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan);
 static void exec_check_rw_parameter(PLpgSQL_expr *expr, int target_dno);
@@ -436,7 +443,7 @@ static char *format_preparedparamsdata(PLpgSQL_execstate *estate,
  */
 Datum
 plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
-					  EState *simple_eval_estate)
+					  EState *simple_eval_estate, bool atomic)
 {
 	PLpgSQL_execstate estate;
 	ErrorContextCallback plerrcontext;
@@ -448,6 +455,7 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 	 */
 	plpgsql_estate_setup(&estate, func, (ReturnSetInfo *) fcinfo->resultinfo,
 						 simple_eval_estate);
+	estate.atomic = atomic;
 
 	/*
 	 * Setup error traceback support for ereport()
@@ -1901,6 +1909,10 @@ exec_stmt(PLpgSQL_execstate *estate, PLpgSQL_stmt *stmt)
 			rc = exec_stmt_perform(estate, (PLpgSQL_stmt_perform *) stmt);
 			break;
 
+		case PLPGSQL_STMT_CALL:
+			rc = exec_stmt_call(estate, (PLpgSQL_stmt_call *) stmt);
+			break;
+
 		case PLPGSQL_STMT_GETDIAG:
 			rc = exec_stmt_getdiag(estate, (PLpgSQL_stmt_getdiag *) stmt);
 			break;
@@ -2037,6 +2049,149 @@ exec_stmt_perform(PLpgSQL_execstate *estate, PLpgSQL_stmt_perform *stmt)
 	(void) exec_run_select(estate, expr, 0, NULL);
 	exec_set_found(estate, (estate->eval_processed != 0));
 	exec_eval_cleanup(estate);
+
+	return PLPGSQL_RC_OK;
+}
+
+/*
+ * exec_stmt_call
+ */
+static int
+exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
+{
+	PLpgSQL_expr *expr = stmt->expr;
+	ParamListInfo paramLI;
+	LocalTransactionId before_lxid;
+	LocalTransactionId after_lxid;
+	int			rc;
+
+	if (expr->plan == NULL)
+	{
+		/*
+		 * Don't save the plan if not in atomic context.  Otherwise,
+		 * transaction ends would cause warnings about plan leaks.
+		 */
+		exec_prepare_plan(estate, expr, 0, estate->atomic);
+
+		/*
+		 * The procedure call could end transactions, which would upset the
+		 * snapshot management in SPI_execute*, so don't let it do it.
+		 */
+		expr->plan->no_snapshots = true;
+	}
+
+	paramLI = setup_param_list(estate, expr);
+
+	before_lxid = MyProc->lxid;
+
+	rc = SPI_execute_plan_with_paramlist(expr->plan, paramLI,
+										 estate->readonly_func, 0);
+
+	after_lxid = MyProc->lxid;
+
+	if (rc < 0)
+		elog(ERROR, "SPI_execute_plan_with_paramlist failed executing query \"%s\": %s",
+			 expr->query, SPI_result_code_string(rc));
+
+	/*
+	 * If we are in a new transaction after the call, we need to reset some
+	 * internal state.
+	 */
+	if (before_lxid != after_lxid)
+	{
+		estate->simple_eval_estate = NULL;
+		plpgsql_create_econtext(estate);
+	}
+
+	if (SPI_processed == 1)
+	{
+		SPITupleTable *tuptab = SPI_tuptable;
+
+		/*
+		 * Construct a dummy target row based on the output arguments of the
+		 * procedure call.
+		 */
+		if (!stmt->target)
+		{
+			Node	   *node;
+			ListCell   *lc;
+			FuncExpr   *funcexpr;
+			int			i;
+			HeapTuple	tuple;
+			int			numargs PG_USED_FOR_ASSERTS_ONLY;
+			Oid		   *argtypes;
+			char	  **argnames;
+			char	   *argmodes;
+			MemoryContext oldcontext;
+			PLpgSQL_row *row;
+			int			nfields;
+
+			/*
+			 * Get the original CallStmt
+			 */
+			node = linitial_node(Query, ((CachedPlanSource *) linitial(expr->plan->plancache_list))->query_list)->utilityStmt;
+			if (!IsA(node, CallStmt))
+				elog(ERROR, "returned row from not a CallStmt");
+
+			funcexpr = castNode(CallStmt, node)->funcexpr;
+
+			/*
+			 * Get the argument modes
+			 */
+			tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcexpr->funcid));
+			if (!HeapTupleIsValid(tuple))
+				elog(ERROR, "cache lookup failed for function %u", funcexpr->funcid);
+			numargs = get_func_arg_info(tuple, &argtypes, &argnames, &argmodes);
+			ReleaseSysCache(tuple);
+
+			Assert(numargs == list_length(funcexpr->args));
+
+			/*
+			 * Construct row
+			 */
+			oldcontext = MemoryContextSwitchTo(estate->func->fn_cxt);
+
+			row = palloc0(sizeof(*row));
+			row->dtype = PLPGSQL_DTYPE_ROW;
+			row->lineno = -1;
+			row->varnos = palloc(sizeof(int) * FUNC_MAX_ARGS);
+
+			nfields = 0;
+			i = 0;
+			foreach (lc, funcexpr->args)
+			{
+				Node *n = lfirst(lc);
+
+				if (argmodes && argmodes[i] == PROARGMODE_INOUT)
+				{
+					Param	   *param;
+
+					if (!IsA(n, Param))
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("argument %d is an output argument but is not writable", i + 1)));
+
+					param = castNode(Param, n);
+					/* paramid is offset by 1 (see make_datum_param()) */
+					row->varnos[nfields++] = param->paramid - 1;
+				}
+				i++;
+			}
+
+			row->nfields = nfields;
+
+			MemoryContextSwitchTo(oldcontext);
+
+			stmt->target = (PLpgSQL_variable *) row;
+		}
+
+		exec_move_row(estate, stmt->target, tuptab->vals[0], tuptab->tupdesc);
+	}
+	else if (SPI_processed > 1)
+		elog(ERROR, "procedure call returned more than one row");
+
+	exec_eval_cleanup(estate);
+	SPI_freetuptable(SPI_tuptable);
 
 	return PLPGSQL_RC_OK;
 }
@@ -2443,13 +2598,13 @@ exec_stmt_fori(PLpgSQL_execstate *estate, PLpgSQL_stmt_fori *stmt)
 		 */
 		if (stmt->reverse)
 		{
-			if ((int32) (loop_value - step_value) > loop_value)
+			if (loop_value < (PG_INT32_MIN + step_value))
 				break;
 			loop_value -= step_value;
 		}
 		else
 		{
-			if ((int32) (loop_value + step_value) < loop_value)
+			if (loop_value > (PG_INT32_MAX - step_value))
 				break;
 			loop_value += step_value;
 		}
@@ -2582,7 +2737,7 @@ exec_stmt_forc(PLpgSQL_execstate *estate, PLpgSQL_stmt_forc *stmt)
 	Assert(query);
 
 	if (query->plan == NULL)
-		exec_prepare_plan(estate, query, curvar->cursor_options);
+		exec_prepare_plan(estate, query, curvar->cursor_options, true);
 
 	/*
 	 * Set up ParamListInfo for this query
@@ -3596,6 +3751,7 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	estate->retisset = func->fn_retset;
 
 	estate->readonly_func = func->fn_readonly;
+	estate->atomic = true;
 
 	estate->exitlabel = NULL;
 	estate->cur_error = NULL;
@@ -3740,7 +3896,8 @@ exec_eval_cleanup(PLpgSQL_execstate *estate)
  */
 static void
 exec_prepare_plan(PLpgSQL_execstate *estate,
-				  PLpgSQL_expr *expr, int cursorOptions)
+				  PLpgSQL_expr *expr, int cursorOptions,
+				  bool keepplan)
 {
 	SPIPlanPtr	plan;
 
@@ -3776,7 +3933,8 @@ exec_prepare_plan(PLpgSQL_execstate *estate,
 					 expr->query, SPI_result_code_string(SPI_result));
 		}
 	}
-	SPI_keepplan(plan);
+	if (keepplan)
+		SPI_keepplan(plan);
 	expr->plan = plan;
 
 	/* Check to see if it's a simple expression */
@@ -3809,13 +3967,13 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 
 	/*
 	 * On the first call for this statement generate the plan, and detect
-	 * whether the statement is INSERT/UPDATE/DELETE
+	 * whether the statement is INSERT/UPDATE/DELETE/MERGE
 	 */
 	if (expr->plan == NULL)
 	{
 		ListCell   *l;
 
-		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK);
+		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK, true);
 		stmt->mod_stmt = false;
 		foreach(l, SPI_plan_get_plan_sources(expr->plan))
 		{
@@ -3830,6 +3988,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 				{
 					if (q->commandType == CMD_INSERT ||
 						q->commandType == CMD_UPDATE ||
+						q->commandType == CMD_MERGE ||
 						q->commandType == CMD_DELETE)
 						stmt->mod_stmt = true;
 				}
@@ -3887,6 +4046,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 		case SPI_OK_INSERT_RETURNING:
 		case SPI_OK_UPDATE_RETURNING:
 		case SPI_OK_DELETE_RETURNING:
+		case SPI_OK_MERGE:
 			Assert(stmt->mod_stmt);
 			exec_set_found(estate, (SPI_processed != 0));
 			break;
@@ -4064,6 +4224,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 		case SPI_OK_INSERT_RETURNING:
 		case SPI_OK_UPDATE_RETURNING:
 		case SPI_OK_DELETE_RETURNING:
+		case SPI_OK_MERGE:
 		case SPI_OK_UTILITY:
 		case SPI_OK_REWRITTEN:
 			break;
@@ -4273,7 +4434,7 @@ exec_stmt_open(PLpgSQL_execstate *estate, PLpgSQL_stmt_open *stmt)
 		 */
 		query = stmt->query;
 		if (query->plan == NULL)
-			exec_prepare_plan(estate, query, stmt->cursor_options);
+			exec_prepare_plan(estate, query, stmt->cursor_options, true);
 	}
 	else if (stmt->dynquery != NULL)
 	{
@@ -4344,7 +4505,7 @@ exec_stmt_open(PLpgSQL_execstate *estate, PLpgSQL_stmt_open *stmt)
 
 		query = curvar->cursor_explicit_expr;
 		if (query->plan == NULL)
-			exec_prepare_plan(estate, query, curvar->cursor_options);
+			exec_prepare_plan(estate, query, curvar->cursor_options, true);
 	}
 
 	/*
@@ -4519,14 +4680,7 @@ exec_stmt_close(PLpgSQL_execstate *estate, PLpgSQL_stmt_close *stmt)
 static int
 exec_stmt_commit(PLpgSQL_execstate *estate, PLpgSQL_stmt_commit *stmt)
 {
-	/*
-	 * XXX This could be implemented by converting the pinned portals to
-	 * holdable ones and organizing the cleanup separately.
-	 */
-	if (ThereArePinnedPortals())
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("committing inside a cursor loop is not supported")));
+	HoldPinnedPortals();
 
 	SPI_commit();
 	SPI_start_transaction();
@@ -4545,14 +4699,7 @@ exec_stmt_commit(PLpgSQL_execstate *estate, PLpgSQL_stmt_commit *stmt)
 static int
 exec_stmt_rollback(PLpgSQL_execstate *estate, PLpgSQL_stmt_rollback *stmt)
 {
-	/*
-	 * Unlike the COMMIT case above, this might not make sense at all,
-	 * especially if the query driving the cursor loop has side effects.
-	 */
-	if (ThereArePinnedPortals())
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TRANSACTION_TERMINATION),
-				 errmsg("cannot abort transaction inside a cursor loop")));
+	HoldPinnedPortals();
 
 	SPI_rollback();
 	SPI_start_transaction();
@@ -4584,7 +4731,7 @@ exec_assign_expr(PLpgSQL_execstate *estate, PLpgSQL_datum *target,
 	 */
 	if (expr->plan == NULL)
 	{
-		exec_prepare_plan(estate, expr, 0);
+		exec_prepare_plan(estate, expr, 0, true);
 		if (target->dtype == PLPGSQL_DTYPE_VAR)
 			exec_check_rw_parameter(expr, target->dno);
 	}
@@ -5443,7 +5590,7 @@ exec_eval_expr(PLpgSQL_execstate *estate,
 	 * If first time through, create a plan for this expression.
 	 */
 	if (expr->plan == NULL)
-		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK);
+		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK, true);
 
 	/*
 	 * If this is a simple expression, bypass SPI and use the executor
@@ -5529,7 +5676,7 @@ exec_run_select(PLpgSQL_execstate *estate,
 	 */
 	if (expr->plan == NULL)
 		exec_prepare_plan(estate, expr,
-						  portalP == NULL ? CURSOR_OPT_PARALLEL_OK : 0);
+						  portalP == NULL ? CURSOR_OPT_PARALLEL_OK : 0, true);
 
 	/*
 	 * Set up ParamListInfo to pass to executor
@@ -6763,7 +6910,7 @@ exec_move_row_from_fields(PLpgSQL_execstate *estate,
 		return;
 	}
 
-	elog(ERROR, "unsupported target");
+	elog(ERROR, "unsupported target type: %d", target->dtype);
 }
 
 /*
@@ -7711,11 +7858,13 @@ plpgsql_create_econtext(PLpgSQL_execstate *estate)
 	{
 		MemoryContext oldcontext;
 
-		Assert(shared_simple_eval_estate == NULL);
-		oldcontext = MemoryContextSwitchTo(TopTransactionContext);
-		shared_simple_eval_estate = CreateExecutorState();
+		if (shared_simple_eval_estate == NULL)
+		{
+			oldcontext = MemoryContextSwitchTo(TopTransactionContext);
+			shared_simple_eval_estate = CreateExecutorState();
+			MemoryContextSwitchTo(oldcontext);
+		}
 		estate->simple_eval_estate = shared_simple_eval_estate;
-		MemoryContextSwitchTo(oldcontext);
 	}
 
 	/*

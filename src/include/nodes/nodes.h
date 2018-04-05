@@ -34,6 +34,7 @@ typedef enum NodeTag
 	T_ExprContext,
 	T_ProjectionInfo,
 	T_JunkFilter,
+	T_OnConflictSetState,
 	T_ResultRelInfo,
 	T_EState,
 	T_TupleTableSlot,
@@ -96,6 +97,7 @@ typedef enum NodeTag
 	T_PlanState,
 	T_ResultState,
 	T_ProjectSetState,
+	T_MergeActionState,
 	T_ModifyTableState,
 	T_AppendState,
 	T_MergeAppendState,
@@ -307,6 +309,8 @@ typedef enum NodeTag
 	T_InsertStmt,
 	T_DeleteStmt,
 	T_UpdateStmt,
+	T_MergeStmt,
+	T_MergeAction,
 	T_SelectStmt,
 	T_AlterTableStmt,
 	T_AlterTableCmd,
@@ -659,7 +663,8 @@ typedef enum CmdType
 	CMD_SELECT,					/* select stmt */
 	CMD_UPDATE,					/* update stmt */
 	CMD_INSERT,					/* insert stmt */
-	CMD_DELETE,
+	CMD_DELETE,					/* delete stmt */
+	CMD_MERGE,					/* merge stmt */
 	CMD_UTILITY,				/* cmds like create, destroy, copy, vacuum,
 								 * etc. */
 	CMD_NOTHING					/* dummy command for instead nothing rules

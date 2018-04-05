@@ -64,12 +64,15 @@ typedef struct ExprState
 	 * Storage for result value of a scalar expression, or for individual
 	 * column results within expressions built by ExecBuildProjectionInfo().
 	 */
+#define FIELDNO_EXPRSTATE_RESNULL 2
 	bool		resnull;
+#define FIELDNO_EXPRSTATE_RESVALUE 3
 	Datum		resvalue;
 
 	/*
 	 * If projecting a tuple result, this slot holds the result; else NULL.
 	 */
+#define FIELDNO_EXPRSTATE_RESULTSLOT 4
 	TupleTableSlot *resultslot;
 
 	/*
@@ -208,8 +211,11 @@ typedef struct ExprContext
 	NodeTag		type;
 
 	/* Tuples that Var nodes in expression may refer to */
+#define FIELDNO_EXPRCONTEXT_SCANTUPLE 1
 	TupleTableSlot *ecxt_scantuple;
+#define FIELDNO_EXPRCONTEXT_INNERTUPLE 2
 	TupleTableSlot *ecxt_innertuple;
+#define FIELDNO_EXPRCONTEXT_OUTERTUPLE 3
 	TupleTableSlot *ecxt_outertuple;
 
 	/* Memory contexts for expression evaluation --- see notes above */
@@ -224,15 +230,21 @@ typedef struct ExprContext
 	 * Values to substitute for Aggref nodes in the expressions of an Agg
 	 * node, or for WindowFunc nodes within a WindowAgg node.
 	 */
+#define FIELDNO_EXPRCONTEXT_AGGVALUES 8
 	Datum	   *ecxt_aggvalues; /* precomputed values for aggs/windowfuncs */
+#define FIELDNO_EXPRCONTEXT_AGGNULLS 9
 	bool	   *ecxt_aggnulls;	/* null flags for aggs/windowfuncs */
 
 	/* Value to substitute for CaseTestExpr nodes in expression */
+#define FIELDNO_EXPRCONTEXT_CASEDATUM 10
 	Datum		caseValue_datum;
+#define FIELDNO_EXPRCONTEXT_CASENULL 11
 	bool		caseValue_isNull;
 
 	/* Value to substitute for CoerceToDomainValue nodes in expression */
+#define FIELDNO_EXPRCONTEXT_DOMAINDATUM 12
 	Datum		domainValue_datum;
+#define FIELDNO_EXPRCONTEXT_DOMAINNULL 13
 	bool		domainValue_isNull;
 
 	/* Link to containing EState (NULL if a standalone ExprContext) */
@@ -348,7 +360,30 @@ typedef struct JunkFilter
 	AttrNumber *jf_cleanMap;
 	TupleTableSlot *jf_resultSlot;
 	AttrNumber	jf_junkAttNo;
+	AttrNumber	jf_otherJunkAttNo;
 } JunkFilter;
+
+typedef struct MergeState
+{
+	/* List of MERGE MATCHED action states */
+	List		   *matchedActionStates;
+	/* List of MERGE NOT MATCHED action states */
+	List		   *notMatchedActionStates;
+} MergeState;
+
+/*
+ * OnConflictSetState
+ *
+ * Executor state of an ON CONFLICT DO UPDATE operation.
+ */
+typedef struct OnConflictSetState
+{
+	NodeTag		type;
+
+	ProjectionInfo *oc_ProjInfo;	/* for ON CONFLICT DO UPDATE SET */
+	TupleDesc	oc_ProjTupdesc; /* TupleDesc for the above projection */
+	ExprState  *oc_WhereClause; /* state for the WHERE clause */
+} OnConflictSetState;
 
 /*
  * ResultRelInfo
@@ -412,11 +447,11 @@ typedef struct ResultRelInfo
 	/* for computing a RETURNING list */
 	ProjectionInfo *ri_projectReturning;
 
-	/* for computing ON CONFLICT DO UPDATE SET */
-	ProjectionInfo *ri_onConflictSetProj;
+	/* list of arbiter indexes to use to check conflicts */
+	List	   *ri_onConflictArbiterIndexes;
 
-	/* list of ON CONFLICT DO UPDATE exprs (qual) */
-	ExprState  *ri_onConflictSetWhere;
+	/* ON CONFLICT evaluation state */
+	OnConflictSetState *ri_onConflict;
 
 	/* partition check expression */
 	List	   *ri_PartitionCheck;
@@ -426,7 +461,37 @@ typedef struct ResultRelInfo
 
 	/* relation descriptor for root partitioned table */
 	Relation	ri_PartitionRoot;
+
+	int			ri_PartitionLeafIndex;
+	/* for running MERGE on this result relation */
+	MergeState *ri_mergeState;
+
+	/*
+	 * While executing MERGE, the target relation is processed twice; once
+	 * as a target relation and once to run a join between the target and the
+	 * source. We generate two different RTEs for these two purposes, one with
+	 * rte->inh set to false and other with rte->inh set to true.
+	 *
+	 * Since the plan re-evaluated by EvalPlanQual uses the join RTE, we must
+	 * install the updated tuple in the scan corresponding to that RTE. The
+	 * following member tracks the index of the second RTE for EvalPlanQual
+	 * purposes. ri_mergeTargetRTI is non-zero only when MERGE is in-progress.
+	 * We use ri_mergeTargetRTI to run EvalPlanQual for MERGE and
+	 * ri_RangeTableIndex elsewhere.
+	 */
+	Index		ri_mergeTargetRTI;
 } ResultRelInfo;
+
+/*
+ * Get the Range table index for EvalPlanQual.
+ *
+ * We use the ri_mergeTargetRTI if set, otherwise use ri_RangeTableIndex.
+ * ri_mergeTargetRTI should really be ever set iff we're running MERGE.
+ */
+#define GetEPQRangeTableIndex(r) \
+	(((r)->ri_mergeTargetRTI > 0)  \
+	 ? (r)->ri_mergeTargetRTI \
+	 : (r)->ri_RangeTableIndex)
 
 /* ----------------
  *	  EState information
@@ -528,6 +593,14 @@ typedef struct EState
 
 	/* The per-query shared memory area to use for parallel execution. */
 	struct dsa_area *es_query_dsa;
+
+	/*
+	 * JIT information. es_jit_flags indicates whether JIT should be performed
+	 * and with which options.  es_jit is created on-demand when JITing is
+	 * performed.
+	 */
+	int			es_jit_flags;
+	struct JitContext *es_jit;
 } EState;
 
 
@@ -886,6 +959,7 @@ typedef struct PlanState
 	ExprState  *qual;			/* boolean qual condition */
 	struct PlanState *lefttree; /* input plan tree(s) */
 	struct PlanState *righttree;
+
 	List	   *initPlan;		/* Init SubPlanState nodes (un-correlated expr
 								 * subselects) */
 	List	   *subPlan;		/* SubPlanState nodes in my expressions */
@@ -901,6 +975,13 @@ typedef struct PlanState
 	TupleTableSlot *ps_ResultTupleSlot; /* slot for my result tuples */
 	ExprContext *ps_ExprContext;	/* node's expression-evaluation context */
 	ProjectionInfo *ps_ProjInfo;	/* info for doing tuple projection */
+
+	/*
+	 * Scanslot's descriptor if known. This is a bit of a hack, but otherwise
+	 * it's hard for expression compilation to optimize based on the
+	 * descriptor, without encoding knowledge about all executor nodes.
+	 */
+	TupleDesc	scandesc;
 } PlanState;
 
 /* ----------------
@@ -923,6 +1004,11 @@ typedef struct PlanState
 	do { \
 		if (((PlanState *)(node))->instrument) \
 			((PlanState *)(node))->instrument->nfiltered2 += (delta); \
+	} while(0)
+#define InstrCountFiltered3(node, delta) \
+	do { \
+		if (((PlanState *)(node))->instrument) \
+			((PlanState *)(node))->instrument->nfiltered3 += (delta); \
 	} while(0)
 
 /*
@@ -971,13 +1057,27 @@ typedef struct ProjectSetState
 } ProjectSetState;
 
 /* ----------------
+ *	 MergeActionState information
+ * ----------------
+ */
+typedef struct MergeActionState
+{
+	NodeTag		type;
+	bool		matched;		/* true=MATCHED, false=NOT MATCHED */
+	ExprState  *whenqual;		/* WHEN AND conditions */
+	CmdType		commandType;	/* INSERT/UPDATE/DELETE/DO NOTHING */
+	ProjectionInfo *proj;		/* tuple projection info */
+	TupleDesc	tupDesc;		/* tuple descriptor for projection */
+} MergeActionState;
+
+/* ----------------
  *	 ModifyTableState information
  * ----------------
  */
 typedef struct ModifyTableState
 {
 	PlanState	ps;				/* its first field is NodeTag */
-	CmdType		operation;		/* INSERT, UPDATE, or DELETE */
+	CmdType		operation;		/* INSERT, UPDATE, DELETE or MERGE */
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	bool		mt_done;		/* are we done? */
 	PlanState **mt_plans;		/* subplans (one per target rel) */
@@ -989,20 +1089,26 @@ typedef struct ModifyTableState
 	List	  **mt_arowmarks;	/* per-subplan ExecAuxRowMark lists */
 	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
 	bool		fireBSTriggers; /* do we need to fire stmt triggers? */
-	OnConflictAction mt_onconflict; /* ON CONFLICT type */
-	List	   *mt_arbiterindexes;	/* unique index OIDs to arbitrate taking
-									 * alt path */
 	TupleTableSlot *mt_existing;	/* slot to store existing target tuple in */
 	List	   *mt_excludedtlist;	/* the excluded pseudo relation's tlist  */
 	TupleTableSlot *mt_conflproj;	/* CONFLICT ... SET ... projection target */
-	struct PartitionTupleRouting *mt_partition_tuple_routing;
+
+	TupleTableSlot *mt_mergeproj;	/* MERGE action projection target */
+
 	/* Tuple-routing support info */
-	struct TransitionCaptureState *mt_transition_capture;
+	struct PartitionTupleRouting *mt_partition_tuple_routing;
+
 	/* controls transition table population for specified operation */
-	struct TransitionCaptureState *mt_oc_transition_capture;
+	struct TransitionCaptureState *mt_transition_capture;
+
 	/* controls transition table population for INSERT...ON CONFLICT UPDATE */
-	TupleConversionMap **mt_per_subplan_tupconv_maps;
+	struct TransitionCaptureState *mt_oc_transition_capture;
+
 	/* Per plan map for tuple conversion from child to root */
+	TupleConversionMap **mt_per_subplan_tupconv_maps;
+
+	/* Flags showing which subcommands are present INS/UPD/DEL/DO NOTHING */
+	int			mt_merge_subcommands;
 } ModifyTableState;
 
 /* ----------------
@@ -1838,12 +1944,15 @@ typedef struct AggState
 	ExprContext *hashcontext;	/* econtexts for long-lived data (hashtable) */
 	ExprContext **aggcontexts;	/* econtexts for long-lived data (per GS) */
 	ExprContext *tmpcontext;	/* econtext for input expressions */
+#define FIELDNO_AGGSTATE_CURAGGCONTEXT 14
 	ExprContext *curaggcontext; /* currently active aggcontext */
 	AggStatePerAgg curperagg;	/* currently active aggregate, if any */
+#define FIELDNO_AGGSTATE_CURPERTRANS 16
 	AggStatePerTrans curpertrans;	/* currently active trans state, if any */
 	bool		input_done;		/* indicates end of input */
 	bool		agg_done;		/* indicates completion of Agg scan */
 	int			projected_set;	/* The last projected grouping set */
+#define FIELDNO_AGGSTATE_CURRENT_SET 20
 	int			current_set;	/* The current grouping set being evaluated */
 	Bitmapset  *grouped_cols;	/* grouped cols in current projection */
 	List	   *all_grouped_cols;	/* list of all grouped cols in DESC order */
@@ -1865,6 +1974,7 @@ typedef struct AggState
 										 * per-group pointers */
 
 	/* support for evaluation of agg input expressions: */
+#define FIELDNO_AGGSTATE_ALL_PERGROUPS 34
 	AggStatePerGroup *all_pergroups;	/* array of first ->pergroups, than
 										 * ->hash_pergroup */
 	ProjectionInfo *combinedproj;	/* projection machinery */

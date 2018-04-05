@@ -138,6 +138,10 @@ typedef struct PartitionRangeBound
 	bool		lower;			/* this is the lower (vs upper) bound */
 } PartitionRangeBound;
 
+
+static Oid	get_partition_parent_worker(Relation inhRel, Oid relid);
+static void get_partition_ancestors_worker(Relation inhRel, Oid relid,
+							   List **ancestors);
 static int32 qsort_partition_hbound_cmp(const void *a, const void *b);
 static int32 qsort_partition_list_value_cmp(const void *a, const void *b,
 							   void *arg);
@@ -226,13 +230,6 @@ RelationBuildPartitionDesc(Relation rel)
 
 	/* Range partitioning specific */
 	PartitionRangeBound **rbounds = NULL;
-
-	/*
-	 * The following could happen in situations where rel has a pg_class entry
-	 * but not the pg_partitioned_table entry yet.
-	 */
-	if (key == NULL)
-		return;
 
 	/* Get partition oids from pg_inherits */
 	inhoids = find_inheritance_children(RelationGetRelid(rel), NoLock);
@@ -528,10 +525,11 @@ RelationBuildPartitionDesc(Relation rel)
 	}
 
 	/* Now build the actual relcache partition descriptor */
-	rel->rd_pdcxt = AllocSetContextCreateExtended(CacheMemoryContext,
-												  RelationGetRelationName(rel),
-												  MEMCONTEXT_COPY_NAME,
-												  ALLOCSET_DEFAULT_SIZES);
+	rel->rd_pdcxt = AllocSetContextCreate(CacheMemoryContext,
+										  "partition descriptor",
+										  ALLOCSET_DEFAULT_SIZES);
+	MemoryContextCopySetIdentifier(rel->rd_pdcxt, RelationGetRelationName(rel));
+
 	oldcxt = MemoryContextSwitchTo(rel->rd_pdcxt);
 
 	result = (PartitionDescData *) palloc0(sizeof(PartitionDescData));
@@ -1384,6 +1382,7 @@ check_default_allows_bound(Relation parent, Relation default_rel,
 
 /*
  * get_partition_parent
+ *		Obtain direct parent of given relation
  *
  * Returns inheritance parent of a partition by scanning pg_inherits
  *
@@ -1394,14 +1393,33 @@ check_default_allows_bound(Relation parent, Relation default_rel,
 Oid
 get_partition_parent(Oid relid)
 {
-	Form_pg_inherits form;
 	Relation	catalogRelation;
-	SysScanDesc scan;
-	ScanKeyData key[2];
-	HeapTuple	tuple;
 	Oid			result;
 
 	catalogRelation = heap_open(InheritsRelationId, AccessShareLock);
+
+	result = get_partition_parent_worker(catalogRelation, relid);
+
+	if (!OidIsValid(result))
+		elog(ERROR, "could not find tuple for parent of relation %u", relid);
+
+	heap_close(catalogRelation, AccessShareLock);
+
+	return result;
+}
+
+/*
+ * get_partition_parent_worker
+ *		Scan the pg_inherits relation to return the OID of the parent of the
+ *		given relation
+ */
+static Oid
+get_partition_parent_worker(Relation inhRel, Oid relid)
+{
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	Oid			result = InvalidOid;
+	HeapTuple	tuple;
 
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhrelid,
@@ -1412,20 +1430,62 @@ get_partition_parent(Oid relid)
 				BTEqualStrategyNumber, F_INT4EQ,
 				Int32GetDatum(1));
 
-	scan = systable_beginscan(catalogRelation, InheritsRelidSeqnoIndexId, true,
+	scan = systable_beginscan(inhRel, InheritsRelidSeqnoIndexId, true,
 							  NULL, 2, key);
-
 	tuple = systable_getnext(scan);
-	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "could not find tuple for parent of relation %u", relid);
+	if (HeapTupleIsValid(tuple))
+	{
+		Form_pg_inherits form = (Form_pg_inherits) GETSTRUCT(tuple);
 
-	form = (Form_pg_inherits) GETSTRUCT(tuple);
-	result = form->inhparent;
+		result = form->inhparent;
+	}
 
 	systable_endscan(scan);
-	heap_close(catalogRelation, AccessShareLock);
 
 	return result;
+}
+
+/*
+ * get_partition_ancestors
+ *		Obtain ancestors of given relation
+ *
+ * Returns a list of ancestors of the given relation.
+ *
+ * Note: Because this function assumes that the relation whose OID is passed
+ * as an argument and each ancestor will have precisely one parent, it should
+ * only be called when it is known that the relation is a partition.
+ */
+List *
+get_partition_ancestors(Oid relid)
+{
+	List	   *result = NIL;
+	Relation	inhRel;
+
+	inhRel = heap_open(InheritsRelationId, AccessShareLock);
+
+	get_partition_ancestors_worker(inhRel, relid, &result);
+
+	heap_close(inhRel, AccessShareLock);
+
+	return result;
+}
+
+/*
+ * get_partition_ancestors_worker
+ *		recursive worker for get_partition_ancestors
+ */
+static void
+get_partition_ancestors_worker(Relation inhRel, Oid relid, List **ancestors)
+{
+	Oid			parentOid;
+
+	/* Recursion ends at the topmost level, ie., when there's no parent */
+	parentOid = get_partition_parent_worker(inhRel, relid);
+	if (parentOid == InvalidOid)
+		return;
+
+	*ancestors = lappend_oid(*ancestors, parentOid);
+	get_partition_ancestors_worker(inhRel, parentOid, ancestors);
 }
 
 /*
@@ -3204,12 +3264,14 @@ get_proposed_default_constraint(List *new_part_constraints)
 	defPartConstraint = makeBoolExpr(NOT_EXPR,
 									 list_make1(defPartConstraint),
 									 -1);
+
+	/* Simplify, to put the negated expression into canonical form */
 	defPartConstraint =
 		(Expr *) eval_const_expressions(NULL,
 										(Node *) defPartConstraint);
-	defPartConstraint = canonicalize_qual(defPartConstraint);
+	defPartConstraint = canonicalize_qual(defPartConstraint, true);
 
-	return list_make1(defPartConstraint);
+	return make_ands_implicit(defPartConstraint);
 }
 
 /*

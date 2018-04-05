@@ -19,7 +19,8 @@ include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = access bootstrap catalog parser commands executor foreign lib libpq \
 	main nodes optimizer port postmaster regex replication rewrite \
-	statistics storage tcop tsearch utils $(top_builddir)/src/timezone
+	statistics storage tcop tsearch utils $(top_builddir)/src/timezone \
+	jit
 
 include $(srcdir)/common.mk
 
@@ -69,13 +70,10 @@ ifeq ($(PORTNAME), cygwin)
 postgres: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) -Wl,--stack,$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(call expand_subsys,$^) $(LIBS) -o $@
 
-# There is no correct way to write a rule that generates two files.
-# Rules with two targets don't have that meaning, they are merely
-# shorthand for two otherwise separate rules.  To be safe for parallel
-# make, we must chain the dependencies like this.  The semicolon is
-# important, otherwise make will choose some built-in rule.
-
-libpostgres.a: postgres ;
+# libpostgres.a is actually built in the preceding rule, but we need this to
+# ensure it's newer than postgres; see notes in src/backend/parser/Makefile
+libpostgres.a: postgres
+	touch $@
 
 endif # cygwin
 
@@ -85,7 +83,10 @@ LIBS += -lsecur32
 postgres: $(OBJS) $(WIN32RES)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDFLAGS_EX) -Wl,--stack=$(WIN32_STACK_RLIMIT) -Wl,--export-all-symbols -Wl,--out-implib=libpostgres.a $(call expand_subsys,$(OBJS)) $(WIN32RES) $(LIBS) -o $@$(X)
 
-libpostgres.a: postgres ;
+# libpostgres.a is actually built in the preceding rule, but we need this to
+# ensure it's newer than postgres; see notes in src/backend/parser/Makefile
+libpostgres.a: postgres
+	touch $@
 
 endif # win32
 
@@ -129,21 +130,28 @@ postgres.o: $(OBJS)
 # The following targets are specified in make commands that appear in
 # the make files in our subdirectories. Note that it's important we
 # match the dependencies shown in the subdirectory makefiles!
+# Also, in cases where a subdirectory makefile generates two files in
+# what's really one step, such as bison producing both gram.h and gram.c,
+# we must request making the one that is shown as the secondary (dependent)
+# output, else the timestamp on it might be wrong.  By project convention,
+# the .h file is the dependent one for bison output, so we need only request
+# that; but in other cases, request both for safety.
 
 parser/gram.h: parser/gram.y
 	$(MAKE) -C parser gram.h
 
 storage/lmgr/lwlocknames.h: storage/lmgr/generate-lwlocknames.pl storage/lmgr/lwlocknames.txt
-	$(MAKE) -C storage/lmgr lwlocknames.h
+	$(MAKE) -C storage/lmgr lwlocknames.h lwlocknames.c
 
 utils/errcodes.h: utils/generate-errcodes.pl utils/errcodes.txt
 	$(MAKE) -C utils errcodes.h
 
-# see explanation in parser/Makefile
-utils/fmgrprotos.h: utils/fmgroids.h ;
+# see notes in src/backend/parser/Makefile
+utils/fmgrprotos.h: utils/fmgroids.h
+	touch $@
 
 utils/fmgroids.h: utils/Gen_fmgrtab.pl catalog/Catalog.pm $(top_srcdir)/src/include/catalog/pg_proc.h
-	$(MAKE) -C utils $(notdir $@)
+	$(MAKE) -C utils fmgroids.h fmgrprotos.h
 
 utils/probes.h: utils/probes.d
 	$(MAKE) -C utils probes.h
@@ -218,7 +226,7 @@ distprep:
 	$(MAKE) -C bootstrap	bootparse.c bootscanner.c
 	$(MAKE) -C catalog	schemapg.h postgres.bki postgres.description postgres.shdescription
 	$(MAKE) -C replication	repl_gram.c repl_scanner.c syncrep_gram.c syncrep_scanner.c
-	$(MAKE) -C storage/lmgr	lwlocknames.h
+	$(MAKE) -C storage/lmgr	lwlocknames.h lwlocknames.c
 	$(MAKE) -C utils	fmgrtab.c fmgroids.h fmgrprotos.h errcodes.h
 	$(MAKE) -C utils/misc	guc-file.c
 	$(MAKE) -C utils/sort	qsort_tuple.c
@@ -239,10 +247,18 @@ endif
 endif
 	$(MAKE) -C catalog install-data
 	$(MAKE) -C tsearch install-data
+	$(MAKE) -C utils install-data
 	$(INSTALL_DATA) $(srcdir)/libpq/pg_hba.conf.sample '$(DESTDIR)$(datadir)/pg_hba.conf.sample'
 	$(INSTALL_DATA) $(srcdir)/libpq/pg_ident.conf.sample '$(DESTDIR)$(datadir)/pg_ident.conf.sample'
 	$(INSTALL_DATA) $(srcdir)/utils/misc/postgresql.conf.sample '$(DESTDIR)$(datadir)/postgresql.conf.sample'
 	$(INSTALL_DATA) $(srcdir)/access/transam/recovery.conf.sample '$(DESTDIR)$(datadir)/recovery.conf.sample'
+
+ifeq ($(with_llvm), yes)
+install-bin: install-postgres-bitcode
+
+install-postgres-bitcode: $(OBJS) all
+	$(call install_llvm_module,postgres,$(call expand_subsys, $(filter-out $(top_builddir)/src/timezone/objfiles.txt, $(SUBDIROBJS))))
+endif
 
 install-bin: postgres $(POSTGRES_IMP) installdirs
 	$(INSTALL_PROGRAM) postgres$(X) '$(DESTDIR)$(bindir)/postgres$(X)'
@@ -297,10 +313,14 @@ endif
 endif
 	$(MAKE) -C catalog uninstall-data
 	$(MAKE) -C tsearch uninstall-data
+	$(MAKE) -C utils uninstall-data
 	rm -f '$(DESTDIR)$(datadir)/pg_hba.conf.sample' \
 	      '$(DESTDIR)$(datadir)/pg_ident.conf.sample' \
 	      '$(DESTDIR)$(datadir)/postgresql.conf.sample' \
 	      '$(DESTDIR)$(datadir)/recovery.conf.sample'
+ifeq ($(with_llvm), yes)
+	$(call uninstall_llvm_module,postgres)
+endif
 
 
 ##########################################################################

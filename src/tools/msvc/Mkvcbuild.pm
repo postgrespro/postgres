@@ -43,6 +43,7 @@ my $contrib_extrasource = {
 my @contrib_excludes = (
 	'commit_ts',       'hstore_plperl',
 	'hstore_plpython', 'intagg',
+	'jsonb_plperl',    'jsonb_plpython',
 	'ltree_plpython',  'pgcrypto',
 	'sepgsql',         'brin',
 	'test_extensions', 'test_pg_dump',
@@ -100,7 +101,7 @@ sub mkvcbuild
 
 	if ($vsVersion >= '9.00')
 	{
-		push(@pgportfiles, 'pg_crc32c_choose.c');
+		push(@pgportfiles, 'pg_crc32c_sse42_choose.c');
 		push(@pgportfiles, 'pg_crc32c_sse42.c');
 		push(@pgportfiles, 'pg_crc32c_sb8.c');
 	}
@@ -131,7 +132,7 @@ sub mkvcbuild
 	our @pgcommonbkndfiles = @pgcommonallfiles;
 
 	our @pgfeutilsfiles = qw(
-	  mbprint.c print.c psqlscan.l psqlscan.c simple_list.c string_utils.c);
+	  conditional.c mbprint.c print.c psqlscan.l psqlscan.c simple_list.c string_utils.c);
 
 	$libpgport = $solution->AddProject('libpgport', 'lib', 'misc');
 	$libpgport->AddDefine('FRONTEND');
@@ -182,6 +183,7 @@ sub mkvcbuild
    # if building without OpenSSL
 	if (!$solution->{options}->{openssl})
 	{
+		$postgres->RemoveFile('src/backend/libpq/be-secure-common.c');
 		$postgres->RemoveFile('src/backend/libpq/be-secure-openssl.c');
 	}
 
@@ -505,6 +507,11 @@ sub mkvcbuild
 			'hstore',                        'contrib/hstore');
 		$hstore_plpython->AddDefine(
 			'PLPYTHON_LIBNAME="plpython' . $pymajorver . '"');
+		my $jsonb_plpython = AddTransformModule(
+			'jsonb_plpython' . $pymajorver, 'contrib/jsonb_plpython',
+			'plpython' . $pymajorver,       'src/pl/plpython');
+		$jsonb_plpython->AddDefine(
+			'PLPYTHON_LIBNAME="plpython' . $pymajorver . '"');
 		my $ltree_plpython = AddTransformModule(
 			'ltree_plpython' . $pymajorver, 'contrib/ltree_plpython',
 			'plpython' . $pymajorver,       'src/pl/plpython',
@@ -739,15 +746,19 @@ sub mkvcbuild
 			}
 		}
 
-		# Add transform module dependent on plperl
+		# Add transform modules dependent on plperl
 		my $hstore_plperl = AddTransformModule(
 			'hstore_plperl', 'contrib/hstore_plperl',
 			'plperl',        'src/pl/plperl',
 			'hstore',        'contrib/hstore');
+		my $jsonb_plperl = AddTransformModule(
+			'jsonb_plperl', 'contrib/jsonb_plperl',
+			'plperl',        'src/pl/plperl');
 
 		foreach my $f (@perl_embed_ccflags)
 		{
 			$hstore_plperl->AddDefine($f);
+			$jsonb_plperl->AddDefine($f);
 		}
 	}
 
@@ -849,20 +860,23 @@ sub AddTransformModule
 	my $n_src          = shift;
 	my $pl_proj_name   = shift;
 	my $pl_src         = shift;
-	my $transform_name = shift;
-	my $transform_src  = shift;
+	my $type_name      = shift;
+	my $type_src       = shift;
 
-	my $transform_proj = undef;
-	foreach my $proj (@{ $solution->{projects}->{'contrib'} })
+	my $type_proj = undef;
+	if ($type_name)
 	{
-		if ($proj->{name} eq $transform_name)
+		foreach my $proj (@{ $solution->{projects}->{'contrib'} })
 		{
-			$transform_proj = $proj;
-			last;
+			if ($proj->{name} eq $type_name)
+			{
+				$type_proj = $proj;
+				last;
+			}
 		}
+		die "could not find base module $type_name for transform module $n"
+		  if (!defined($type_proj));
 	}
-	die "could not find base module $transform_name for transform module $n"
-	  if (!defined($transform_proj));
 
 	my $pl_proj = undef;
 	foreach my $proj (@{ $solution->{projects}->{'PLs'} })
@@ -893,13 +907,16 @@ sub AddTransformModule
 	}
 
 	# Add base module dependencies
-	$p->AddIncludeDir($transform_src);
-	$p->AddIncludeDir($transform_proj->{includes});
-	foreach my $trans_lib (@{ $transform_proj->{libraries} })
+	if ($type_proj)
 	{
-		$p->AddLibrary($trans_lib);
+		$p->AddIncludeDir($type_src);
+		$p->AddIncludeDir($type_proj->{includes});
+		foreach my $type_lib (@{ $type_proj->{libraries} })
+		{
+			$p->AddLibrary($type_lib);
+		}
+		$p->AddReference($type_proj);
 	}
-	$p->AddReference($transform_proj);
 
 	return $p;
 }

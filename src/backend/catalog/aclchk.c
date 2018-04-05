@@ -4588,7 +4588,7 @@ pg_attribute_aclcheck_all(Oid table_oid, Oid roleid, AclMode mode,
 		 * grants no privileges, so that we can fall out quickly in the very
 		 * common case where attacl is null.
 		 */
-		if (heap_attisnull(attTuple, Anum_pg_attribute_attacl))
+		if (heap_attisnull(attTuple, Anum_pg_attribute_attacl, NULL))
 			attmask = 0;
 		else
 			attmask = pg_attribute_aclmask(table_oid, curr_att, roleid,
@@ -5280,7 +5280,7 @@ pg_extension_ownercheck(Oid ext_oid, Oid roleid)
 }
 
 /*
- * Ownership check for an publication (specified by OID).
+ * Ownership check for a publication (specified by OID).
  */
 bool
 pg_publication_ownercheck(Oid pub_oid, Oid roleid)

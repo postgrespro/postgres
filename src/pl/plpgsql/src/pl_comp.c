@@ -342,11 +342,12 @@ do_compile(FunctionCallInfo fcinfo,
 	 * per-function memory context, so it can be reclaimed easily.
 	 */
 	func_cxt = AllocSetContextCreate(TopMemoryContext,
-									 "PL/pgSQL function context",
+									 "PL/pgSQL function",
 									 ALLOCSET_DEFAULT_SIZES);
 	plpgsql_compile_tmp_cxt = MemoryContextSwitchTo(func_cxt);
 
 	function->fn_signature = format_procedure(fcinfo->flinfo->fn_oid);
+	MemoryContextSetIdentifier(func_cxt, function->fn_signature);
 	function->fn_oid = fcinfo->flinfo->fn_oid;
 	function->fn_xmin = HeapTupleHeaderGetRawXmin(procTup->t_data);
 	function->fn_tid = procTup->t_self;
@@ -475,11 +476,11 @@ do_compile(FunctionCallInfo fcinfo,
 			/*
 			 * If there's just one OUT parameter, out_param_varno points
 			 * directly to it.  If there's more than one, build a row that
-			 * holds all of them.
+			 * holds all of them.  Procedures return a row even for one OUT
+			 * parameter.
 			 */
-			if (num_out_args == 1)
-				function->out_param_varno = out_arg_variables[0]->dno;
-			else if (num_out_args > 1)
+			if (num_out_args > 1 ||
+				(num_out_args == 1 && function->fn_prokind == PROKIND_PROCEDURE))
 			{
 				PLpgSQL_row *row = build_row_from_vars(out_arg_variables,
 													   num_out_args);
@@ -487,6 +488,8 @@ do_compile(FunctionCallInfo fcinfo,
 				plpgsql_adddatum((PLpgSQL_datum *) row);
 				function->out_param_varno = row->dno;
 			}
+			else if (num_out_args == 1)
+				function->out_param_varno = out_arg_variables[0]->dno;
 
 			/*
 			 * Check for a polymorphic returntype. If found, use the actual
@@ -2451,7 +2454,7 @@ plpgsql_HashTableInit(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(PLpgSQL_func_hashkey);
 	ctl.entrysize = sizeof(plpgsql_HashEnt);
-	plpgsql_HashTable = hash_create("PLpgSQL function cache",
+	plpgsql_HashTable = hash_create("PLpgSQL function hash",
 									FUNCS_PER_USER,
 									&ctl,
 									HASH_ELEM | HASH_BLOBS);

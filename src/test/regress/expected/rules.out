@@ -1175,47 +1175,47 @@ SELECT count(*) FROM shoe;
 --
 -- Simple test of qualified ON INSERT ... this did not work in 7.0 ...
 --
-create table foo (f1 int);
-create table foo2 (f1 int);
-create rule foorule as on insert to foo where f1 < 100
+create table rules_foo (f1 int);
+create table rules_foo2 (f1 int);
+create rule rules_foorule as on insert to rules_foo where f1 < 100
 do instead nothing;
-insert into foo values(1);
-insert into foo values(1001);
-select * from foo;
+insert into rules_foo values(1);
+insert into rules_foo values(1001);
+select * from rules_foo;
   f1  
 ------
  1001
 (1 row)
 
-drop rule foorule on foo;
+drop rule rules_foorule on rules_foo;
 -- this should fail because f1 is not exposed for unqualified reference:
-create rule foorule as on insert to foo where f1 < 100
-do instead insert into foo2 values (f1);
+create rule rules_foorule as on insert to rules_foo where f1 < 100
+do instead insert into rules_foo2 values (f1);
 ERROR:  column "f1" does not exist
-LINE 2: do instead insert into foo2 values (f1);
-                                            ^
+LINE 2: do instead insert into rules_foo2 values (f1);
+                                                  ^
 HINT:  There is a column named "f1" in table "old", but it cannot be referenced from this part of the query.
 -- this is the correct way:
-create rule foorule as on insert to foo where f1 < 100
-do instead insert into foo2 values (new.f1);
-insert into foo values(2);
-insert into foo values(100);
-select * from foo;
+create rule rules_foorule as on insert to rules_foo where f1 < 100
+do instead insert into rules_foo2 values (new.f1);
+insert into rules_foo values(2);
+insert into rules_foo values(100);
+select * from rules_foo;
   f1  
 ------
  1001
   100
 (2 rows)
 
-select * from foo2;
+select * from rules_foo2;
  f1 
 ----
   2
 (1 row)
 
-drop rule foorule on foo;
-drop table foo;
-drop table foo2;
+drop rule rules_foorule on rules_foo;
+drop table rules_foo;
+drop table rules_foo2;
 --
 -- Test rules containing INSERT ... SELECT, which is a very ugly special
 -- case as of 7.1.  Example is based on bug report from Joel Burton.
@@ -1972,8 +1972,10 @@ pg_stat_wal_receiver| SELECT s.pid,
     s.latest_end_lsn,
     s.latest_end_time,
     s.slot_name,
+    s.sender_host,
+    s.sender_port,
     s.conninfo
-   FROM pg_stat_get_wal_receiver() s(pid, status, receive_start_lsn, receive_start_tli, received_lsn, received_tli, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, conninfo)
+   FROM pg_stat_get_wal_receiver() s(pid, status, receive_start_lsn, receive_start_tli, received_lsn, received_tli, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, sender_host, sender_port, conninfo)
   WHERE (s.pid IS NOT NULL);
 pg_stat_xact_all_tables| SELECT c.oid AS relid,
     n.nspname AS schemaname,
@@ -2535,50 +2537,50 @@ DETAIL:  Key (id3a, id3b)=(1, 13) is not present in table "rule_and_refint_t1".
 --
 -- disallow dropping a view's rule (bug #5072)
 --
-create view fooview as select 'foo'::text;
-drop rule "_RETURN" on fooview;
-ERROR:  cannot drop rule _RETURN on view fooview because view fooview requires it
-HINT:  You can drop view fooview instead.
-drop view fooview;
+create view rules_fooview as select 'rules_foo'::text;
+drop rule "_RETURN" on rules_fooview;
+ERROR:  cannot drop rule _RETURN on view rules_fooview because view rules_fooview requires it
+HINT:  You can drop view rules_fooview instead.
+drop view rules_fooview;
 --
 -- test conversion of table to view (needed to load some pg_dump files)
 --
-create table fooview (x int, y text);
-select xmin, * from fooview;
+create table rules_fooview (x int, y text);
+select xmin, * from rules_fooview;
  xmin | x | y 
 ------+---+---
 (0 rows)
 
-create rule "_RETURN" as on select to fooview do instead
+create rule "_RETURN" as on select to rules_fooview do instead
   select 1 as x, 'aaa'::text as y;
-select * from fooview;
+select * from rules_fooview;
  x |  y  
 ---+-----
  1 | aaa
 (1 row)
 
-select xmin, * from fooview;  -- fail, views don't have such a column
+select xmin, * from rules_fooview;  -- fail, views don't have such a column
 ERROR:  column "xmin" does not exist
-LINE 1: select xmin, * from fooview;
+LINE 1: select xmin, * from rules_fooview;
                ^
 select reltoastrelid, relkind, relfrozenxid
-  from pg_class where oid = 'fooview'::regclass;
+  from pg_class where oid = 'rules_fooview'::regclass;
  reltoastrelid | relkind | relfrozenxid 
 ---------------+---------+--------------
              0 | v       |            0
 (1 row)
 
-drop view fooview;
+drop view rules_fooview;
 -- trying to convert a partitioned table to view is not allowed
-create table fooview (x int, y text) partition by list (x);
-create rule "_RETURN" as on select to fooview do instead
+create table rules_fooview (x int, y text) partition by list (x);
+create rule "_RETURN" as on select to rules_fooview do instead
   select 1 as x, 'aaa'::text as y;
-ERROR:  cannot convert partitioned table "fooview" to a view
+ERROR:  cannot convert partitioned table "rules_fooview" to a view
 -- nor can one convert a partition to view
-create table fooview_part partition of fooview for values in (1);
-create rule "_RETURN" as on select to fooview_part do instead
+create table rules_fooview_part partition of rules_fooview for values in (1);
+create rule "_RETURN" as on select to rules_fooview_part do instead
   select 1 as x, 'aaa'::text as y;
-ERROR:  cannot convert partition "fooview_part" to a view
+ERROR:  cannot convert partition "rules_fooview_part" to a view
 --
 -- check for planner problems with complex inherited UPDATES
 --
@@ -3149,6 +3151,33 @@ SELECT * FROM hat_data WHERE hat_name IN ('h8', 'h9', 'h7') ORDER BY hat_name;
 DROP RULE hat_upsert ON hats;
 drop table hats;
 drop table hat_data;
+-- test for pg_get_functiondef properly regurgitating SET parameters
+-- Note that the function is kept around to stress pg_dump.
+CREATE FUNCTION func_with_set_params() RETURNS integer
+    AS 'select 1;'
+    LANGUAGE SQL
+    SET search_path TO PG_CATALOG
+    SET extra_float_digits TO 2
+    SET work_mem TO '4MB'
+    SET datestyle to iso, mdy
+    SET local_preload_libraries TO "Mixed/Case", 'c:/"a"/path'
+    IMMUTABLE STRICT;
+SELECT pg_get_functiondef('func_with_set_params()'::regprocedure);
+                      pg_get_functiondef                       
+---------------------------------------------------------------
+ CREATE OR REPLACE FUNCTION public.func_with_set_params()     +
+  RETURNS integer                                             +
+  LANGUAGE sql                                                +
+  IMMUTABLE STRICT                                            +
+  SET search_path TO pg_catalog                               +
+  SET extra_float_digits TO '2'                               +
+  SET work_mem TO '4MB'                                       +
+  SET "DateStyle" TO 'iso, mdy'                               +
+  SET local_preload_libraries TO "Mixed/Case", "c:/""a""/path"+
+ AS $function$select 1;$function$                             +
+ 
+(1 row)
+
 -- tests for pg_get_*def with invalid objects
 SELECT pg_get_constraintdef(0);
  pg_get_constraintdef 
@@ -3229,12 +3258,43 @@ SELECT pg_get_partkeydef(0);
 (1 row)
 
 -- test rename for a rule defined on a partitioned table
-CREATE TABLE parted_table (a int) PARTITION BY LIST (a);
-CREATE TABLE parted_table_1 PARTITION OF parted_table FOR VALUES IN (1);
-CREATE RULE parted_table_insert AS ON INSERT to parted_table
-    DO INSTEAD INSERT INTO parted_table_1 VALUES (NEW.*);
-ALTER RULE parted_table_insert ON parted_table RENAME TO parted_table_insert_redirect;
-DROP TABLE parted_table;
+CREATE TABLE rules_parted_table (a int) PARTITION BY LIST (a);
+CREATE TABLE rules_parted_table_1 PARTITION OF rules_parted_table FOR VALUES IN (1);
+CREATE RULE rules_parted_table_insert AS ON INSERT to rules_parted_table
+    DO INSTEAD INSERT INTO rules_parted_table_1 VALUES (NEW.*);
+ALTER RULE rules_parted_table_insert ON rules_parted_table RENAME TO rules_parted_table_insert_redirect;
+DROP TABLE rules_parted_table;
+--
+-- test MERGE
+--
+CREATE TABLE rule_merge1 (a int, b text);
+CREATE TABLE rule_merge2 (a int, b text);
+CREATE RULE rule1 AS ON INSERT TO rule_merge1
+	DO INSTEAD INSERT INTO rule_merge2 VALUES (NEW.*);
+CREATE RULE rule2 AS ON UPDATE TO rule_merge1
+	DO INSTEAD UPDATE rule_merge2 SET a = NEW.a, b = NEW.b
+	WHERE a = OLD.a;
+CREATE RULE rule3 AS ON DELETE TO rule_merge1
+	DO INSTEAD DELETE FROM rule_merge2 WHERE a = OLD.a;
+-- MERGE not supported for table with rules
+MERGE INTO rule_merge1 t USING (SELECT 1 AS a) s
+	ON t.a = s.a
+	WHEN MATCHED AND t.a < 2 THEN
+		UPDATE SET b = b || ' updated by merge'
+	WHEN MATCHED AND t.a > 2 THEN
+		DELETE
+	WHEN NOT MATCHED THEN
+		INSERT VALUES (s.a, '');
+ERROR:  MERGE is not supported for relations with rules
+-- should be ok with the other table though
+MERGE INTO rule_merge2 t USING (SELECT 1 AS a) s
+	ON t.a = s.a
+	WHEN MATCHED AND t.a < 2 THEN
+		UPDATE SET b = b || ' updated by merge'
+	WHEN MATCHED AND t.a > 2 THEN
+		DELETE
+	WHEN NOT MATCHED THEN
+		INSERT VALUES (s.a, '');
 --
 -- Test enabling/disabling
 --

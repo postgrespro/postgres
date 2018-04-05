@@ -134,8 +134,6 @@ static void subquery_push_qual(Query *subquery,
 static void recurse_push_qual(Node *setOp, Query *topquery,
 				  RangeTblEntry *rte, Index rti, Node *qual);
 static void remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel);
-static void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
-						List *live_childrels);
 
 
 /*
@@ -481,13 +479,20 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	}
 
 	/*
-	 * If this is a baserel, consider gathering any partial paths we may have
-	 * created for it.  (If we tried to gather inheritance children, we could
+	 * If this is a baserel, we should normally consider gathering any partial
+	 * paths we may have created for it.
+	 *
+	 * However, if this is an inheritance child, skip it.  Otherwise, we could
 	 * end up with a very large number of gather nodes, each trying to grab
-	 * its own pool of workers, so don't do this for otherrels.  Instead,
-	 * we'll consider gathering partial paths for the parent appendrel.)
+	 * its own pool of workers.  Instead, we'll consider gathering partial
+	 * paths for the parent appendrel.
+	 *
+	 * Also, if this is the topmost scan/join rel (that is, the only baserel),
+	 * we postpone this until the final scan/join targelist is available (see
+	 * grouping_planner).
 	 */
-	if (rel->reloptkind == RELOPT_BASEREL)
+	if (rel->reloptkind == RELOPT_BASEREL &&
+		bms_membership(root->all_baserels) != BMS_SINGLETON)
 		generate_gather_paths(root, rel, false);
 
 	/*
@@ -1326,7 +1331,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
  * parameterization or ordering. Similarly it collects partial paths from
  * non-dummy children to create partial append paths.
  */
-static void
+void
 add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 						List *live_childrels)
 {
@@ -1413,8 +1418,12 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		 * If child has an unparameterized cheapest-total path, add that to
 		 * the unparameterized Append path we are constructing for the parent.
 		 * If not, there's no workable unparameterized path.
+		 *
+		 * With partitionwise aggregates, the child rel's pathlist may be
+		 * empty, so don't assume that a path exists here.
 		 */
-		if (childrel->cheapest_total_path->param_info == NULL)
+		if (childrel->pathlist != NIL &&
+			childrel->cheapest_total_path->param_info == NULL)
 			accumulate_append_subpath(childrel->cheapest_total_path,
 									  &subpaths, NULL);
 		else
@@ -1574,7 +1583,7 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 
 		/*
 		 * If the use of parallel append is permitted, always request at least
-		 * log2(# of children) paths.  We assume it can be useful to have
+		 * log2(# of children) workers.  We assume it can be useful to have
 		 * extra workers in this case because they will be spread out across
 		 * the children.  The precise formula is just a guess, but we don't
 		 * want to end up with a radically different answer for a table with N
@@ -1681,6 +1690,13 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		{
 			RelOptInfo *childrel = (RelOptInfo *) lfirst(lcr);
 			Path	   *subpath;
+
+			if (childrel->pathlist == NIL)
+			{
+				/* failed to make a suitable path for this child */
+				subpaths_valid = false;
+				break;
+			}
 
 			subpath = get_cheapest_parameterized_child_path(root,
 															childrel,
@@ -2179,6 +2195,28 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 				 create_subqueryscan_path(root, rel, subpath,
 										  pathkeys, required_outer));
 	}
+
+	/* If consider_parallel is false, there should be no partial paths. */
+	Assert(sub_final_rel->consider_parallel ||
+		   sub_final_rel->partial_pathlist == NIL);
+
+	/* Same for partial paths. */
+	foreach(lc, sub_final_rel->partial_pathlist)
+	{
+		Path	   *subpath = (Path *) lfirst(lc);
+		List	   *pathkeys;
+
+		/* Convert subpath's pathkeys to outer representation */
+		pathkeys = convert_subquery_pathkeys(root,
+											 rel,
+											 subpath->pathkeys,
+											 make_tlist_from_pathtarget(subpath->pathtarget));
+
+		/* Generate outer path using this subpath */
+		add_partial_path(rel, (Path *)
+						 create_subqueryscan_path(root, rel, subpath,
+												  pathkeys, required_outer));
+	}
 }
 
 /*
@@ -2668,8 +2706,13 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 			/* Create paths for partitionwise joins. */
 			generate_partitionwise_join_paths(root, rel);
 
-			/* Create GatherPaths for any useful partial paths for rel */
-			generate_gather_paths(root, rel, false);
+			/*
+			 * Except for the topmost scan/join rel, consider gathering
+			 * partial paths.  We'll do the same for the topmost scan/join rel
+			 * once we know the final targetlist (see grouping_planner).
+			 */
+			if (lev < levels_needed)
+				generate_gather_paths(root, rel, false);
 
 			/* Find and save the cheapest paths for this rel */
 			set_cheapest(rel);

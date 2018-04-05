@@ -141,10 +141,12 @@ typedef struct RelationData
 	List	   *rd_statlist;	/* list of OIDs of extended stats */
 
 	/* data managed by RelationGetIndexAttrBitmap: */
-	Bitmapset  *rd_indexattr;	/* identifies columns used in indexes */
+	Bitmapset  *rd_indexattr;	/* columns used in non-projection indexes */
+	Bitmapset  *rd_projindexattr;	/* columns used in projection indexes */
 	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
 	Bitmapset  *rd_pkattr;		/* cols included in primary key */
 	Bitmapset  *rd_idattr;		/* included in replica identity index */
+	Bitmapset  *rd_projidx;     /* Oids of projection indexes */
 
 	PublicationActions *rd_pubactions;	/* publication actions */
 
@@ -245,6 +247,14 @@ typedef struct ForeignKeyCacheInfo
 	Oid			conpfeqop[INDEX_MAX_KEYS];	/* PK = FK operator OIDs */
 } ForeignKeyCacheInfo;
 
+/*
+ * Options common for all all indexes
+ */
+typedef struct GenericIndexOpts
+{
+	int32		vl_len_;
+	bool        recheck_on_update;
+} GenericIndexOpts;
 
 /*
  * StdRdOptions
@@ -277,6 +287,8 @@ typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
+	/* fraction of newly inserted tuples prior to trigger index cleanup */
+	float8		vacuum_cleanup_index_scale_factor;
 	int			toast_tuple_target; /* target for tuple toasting */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */

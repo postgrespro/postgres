@@ -215,8 +215,8 @@ CheckIndexCompatible(Oid oldId,
 	 * We don't assess expressions or predicates; assume incompatibility.
 	 * Also, if the index is invalid for any reason, treat it as incompatible.
 	 */
-	if (!(heap_attisnull(tuple, Anum_pg_index_indpred) &&
-		  heap_attisnull(tuple, Anum_pg_index_indexprs) &&
+	if (!(heap_attisnull(tuple, Anum_pg_index_indpred, NULL) &&
+		  heap_attisnull(tuple, Anum_pg_index_indexprs, NULL) &&
 		  IndexIsValid(indexForm)))
 	{
 		ReleaseSysCache(tuple);
@@ -973,7 +973,7 @@ DefineIndex(Oid relationId,
 								InvalidOid,			/* no predefined OID */
 								indexRelationId,	/* this is our child */
 								createdConstraintId,
-								false, check_rights, check_not_in_use,
+								is_alter_table, check_rights, check_not_in_use,
 								false, quiet);
 				}
 
@@ -2091,7 +2091,7 @@ ReindexIndex(RangeVar *indexRelation, int options)
 	 * used here must match the index lock obtained in reindex_index().
 	 */
 	indOid = RangeVarGetRelidExtended(indexRelation, AccessExclusiveLock,
-									  false, false,
+									  0,
 									  RangeVarCallbackForReindexIndex,
 									  (void *) &heapOid);
 
@@ -2183,7 +2183,7 @@ ReindexTable(RangeVar *relation, int options)
 	Oid			heapOid;
 
 	/* The lock level used here should match reindex_relation(). */
-	heapOid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
+	heapOid = RangeVarGetRelidExtended(relation, ShareLock, 0,
 									   RangeVarCallbackOwnsTable, NULL);
 
 	if (!reindex_relation(heapOid,
@@ -2512,5 +2512,8 @@ IndexSetParentIndex(Relation partitionIdx, Oid parentOid)
 
 			recordDependencyOn(&partIdx, &partitionTbl, DEPENDENCY_AUTO);
 		}
+
+		/* make our updates visible */
+		CommandCounterIncrement();
 	}
 }

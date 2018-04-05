@@ -1262,6 +1262,64 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+     <varlistentry id="libpq-connect-replication" xreflabel="replication">
+      <term><literal>replication</literal></term>
+      <listitem>
+      <para>
+       This option determines whether the connection should use the
+       replication protocol instead of the normal protocol.  This is what
+       PostgreSQL replication connections as well as tools such as
+       <application>pg_basebackup</application> use internally, but it can
+       also be used by third-party applications.  For a description of the
+       replication protocol, consult <xref linkend="protocol-replication"/>.
+      </para>
+
+      <para>
+       The following values, which are case-insensitive, are supported:
+       <variablelist>
+        <varlistentry>
+         <term>
+          <literal>true</literal>, <literal>on</literal>,
+          <literal>yes</literal>, <literal>1</literal>
+         </term>
+         <listitem>
+          <para>
+           The connection goes into physical replication mode.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry>
+         <term><literal>database</literal></term>
+         <listitem>
+          <para>
+           The connection goes into logical replication mode, connecting to
+           the database specified in the <literal>dbname</literal> parameter.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry>
+         <term>
+          <literal>false</literal>, <literal>off</literal>,
+          <literal>no</literal>, <literal>0</literal>
+         </term>
+         <listitem>
+          <para>
+           The connection is a regular one, which is the default behavior.
+          </para>
+         </listitem>
+        </varlistentry>
+       </variablelist>
+      </para>
+
+      <para>
+       In physical or logical replication mode, only the simple query protocol
+       can be used.
+      </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="libpq-connect-sslmode" xreflabel="sslmode">
       <term><literal>sslmode</literal></term>
       <listitem>
@@ -1380,19 +1438,28 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>sslcompression</literal></term>
       <listitem>
        <para>
-        If set to 1 (default), data sent over SSL connections will be
-        compressed.
-        If set to 0, compression will be disabled (this requires
-        <productname>OpenSSL</productname> 1.0.0 or later).
-        This parameter is ignored if a connection without SSL is made,
-        or if the version of <productname>OpenSSL</productname> used does not support
-        it.
+        If set to 1, data sent over SSL connections will be compressed.  If
+        set to 0, compression will be disabled.  The default is 0.  This
+        parameter is ignored if a connection without SSL is made.
        </para>
+
        <para>
-        Compression uses CPU time, but can improve throughput if
-        the network is the bottleneck.
-        Disabling compression can improve response time and throughput
-        if CPU performance is the limiting factor.
+        SSL compression is nowadays considered insecure and its use is no
+        longer recommended.  <productname>OpenSSL</productname> 1.1.0 disables
+        compression by default, and many operating system distributions
+        disable it in prior versions as well, so setting this parameter to on
+        will not have any effect if the server does not accept compression.
+        On the other hand, <productname>OpenSSL</productname> before 1.0.0
+        does not support disabling compression, so this parameter is ignored
+        with those versions, and whether compression is used depends on the
+        server.
+       </para>
+
+       <para>
+        If security is not a primary concern, compression can improve
+        throughput if the network is the bottleneck.  Disabling compression
+        can improve response time and throughput if CPU performance is the
+        limiting factor.
        </para>
       </listitem>
      </varlistentry>
@@ -1625,7 +1692,7 @@ char *PQpass(const PGconn *conn);
 
      <listitem>
       <para>
-       Returns the server host name of the connection.
+       Returns the server host name of the active connection.
        This can be a host name, an IP address, or a directory path if the
        connection is via Unix socket.  (The path case can be distinguished
        because it will always be an absolute path, beginning
@@ -1633,6 +1700,30 @@ char *PQpass(const PGconn *conn);
 <synopsis>
 char *PQhost(const PGconn *conn);
 </synopsis>
+      </para>
+
+      <para>
+       If the connection parameters specified both <literal>host</literal> and
+       <literal>hostaddr</literal>, then <function>PQhost</function> will
+       return the <literal>host</literal> information.  If only
+       <literal>hostaddr</literal> was specified, then that is returned.
+       If multiple hosts were specified in the connection parameters,
+       <function>PQhost</function> returns the host actually connected to.
+      </para>
+
+      <para>
+       <function>PQhost</function> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there is an error producing the host information (perhaps
+       if the connection has not been fully established or there was an
+       error), it returns an empty string.
+      </para>
+
+      <para>
+       If multiple hosts were specified in the connection parameters, it is
+       not possible to rely on the result of <function>PQhost</function> until
+       the connection is established.  The status of the connection can be
+       checked using the function <function>PQstatus</function>.
       </para>
      </listitem>
     </varlistentry>
@@ -1647,11 +1738,31 @@ char *PQhost(const PGconn *conn);
 
      <listitem>
       <para>
-       Returns the port of the connection.
+       Returns the port of the active connection.
 
 <synopsis>
 char *PQport(const PGconn *conn);
 </synopsis>
+      </para>
+
+      <para>
+       If multiple ports were specified in the connection parameters,
+       <function>PQport</function> returns the port actually connected to.
+      </para>
+
+      <para>
+       <function>PQport</function> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there is an error producing the port information (perhaps
+       if the connection has not been fully established or there was an
+       error), it returns an empty string.
+      </para>
+
+      <para>
+       If multiple ports were specified in the connection parameters, it is
+       not possible to rely on the result of <function>PQport</function> until
+       the connection is established.  The status of the connection can be
+       checked using the function <function>PQstatus</function>.
       </para>
      </listitem>
     </varlistentry>
@@ -3806,9 +3917,11 @@ char *PQcmdTuples(PGresult *res);
        <structname>PGresult</structname>. This function can only be used following
        the execution of a <command>SELECT</command>, <command>CREATE TABLE AS</command>,
        <command>INSERT</command>, <command>UPDATE</command>, <command>DELETE</command>,
-       <command>MOVE</command>, <command>FETCH</command>, or <command>COPY</command> statement,
-       or an <command>EXECUTE</command> of a prepared query that contains an
-       <command>INSERT</command>, <command>UPDATE</command>, or <command>DELETE</command> statement.
+       <command>MERGE</command>, <command>MOVE</command>, <command>FETCH</command>,
+       or <command>COPY</command> statement, or an <command>EXECUTE</command> of a
+       prepared query that contains an <command>INSERT</command>,
+       <command>UPDATE</command>, <command>DELETE</command>
+       or <command>MERGE</command> statement.
        If the command that generated the <structname>PGresult</structname> was anything
        else, <function>PQcmdTuples</function> returns an empty string. The caller
        should not free the return value directly. It will be freed when

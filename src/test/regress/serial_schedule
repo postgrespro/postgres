@@ -101,6 +101,7 @@ test: portals
 test: arrays
 test: btree_index
 test: hash_index
+test: func_index
 test: update
 test: delete
 test: namespace
@@ -122,6 +123,7 @@ test: tablesample
 test: groupingsets
 test: drop_operator
 test: password
+test: merge
 test: alter_generic
 test: alter_operator
 test: misc
@@ -185,5 +187,7 @@ test: partition_prune
 test: reloptions
 test: hash_part
 test: indexing
+test: partition_aggregate
+test: fast_default
 test: event_trigger
 test: stats

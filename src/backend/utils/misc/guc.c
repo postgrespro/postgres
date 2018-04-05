@@ -42,6 +42,7 @@
 #include "commands/variable.h"
 #include "commands/trigger.h"
 #include "funcapi.h"
+#include "jit/jit.h"
 #include "libpq/auth.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
@@ -796,8 +797,8 @@ static const unit_conversion time_unit_conversion_table[] =
  *
  * 6. Don't forget to document the option (at least in config.sgml).
  *
- * 7. If it's a new GUC_LIST option you must edit pg_dumpall.c to ensure
- *	  it is not single quoted at dump time.
+ * 7. If it's a new GUC_LIST_QUOTE option, you must add it to
+ *	  variable_is_guc_list_quote() in src/bin/pg_dump/dumputils.c.
  */
 
 
@@ -923,6 +924,15 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables partitionwise aggregation and grouping."),
+			NULL
+		},
+		&enable_partitionwise_aggregate,
+		false,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_parallel_append", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of parallel append plans."),
 			NULL
@@ -987,6 +997,15 @@ static struct config_bool ConfigureNamesBool[] =
 		&EnableSSL,
 		false,
 		check_ssl, NULL, NULL
+	},
+	{
+		{"ssl_passphrase_command_supports_reload", PGC_SIGHUP, CONN_AUTH_SSL,
+			gettext_noop("Also use ssl_passphrase_command during server reload."),
+			NULL
+		},
+		&ssl_passphrase_command_supports_reload,
+		false,
+		NULL, NULL, NULL
 	},
 	{
 		{"ssl_prefer_server_ciphers", PGC_SIGHUP, CONN_AUTH_SSL,
@@ -1705,6 +1724,81 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jit", PGC_USERSET, QUERY_TUNING_OTHER,
+			gettext_noop("Allow JIT compilation."),
+			NULL
+		},
+		&jit_enabled,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_debugging_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
+			gettext_noop("Register JIT compiled function with debugger."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_debugging_support,
+		false,
+		/*
+		 * This is not guaranteed to be available, but given it's a developer
+		 * oriented option, it doesn't seem worth adding code checking
+		 * availability.
+		 */
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_dump_bitcode", PGC_SUSET, DEVELOPER_OPTIONS,
+			gettext_noop("Write out LLVM bitcode to facilitate JIT debugging."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_dump_bitcode,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_expressions", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Allow JIT compilation of expressions."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_expressions,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_profiling_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
+			gettext_noop("Register JIT compiled function with perf profiler."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_profiling_support,
+		false,
+		/*
+		 * This is not guaranteed to be available, but given it's a developer
+		 * oriented option, it doesn't seem worth adding code checking
+		 * availability.
+		 */
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_tuple_deforming", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Allow JIT compilation of tuple deforming."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_tuple_deforming,
+		true,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
@@ -1873,6 +1967,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		/* see max_connections and max_wal_senders */
 		{"superuser_reserved_connections", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
 			gettext_noop("Sets the number of connection slots reserved for superusers."),
 			NULL
@@ -2375,7 +2470,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections */
+		/* see max_connections and superuser_reserved_connections */
 		{"max_wal_senders", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously running WAL sender processes."),
 			NULL
@@ -2386,7 +2481,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections */
+		/* see max_wal_senders */
 		{"max_replication_slots", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously defined replication slots."),
 			NULL
@@ -2756,7 +2851,7 @@ static struct config_int ConfigureNamesInt[] =
 
 	{
 		{"max_parallel_workers", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
-			gettext_noop("Sets the maximum number of parallel workers than can be active at one time."),
+			gettext_noop("Sets the maximum number of parallel workers that can be active at one time."),
 			NULL
 		},
 		&max_parallel_workers,
@@ -3003,6 +3098,36 @@ static struct config_real ConfigureNamesReal[] =
 	},
 
 	{
+		{"jit_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Perform JIT compilation if query is more expensive."),
+			gettext_noop("-1 disables JIT compilation.")
+		},
+		&jit_above_cost,
+		100000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_optimize_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Optimize JITed functions if query is more expensive."),
+			gettext_noop("-1 disables optimization.")
+		},
+		&jit_optimize_above_cost,
+		500000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_inline_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Perform JIT inlining if query is more expensive."),
+			gettext_noop("-1 disables inlining.")
+		},
+		&jit_inline_above_cost,
+		500000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"cursor_tuple_fraction", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Sets the planner's estimate of the fraction of "
 						 "a cursor's rows that will be retrieved."),
@@ -3080,6 +3205,16 @@ static struct config_real ConfigureNamesReal[] =
 		},
 		&CheckPointCompletionTarget,
 		0.5, 0.0, 1.0,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"vacuum_cleanup_index_scale_factor", PGC_SIGHUP, AUTOVACUUM,
+			gettext_noop("Number of tuple inserts prior to index cleanup as a fraction of reltuples."),
+			NULL
+		},
+		&vacuum_cleanup_index_scale_factor,
+		0.1, 0.0, 100.0,
 		NULL, NULL, NULL
 	},
 
@@ -3655,6 +3790,16 @@ static struct config_string ConfigureNamesString[] =
 	},
 
 	{
+		{"ssl_passphrase_command", PGC_SIGHUP, CONN_AUTH_SSL,
+			gettext_noop("Command to obtain passphrases for SSL."),
+			NULL
+		},
+		&ssl_passphrase_command,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
 		{"application_name", PGC_USERSET, LOGGING_WHAT,
 			gettext_noop("Sets the application name to be reported in statistics and logs."),
 			NULL,
@@ -3685,6 +3830,17 @@ static struct config_string ConfigureNamesString[] =
 		&wal_consistency_checking_string,
 		"",
 		check_wal_consistency_checking, assign_wal_consistency_checking, NULL
+	},
+
+	{
+		{"jit_provider", PGC_POSTMASTER, FILE_LOCATIONS,
+			gettext_noop("JIT provider to use."),
+			NULL,
+			GUC_SUPERUSER_ONLY
+		},
+		&jit_provider,
+		"llvmjit",
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */
@@ -6839,6 +6995,30 @@ GetConfigOptionResetString(const char *name)
 	return NULL;
 }
 
+/*
+ * Get the GUC flags associated with the given option.
+ *
+ * If the option doesn't exist, return 0 if missing_ok is true,
+ * otherwise throw an ereport and don't return.
+ */
+int
+GetConfigOptionFlags(const char *name, bool missing_ok)
+{
+	struct config_generic *record;
+
+	record = find_option(name, false, WARNING);
+	if (record == NULL)
+	{
+		if (missing_ok)
+			return 0;
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("unrecognized configuration parameter \"%s\"",
+						name)));
+	}
+	return record->flags;
+}
+
 
 /*
  * flatten_set_variable_args
@@ -6912,7 +7092,7 @@ flatten_set_variable_args(const char *name, List *args)
 		switch (nodeTag(&con->val))
 		{
 			case T_Integer:
-				appendStringInfo(&buf, "%ld", intVal(&con->val));
+				appendStringInfo(&buf, "%d", intVal(&con->val));
 				break;
 			case T_Float:
 				/* represented as a string, so just copy it */
@@ -7347,7 +7527,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 		case VAR_SET_VALUE:
 		case VAR_SET_CURRENT:
 			if (stmt->is_local)
-				WarnNoTransactionChain(isTopLevel, "SET LOCAL");
+				WarnNoTransactionBlock(isTopLevel, "SET LOCAL");
 			(void) set_config_option(stmt->name,
 									 ExtractSetVariableArgs(stmt),
 									 (superuser() ? PGC_SUSET : PGC_USERSET),
@@ -7367,7 +7547,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 			{
 				ListCell   *head;
 
-				WarnNoTransactionChain(isTopLevel, "SET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "SET TRANSACTION");
 
 				foreach(head, stmt->args)
 				{
@@ -7418,7 +7598,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("SET LOCAL TRANSACTION SNAPSHOT is not implemented")));
 
-				WarnNoTransactionChain(isTopLevel, "SET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "SET TRANSACTION");
 				Assert(nodeTag(&con->val) == T_String);
 				ImportSnapshot(strVal(&con->val));
 			}
@@ -7428,11 +7608,11 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 			break;
 		case VAR_SET_DEFAULT:
 			if (stmt->is_local)
-				WarnNoTransactionChain(isTopLevel, "SET LOCAL");
+				WarnNoTransactionBlock(isTopLevel, "SET LOCAL");
 			/* fall through */
 		case VAR_RESET:
 			if (strcmp(stmt->name, "transaction_isolation") == 0)
-				WarnNoTransactionChain(isTopLevel, "RESET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "RESET TRANSACTION");
 
 			(void) set_config_option(stmt->name,
 									 NULL,
@@ -7561,6 +7741,15 @@ init_custom_variable(const char *name,
 	if (context == PGC_POSTMASTER &&
 		!process_shared_preload_libraries_in_progress)
 		elog(FATAL, "cannot create PGC_POSTMASTER variables after startup");
+
+	/*
+	 * We can't support custom GUC_LIST_QUOTE variables, because the wrong
+	 * things would happen if such a variable were set or pg_dump'd when the
+	 * defining extension isn't loaded.  Again, treat this as fatal because
+	 * the loadable module may be partly initialized already.
+	 */
+	if (flags & GUC_LIST_QUOTE)
+		elog(FATAL, "extensions cannot define GUC_LIST_QUOTE variables");
 
 	/*
 	 * Before pljava commit 398f3b876ed402bdaec8bc804f29e2be95c75139
@@ -10527,7 +10716,7 @@ check_cluster_name(char **newval, void **extra, GucSource source)
 static const char *
 show_unix_socket_permissions(void)
 {
-	static char buf[8];
+	static char buf[12];
 
 	snprintf(buf, sizeof(buf), "%04o", Unix_socket_permissions);
 	return buf;
@@ -10536,7 +10725,7 @@ show_unix_socket_permissions(void)
 static const char *
 show_log_file_mode(void)
 {
-	static char buf[8];
+	static char buf[12];
 
 	snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
 	return buf;

@@ -36,6 +36,7 @@
 #include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
+#include "access/tupdesc_details.h"
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
@@ -69,14 +70,17 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
+#include "optimizer/cost.h"
 #include "optimizer/prep.h"
 #include "optimizer/var.h"
+#include "pgstat.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rowsecurity.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -493,6 +497,7 @@ RelationBuildTupleDesc(Relation relation)
 	int			need;
 	TupleConstr *constr;
 	AttrDefault *attrdef = NULL;
+	AttrMissing *attrmiss = NULL;
 	int			ndef = 0;
 
 	/* copy some fields from pg_class row to rd_att */
@@ -538,15 +543,17 @@ RelationBuildTupleDesc(Relation relation)
 	while (HeapTupleIsValid(pg_attribute_tuple = systable_getnext(pg_attribute_scan)))
 	{
 		Form_pg_attribute attp;
+		int			attnum;
 
 		attp = (Form_pg_attribute) GETSTRUCT(pg_attribute_tuple);
 
-		if (attp->attnum <= 0 ||
-			attp->attnum > relation->rd_rel->relnatts)
+		attnum = attp->attnum;
+		if (attnum <= 0 || attnum > relation->rd_rel->relnatts)
 			elog(ERROR, "invalid attribute number %d for %s",
 				 attp->attnum, RelationGetRelationName(relation));
 
-		memcpy(TupleDescAttr(relation->rd_att, attp->attnum - 1),
+
+		memcpy(TupleDescAttr(relation->rd_att, attnum - 1),
 			   attp,
 			   ATTRIBUTE_FIXED_PART_SIZE);
 
@@ -554,6 +561,7 @@ RelationBuildTupleDesc(Relation relation)
 		if (attp->attnotnull)
 			constr->has_not_null = true;
 
+		/* If the column has a default, fill it into the attrdef array */
 		if (attp->atthasdef)
 		{
 			if (attrdef == NULL)
@@ -561,9 +569,62 @@ RelationBuildTupleDesc(Relation relation)
 					MemoryContextAllocZero(CacheMemoryContext,
 										   relation->rd_rel->relnatts *
 										   sizeof(AttrDefault));
-			attrdef[ndef].adnum = attp->attnum;
+			attrdef[ndef].adnum = attnum;
 			attrdef[ndef].adbin = NULL;
+
 			ndef++;
+		}
+
+		/* Likewise for a missing value */
+		if (attp->atthasmissing)
+		{
+			Datum		missingval;
+			bool		missingNull;
+
+			/* Do we have a missing value? */
+			missingval = heap_getattr(pg_attribute_tuple,
+									  Anum_pg_attribute_attmissingval,
+									  pg_attribute_desc->rd_att,
+									  &missingNull);
+			if (!missingNull)
+			{
+				/* Yes, fetch from the array */
+				MemoryContext oldcxt;
+				bool		is_null;
+				int			one = 1;
+				Datum		missval;
+
+				if (attrmiss == NULL)
+					attrmiss = (AttrMissing *)
+						MemoryContextAllocZero(CacheMemoryContext,
+											   relation->rd_rel->relnatts *
+											   sizeof(AttrMissing));
+
+				missval = array_get_element(missingval,
+											1,
+											&one,
+											-1,
+											attp->attlen,
+											attp->attbyval,
+											attp->attalign,
+											&is_null);
+				Assert(!is_null);
+				if (attp->attbyval)
+				{
+					/* for copy by val just copy the datum direct */
+					attrmiss[attnum - 1].ammissing = missval;
+				}
+				else
+				{
+					/* otherwise copy in the correct context */
+					oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+					attrmiss[attnum - 1].ammissing = datumCopy(missval,
+															   attp->attbyval,
+															   attp->attlen);
+					MemoryContextSwitchTo(oldcxt);
+				}
+				attrmiss[attnum - 1].ammissingPresent = true;
+			}
 		}
 		need--;
 		if (need == 0)
@@ -605,7 +666,8 @@ RelationBuildTupleDesc(Relation relation)
 	/*
 	 * Set up constraint/default info
 	 */
-	if (constr->has_not_null || ndef > 0 || relation->rd_rel->relchecks)
+	if (constr->has_not_null || ndef > 0 ||
+		attrmiss || relation->rd_rel->relchecks)
 	{
 		relation->rd_att->constr = constr;
 
@@ -621,6 +683,8 @@ RelationBuildTupleDesc(Relation relation)
 		}
 		else
 			constr->num_defval = 0;
+
+		constr->missing = attrmiss;
 
 		if (relation->rd_rel->relchecks > 0)	/* CHECKs */
 		{
@@ -673,11 +737,12 @@ RelationBuildRuleLock(Relation relation)
 	/*
 	 * Make the private context.  Assume it'll not contain much data.
 	 */
-	rulescxt = AllocSetContextCreateExtended(CacheMemoryContext,
-											 RelationGetRelationName(relation),
-											 MEMCONTEXT_COPY_NAME,
-											 ALLOCSET_SMALL_SIZES);
+	rulescxt = AllocSetContextCreate(CacheMemoryContext,
+									 "relation rules",
+									 ALLOCSET_SMALL_SIZES);
 	relation->rd_rulescxt = rulescxt;
+	MemoryContextCopySetIdentifier(rulescxt,
+								   RelationGetRelationName(relation));
 
 	/*
 	 * allocate an array to hold the rewrite rules (the array is extended if
@@ -850,10 +915,11 @@ RelationBuildPartitionKey(Relation relation)
 	if (!HeapTupleIsValid(tuple))
 		return;
 
-	partkeycxt = AllocSetContextCreateExtended(CurTransactionContext,
-											   RelationGetRelationName(relation),
-											   MEMCONTEXT_COPY_NAME,
-											   ALLOCSET_SMALL_SIZES);
+	partkeycxt = AllocSetContextCreate(CurTransactionContext,
+									   "partition key",
+									   ALLOCSET_SMALL_SIZES);
+	MemoryContextCopySetIdentifier(partkeycxt,
+								   RelationGetRelationName(relation));
 
 	key = (PartitionKey) MemoryContextAllocZero(partkeycxt,
 												sizeof(PartitionKeyData));
@@ -900,8 +966,9 @@ RelationBuildPartitionKey(Relation relation)
 		 * will be comparing them to similarly-processed qual clause operands,
 		 * and may fail to detect valid matches without this step; fix
 		 * opfuncids while at it.  We don't need to bother with
-		 * canonicalize_qual() though, because partition expressions are not
-		 * full-fledged qualification clauses.
+		 * canonicalize_qual() though, because partition expressions should be
+		 * in canonical form already (ie, no need for OR-merging or constant
+		 * elimination).
 		 */
 		expr = eval_const_expressions(NULL, expr);
 		fix_opfuncids(expr);
@@ -1530,11 +1597,12 @@ RelationInitIndexAccessInfo(Relation relation)
 	 * a context, and not just a couple of pallocs, is so that we won't leak
 	 * any subsidiary info attached to fmgr lookup records.
 	 */
-	indexcxt = AllocSetContextCreateExtended(CacheMemoryContext,
-											 RelationGetRelationName(relation),
-											 MEMCONTEXT_COPY_NAME,
-											 ALLOCSET_SMALL_SIZES);
+	indexcxt = AllocSetContextCreate(CacheMemoryContext,
+									 "index info",
+									 ALLOCSET_SMALL_SIZES);
 	relation->rd_indexcxt = indexcxt;
+	MemoryContextCopySetIdentifier(indexcxt,
+								   RelationGetRelationName(relation));
 
 	/*
 	 * Now we can fetch the index AM's API struct
@@ -2313,9 +2381,11 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 	list_free_deep(relation->rd_fkeylist);
 	list_free(relation->rd_indexlist);
 	bms_free(relation->rd_indexattr);
+	bms_free(relation->rd_projindexattr);
 	bms_free(relation->rd_keyattr);
 	bms_free(relation->rd_pkattr);
 	bms_free(relation->rd_idattr);
+	bms_free(relation->rd_projidx);
 	if (relation->rd_pubactions)
 		pfree(relation->rd_pubactions);
 	if (relation->rd_options)
@@ -2350,7 +2420,7 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
  *	 NB: when rebuilding, we'd better hold some lock on the relation,
  *	 else the catalog data we need to read could be changing under us.
  *	 Also, a rel to be rebuilt had better have refcnt > 0.  This is because
- *	 an sinval reset could happen while we're accessing the catalogs, and
+ *	 a sinval reset could happen while we're accessing the catalogs, and
  *	 the rel would get blown away underneath us by RelationCacheInvalidate
  *	 if it has zero refcnt.
  *
@@ -4055,10 +4125,6 @@ AttrDefaultFetch(Relation relation)
 
 	systable_endscan(adscan);
 	heap_close(adrel, AccessShareLock);
-
-	if (found != ndef)
-		elog(WARNING, "%d attrdef record(s) missing for rel %s",
-			 ndef - found, RelationGetRelationName(relation));
 }
 
 /*
@@ -4397,7 +4463,7 @@ RelationGetIndexList(Relation relation)
 		 */
 		if (!IndexIsValid(index) || !index->indisunique ||
 			!index->indimmediate ||
-			!heap_attisnull(htup, Anum_pg_index_indpred))
+			!heap_attisnull(htup, Anum_pg_index_indpred, NULL))
 			continue;
 
 		/* Check to see if is a usable btree index on OID */
@@ -4692,7 +4758,7 @@ RelationGetIndexExpressions(Relation relation)
 
 	/* Quick exit if there is nothing to do. */
 	if (relation->rd_indextuple == NULL ||
-		heap_attisnull(relation->rd_indextuple, Anum_pg_index_indexprs))
+		heap_attisnull(relation->rd_indextuple, Anum_pg_index_indexprs, NULL))
 		return NIL;
 
 	/*
@@ -4713,11 +4779,10 @@ RelationGetIndexExpressions(Relation relation)
 	 * Run the expressions through eval_const_expressions. This is not just an
 	 * optimization, but is necessary, because the planner will be comparing
 	 * them to similarly-processed qual clauses, and may fail to detect valid
-	 * matches without this.  We don't bother with canonicalize_qual, however.
+	 * matches without this.  We must not use canonicalize_qual, however,
+	 * since these aren't qual expressions.
 	 */
 	result = (List *) eval_const_expressions(NULL, (Node *) result);
-
-	result = (List *) canonicalize_qual((Expr *) result);
 
 	/* May as well fix opfuncids too */
 	fix_opfuncids((Node *) result);
@@ -4755,7 +4820,7 @@ RelationGetIndexPredicate(Relation relation)
 
 	/* Quick exit if there is nothing to do. */
 	if (relation->rd_indextuple == NULL ||
-		heap_attisnull(relation->rd_indextuple, Anum_pg_index_indpred))
+		heap_attisnull(relation->rd_indextuple, Anum_pg_index_indpred, NULL))
 		return NIL;
 
 	/*
@@ -4783,7 +4848,7 @@ RelationGetIndexPredicate(Relation relation)
 	 */
 	result = (List *) eval_const_expressions(NULL, (Node *) result);
 
-	result = (List *) canonicalize_qual((Expr *) result);
+	result = (List *) canonicalize_qual((Expr *) result, false);
 
 	/* Also convert to implicit-AND format */
 	result = make_ands_implicit((Expr *) result);
@@ -4797,6 +4862,73 @@ RelationGetIndexPredicate(Relation relation)
 	MemoryContextSwitchTo(oldcxt);
 
 	return result;
+}
+
+#define HEURISTIC_MAX_HOT_RECHECK_EXPR_COST 1000
+
+/*
+ * Check if functional index is projection: index expression returns some subset
+ * of its argument values. During HOT update check we handle projection indexes
+ * differently: instead of checking if any of attributes used in indexed
+ * expression were updated, we calculate and compare values of index expression
+ * for old and new tuple values.
+ *
+ * Decision made by this function is based on two sources:
+ * 1. Calculated cost of index expression: if greater than some heuristic limit
+	  then extra comparison of index expression values is expected to be too
+	  expensive, so we don't attempt it by default.
+ * 2. "recheck_on_update" index option explicitly set by user, which overrides 1)
+ */
+static bool IsProjectionFunctionalIndex(Relation index, IndexInfo* ii)
+{
+	bool is_projection = false;
+
+	if (ii->ii_Expressions)
+	{
+		HeapTuple       tuple;
+		Datum           reloptions;
+		bool            isnull;
+		QualCost index_expr_cost;
+
+		/* by default functional index is considered as non-injective */
+		is_projection = true;
+
+		cost_qual_eval(&index_expr_cost, ii->ii_Expressions, NULL);
+
+		/*
+		 * If index expression is too expensive, then disable projection
+		 * optimization, because extra evaluation of index expression is
+		 * expected to be more expensive than index update.  Currently the
+		 * projection optimization has to calculate index expression twice
+		 * when the value of index expression has not changed and three times
+		 * when values differ because the expression is recalculated when
+		 * inserting a new index entry for the changed value.
+		 */
+		if ((index_expr_cost.startup + index_expr_cost.per_tuple) >
+								HEURISTIC_MAX_HOT_RECHECK_EXPR_COST)
+			is_projection = false;
+
+		tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(RelationGetRelid(index)));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for relation %u", RelationGetRelid(index));
+
+		reloptions = SysCacheGetAttr(RELOID, tuple,
+									 Anum_pg_class_reloptions, &isnull);
+		if (!isnull)
+		{
+			GenericIndexOpts *idxopts;
+
+			idxopts = (GenericIndexOpts *) index_generic_reloptions(reloptions, false);
+
+			if (idxopts != NULL)
+			{
+				is_projection = idxopts->recheck_on_update;
+				pfree(idxopts);
+			}
+		}
+		ReleaseSysCache(tuple);
+	}
+	return is_projection;
 }
 
 /*
@@ -4826,24 +4958,29 @@ RelationGetIndexPredicate(Relation relation)
 Bitmapset *
 RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 {
-	Bitmapset  *indexattrs;		/* indexed columns */
+	Bitmapset  *indexattrs;		/* columns used in non-projection indexes */
+	Bitmapset  *projindexattrs;	/* columns used in projection indexes */
 	Bitmapset  *uindexattrs;	/* columns in unique indexes */
 	Bitmapset  *pkindexattrs;	/* columns in the primary index */
 	Bitmapset  *idindexattrs;	/* columns in the replica identity */
+	Bitmapset  *projindexes;	/* projection indexes */
 	List	   *indexoidlist;
 	List	   *newindexoidlist;
 	Oid			relpkindex;
 	Oid			relreplindex;
 	ListCell   *l;
 	MemoryContext oldcxt;
+	int         indexno;
 
 	/* Quick exit if we already computed the result. */
 	if (relation->rd_indexattr != NULL)
 	{
 		switch (attrKind)
 		{
-			case INDEX_ATTR_BITMAP_ALL:
+			case INDEX_ATTR_BITMAP_HOT:
 				return bms_copy(relation->rd_indexattr);
+			case INDEX_ATTR_BITMAP_PROJ:
+				return bms_copy(relation->rd_projindexattr);
 			case INDEX_ATTR_BITMAP_KEY:
 				return bms_copy(relation->rd_keyattr);
 			case INDEX_ATTR_BITMAP_PRIMARY_KEY:
@@ -4890,9 +5027,12 @@ restart:
 	 * won't be returned at all by RelationGetIndexList.
 	 */
 	indexattrs = NULL;
+	projindexattrs = NULL;
 	uindexattrs = NULL;
 	pkindexattrs = NULL;
 	idindexattrs = NULL;
+	projindexes = NULL;
+	indexno = 0;
 	foreach(l, indexoidlist)
 	{
 		Oid			indexOid = lfirst_oid(l);
@@ -4943,13 +5083,22 @@ restart:
 			}
 		}
 
-		/* Collect all attributes used in expressions, too */
-		pull_varattnos((Node *) indexInfo->ii_Expressions, 1, &indexattrs);
-
+		/* Collect attributes used in expressions, too */
+		if (IsProjectionFunctionalIndex(indexDesc, indexInfo))
+		{
+			projindexes = bms_add_member(projindexes, indexno);
+			pull_varattnos((Node *) indexInfo->ii_Expressions, 1, &projindexattrs);
+		}
+		else
+		{
+			/* Collect all attributes used in expressions, too */
+			pull_varattnos((Node *) indexInfo->ii_Expressions, 1, &indexattrs);
+		}
 		/* Collect all attributes in the index predicate, too */
 		pull_varattnos((Node *) indexInfo->ii_Predicate, 1, &indexattrs);
 
 		index_close(indexDesc, AccessShareLock);
+		indexno += 1;
 	}
 
 	/*
@@ -4976,6 +5125,8 @@ restart:
 		bms_free(pkindexattrs);
 		bms_free(idindexattrs);
 		bms_free(indexattrs);
+		bms_free(projindexattrs);
+		bms_free(projindexes);
 
 		goto restart;
 	}
@@ -4983,12 +5134,16 @@ restart:
 	/* Don't leak the old values of these bitmaps, if any */
 	bms_free(relation->rd_indexattr);
 	relation->rd_indexattr = NULL;
+	bms_free(relation->rd_projindexattr);
+	relation->rd_projindexattr = NULL;
 	bms_free(relation->rd_keyattr);
 	relation->rd_keyattr = NULL;
 	bms_free(relation->rd_pkattr);
 	relation->rd_pkattr = NULL;
 	bms_free(relation->rd_idattr);
 	relation->rd_idattr = NULL;
+	bms_free(relation->rd_projidx);
+	relation->rd_projidx = NULL;
 
 	/*
 	 * Now save copies of the bitmaps in the relcache entry.  We intentionally
@@ -5002,13 +5157,17 @@ restart:
 	relation->rd_pkattr = bms_copy(pkindexattrs);
 	relation->rd_idattr = bms_copy(idindexattrs);
 	relation->rd_indexattr = bms_copy(indexattrs);
+	relation->rd_projindexattr = bms_copy(projindexattrs);
+	relation->rd_projidx = bms_copy(projindexes);
 	MemoryContextSwitchTo(oldcxt);
 
 	/* We return our original working copy for caller to play with */
 	switch (attrKind)
 	{
-		case INDEX_ATTR_BITMAP_ALL:
+		case INDEX_ATTR_BITMAP_HOT:
 			return indexattrs;
+		case INDEX_ATTR_BITMAP_PROJ:
+			return projindexattrs;
 		case INDEX_ATTR_BITMAP_KEY:
 			return uindexattrs;
 		case INDEX_ATTR_BITMAP_PRIMARY_KEY:
@@ -5505,12 +5664,12 @@ load_relcache_init_file(bool shared)
 			 * prepare index info context --- parameters should match
 			 * RelationInitIndexAccessInfo
 			 */
-			indexcxt =
-				AllocSetContextCreateExtended(CacheMemoryContext,
-											  RelationGetRelationName(rel),
-											  MEMCONTEXT_COPY_NAME,
-											  ALLOCSET_SMALL_SIZES);
+			indexcxt = AllocSetContextCreate(CacheMemoryContext,
+											 "index info",
+											 ALLOCSET_SMALL_SIZES);
 			rel->rd_indexcxt = indexcxt;
+			MemoryContextCopySetIdentifier(indexcxt,
+										   RelationGetRelationName(rel));
 
 			/*
 			 * Now we can fetch the index AM's API struct.  (We can't store
@@ -5632,9 +5791,11 @@ load_relcache_init_file(bool shared)
 		rel->rd_pkindex = InvalidOid;
 		rel->rd_replidindex = InvalidOid;
 		rel->rd_indexattr = NULL;
+		rel->rd_projindexattr = NULL;
 		rel->rd_keyattr = NULL;
 		rel->rd_pkattr = NULL;
 		rel->rd_idattr = NULL;
+		rel->rd_projidx = NULL;
 		rel->rd_pubactions = NULL;
 		rel->rd_statvalid = false;
 		rel->rd_statlist = NIL;

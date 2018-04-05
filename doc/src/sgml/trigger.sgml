@@ -53,15 +53,21 @@
    <para>
     On views, triggers can be defined to execute instead of
     <command>INSERT</command>, <command>UPDATE</command>, or
-    <command>DELETE</command> operations.  <literal>INSTEAD OF</literal> triggers
+    <command>DELETE</command> operations.
+    Such <literal>INSTEAD OF</literal> triggers
     are fired once for each row that needs to be modified in the view.
     It is the responsibility of the
-    trigger's function to perform the necessary modifications to the
-    underlying base tables and, where appropriate, return the modified
+    trigger's function to perform the necessary modifications to the view's
+    underlying base table(s) and, where appropriate, return the modified
     row as it will appear in the view.  Triggers on views can also be defined
     to execute once per <acronym>SQL</acronym> statement, before or after
     <command>INSERT</command>, <command>UPDATE</command>, or
     <command>DELETE</command> operations.
+    However, such triggers are fired only if there is also
+    an <literal>INSTEAD OF</literal> trigger on the view.  Otherwise,
+    any statement targeting the view must be rewritten into a statement
+    affecting its underlying base table(s), and then the triggers
+    that will be fired are the ones attached to the base table(s).
    </para>
 
    <para>
@@ -174,6 +180,26 @@
     even if row movement occurs; only the <command>UPDATE</command> triggers
     defined on the target table used in the <command>UPDATE</command> statement
     will be fired.
+   </para>
+
+   <para>
+    No separate triggers are defined for <command>MERGE</command>. Instead,
+    statement-level or row-level <command>UPDATE</command>,
+    <command>DELETE</command> and <command>INSERT</command> triggers are fired
+    depending on what actions are specified in the <command>MERGE</command> query
+    and what actions are activated.
+   </para>
+
+   <para>
+    While running a <command>MERGE</command> command, statement-level
+    <literal>BEFORE</literal> and <literal>AFTER</literal> triggers are fired for
+    events specified in the actions of the <command>MERGE</command> command,
+    irrespective of whether the action is finally activated or not. This is same as
+    an <command>UPDATE</command> statement that updates no rows, yet
+    statement-level triggers are fired. The row-level triggers are fired only
+    when a row is actually updated, inserted or deleted. So it's perfectly legal
+    that while statement-level triggers are fired for certain type of action, no
+    row-level triggers are fired for the same kind of action.
    </para>
 
    <para>

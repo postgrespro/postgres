@@ -1321,7 +1321,7 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 			!(tup->t_data->t_infomask & HEAP_UPDATED))
 			 /* safe to do inside transaction block */ ;
 		else
-			PreventTransactionChain(isTopLevel, "ALTER TYPE ... ADD");
+			PreventInTransactionBlock(isTopLevel, "ALTER TYPE ... ADD");
 
 		AddEnumLabel(enum_type_oid, stmt->newVal,
 					 stmt->newValNeighbor, stmt->newValIsAfter,
@@ -2397,7 +2397,7 @@ AlterDomainNotNull(List *names, bool notNull)
 					int			attnum = rtc->atts[i];
 					Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
 
-					if (heap_attisnull(tuple, attnum))
+					if (heap_attisnull(tuple, attnum, tupdesc))
 					{
 						/*
 						 * In principle the auxiliary information for this
@@ -3153,6 +3153,7 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 							  false,	/* Is Deferrable */
 							  false,	/* Is Deferred */
 							  !constr->skip_validation, /* Is Validated */
+							  InvalidOid,	/* no parent constraint */
 							  InvalidOid,	/* not a relation constraint */
 							  NULL,
 							  0,

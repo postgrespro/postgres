@@ -811,7 +811,7 @@ main(int argc, char **argv)
 	/*
 	 * In binary-upgrade mode, we do not have to worry about the actual blob
 	 * data or the associated metadata that resides in the pg_largeobject and
-	 * pg_largeobject_metadata tables, respectivly.
+	 * pg_largeobject_metadata tables, respectively.
 	 *
 	 * However, we do need to collect blob information as there may be
 	 * comments or other information on blobs that we do need to dump out.
@@ -7116,13 +7116,23 @@ getConstraints(Archive *fout, TableInfo tblinfo[], int numTables)
 					  tbinfo->dobj.name);
 
 		resetPQExpBuffer(query);
-		appendPQExpBuffer(query,
-						  "SELECT tableoid, oid, conname, confrelid, "
-						  "pg_catalog.pg_get_constraintdef(oid) AS condef "
-						  "FROM pg_catalog.pg_constraint "
-						  "WHERE conrelid = '%u'::pg_catalog.oid "
-						  "AND contype = 'f'",
-						  tbinfo->dobj.catId.oid);
+		if (fout->remoteVersion >= 110000)
+			appendPQExpBuffer(query,
+							  "SELECT tableoid, oid, conname, confrelid, "
+							  "pg_catalog.pg_get_constraintdef(oid) AS condef "
+							  "FROM pg_catalog.pg_constraint "
+							  "WHERE conrelid = '%u'::pg_catalog.oid "
+							  "AND conparentid = 0 "
+							  "AND contype = 'f'",
+							  tbinfo->dobj.catId.oid);
+		else
+			appendPQExpBuffer(query,
+							  "SELECT tableoid, oid, conname, confrelid, "
+							  "pg_catalog.pg_get_constraintdef(oid) AS condef "
+							  "FROM pg_catalog.pg_constraint "
+							  "WHERE conrelid = '%u'::pg_catalog.oid "
+							  "AND contype = 'f'",
+							  tbinfo->dobj.catId.oid);
 		res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 
 		ntups = PQntuples(res);
@@ -11877,11 +11887,15 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 		appendPQExpBuffer(q, "\n    SET %s TO ", fmtId(configitem));
 
 		/*
-		 * Some GUC variable names are 'LIST' type and hence must not be
-		 * quoted.
+		 * Variables that are marked GUC_LIST_QUOTE were already fully quoted
+		 * by flatten_set_variable_args() before they were put into the
+		 * proconfig array; we mustn't re-quote them or we'll make a mess.
+		 * Variables that are not so marked should just be emitted as simple
+		 * string literals.  If the variable is not known to
+		 * variable_is_guc_list_quote(), we'll do the latter; this makes it
+		 * unsafe to use GUC_LIST_QUOTE for extension variables.
 		 */
-		if (pg_strcasecmp(configitem, "DateStyle") == 0
-			|| pg_strcasecmp(configitem, "search_path") == 0)
+		if (variable_is_guc_list_quote(configitem))
 			appendPQExpBufferStr(q, pos);
 		else
 			appendStringLiteralAH(q, pos, fout);
@@ -16384,18 +16398,28 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	}
 	else if (coninfo->contype == 'f')
 	{
+		char *only;
+
+		/*
+		 * Foreign keys on partitioned tables are always declared as inheriting
+		 * to partitions; for all other cases, emit them as applying ONLY
+		 * directly to the named table, because that's how they work for
+		 * regular inherited tables.
+		 */
+		only = tbinfo->relkind == RELKIND_PARTITIONED_TABLE ? "" : "ONLY ";
+
 		/*
 		 * XXX Potentially wrap in a 'SET CONSTRAINTS OFF' block so that the
 		 * current table data is not processed
 		 */
-		appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n",
-						  fmtQualifiedDumpable(tbinfo));
+		appendPQExpBuffer(q, "ALTER TABLE %s%s\n",
+						  only, fmtQualifiedDumpable(tbinfo));
 		appendPQExpBuffer(q, "    ADD CONSTRAINT %s %s;\n",
 						  fmtId(coninfo->dobj.name),
 						  coninfo->condef);
 
-		appendPQExpBuffer(delq, "ALTER TABLE ONLY %s ",
-						  fmtQualifiedDumpable(tbinfo));
+		appendPQExpBuffer(delq, "ALTER TABLE %s%s ",
+						  only, fmtQualifiedDumpable(tbinfo));
 		appendPQExpBuffer(delq, "DROP CONSTRAINT %s;\n",
 						  fmtId(coninfo->dobj.name));
 

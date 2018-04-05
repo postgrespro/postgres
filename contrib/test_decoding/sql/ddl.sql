@@ -67,7 +67,7 @@ INSERT INTO replication_example(somedata, somenum) VALUES (4, 1);
 SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');
 
 ALTER TABLE replication_example ALTER COLUMN somenum TYPE int4 USING (somenum::int4);
--- throw away changes, they contain oids
+-- check that this doesn't produce any changes from the heap rewrite
 SELECT count(data) FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');
 
 INSERT INTO replication_example(somedata, somenum) VALUES (5, 1);
@@ -93,12 +93,27 @@ COMMIT;
 /* display results */
 SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');
 
--- hide changes bc of oid visible in full table rewrites
+-- MERGE support
+BEGIN;
+MERGE INTO replication_example t
+	USING (SELECT i as id, i as data, i as num FROM generate_series(-20, 5) i) s
+	ON t.id = s.id
+	WHEN MATCHED AND t.id < 0 THEN
+		UPDATE SET somenum = somenum + 1
+	WHEN MATCHED AND t.id >= 0 THEN
+		DELETE
+	WHEN NOT MATCHED THEN
+		INSERT VALUES (s.*);
+COMMIT;
+
+/* display results */
+SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');
+
 CREATE TABLE tr_unique(id2 serial unique NOT NULL, data int);
 INSERT INTO tr_unique(data) VALUES(10);
 ALTER TABLE tr_unique RENAME TO tr_pkey;
 ALTER TABLE tr_pkey ADD COLUMN id serial primary key;
-SELECT count(data) FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');
+SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1', 'include-rewrites', '1');
 
 INSERT INTO tr_pkey(data) VALUES(1);
 --show deletion with primary key
