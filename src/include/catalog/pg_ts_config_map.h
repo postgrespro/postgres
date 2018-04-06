@@ -41,6 +41,11 @@ CATALOG(pg_ts_config_map,3603) BKI_WITHOUT_OIDS
 {
 	Oid			mapcfg;			/* OID of configuration owning this entry */
 	int32		maptokentype;	/* token type from parser */
+
+	/*
+	 * mapdicts is the only one variable-length field so it is safe to use
+	 * it directly, without hiding from C interface.
+	 */
 	jsonb		mapdicts;		/* dictionary map Jsonb representation */
 } FormData_pg_ts_config_map;
 

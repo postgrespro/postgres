@@ -240,9 +240,6 @@ SELECT to_tsvector('thesaurus_tst', 'one postgres one two one two three one');
 SELECT to_tsvector('thesaurus_tst', 'Supernovae star is very new star and usually called supernovae (abbreviation SN)');
 SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a tickets');
 
-ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH english_stem UNION simple;
-SELECT to_tsvector('thesaurus_tst', 'The Mysterious Rings of Supernova 1987A');
-
 ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH CASE
 	thesaurus WHEN MATCH THEN KEEP ELSE english_stem
 END;
@@ -276,6 +273,16 @@ ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING
 SELECT to_tsvector('thesaurus_tst', 'one two');
 SELECT to_tsvector('thesaurus_tst', 'one two three');
 SELECT to_tsvector('thesaurus_tst', 'one two books');
+
+CREATE TEXT SEARCH CONFIGURATION operators_tst (
+						COPY=thesaurus_tst
+);
+
+ALTER TEXT SEARCH CONFIGURATION operators_tst ALTER MAPPING FOR asciiword WITH english_stem UNION simple;
+SELECT to_tsvector('operators_tst', 'The Mysterious Rings of Supernova 1987A');
+
+ALTER TEXT SEARCH CONFIGURATION operators_tst ALTER MAPPING FOR asciiword WITH english_stem UNION (synonym, simple);
+SELECT to_tsvector('operators_tst', 'The Mysterious Rings of Supernova 1987A Postgres');
 
 -- invalid: non-lowercase quoted identifiers
 CREATE TEXT SEARCH DICTIONARY tsdict_case

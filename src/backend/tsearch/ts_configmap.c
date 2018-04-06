@@ -150,8 +150,18 @@ static void
 TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 {
 
-	if (expression->left)
-		TSMapPrintElement(expression->left, result);
+	Assert(expression->left);
+	if (expression->left->type == TSMAP_EXPRESSION &&
+		expression->left->value.objectExpression->operator != expression->operator)
+	{
+		appendStringInfoChar(result, '(');
+	}
+	TSMapPrintElement(expression->left, result);
+	if (expression->left->type == TSMAP_EXPRESSION &&
+		expression->left->value.objectExpression->operator != expression->operator)
+	{
+		appendStringInfoChar(result, ')');
+	}
 
 	switch (expression->operator)
 	{
@@ -178,8 +188,18 @@ TSMapPrintExpression(TSMapExpression *expression, StringInfo result)
 			break;
 	}
 
-	if (expression->right)
-		TSMapPrintElement(expression->right, result);
+	Assert(expression->right);
+	if (expression->right->type == TSMAP_EXPRESSION &&
+		expression->right->value.objectExpression->operator != expression->operator)
+	{
+		appendStringInfoChar(result, '(');
+	}
+	TSMapPrintElement(expression->right, result);
+	if (expression->right->type == TSMAP_EXPRESSION &&
+		expression->right->value.objectExpression->operator != expression->operator)
+	{
+		appendStringInfoChar(result, ')');
+	}
 }
 
 /*

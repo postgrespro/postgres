@@ -679,13 +679,6 @@ SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a
  'card':3,10 'invit':2,9 'like':6 'look':5 'order':1,8
 (1 row)
 
-ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH english_stem UNION simple;
-SELECT to_tsvector('thesaurus_tst', 'The Mysterious Rings of Supernova 1987A');
-                                     to_tsvector                                      
---------------------------------------------------------------------------------------
- '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'supernova':5 'the':1
-(1 row)
-
 ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR asciiword WITH CASE
 	thesaurus WHEN MATCH THEN KEEP ELSE english_stem
 END;
@@ -824,6 +817,23 @@ SELECT to_tsvector('thesaurus_tst', 'one two books');
    to_tsvector   
 -----------------
  '12':1 'book':2
+(1 row)
+
+CREATE TEXT SEARCH CONFIGURATION operators_tst (
+						COPY=thesaurus_tst
+);
+ALTER TEXT SEARCH CONFIGURATION operators_tst ALTER MAPPING FOR asciiword WITH english_stem UNION simple;
+SELECT to_tsvector('operators_tst', 'The Mysterious Rings of Supernova 1987A');
+                                     to_tsvector                                      
+--------------------------------------------------------------------------------------
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'ring':3 'rings':3 'supernova':5 'the':1
+(1 row)
+
+ALTER TEXT SEARCH CONFIGURATION operators_tst ALTER MAPPING FOR asciiword WITH english_stem UNION (synonym, simple);
+SELECT to_tsvector('operators_tst', 'The Mysterious Rings of Supernova 1987A Postgres');
+                                                to_tsvector                                                
+-----------------------------------------------------------------------------------------------------------
+ '1987a':6 'mysteri':2 'mysterious':2 'of':4 'pgsql':7 'postgr':7 'ring':3 'rings':3 'supernova':5 'the':1
 (1 row)
 
 -- invalid: non-lowercase quoted identifiers
