@@ -27,7 +27,8 @@ extern TupleTableSlot *ExecDelete(ModifyTableState *mtstate,
 		   ItemPointer tupleid, HeapTuple oldtuple, TupleTableSlot *planSlot,
 		   EPQState *epqstate, EState *estate, bool *tupleDeleted,
 		   bool processReturning, HeapUpdateFailureData *hufdp,
-		   MergeActionState *actionState, bool canSetTag);
+		   MergeActionState *actionState, bool canSetTag,
+		   bool changingPart);
 extern TupleTableSlot *ExecUpdate(ModifyTableState *mtstate,
 		   ItemPointer tupleid, HeapTuple oldtuple, TupleTableSlot *slot,
 		   TupleTableSlot *planSlot, EPQState *epqstate, EState *estate,
@@ -39,5 +40,6 @@ extern TupleTableSlot *ExecInsert(ModifyTableState *mtstate,
 		   EState *estate,
 		   MergeActionState *actionState,
 		   bool canSetTag);
+extern void ExecCheckPlanOutput(Relation resultRel, List *targetList);
 
 #endif							/* NODEMODIFYTABLE_H */

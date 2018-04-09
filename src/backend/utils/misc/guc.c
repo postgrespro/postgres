@@ -32,6 +32,7 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
@@ -68,6 +69,7 @@
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "storage/bufmgr.h"
+#include "storage/checksum.h"
 #include "storage/dsm_impl.h"
 #include "storage/standby.h"
 #include "storage/fd.h"
@@ -192,6 +194,7 @@ static void assign_application_name(const char *newval, void *extra);
 static bool check_cluster_name(char **newval, void **extra, GucSource source);
 static const char *show_unix_socket_permissions(void);
 static const char *show_log_file_mode(void);
+static const char *show_data_directory_mode(void);
 
 /* Private functions in guc-file.l that need to be called from guc.c */
 static ConfigVariable *ProcessConfigFileInternal(GucContext context,
@@ -420,6 +423,17 @@ static const struct config_enum_entry password_encryption_options[] = {
 };
 
 /*
+ * data_checksum used to be a boolean, but was only set by initdb so there is
+ * no need to support variants of boolean input.
+ */
+static const struct config_enum_entry data_checksum_options[] = {
+	{"on", DATA_CHECKSUMS_ON, true},
+	{"off", DATA_CHECKSUMS_OFF, true},
+	{"inprogress", DATA_CHECKSUMS_INPROGRESS, true},
+	{NULL, 0, false}
+};
+
+/*
  * Options for enum values stored in other modules
  */
 extern const struct config_enum_entry wal_level_options[];
@@ -514,7 +528,7 @@ static int	max_identifier_length;
 static int	block_size;
 static int	segment_size;
 static int	wal_block_size;
-static bool data_checksums;
+static int	data_checksums_tmp; /* only accessed locally! */
 static bool integer_datetimes;
 static bool assert_enabled;
 
@@ -1684,17 +1698,6 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"data_checksums", PGC_INTERNAL, PRESET_OPTIONS,
-			gettext_noop("Shows whether data checksums are turned on for this cluster."),
-			NULL,
-			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
-		},
-		&data_checksums,
-		false,
-		NULL, NULL, NULL
-	},
-
-	{
 		{"syslog_sequence_numbers", PGC_SIGHUP, LOGGING_WHERE,
 			gettext_noop("Add sequence number to syslog messages to avoid duplicate suppression."),
 			NULL
@@ -2040,6 +2043,21 @@ static struct config_int ConfigureNamesInt[] =
 		&Log_file_mode,
 		0600, 0000, 0777,
 		NULL, NULL, show_log_file_mode
+	},
+
+
+	{
+		{"data_directory_mode", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Mode of the data directory."),
+			gettext_noop("The parameter value is a numeric mode specification "
+						 "in the form accepted by the chmod and umask system "
+						 "calls. (To use the customary octal format the number "
+						 "must start with a 0 (zero).)"),
+			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&data_directory_mode,
+		0700, 0000, 0777,
+		NULL, NULL, show_data_directory_mode
 	},
 
 	{
@@ -4109,6 +4127,17 @@ static struct config_enum ConfigureNamesEnum[] =
 		&Password_encryption,
 		PASSWORD_TYPE_MD5, password_encryption_options,
 		NULL, NULL, NULL
+	},
+
+	{
+		{"data_checksums", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Shows whether data checksums are turned on for this cluster."),
+			NULL,
+			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&data_checksums_tmp,
+		DATA_CHECKSUMS_OFF, data_checksum_options,
+		NULL, NULL, show_data_checksums
 	},
 
 	/* End-of-list marker */
@@ -10728,6 +10757,15 @@ show_log_file_mode(void)
 	static char buf[12];
 
 	snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
+	return buf;
+}
+
+static const char *
+show_data_directory_mode(void)
+{
+	static char buf[12];
+
+	snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
 	return buf;
 }
 

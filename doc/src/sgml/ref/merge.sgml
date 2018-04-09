@@ -285,6 +285,7 @@ DELETE
       <command>INSERT</command> actions cannot contain sub-selects. 
      </para>
      <para>
+      Only one <literal>VALUES</literal> clause can be specified.
       The <literal>VALUES</literal> clause can only refer to columns from
       the source relation, since by definition there is no matching target row.
      </para>

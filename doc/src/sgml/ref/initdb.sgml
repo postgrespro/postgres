@@ -77,6 +77,14 @@ PostgreSQL documentation
   </para>
 
   <para>
+    For security reasons the new cluster created by <command>initdb</command>
+    will only be accessible by the cluster owner by default.  The
+    <option>--allow-group-access</option> option allows any user in the same
+    group as the cluster owner to read files in the cluster.  This is useful
+    for performing backups as a non-privileged user.
+  </para>
+
+  <para>
    <command>initdb</command> initializes the database cluster's default
    locale and character set encoding. The character set encoding,
    collation order (<literal>LC_COLLATE</literal>) and character set classes
@@ -188,6 +196,17 @@ PostgreSQL documentation
       </listitem>
      </varlistentry>
 
+     <varlistentry id="app-initdb-allow-group-access" xreflabel="group access">
+      <term><option>-g</option></term>
+      <term><option>--allow-group-access</option></term>
+      <listitem>
+       <para>
+        Allows users in the same group as the cluster owner to read all cluster
+        files created by <command>initdb</command>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="app-initdb-data-checksums" xreflabel="data checksums">
       <term><option>-k</option></term>
       <term><option>--data-checksums</option></term>
@@ -195,9 +214,9 @@ PostgreSQL documentation
        <para>
         Use checksums on data pages to help detect corruption by the
         I/O system that would otherwise be silent. Enabling checksums
-        may incur a noticeable performance penalty. This option can only
-        be set during initialization, and cannot be changed later. If
-        set, checksums are calculated for all objects, in all databases.
+        may incur a noticeable performance penalty. If set, checksums
+        are calculated for all objects, in all databases. See
+        <xref linkend="checksums" /> for details.
        </para>
       </listitem>
      </varlistentry>

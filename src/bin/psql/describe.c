@@ -14,9 +14,9 @@
 
 #include <ctype.h>
 
-#include "catalog/pg_attribute.h"
-#include "catalog/pg_class.h"
-#include "catalog/pg_default_acl.h"
+#include "catalog/pg_attribute_d.h"
+#include "catalog/pg_class_d.h"
+#include "catalog/pg_default_acl_d.h"
 #include "fe_utils/string_utils.h"
 
 #include "common.h"
@@ -5203,7 +5203,7 @@ listPublications(const char *pattern)
 	PQExpBufferData buf;
 	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
-	static const bool translate_columns[] = {false, false, false, false, false, false};
+	static const bool translate_columns[] = {false, false, false, false, false, false, false};
 
 	if (pset.sversion < 100000)
 	{
@@ -5223,13 +5223,17 @@ listPublications(const char *pattern)
 					  "  puballtables AS \"%s\",\n"
 					  "  pubinsert AS \"%s\",\n"
 					  "  pubupdate AS \"%s\",\n"
-					  "  pubdelete AS \"%s\"\n",
+					  "  pubdelete AS \"%s\"",
 					  gettext_noop("Name"),
 					  gettext_noop("Owner"),
 					  gettext_noop("All tables"),
 					  gettext_noop("Inserts"),
 					  gettext_noop("Updates"),
 					  gettext_noop("Deletes"));
+	if (pset.sversion >= 110000)
+		appendPQExpBuffer(&buf,
+						  ",\n  pubtruncate AS \"%s\"",
+						  gettext_noop("Truncates"));
 
 	appendPQExpBufferStr(&buf,
 						 "\nFROM pg_catalog.pg_publication\n");
@@ -5270,6 +5274,7 @@ describePublications(const char *pattern)
 	PQExpBufferData buf;
 	int			i;
 	PGresult   *res;
+	bool		has_pubtruncate;
 
 	if (pset.sversion < 100000)
 	{
@@ -5281,13 +5286,19 @@ describePublications(const char *pattern)
 		return true;
 	}
 
+	has_pubtruncate = (pset.sversion >= 110000);
+
 	initPQExpBuffer(&buf);
 
 	printfPQExpBuffer(&buf,
 					  "SELECT oid, pubname,\n"
 					  "  pg_catalog.pg_get_userbyid(pubowner) AS owner,\n"
-					  "  puballtables, pubinsert, pubupdate, pubdelete\n"
-					  "FROM pg_catalog.pg_publication\n");
+					  "  puballtables, pubinsert, pubupdate, pubdelete");
+	if (has_pubtruncate)
+		appendPQExpBuffer(&buf,
+						  ", pubtruncate");
+	appendPQExpBuffer(&buf,
+					  "\nFROM pg_catalog.pg_publication\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
 						  NULL, "pubname", NULL,
@@ -5333,6 +5344,9 @@ describePublications(const char *pattern)
 		printTableOpt myopt = pset.popt.topt;
 		printTableContent cont;
 
+		if (has_pubtruncate)
+			ncols++;
+
 		initPQExpBuffer(&title);
 		printfPQExpBuffer(&title, _("Publication %s"), pubname);
 		printTableInit(&cont, &myopt, title.data, ncols, nrows);
@@ -5342,12 +5356,16 @@ describePublications(const char *pattern)
 		printTableAddHeader(&cont, gettext_noop("Inserts"), true, align);
 		printTableAddHeader(&cont, gettext_noop("Updates"), true, align);
 		printTableAddHeader(&cont, gettext_noop("Deletes"), true, align);
+		if (has_pubtruncate)
+			printTableAddHeader(&cont, gettext_noop("Truncates"), true, align);
 
 		printTableAddCell(&cont, PQgetvalue(res, i, 2), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 3), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 4), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 5), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 6), false, false);
+		if (has_pubtruncate)
+			printTableAddCell(&cont, PQgetvalue(res, i, 7), false, false);
 
 		if (!puballtables)
 		{

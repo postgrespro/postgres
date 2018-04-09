@@ -349,13 +349,15 @@ AuxiliaryProcessMain(int argc, char *argv[])
 			proc_exit(1);
 	}
 
-	/* Validate we have been given a reasonable-looking DataDir */
-	Assert(DataDir);
-	ValidatePgVersion(DataDir);
-
-	/* Change into DataDir (if under postmaster, should be done already) */
+	/*
+	 * Validate we have been given a reasonable-looking DataDir and change
+	 * into it (if under postmaster, should be done already).
+	 */
 	if (!IsUnderPostmaster)
+	{
+		checkDataDir();
 		ChangeToDataDir();
+	}
 
 	/* If standalone, create lockfile for data directory */
 	if (!IsUnderPostmaster)
@@ -498,7 +500,7 @@ BootstrapModeMain(void)
 	 */
 	InitProcess();
 
-	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, NULL);
+	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, NULL, false);
 
 	/* Initialize stuff for bootstrap-file processing */
 	for (i = 0; i < MAXATTR; i++)
@@ -616,7 +618,7 @@ boot_openrel(char *relname)
 		 relname, (int) ATTRIBUTE_FIXED_PART_SIZE);
 
 	boot_reldesc = heap_openrv(makeRangeVar(NULL, relname, -1), NoLock);
-	numattr = boot_reldesc->rd_rel->relnatts;
+	numattr = RelationGetNumberOfAttributes(boot_reldesc);
 	for (i = 0; i < numattr; i++)
 	{
 		if (attrtypes[i] == NULL)

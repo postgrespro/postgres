@@ -63,7 +63,7 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 	opclass = (oidvector *) DatumGetPointer(indclassDatum);
 
 	/* Build scankey for every attribute in the index. */
-	for (attoff = 0; attoff < RelationGetNumberOfAttributes(idxrel); attoff++)
+	for (attoff = 0; attoff < IndexRelationGetNumberOfKeyAttributes(idxrel); attoff++)
 	{
 		Oid			operator;
 		Oid			opfamily;
@@ -131,7 +131,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	/* Start an index scan. */
 	InitDirtySnapshot(snap);
 	scan = index_beginscan(rel, idxrel, &snap,
-						   RelationGetNumberOfAttributes(idxrel),
+						   IndexRelationGetNumberOfKeyAttributes(idxrel),
 						   0);
 
 	/* Build scan key. */
@@ -140,7 +140,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 retry:
 	found = false;
 
-	index_rescan(scan, skey, RelationGetNumberOfAttributes(idxrel), NULL, 0);
+	index_rescan(scan, skey, IndexRelationGetNumberOfKeyAttributes(idxrel), NULL, 0);
 
 	/* Try to find the tuple */
 	if ((scantuple = index_getnext(scan, ForwardScanDirection)) != NULL)
@@ -191,9 +191,14 @@ retry:
 				break;
 			case HeapTupleUpdated:
 				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent update, retrying")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+				else
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("concurrent update, retrying")));
 				goto retry;
 			case HeapTupleInvisible:
 				elog(ERROR, "attempted to lock invisible tuple");
@@ -349,9 +354,14 @@ retry:
 				break;
 			case HeapTupleUpdated:
 				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent update, retrying")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+				else
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("concurrent update, retrying")));
 				goto retry;
 			case HeapTupleInvisible:
 				elog(ERROR, "attempted to lock invisible tuple");

@@ -1518,19 +1518,34 @@ typedef struct MergeStmt
 	RangeVar   *relation;			/* target relation to merge into */
 	Node	   *source_relation;	/* source relation */
 	Node	   *join_condition; /* join condition between source and target */
-	List	   *mergeActionList;	/* list of MergeAction(s) */
+	List	   *mergeWhenClauses;	/* list of MergeWhenClause(es) */
 	WithClause *withClause;		/* WITH clause */
 } MergeStmt;
 
-typedef struct MergeAction
+typedef struct MergeWhenClause
 {
 	NodeTag		type;
 	bool		matched;		/* true=MATCHED, false=NOT MATCHED */
-	Node	   *condition;		/* WHEN AND conditions (raw parser) */
-	Node	   *qual;			/* transformed WHEN AND conditions */
 	CmdType		commandType;	/* INSERT/UPDATE/DELETE/DO NOTHING */
-	Node	   *stmt;			/* T_UpdateStmt etc */
-	List	   *targetList;		/* the target list (of ResTarget) */
+	Node	   *condition;		/* WHEN AND conditions (raw parser) */
+	List	   *targetList;		/* INSERT/UPDATE targetlist */
+	/* the following members are only useful for INSERT action */
+	List	   *cols;			/* optional: names of the target columns */
+	List	   *values;			/* VALUES to INSERT, or NULL */
+	OverridingKind override;	/* OVERRIDING clause */
+} MergeWhenClause;
+
+/*
+ * WHEN [NOT] MATCHED THEN action info
+ */
+typedef struct MergeAction
+{
+	NodeTag     type;
+	bool        matched;        /* true=MATCHED, false=NOT MATCHED */
+	OverridingKind	override;	/* OVERRIDING clause */
+	Node       *qual;           /* transformed WHEN AND conditions */
+	CmdType     commandType;    /* INSERT/UPDATE/DELETE/DO NOTHING */
+	List       *targetList;     /* the target list (of ResTarget) */
 } MergeAction;
 
 /* ----------------------
@@ -2132,7 +2147,10 @@ typedef struct Constraint
 	char		generated_when;
 
 	/* Fields used for unique constraints (UNIQUE and PRIMARY KEY): */
-	List	   *keys;			/* String nodes naming referenced column(s) */
+	List	   *keys;			/* String nodes naming referenced key
+								 * column(s) */
+	List	   *including;		/* String nodes naming referenced nonkey
+								 * column(s) */
 
 	/* Fields used for EXCLUSION constraints: */
 	List	   *exclusions;		/* list of (IndexElem, operator name) pairs */
@@ -2745,6 +2763,8 @@ typedef struct IndexStmt
 	char	   *accessMethod;	/* name of access method (eg. btree) */
 	char	   *tableSpace;		/* tablespace, or NULL for default */
 	List	   *indexParams;	/* columns to index: a list of IndexElem */
+	List	   *indexIncludingParams;	/* additional columns to index: a list
+										 * of IndexElem */
 	List	   *options;		/* WITH clause options: a list of DefElem */
 	Node	   *whereClause;	/* qualification (partial-index predicate) */
 	List	   *excludeOpNames; /* exclusion operator names, or NIL if none */

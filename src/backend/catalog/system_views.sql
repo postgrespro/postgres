@@ -986,6 +986,11 @@ CREATE OR REPLACE FUNCTION pg_stop_backup (
   RETURNS SETOF record STRICT VOLATILE LANGUAGE internal as 'pg_stop_backup_v2'
   PARALLEL RESTRICTED;
 
+CREATE OR REPLACE FUNCTION pg_enable_data_checksums (
+        cost_delay int DEFAULT 0, cost_limit int DEFAULT 100)
+  RETURNS void STRICT VOLATILE LANGUAGE internal AS 'enable_data_checksums'
+  PARALLEL RESTRICTED;
+
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
   json_populate_record(base anyelement, from_json json, use_json_as_text boolean DEFAULT false)
@@ -1109,6 +1114,20 @@ REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_ls_logdir() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_ls_waldir() FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_read_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_file(text,bigint,bigint) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_file(text,bigint,bigint,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_stat_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_file(text,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_ls_dir(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_dir(text,boolean,boolean) FROM public;
 
 --
 -- We also set up some things as accessible to standard roles.

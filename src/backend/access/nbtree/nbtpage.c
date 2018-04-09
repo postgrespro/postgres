@@ -33,6 +33,7 @@
 #include "storage/predicate.h"
 #include "utils/snapmgr.h"
 
+static void _bt_cachemetadata(Relation rel, BTMetaPageData *metad);
 static bool _bt_mark_page_halfdead(Relation rel, Buffer buf, BTStack stack);
 static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
 						 bool *rightsib_empty);
@@ -85,7 +86,7 @@ void
 _bt_upgrademetapage(Page page)
 {
 	BTMetaPageData *metad;
-	BTPageOpaque metaopaque;
+	BTPageOpaque metaopaque PG_USED_FOR_ASSERTS_ONLY;
 
 	metad = BTPageGetMeta(page);
 	metaopaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -106,11 +107,49 @@ _bt_upgrademetapage(Page page)
 }
 
 /*
+ * Cache metadata from meta page to rel->rd_amcache.
+ */
+static void
+_bt_cachemetadata(Relation rel, BTMetaPageData *metad)
+{
+	/* We assume rel->rd_amcache was already freed by caller */
+	Assert(rel->rd_amcache == NULL);
+	rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
+										 sizeof(BTMetaPageData));
+
+	/*
+	 * Meta page should be of supported version (should be already checked by
+	 * caller).
+	 */
+	Assert(metad->btm_version >= BTREE_MIN_VERSION &&
+		   metad->btm_version <= BTREE_VERSION);
+
+	if (metad->btm_version == BTREE_VERSION)
+	{
+		/* Last version of meta-data, no need to upgrade */
+		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
+	}
+	else
+	{
+		BTMetaPageData *cached_metad = (BTMetaPageData *) rel->rd_amcache;
+
+		/*
+		 * Upgrade meta-data: copy available information from meta-page and
+		 * fill new fields with default values.
+		 */
+		memcpy(rel->rd_amcache, metad, offsetof(BTMetaPageData, btm_oldest_btpo_xact));
+		cached_metad->btm_version = BTREE_VERSION;
+		cached_metad->btm_oldest_btpo_xact = InvalidTransactionId;
+		cached_metad->btm_last_cleanup_num_heap_tuples = -1.0;
+	}
+}
+
+/*
  *	_bt_update_meta_cleanup_info() -- Update cleanup-related information in
  *									  the metapage.
  *
  *		This routine checks if provided cleanup-related information is matching
- *		to those written in the metapage.  On mismatch, metapage is overritten.
+ *		to those written in the metapage.  On mismatch, metapage is overwritten.
  */
 void
 _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
@@ -118,7 +157,6 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 {
 	Buffer			metabuf;
 	Page			metapg;
-	BTPageOpaque	metaopaque;
 	BTMetaPageData *metad;
 	bool			needsRewrite = false;
 	XLogRecPtr		recptr;
@@ -126,7 +164,6 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	/* read the metapage and check if it needs rewrite */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
-	metaopaque = (BTPageOpaque) PageGetSpecialPointer(metapg);
 	metad = BTPageGetMeta(metapg);
 
 	/* outdated version of metapage always needs rewrite */
@@ -405,9 +442,7 @@ _bt_getroot(Relation rel, int access)
 		/*
 		 * Cache the metapage data for next time
 		 */
-		rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
-											 sizeof(BTMetaPageData));
-		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
+		_bt_cachemetadata(rel, metad);
 
 		/*
 		 * We are done with the metapage; arrange to release it via first
@@ -606,9 +641,7 @@ _bt_getrootheight(Relation rel)
 		/*
 		 * Cache the metapage data for next time
 		 */
-		rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
-											 sizeof(BTMetaPageData));
-		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
+		_bt_cachemetadata(rel, metad);
 
 		_bt_relbuf(rel, metabuf);
 	}
@@ -1110,7 +1143,7 @@ _bt_lock_branch_parent(Relation rel, BlockNumber child, BTStack stack,
 	 * Locate the downlink of "child" in the parent (updating the stack entry
 	 * if needed)
 	 */
-	ItemPointerSet(&(stack->bts_btentry.t_tid), child, P_HIKEY);
+	stack->bts_btentry = child;
 	pbuf = _bt_getstackbuf(rel, stack, BT_WRITE);
 	if (pbuf == InvalidBuffer)
 		elog(ERROR, "failed to re-find parent key in index \"%s\" for deletion target page %u",
@@ -1381,8 +1414,9 @@ _bt_pagedel(Relation rel, Buffer buf)
 				/* we need an insertion scan key for the search, so build one */
 				itup_scankey = _bt_mkscankey(rel, targetkey);
 				/* find the leftmost leaf page containing this key */
-				stack = _bt_search(rel, rel->rd_rel->relnatts, itup_scankey,
-								   false, &lbuf, BT_READ, NULL);
+				stack = _bt_search(rel,
+								   IndexRelationGetNumberOfKeyAttributes(rel),
+								   itup_scankey, false, &lbuf, BT_READ, NULL);
 				/* don't need a pin on the page */
 				_bt_relbuf(rel, lbuf);
 
@@ -1518,15 +1552,15 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 #ifdef USE_ASSERT_CHECKING
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	Assert(ItemPointerGetBlockNumber(&(itup->t_tid)) == target);
+	Assert(BTreeInnerTupleGetDownLink(itup) == target);
 #endif
 
 	nextoffset = OffsetNumberNext(topoff);
 	itemid = PageGetItemId(page, nextoffset);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	if (ItemPointerGetBlockNumber(&(itup->t_tid)) != rightsib)
+	if (BTreeInnerTupleGetDownLink(itup) != rightsib)
 		elog(ERROR, "right sibling %u of block %u is not next child %u of block %u in index \"%s\"",
-			 rightsib, target, ItemPointerGetBlockNumber(&(itup->t_tid)),
+			 rightsib, target, BTreeInnerTupleGetDownLink(itup),
 			 BufferGetBlockNumber(topparent), RelationGetRelationName(rel));
 
 	/*
@@ -1549,7 +1583,7 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	ItemPointerSet(&(itup->t_tid), rightsib, P_HIKEY);
+	BTreeInnerTupleSetDownLink(itup, rightsib);
 
 	nextoffset = OffsetNumberNext(topoff);
 	PageIndexTupleDelete(page, nextoffset);
@@ -1568,7 +1602,7 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 	MemSet(&trunctuple, 0, sizeof(IndexTupleData));
 	trunctuple.t_info = sizeof(IndexTupleData);
 	if (target != leafblkno)
-		ItemPointerSet(&trunctuple.t_tid, target, P_HIKEY);
+		ItemPointerSetBlockNumber(&trunctuple.t_tid, target);
 	else
 		ItemPointerSetInvalid(&trunctuple.t_tid);
 	if (PageAddItem(page, (Item) &trunctuple, sizeof(IndexTupleData), P_HIKEY,
@@ -1680,7 +1714,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 	 */
 	if (ItemPointerIsValid(leafhikey))
 	{
-		target = ItemPointerGetBlockNumber(leafhikey);
+		target = ItemPointerGetBlockNumberNoCheck(leafhikey);
 		Assert(target != leafblkno);
 
 		/* fetch the block number of the topmost parent's left sibling */
@@ -1796,7 +1830,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 
 		/* remember the next non-leaf child down in the branch. */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		nextchild = ItemPointerGetBlockNumber(&((IndexTuple) PageGetItem(page, itemid))->t_tid);
+		nextchild = BTreeInnerTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
 		if (nextchild == leafblkno)
 			nextchild = InvalidBlockNumber;
 	}
@@ -1887,7 +1921,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 		if (nextchild == InvalidBlockNumber)
 			ItemPointerSetInvalid(leafhikey);
 		else
-			ItemPointerSet(leafhikey, nextchild, P_HIKEY);
+			ItemPointerSetBlockNumber(leafhikey, nextchild);
 	}
 
 	/*

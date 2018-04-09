@@ -3731,8 +3731,7 @@ PostgresMain(int argc, char *argv[],
 		 * Validate we have been given a reasonable-looking DataDir (if under
 		 * postmaster, assume postmaster did this already).
 		 */
-		Assert(DataDir);
-		ValidatePgVersion(DataDir);
+		checkDataDir();
 
 		/* Change into DataDir (if under postmaster, was done already) */
 		ChangeToDataDir();
@@ -3775,7 +3774,7 @@ PostgresMain(int argc, char *argv[],
 	 * it inside InitPostgres() instead.  In particular, anything that
 	 * involves database access should be there, not here.
 	 */
-	InitPostgres(dbname, InvalidOid, username, InvalidOid, NULL);
+	InitPostgres(dbname, InvalidOid, username, InvalidOid, NULL, false);
 
 	/*
 	 * If the PostmasterContext is still around, recycle the space; we don't

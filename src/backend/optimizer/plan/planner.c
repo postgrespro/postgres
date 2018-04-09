@@ -22,7 +22,7 @@
 #include "access/parallel.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
-#include "catalog/pg_constraint_fn.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
@@ -616,7 +616,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	root->multiexpr_params = NIL;
 	root->eq_classes = NIL;
 	root->append_rel_list = NIL;
-	root->pcinfo_list = NIL;
 	root->rowMarks = NIL;
 	memset(root->upper_rels, 0, sizeof(root->upper_rels));
 	memset(root->upper_targets, 0, sizeof(root->upper_targets));
@@ -631,6 +630,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	else
 		root->wt_param_id = -1;
 	root->non_recursive_path = NULL;
+	root->partColsUpdated = false;
 
 	/*
 	 * If there is a WITH list, process each WITH query and build an initplan
@@ -1191,12 +1191,12 @@ inheritance_planner(PlannerInfo *root)
 	ListCell   *lc;
 	Index		rti;
 	RangeTblEntry *parent_rte;
+	Relids		partitioned_relids = NULL;
 	List	   *partitioned_rels = NIL;
 	PlannerInfo *parent_root;
 	Query	   *parent_parse;
 	Bitmapset  *parent_relids = bms_make_singleton(top_parentRTindex);
 	PlannerInfo **parent_roots = NULL;
-	bool		partColsUpdated = false;
 
 	Assert(parse->commandType != CMD_INSERT);
 
@@ -1268,10 +1268,12 @@ inheritance_planner(PlannerInfo *root)
 	if (parent_rte->relkind == RELKIND_PARTITIONED_TABLE)
 	{
 		nominalRelation = top_parentRTindex;
-		partitioned_rels = get_partitioned_child_rels(root, top_parentRTindex,
-													  &partColsUpdated);
-		/* The root partitioned table is included as a child rel */
-		Assert(list_length(partitioned_rels) >= 1);
+
+		/*
+		 * Root parent's RT index is always present in the partitioned_rels of
+		 * the ModifyTable node, if one is needed at all.
+		 */
+		partitioned_relids = bms_make_singleton(top_parentRTindex);
 	}
 
 	/*
@@ -1503,6 +1505,15 @@ inheritance_planner(PlannerInfo *root)
 			continue;
 
 		/*
+		 * Add the current parent's RT index to the partitione_rels set if
+		 * we're going to create the ModifyTable path for a partitioned root
+		 * table.
+		 */
+		if (partitioned_relids)
+			partitioned_relids = bms_add_member(partitioned_relids,
+												appinfo->parent_relid);
+
+		/*
 		 * If this is the first non-excluded child, its post-planning rtable
 		 * becomes the initial contents of final_rtable; otherwise, append
 		 * just its modified subquery RTEs to final_rtable.
@@ -1603,6 +1614,21 @@ inheritance_planner(PlannerInfo *root)
 	else
 		rowMarks = root->rowMarks;
 
+	if (partitioned_relids)
+	{
+		int			i;
+
+		i = -1;
+		while ((i = bms_next_member(partitioned_relids, i)) >= 0)
+			partitioned_rels = lappend_int(partitioned_rels, i);
+
+		/*
+		 * If we're going to create ModifyTable at all, the list should
+		 * contain at least one member, that is, the root parent's index.
+		 */
+		Assert(list_length(partitioned_rels) >= 1);
+	}
+
 	/* Create Path representing a ModifyTable to do the UPDATE/DELETE work */
 	add_path(final_rel, (Path *)
 			 create_modifytable_path(root, final_rel,
@@ -1610,7 +1636,7 @@ inheritance_planner(PlannerInfo *root)
 									 parse->canSetTag,
 									 nominalRelation,
 									 partitioned_rels,
-									 partColsUpdated,
+									 root->partColsUpdated,
 									 resultRelations,
 									 0,
 									 subpaths,
@@ -3894,7 +3920,8 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 			paths = lappend(paths, path);
 		}
 		path = (Path *)
-			create_append_path(grouped_rel,
+			create_append_path(root,
+							   grouped_rel,
 							   paths,
 							   NIL,
 							   NULL,
@@ -6145,65 +6172,6 @@ done:
 }
 
 /*
- * get_partitioned_child_rels
- *		Returns a list of the RT indexes of the partitioned child relations
- *		with rti as the root parent RT index. Also sets
- *		*part_cols_updated to true if any of the root rte's updated
- *		columns is used in the partition key either of the relation whose RTI
- *		is specified or of any child relation.
- *
- * Note: This function might get called even for range table entries that
- * are not partitioned tables; in such a case, it will simply return NIL.
- */
-List *
-get_partitioned_child_rels(PlannerInfo *root, Index rti,
-						   bool *part_cols_updated)
-{
-	List	   *result = NIL;
-	ListCell   *l;
-
-	if (part_cols_updated)
-		*part_cols_updated = false;
-
-	foreach(l, root->pcinfo_list)
-	{
-		PartitionedChildRelInfo *pc = lfirst_node(PartitionedChildRelInfo, l);
-
-		if (pc->parent_relid == rti)
-		{
-			result = pc->child_rels;
-			if (part_cols_updated)
-				*part_cols_updated = pc->part_cols_updated;
-			break;
-		}
-	}
-
-	return result;
-}
-
-/*
- * get_partitioned_child_rels_for_join
- *		Build and return a list containing the RTI of every partitioned
- *		relation which is a child of some rel included in the join.
- */
-List *
-get_partitioned_child_rels_for_join(PlannerInfo *root, Relids join_relids)
-{
-	List	   *result = NIL;
-	ListCell   *l;
-
-	foreach(l, root->pcinfo_list)
-	{
-		PartitionedChildRelInfo *pc = lfirst(l);
-
-		if (bms_is_member(pc->parent_relid, join_relids))
-			result = list_concat(result, list_copy(pc->child_rels));
-	}
-
-	return result;
-}
-
-/*
  * add_paths_to_grouping_rel
  *
  * Add non-partial paths to grouping relation.
@@ -6885,8 +6853,9 @@ apply_scanjoin_target_to_paths(PlannerInfo *root,
 		 * node, which would cause this relation to stop appearing to be a
 		 * dummy rel.)
 		 */
-		rel->pathlist = list_make1(create_append_path(rel, NIL, NIL, NULL,
-													  0, false, NIL, -1));
+		rel->pathlist = list_make1(create_append_path(root, rel, NIL, NIL,
+													  NULL, 0, false, NIL,
+													  -1));
 		rel->partial_pathlist = NIL;
 		set_cheapest(rel);
 		Assert(IS_DUMMY_REL(rel));

@@ -42,7 +42,7 @@
 #include "commands/trigger.h"
 #include "executor/execPartition.h"
 #include "executor/executor.h"
-#include "executor/nodeMerge.h"
+#include "executor/execMerge.h"
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
@@ -69,11 +69,6 @@ static void ExecSetupChildParentMapForSubplan(ModifyTableState *mtstate);
 static TupleConversionMap *tupconv_map_for_subplan(ModifyTableState *node,
 						int whichplan);
 
-/* flags for mt_merge_subcommands */
-#define MERGE_INSERT	0x01
-#define MERGE_UPDATE	0x02
-#define MERGE_DELETE	0x04
-
 /*
  * Verify that the tuples to be produced by INSERT or UPDATE match the
  * target relation's rowtype
@@ -86,7 +81,7 @@ static TupleConversionMap *tupconv_map_for_subplan(ModifyTableState *node,
  * The plan output is represented by its targetlist, because that makes
  * handling the dropped-column case easier.
  */
-static void
+void
 ExecCheckPlanOutput(Relation resultRel, List *targetList)
 {
 	TupleDesc	resultDesc = RelationGetDescr(resultRel);
@@ -650,7 +645,8 @@ ExecDelete(ModifyTableState *mtstate,
 		   bool processReturning,
 		   HeapUpdateFailureData *hufdp,
 		   MergeActionState *actionState,
-		   bool canSetTag)
+		   bool canSetTag,
+		   bool changingPart)
 {
 	ResultRelInfo *resultRelInfo;
 	Relation	resultRelationDesc;
@@ -749,7 +745,8 @@ ldelete:;
 							 estate->es_output_cid,
 							 estate->es_crosscheck_snapshot,
 							 true /* wait for commit */ ,
-							 &hufd);
+							 &hufd,
+							 changingPart);
 
 		/*
 		 * Copy the necessary information, if the caller has asked for it. We
@@ -808,6 +805,10 @@ ldelete:;
 					ereport(ERROR,
 							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 							 errmsg("could not serialize access due to concurrent update")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be deleted was already moved to another partition due to concurrent update")));
 
 				if (!ItemPointerEquals(tupleid, &hufd.ctid))
 				{
@@ -1162,7 +1163,7 @@ lreplace:;
 			 */
 			ExecDelete(mtstate, tupleid, oldtuple, planSlot, epqstate,
 					   estate, &tuple_deleted, false, hufdp, NULL,
-					   false);
+					   false /* canSetTag */, true /* changingPart */);
 
 			/*
 			 * For some reason if DELETE didn't happen (e.g. trigger prevented
@@ -1338,6 +1339,10 @@ lreplace:;
 					ereport(ERROR,
 							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 							 errmsg("could not serialize access due to concurrent update")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be updated was already moved to another partition due to concurrent update")));
 
 				if (!ItemPointerEquals(tupleid, &hufd.ctid))
 				{
@@ -1526,6 +1531,14 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 				ereport(ERROR,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 						 errmsg("could not serialize access due to concurrent update")));
+
+			/*
+			 * As long as we don't support an UPDATE of INSERT ON CONFLICT for
+			 * a partitioned table we shouldn't reach to a case where tuple to
+			 * be lock is moved to another partition due to concurrent update
+			 * of the partition key.
+			 */
+			Assert(!ItemPointerIndicatesMovedPartitions(&hufd.ctid));
 
 			/*
 			 * Tell caller to try again from the very start.
@@ -1831,11 +1844,21 @@ ExecPrepareTupleRouting(ModifyTableState *mtstate,
 										proute, estate,
 										partidx);
 
-	/* We do not yet have a way to insert into a foreign partition */
-	if (partrel->ri_FdwRoutine)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot route inserted tuples to a foreign table")));
+	/*
+	 * Set up information needed for routing tuples to the partition if we
+	 * didn't yet (ExecInitRoutingInfo would abort the operation if the
+	 * partition isn't routable).
+	 *
+	 * Note: an UPDATE of a partition key invokes an INSERT that moves the
+	 * tuple to a new partition.  This setup would be needed for a subplan
+	 * partition of such an UPDATE that is chosen as the partition to route
+	 * the tuple to.  The reason we do this setup here rather than in
+	 * ExecSetupPartitionTupleRouting is to avoid aborting such an UPDATE
+	 * unnecessarily due to non-routable subplan partitions that may not be
+	 * chosen for update tuple movement after all.
+	 */
+	if (!partrel->ri_PartitionReadyForRouting)
+		ExecInitRoutingInfo(mtstate, estate, proute, partrel, partidx);
 
 	/*
 	 * Make it look like we are inserting into the partition.
@@ -2269,7 +2292,8 @@ ExecModifyTable(PlanState *pstate)
 			case CMD_DELETE:
 				slot = ExecDelete(node, tupleid, oldtuple, planSlot,
 								  &node->mt_epqstate, estate,
-								  NULL, true, NULL, NULL, node->canSetTag);
+								  NULL, true, NULL, NULL, node->canSetTag,
+								  false /* changingPart */);
 				break;
 			default:
 				elog(ERROR, "unknown operation");
@@ -2536,6 +2560,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		{
 			List	   *rlist = (List *) lfirst(l);
 
+			resultRelInfo->ri_returningList = rlist;
 			resultRelInfo->ri_projectReturning =
 				ExecBuildProjectionInfo(rlist, econtext, slot, &mtstate->ps,
 										resultRelInfo->ri_RelationDesc->rd_att);
@@ -2660,104 +2685,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	}
 
 	resultRelInfo = mtstate->resultRelInfo;
-
-	if (node->mergeActionList)
-	{
-		ListCell   *l;
-		ExprContext *econtext;
-		List	   *mergeMatchedActionStates = NIL;
-		List	   *mergeNotMatchedActionStates = NIL;
-		TupleDesc	relationDesc = resultRelInfo->ri_RelationDesc->rd_att;
-
-		mtstate->mt_merge_subcommands = 0;
-
-		if (mtstate->ps.ps_ExprContext == NULL)
-			ExecAssignExprContext(estate, &mtstate->ps);
-
-		econtext = mtstate->ps.ps_ExprContext;
-
-		/* initialize slot for the existing tuple */
-		Assert(mtstate->mt_existing == NULL);
-		mtstate->mt_existing =
-			ExecInitExtraTupleSlot(mtstate->ps.state,
-								   mtstate->mt_partition_tuple_routing ?
-								   NULL : relationDesc);
-
-		/* initialize slot for merge actions */
-		Assert(mtstate->mt_mergeproj == NULL);
-		mtstate->mt_mergeproj =
-			ExecInitExtraTupleSlot(mtstate->ps.state,
-								   mtstate->mt_partition_tuple_routing ?
-								   NULL : relationDesc);
-
-		/*
-		 * Create a MergeActionState for each action on the mergeActionList
-		 * and add it to either a list of matched actions or not-matched
-		 * actions.
-		 */
-		foreach(l, node->mergeActionList)
-		{
-			MergeAction *action = (MergeAction *) lfirst(l);
-			MergeActionState *action_state = makeNode(MergeActionState);
-			TupleDesc	tupDesc;
-
-			action_state->matched = action->matched;
-			action_state->commandType = action->commandType;
-			action_state->whenqual = ExecInitQual((List *) action->qual,
-					&mtstate->ps);
-
-			/* create target slot for this action's projection */
-			tupDesc = ExecTypeFromTL((List *) action->targetList,
-					resultRelInfo->ri_RelationDesc->rd_rel->relhasoids);
-			action_state->tupDesc = tupDesc;
-
-			/* build action projection state */
-			action_state->proj =
-				ExecBuildProjectionInfo(action->targetList, econtext,
-						mtstate->mt_mergeproj, &mtstate->ps,
-						resultRelInfo->ri_RelationDesc->rd_att);
-
-			/*
-			 * We create two lists - one for WHEN MATCHED actions and one
-			 * for WHEN NOT MATCHED actions - and stick the
-			 * MergeActionState into the appropriate list.
-			 */
-			if (action_state->matched)
-				mergeMatchedActionStates =
-					lappend(mergeMatchedActionStates, action_state);
-			else
-				mergeNotMatchedActionStates =
-					lappend(mergeNotMatchedActionStates, action_state);
-
-			switch (action->commandType)
-			{
-				case CMD_INSERT:
-					ExecCheckPlanOutput(resultRelInfo->ri_RelationDesc,
-										action->targetList);
-					mtstate->mt_merge_subcommands |= MERGE_INSERT;
-					break;
-				case CMD_UPDATE:
-					ExecCheckPlanOutput(resultRelInfo->ri_RelationDesc,
-										action->targetList);
-					mtstate->mt_merge_subcommands |= MERGE_UPDATE;
-					break;
-				case CMD_DELETE:
-					mtstate->mt_merge_subcommands |= MERGE_DELETE;
-					break;
-				case CMD_NOTHING:
-					break;
-				default:
-					elog(ERROR, "unknown operation");
-					break;
-			}
-
-			resultRelInfo->ri_mergeState->matchedActionStates =
-						mergeMatchedActionStates;
-			resultRelInfo->ri_mergeState->notMatchedActionStates =
-						mergeNotMatchedActionStates;
-
-		}
-	}
+	if (mtstate->operation == CMD_MERGE)
+		ExecInitMerge(mtstate, estate, resultRelInfo);
 
 	/* select first subplan */
 	mtstate->mt_whichplan = 0;
@@ -2931,7 +2860,7 @@ ExecEndModifyTable(ModifyTableState *node)
 
 	/* Close all the partitioned tables, leaf partitions, and their indices */
 	if (node->mt_partition_tuple_routing)
-		ExecCleanupTupleRouting(node->mt_partition_tuple_routing);
+		ExecCleanupTupleRouting(node, node->mt_partition_tuple_routing);
 
 	/*
 	 * Free the exprcontext

@@ -118,9 +118,11 @@ typedef struct ExprState
  *		entries for a particular index.  Used for both index_build and
  *		retail creation of index entries.
  *
- *		NumIndexAttrs		number of columns in this index
+ *		NumIndexAttrs		total number of columns in this index
+ *		NumIndexKeyAttrs	number of key columns in index
  *		KeyAttrNumbers		underlying-rel attribute numbers used as keys
- *							(zeroes indicate expressions)
+ *							(zeroes indicate expressions). It also contains
+ * 							info about included columns.
  *		Expressions			expr trees for expression entries, or NIL if none
  *		ExpressionsState	exec state for expressions, or NIL if none
  *		Predicate			partial-index predicate, or NIL if none
@@ -146,7 +148,8 @@ typedef struct ExprState
 typedef struct IndexInfo
 {
 	NodeTag		type;
-	int			ii_NumIndexAttrs;
+	int			ii_NumIndexAttrs;	/* total number of columns in index */
+	int			ii_NumIndexKeyAttrs;	/* number of key columns in index */
 	AttrNumber	ii_KeyAttrNumbers[INDEX_MAX_KEYS];
 	List	   *ii_Expressions; /* list of Expr */
 	List	   *ii_ExpressionsState;	/* list of ExprState */
@@ -444,6 +447,9 @@ typedef struct ResultRelInfo
 	/* for removing junk attributes from tuples */
 	JunkFilter *ri_junkFilter;
 
+	/* list of RETURNING expressions */
+	List	   *ri_returningList;
+
 	/* for computing a RETURNING list */
 	ProjectionInfo *ri_projectReturning;
 
@@ -461,6 +467,9 @@ typedef struct ResultRelInfo
 
 	/* relation descriptor for root partitioned table */
 	Relation	ri_PartitionRoot;
+
+	/* true if ready for tuple routing */
+	bool		ri_PartitionReadyForRouting;
 
 	int			ri_PartitionLeafIndex;
 	/* for running MERGE on this result relation */
@@ -1114,8 +1123,13 @@ typedef struct ModifyTableState
 /* ----------------
  *	 AppendState information
  *
- *		nplans			how many plans are in the array
- *		whichplan		which plan is being executed (0 .. n-1)
+ *		nplans				how many plans are in the array
+ *		whichplan			which plan is being executed (0 .. n-1), or a
+ *							special negative value. See nodeAppend.c.
+ *		pruningstate		details required to allow partitions to be
+ *							eliminated from the scan, or NULL if not possible.
+ *		valid_subplans		for runtime pruning, valid appendplans indexes to
+ *							scan.
  * ----------------
  */
 
@@ -1123,6 +1137,7 @@ struct AppendState;
 typedef struct AppendState AppendState;
 struct ParallelAppendState;
 typedef struct ParallelAppendState ParallelAppendState;
+struct PartitionPruneState;
 
 struct AppendState
 {
@@ -1132,6 +1147,8 @@ struct AppendState
 	int			as_whichplan;
 	ParallelAppendState *as_pstate; /* parallel coordination info */
 	Size		pstate_len;		/* size of parallel coordination info */
+	struct PartitionPruneState *as_prune_state;
+	Bitmapset  *as_valid_subplans;
 	bool		(*choose_next_subplan) (AppendState *);
 };
 

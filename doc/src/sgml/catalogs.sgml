@@ -3743,8 +3743,16 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>indnatts</structfield></entry>
       <entry><type>int2</type></entry>
       <entry></entry>
-      <entry>The number of columns in the index (duplicates
-      <literal>pg_class.relnatts</literal>)</entry>
+      <entry>The total number of columns in the index (duplicates
+      <literal>pg_class.relnatts</literal>). This number includes both key and included attributes.</entry>
+     </row>
+
+      <row>
+      <entry><structfield>indnkeyatts</structfield></entry>
+      <entry><type>int2</type></entry>
+      <entry></entry>
+      <entry>The number of key columns in the index. "Key columns" are ordinary
+      index columns (as opposed to "included" columns).</entry>
      </row>
 
      <row>
@@ -5516,6 +5524,14 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>bool</type></entry>
       <entry></entry>
       <entry>If true, <command>DELETE</command> operations are replicated for
+       tables in the publication.</entry>
+     </row>
+
+     <row>
+      <entry><structfield>pubtruncate</structfield></entry>
+      <entry><type>bool</type></entry>
+      <entry></entry>
+      <entry>If true, <command>TRUNCATE</command> operations are replicated for
        tables in the publication.</entry>
      </row>
     </tbody>

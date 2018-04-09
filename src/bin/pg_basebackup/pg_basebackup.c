@@ -27,6 +27,7 @@
 #endif
 
 #include "access/xlog_internal.h"
+#include "common/file_perm.h"
 #include "common/file_utils.h"
 #include "common/string.h"
 #include "fe_utils/string_utils.h"
@@ -629,7 +630,7 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 				 PQserverVersion(conn) < MINIMUM_VERSION_FOR_PG_WAL ?
 				 "pg_xlog" : "pg_wal");
 
-		if (pg_mkdir_p(statusdir, S_IRWXU) != 0 && errno != EEXIST)
+		if (pg_mkdir_p(statusdir, pg_dir_create_mode) != 0 && errno != EEXIST)
 		{
 			fprintf(stderr,
 					_("%s: could not create directory \"%s\": %s\n"),
@@ -685,7 +686,7 @@ verify_dir_is_empty_or_create(char *dirname, bool *created, bool *found)
 			/*
 			 * Does not exist, so create
 			 */
-			if (pg_mkdir_p(dirname, S_IRWXU) == -1)
+			if (pg_mkdir_p(dirname, pg_dir_create_mode) == -1)
 			{
 				fprintf(stderr,
 						_("%s: could not create directory \"%s\": %s\n"),
@@ -1129,7 +1130,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 
 				tarCreateHeader(header, "recovery.conf", NULL,
 								recoveryconfcontents->len,
-								0600, 04000, 02000,
+								pg_file_create_mode, 04000, 02000,
 								time(NULL));
 
 				padding = ((recoveryconfcontents->len + 511) & ~511) - recoveryconfcontents->len;
@@ -1441,7 +1442,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					 * Directory
 					 */
 					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
-					if (mkdir(filename, S_IRWXU) != 0)
+					if (mkdir(filename, pg_dir_create_mode) != 0)
 					{
 						/*
 						 * When streaming WAL, pg_wal (or pg_xlog for pre-9.6
@@ -2469,14 +2470,6 @@ main(int argc, char **argv)
 	}
 #endif
 
-	/*
-	 * Verify that the target directory exists, or create it. For plaintext
-	 * backups, always require the directory. For tar backups, require it
-	 * unless we are writing to stdout.
-	 */
-	if (format == 'p' || strcmp(basedir, "-") != 0)
-		verify_dir_is_empty_or_create(basedir, &made_new_pgdata, &found_existing_pgdata);
-
 	/* connection in replication mode to server */
 	conn = GetConnection();
 	if (!conn)
@@ -2484,6 +2477,24 @@ main(int argc, char **argv)
 		/* Error message already written in GetConnection() */
 		exit(1);
 	}
+
+	/*
+	 * Set umask so that directories/files are created with the same
+	 * permissions as directories/files in the source data directory.
+	 *
+	 * pg_mode_mask is set to owner-only by default and then updated in
+	 * GetConnection() where we get the mode from the server-side with
+	 * RetrieveDataDirCreatePerm() and then call SetDataDirectoryCreatePerm().
+	 */
+	umask(pg_mode_mask);
+
+	/*
+	 * Verify that the target directory exists, or create it. For plaintext
+	 * backups, always require the directory. For tar backups, require it
+	 * unless we are writing to stdout.
+	 */
+	if (format == 'p' || strcmp(basedir, "-") != 0)
+		verify_dir_is_empty_or_create(basedir, &made_new_pgdata, &found_existing_pgdata);
 
 	/* determine remote server's xlog segment size */
 	if (!RetrieveWalSegSize(conn))
