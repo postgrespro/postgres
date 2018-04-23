@@ -5,7 +5,7 @@ CREATE FUNCTION test1(val jsonb) RETURNS int
 LANGUAGE plpython3u
 TRANSFORM FOR TYPE jsonb
 AS $$
-assert isinstance(val, dict)
+#assert isinstance(val, dict)
 assert(val == {'a': 1, 'c': 'NULL'})
 return len(val)
 $$;
@@ -21,7 +21,7 @@ CREATE FUNCTION test1complex(val jsonb) RETURNS int
 LANGUAGE plpython3u
 TRANSFORM FOR TYPE jsonb
 AS $$
-assert isinstance(val, dict)
+#assert isinstance(val, dict)
 assert(val == {"d": {"d": 1}})
 return len(val)
 $$;
@@ -37,7 +37,7 @@ CREATE FUNCTION test1arr(val jsonb) RETURNS int
 LANGUAGE plpython3u
 TRANSFORM FOR TYPE jsonb
 AS $$
-assert isinstance(val, dict)
+#assert isinstance(val, dict)
 assert(val == {"d": [12, 1]})
 return len(val)
 $$;
@@ -53,7 +53,7 @@ CREATE FUNCTION test2arr(val jsonb) RETURNS int
 LANGUAGE plpython3u
 TRANSFORM FOR TYPE jsonb
 AS $$
-assert isinstance(val, list)
+#assert isinstance(val, list)
 assert(val == [12, 1])
 return len(val)
 $$;
@@ -69,7 +69,7 @@ CREATE FUNCTION test3arr(val jsonb) RETURNS int
 LANGUAGE plpython3u
 TRANSFORM FOR TYPE jsonb
 AS $$
-assert isinstance(val, list)
+#assert isinstance(val, list)
 assert(val == [{"a": 1,"b": 2}, {"c": 3,"d": 4}])
 return len(val)
 $$;
@@ -156,6 +156,12 @@ SELECT roundtrip('true'::jsonb);
  roundtrip 
 -----------
  true
+(1 row)
+
+SELECT roundtrip('false'::jsonb);
+ roundtrip 
+-----------
+ false
 (1 row)
 
 SELECT roundtrip('"string"'::jsonb);
@@ -303,4 +309,530 @@ SELECT test_dict1();
 --------------------------
  {"": 2, "a": 1, "33": 3}
 (1 row)
+
+-- eval arbitrary Python code on jsonb
+CREATE OR REPLACE FUNCTION jsonb_plpy_eval(js jsonb, code text) RETURNS jsonb
+LANGUAGE plpythonu
+TRANSFORM FOR TYPE jsonb
+AS $$
+  try:
+    return eval(code, { '_' : js })
+  except Exception as ex:
+    raise ex
+$$;
+-- test array type
+SELECT jsonb_plpy_eval('[]', 'type(_)');
+         jsonb_plpy_eval          
+----------------------------------
+ "<type 'plpy_jsonb.JsonbArray'>"
+(1 row)
+
+-- test len() for arrays
+SELECT jsonb_plpy_eval('[]', 'len(_)');
+ jsonb_plpy_eval 
+-----------------
+ 0
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 1}]', 'len(_)');
+ jsonb_plpy_eval 
+-----------------
+ 3
+(1 row)
+
+-- test array subscripting
+SELECT jsonb_plpy_eval('[]', '_[0]');
+ERROR:  IndexError: JsonbArray index out of range
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('[1]', '_["0"]');
+ERROR:  TypeError: JsonbArray indices must be integers or slices, not str
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[0]');
+ jsonb_plpy_eval 
+-----------------
+ 1
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[1]');
+ jsonb_plpy_eval 
+-----------------
+ "2"
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[2]');
+ jsonb_plpy_eval 
+-----------------
+ {"a": 3}
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[3]');
+ERROR:  IndexError: JsonbArray index out of range
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-1]');
+ jsonb_plpy_eval 
+-----------------
+ {"a": 3}
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-2]');
+ jsonb_plpy_eval 
+-----------------
+ "2"
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-3]');
+ jsonb_plpy_eval 
+-----------------
+ 1
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-4]');
+ERROR:  IndexError: JsonbArray index out of range
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+-- test array slicing
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[:]');
+  jsonb_plpy_eval   
+--------------------
+ [1, "2", {"a": 3}]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[:1]');
+ jsonb_plpy_eval 
+-----------------
+ [1]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[:5]');
+  jsonb_plpy_eval   
+--------------------
+ [1, "2", {"a": 3}]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[1:]');
+ jsonb_plpy_eval 
+-----------------
+ ["2", {"a": 3}]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[5:]');
+ jsonb_plpy_eval 
+-----------------
+ []
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[0:0]');
+ jsonb_plpy_eval 
+-----------------
+ []
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[1:3]');
+ jsonb_plpy_eval 
+-----------------
+ ["2", {"a": 3}]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[0:-1]');
+ jsonb_plpy_eval 
+-----------------
+ [1, "2"]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[0:4:2]');
+ jsonb_plpy_eval 
+-----------------
+ [1, {"a": 3}]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[::-1]');
+  jsonb_plpy_eval   
+--------------------
+ [{"a": 3}, "2", 1]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[1::-1]');
+ jsonb_plpy_eval 
+-----------------
+ ["2", 1]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-2::-1]');
+ jsonb_plpy_eval 
+-----------------
+ ["2", 1]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[:-3:-1]');
+ jsonb_plpy_eval 
+-----------------
+ [{"a": 3}, "2"]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, "2", {"a": 3}]', '_[-1:1:-1]');
+ jsonb_plpy_eval 
+-----------------
+ [{"a": 3}]
+(1 row)
+
+-- test array .count() method
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.count(1)');
+ jsonb_plpy_eval 
+-----------------
+ 3
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.count("x")');
+ jsonb_plpy_eval 
+-----------------
+ 0
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.count([1, 5])');
+ jsonb_plpy_eval 
+-----------------
+ 1
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.count([5, 1])');
+ jsonb_plpy_eval 
+-----------------
+ 0
+(1 row)
+
+-- test array .index() method
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index(0)');
+ERROR:  ValueError: value is not in JsonbArray
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index(1)');
+ jsonb_plpy_eval 
+-----------------
+ 0
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index(2)');
+ jsonb_plpy_eval 
+-----------------
+ 1
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index(None)');
+ jsonb_plpy_eval 
+-----------------
+ 2
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index("1")');
+ jsonb_plpy_eval 
+-----------------
+ 6
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '_.index([1, 5])');
+ jsonb_plpy_eval 
+-----------------
+ 4
+(1 row)
+
+-- test array iteration
+SELECT jsonb_plpy_eval('[]', 'type(iter(_))');
+           jsonb_plpy_eval           
+-------------------------------------
+ "<type 'plpy_jsonb.JsonbIterator'>"
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', 'iter(_)');
+         jsonb_plpy_eval         
+---------------------------------
+ [1, 2, null, 1, [1, 5], 1, "1"]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '[x for x in _]');
+         jsonb_plpy_eval         
+---------------------------------
+ [1, 2, null, 1, [1, 5], 1, "1"]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '[x for x in iter(_)]');
+         jsonb_plpy_eval         
+---------------------------------
+ [1, 2, null, 1, [1, 5], 1, "1"]
+(1 row)
+
+SELECT jsonb_plpy_eval('[1, 2, null, 1, [1, 5], 1, "1"]', '[x for x in _ if x > 1]');
+ jsonb_plpy_eval  
+------------------
+ [2, [1, 5], "1"]
+(1 row)
+
+-- test object subscription
+SELECT jsonb_plpy_eval('{}', '_[0]');
+ERROR:  KeyError: "key '0' is absent in JsonbObject"
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('{}', '_["a"]');
+ERROR:  KeyError: "key 'a' is absent in JsonbObject"
+CONTEXT:  Traceback (most recent call last):
+  PL/Python function "jsonb_plpy_eval", line 5, in <module>
+    raise ex
+PL/Python function "jsonb_plpy_eval"
+SELECT jsonb_plpy_eval('{"a": 123}', '_["a"]');
+ jsonb_plpy_eval 
+-----------------
+ 123
+(1 row)
+
+-- test '"key" in object'
+SELECT jsonb_plpy_eval('{"a": 123}', '"a" in _');
+ jsonb_plpy_eval 
+-----------------
+ true
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '"b" in _');
+ jsonb_plpy_eval 
+-----------------
+ false
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '123 in _');
+ jsonb_plpy_eval 
+-----------------
+ false
+(1 row)
+
+-- test object .get() method
+SELECT jsonb_plpy_eval('{"a": 123}', '_.get("a")');
+ jsonb_plpy_eval 
+-----------------
+ 123
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '_.get(1)');
+ jsonb_plpy_eval 
+-----------------
+ 
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '_.get(1) == None');
+ jsonb_plpy_eval 
+-----------------
+ true
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '_.get(1)');
+ jsonb_plpy_eval 
+-----------------
+ 
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 123}', '_.get(1, "default")');
+ jsonb_plpy_eval 
+-----------------
+ "default"
+(1 row)
+
+-- test object .keys() methods
+SELECT jsonb_plpy_eval('{"a": 1, "aa": ["x", false], "b": {"y": "aaa", "z": 2.3}}', '_.keys()');
+ jsonb_plpy_eval  
+------------------
+ ["a", "b", "aa"]
+(1 row)
+
+-- test object .values() methods
+SELECT jsonb_plpy_eval('{"a": 1, "aa": ["x", false], "b": {"y": "aaa", "z": 2.3}}', '_.values()');
+              jsonb_plpy_eval              
+-------------------------------------------
+ [1, {"y": "aaa", "z": 2.3}, ["x", false]]
+(1 row)
+
+-- test object .items() methods
+SELECT jsonb_plpy_eval('{"a": 1, "aa": ["x", false], "b": {"y": "aaa", "z": 2.3}}', '_.items()');
+                         jsonb_plpy_eval                         
+-----------------------------------------------------------------
+ [["a", 1], ["b", {"y": "aaa", "z": 2.3}], ["aa", ["x", false]]]
+(1 row)
+
+-- test object iteration by keys
+SELECT jsonb_plpy_eval('{}', 'type(iter(_))');
+           jsonb_plpy_eval           
+-------------------------------------
+ "<type 'plpy_jsonb.JsonbIterator'>"
+(1 row)
+
+SELECT jsonb_plpy_eval('{}', 'iter(_)');
+ jsonb_plpy_eval 
+-----------------
+ []
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "b": null, "c": "xyz", "d": [4, 5], "e": {"x": 1, "y": "aaa"}}', 'iter(_)');
+      jsonb_plpy_eval      
+---------------------------
+ ["a", "b", "c", "d", "e"]
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "b": null, "c": "xyz", "d": [4, 5], "e": {"x": 1, "y": "aaa"}}', '[k for k in _]');
+      jsonb_plpy_eval      
+---------------------------
+ ["a", "b", "c", "d", "e"]
+(1 row)
+
+-- test object .iterkeys() method
+SELECT jsonb_plpy_eval('{}', 'type(_.iterkeys())');
+           jsonb_plpy_eval           
+-------------------------------------
+ "<type 'plpy_jsonb.JsonbIterator'>"
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "aaa": null, "b": "xyz", "cc": [4, 5], "d": {"x": 1, "y": "aaa"}}', '_.iterkeys()');
+       jsonb_plpy_eval        
+------------------------------
+ ["a", "b", "d", "cc", "aaa"]
+(1 row)
+
+-- test object .itervalues() method
+SELECT jsonb_plpy_eval('{}', 'type(_.itervalues())');
+           jsonb_plpy_eval           
+-------------------------------------
+ "<type 'plpy_jsonb.JsonbIterator'>"
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "aaa": null, "b": "xyz", "cc": [4, 5], "d": {"x": 1, "y": "aaa"}}', '_.itervalues()');
+                jsonb_plpy_eval                 
+------------------------------------------------
+ [1, "xyz", {"x": 1, "y": "aaa"}, [4, 5], null]
+(1 row)
+
+-- test object .iteritems() method
+SELECT jsonb_plpy_eval('{}', 'type(_.iteritems())');
+           jsonb_plpy_eval           
+-------------------------------------
+ "<type 'plpy_jsonb.JsonbIterator'>"
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "aaa": null, "b": "xyz", "cc": [4, 5], "d": {"x": 1, "y": "aaa"}}', '_.iteritems()');
+                                   jsonb_plpy_eval                                    
+--------------------------------------------------------------------------------------
+ [["a", 1], ["b", "xyz"], ["d", {"x": 1, "y": "aaa"}], ["cc", [4, 5]], ["aaa", null]]
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "aaa": null, "b": "xyz", "cc": [4, 5], "d": {"x": 1, "y": "aaa"}}', '[str(i) for i in _.iteritems()]');
+                                                 jsonb_plpy_eval                                                 
+-----------------------------------------------------------------------------------------------------------------
+ ["('a', Decimal('1'))", "('b', 'xyz')", "('d', {\"x\": 1, \"y\": \"aaa\"})", "('cc', [4, 5])", "('aaa', None)"]
+(1 row)
+
+SELECT jsonb_plpy_eval('{"a": 1, "aaa": null, "b": "xyz", "cc": [4, 5], "d": {"x": 1, "y": "aaa"}}', '[(v, k) for (k, v) in _.iteritems()]');
+                                   jsonb_plpy_eval                                    
+--------------------------------------------------------------------------------------
+ [[1, "a"], ["xyz", "b"], [{"x": 1, "y": "aaa"}, "d"], [[4, 5], "cc"], [null, "aaa"]]
+(1 row)
+
+-- test comparison
+SELECT jsonb_plpy_eval('{"a": 1}', '_ == _');
+ jsonb_plpy_eval 
+-----------------
+ true
+(1 row)
+
+SELECT a, jsonb_plpy_eval('1.25', 'next([cmp(_, a), _ > a, _ >= a, _ == a, _ != a,  _ <= a, _ < a] for a in [' || a || '])')
+FROM (VALUES ('1'), ('1.25'), ('"1.25"'), ('{}'), ('[]')) a(a);
+   a    |               jsonb_plpy_eval               
+--------+---------------------------------------------
+ 1      | [1, true, true, false, true, false, false]
+ 1.25   | [0, false, true, true, false, true, false]
+ "1.25" | [-1, false, false, false, true, true, true]
+ {}     | [-1, false, false, false, true, true, true]
+ []     | [-1, false, false, false, true, true, true]
+(5 rows)
+
+SELECT a, jsonb_plpy_eval('[1, 2, 3]', 'next([cmp(_, a), _ > a, _ >= a, _ == a, _ != a,  _ <= a, _ < a] for a in [' || a || '])')
+FROM (VALUES ('1'), ('[]'), ('{}'), ('[1]'), ('[2]'), ('[1,2,3]'), ('[1,2,4]'), ('[1,2,2]'), ('[1,2,2,5]')) a(a);
+     a     |               jsonb_plpy_eval               
+-----------+---------------------------------------------
+ 1         | [1, true, true, false, true, false, false]
+ []        | [1, true, true, false, true, false, false]
+ {}        | [1, true, true, false, true, false, false]
+ [1]       | [1, true, true, false, true, false, false]
+ [2]       | [-1, false, false, false, true, true, true]
+ [1,2,3]   | [0, false, true, true, false, true, false]
+ [1,2,4]   | [-1, false, false, false, true, true, true]
+ [1,2,2]   | [1, true, true, false, true, false, false]
+ [1,2,2,5] | [1, true, true, false, true, false, false]
+(9 rows)
+
+SELECT a, jsonb_plpy_eval('{"a": 1}', 'next([cmp(_, a), _ > a, _ >= a, _ == a, _ != a,  _ <= a, _ < a] for a in [' || a || '])')
+FROM (VALUES ('1'), ('[]'), ('{}'), ('{None : 1}'), ('{"a" : 0}'), ('{"a": 1}'), ('{"a": 2}'), ('{"b": 1}'), ('{"0": 1}'), ('{"a": 0, "b": 0}')) a(a);
+        a         |               jsonb_plpy_eval               
+------------------+---------------------------------------------
+ 1                | [1, true, true, false, true, false, false]
+ []               | [-1, false, false, false, true, true, true]
+ {}               | [1, true, true, false, true, false, false]
+ {None : 1}       | [1, true, true, false, true, false, false]
+ {"a" : 0}        | [1, true, true, false, true, false, false]
+ {"a": 1}         | [0, false, true, true, false, true, false]
+ {"a": 2}         | [-1, false, false, false, true, true, true]
+ {"b": 1}         | [-1, false, false, false, true, true, true]
+ {"0": 1}         | [1, true, true, false, true, false, false]
+ {"a": 0, "b": 0} | [-1, false, false, false, true, true, true]
+(10 rows)
+
+SELECT a, jsonb_plpy_eval('{"a": 1}', 'next([cmp(_, a), a > _, a >= _, a == _, a != _, a <= _, a < _] for a in [' || a || '])')
+FROM (VALUES ('1'), ('[]'), ('{}'), ('{"a" : 0}'), ('{"a": 1}'), ('{"a": 2}'), ('{"a": 0, "b": 0}')) a(a);
+        a         |               jsonb_plpy_eval               
+------------------+---------------------------------------------
+ 1                | [1, false, false, false, true, true, true]
+ []               | [-1, true, true, false, true, false, false]
+ {}               | [1, false, false, false, true, true, true]
+ {"a" : 0}        | [1, false, false, false, true, true, true]
+ {"a": 1}         | [0, false, true, true, false, true, false]
+ {"a": 2}         | [-1, true, true, false, true, false, false]
+ {"a": 0, "b": 0} | [-1, true, true, false, true, false, false]
+(7 rows)
+
+SELECT a, jsonb_plpy_eval('{"b": 1, "d": 2}', 'next([cmp(_, a), _ > a, _ >= a, _ == a, _ != a, _ <= a, _ < a] for a in [' || a || '])')
+FROM (VALUES
+  ('{}'),
+  ('{"x" : 3}'),
+  ('{"b": 1, "d": 2}'),
+  ('{"b": 0, "d": 3}'),
+  ('{"b": 1, "d": 3}'),
+  ('{"b": 1, "e": 2}'),
+  ('{"b": 0, "e": 2}'),
+  ('{"b": 1, "c": 1}'),
+  ('{"b": 0, "c": 1}'),
+  ('{"a": 3, "d": 2}'),
+  ('{"c": 0, "d": 2}')
+) a(a);
+        a         |               jsonb_plpy_eval               
+------------------+---------------------------------------------
+ {}               | [1, true, true, false, true, false, false]
+ {"x" : 3}        | [1, true, true, false, true, false, false]
+ {"b": 1, "d": 2} | [0, false, true, true, false, true, false]
+ {"b": 0, "d": 3} | [1, true, true, false, true, false, false]
+ {"b": 1, "d": 3} | [-1, false, false, false, true, true, true]
+ {"b": 1, "e": 2} | [-1, false, false, false, true, true, true]
+ {"b": 0, "e": 2} | [1, true, true, false, true, false, false]
+ {"b": 1, "c": 1} | [1, true, true, false, true, false, false]
+ {"b": 0, "c": 1} | [1, true, true, false, true, false, false]
+ {"a": 3, "d": 2} | [1, true, true, false, true, false, false]
+ {"c": 0, "d": 2} | [-1, false, false, false, true, true, true]
+(11 rows)
 

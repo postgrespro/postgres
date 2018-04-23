@@ -3,7 +3,8 @@
 MODULE_big = jsonb_plpython$(python_majorversion)
 OBJS = \
 	$(WIN32RES) \
-	jsonb_plpython.o
+	jsonb_plpython.o \
+	jsonb_lazy.o
 PGFILEDESC = "jsonb_plpython - jsonb transform for plpython"
 
 PG_CPPFLAGS = -I$(top_srcdir)/src/pl/plpython $(python_includespec) -DPLPYTHON_LIBNAME='"plpython$(python_majorversion)"'
