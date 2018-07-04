@@ -71,6 +71,7 @@ extern bool numeric_is_inf(Numeric num);
 extern int32 numeric_maximum_size(int32 typmod);
 extern char *numeric_out_sci(Numeric num, int scale);
 extern char *numeric_normalize(Numeric num);
+extern bool numeric_to_exact_int64(Numeric value, int64 *out);
 
 extern Numeric int64_to_numeric(int64 val);
 extern Numeric int64_div_fast_to_numeric(int64 val1, int log10val2);

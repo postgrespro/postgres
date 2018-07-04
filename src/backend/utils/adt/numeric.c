@@ -4545,6 +4545,27 @@ numeric_float4(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(result);
 }
 
+/*
+ * numeric_get_int64() -
+ *
+ *	Try to convert numeric to int64 if it is an exact integer (i.e. it does
+ *	not have digits after the decimal point).  Return true if okay.
+ */
+bool
+numeric_to_exact_int64(Numeric num, int64 *result)
+{
+	NumericVar	var;
+
+	if (NUMERIC_IS_NAN(num))
+		return false;
+
+	if (NUMERIC_DSCALE(num) != 0)
+		return false;	/* digits after the decimal point are not allowed */
+
+	init_var_from_num(num, &var);
+
+	return numericvar_to_int64(&var, result);
+}
 
 Datum
 numeric_pg_lsn(PG_FUNCTION_ARGS)

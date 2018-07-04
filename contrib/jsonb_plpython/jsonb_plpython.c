@@ -118,6 +118,13 @@ PLyObject_FromJsonbValue(JsonbValue *jsonbValue)
 			{
 				Datum		num;
 				char	   *str;
+				int64		intval;
+
+				if (numeric_to_exact_int64(jsonbValue->val.numeric, &intval))
+#ifndef HAVE_LONG_INT_64
+					if ((long) intval == intval)
+#endif
+						return PyLong_FromLongLong((long long) intval);
 
 				num = NumericGetDatum(jsonbValue->val.numeric);
 				str = DatumGetCString(DirectFunctionCall1(numeric_out, num));
@@ -386,7 +393,26 @@ static JsonbValue *
 PLyNumber_ToJsonbValue(PyObject *obj, JsonbValue *jbvNum)
 {
 	Numeric		num;
-	char	   *str = PLyObject_AsString(obj);
+	char	   *str;
+
+	jbvNum->type = jbvNumeric;
+
+	if (PyLong_Check(obj))
+	{
+		long long	val = PyLong_AsLongLong(obj);
+
+		if (val != -1 || !PyErr_Occurred())
+		{
+			jbvNum->val.numeric =
+				DatumGetNumeric(DirectFunctionCall1(int8_numeric,
+													Int64GetDatum((int64) val)));
+			return jbvNum;
+		}
+
+		PyErr_Clear();
+	}
+
+	str = PLyObject_AsString(obj);
 
 	PG_TRY();
 	{
@@ -421,7 +447,6 @@ PLyNumber_ToJsonbValue(PyObject *obj, JsonbValue *jbvNum)
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("cannot convert infinity to jsonb")));
 
-	jbvNum->type = jbvNumeric;
 	jbvNum->val.numeric = num;
 
 	return jbvNum;
