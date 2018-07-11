@@ -17,3 +17,16 @@ CREATE TRANSFORM FOR jsonb LANGUAGE plpython3u (
 );
 
 COMMENT ON TRANSFORM FOR jsonb LANGUAGE plpython3u IS 'transform between jsonb and Python';
+
+CREATE FUNCTION numeric_to_plpython(val internal) RETURNS internal
+LANGUAGE C STRICT IMMUTABLE
+AS 'MODULE_PATHNAME';
+
+CREATE FUNCTION plpython_to_numeric(val internal) RETURNS numeric
+LANGUAGE C STRICT IMMUTABLE
+AS 'MODULE_PATHNAME';
+
+CREATE TRANSFORM FOR numeric LANGUAGE plpython3u (
+	FROM SQL WITH FUNCTION numeric_to_plpython(internal),
+	TO SQL WITH FUNCTION plpython_to_numeric(internal)
+);
