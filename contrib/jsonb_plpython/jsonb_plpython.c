@@ -5,6 +5,7 @@
 #include "plpy_main.h"
 #include "plpy_typeio.h"
 #include "jsonb_plpython.h"
+#include "numeric_plpython.h"
 #include "utils/jsonb.h"
 #include "utils/fmgrprotos.h"
 #include "utils/numeric.h"
@@ -13,8 +14,11 @@ PG_MODULE_MAGIC;
 
 void		_PG_init(void);
 
-typedef void (*PLy_elog_impl_t) (int elevel, const char *fmt,...);
-static PLy_elog_impl_t PLy_elog_impl_p;
+PLyObject_AsString_t PLyObject_AsString_p;
+PLy_elog_impl_t PLy_elog_impl_p;
+#if PY_MAJOR_VERSION >= 3
+PLyUnicode_FromStringAndSize_t PLyUnicode_FromStringAndSize_p;
+#endif
 
 PLy_get_global_memory_context_t PLy_get_global_memory_context_p;
 PLyObject_AsString_t PLyObject_AsString_p;
@@ -35,12 +39,6 @@ static JsonbValue *PLyObject_ToJsonbValue(PyObject *obj,
 #else
 # define PLyObject_FromJsonbContainerLazy(jbc, len) \
 		PLyJsonb_FromJsonbContainer(jbc, len)
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-typedef PyObject *(*PLyUnicode_FromStringAndSize_t)
-			(const char *s, Py_ssize_t size);
-static PLyUnicode_FromStringAndSize_t PLyUnicode_FromStringAndSize_p;
 #endif
 
 /*
@@ -134,6 +132,7 @@ PLyObject_FromJsonbValue(JsonbValue *jsonbValue)
 #endif
 						return PyInt_FromLong((long) intval);
 
+				return PLyObject_FromNumeric(jsonbValue->val.numeric);
 				num = NumericGetDatum(jsonbValue->val.numeric);
 				str = DatumGetCString(DirectFunctionCall1(numeric_out, num));
 
@@ -415,59 +414,18 @@ PLySequence_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 static JsonbValue *
 PLyNumber_ToJsonbValue(PyObject *obj, JsonbValue *jbvNum)
 {
-	Numeric		num;
-	char	   *str;
-
 	jbvNum->type = jbvNumeric;
-
-	if (PyInt_Check(obj))
-	{
-		long		val = PyInt_AsLong(obj);
-
-		if (val != -1 || !PyErr_Occurred())
-		{
-			jbvNum->val.numeric =
-				DatumGetNumeric(DirectFunctionCall1(int8_numeric,
-													Int64GetDatum((int64) val)));
-			return jbvNum;
-		}
-
-		PyErr_Clear();
-	}
-
-	str = PLyObject_AsString(obj);
-
-	PG_TRY();
-	{
-		Datum		numd;
-
-		numd = DirectFunctionCall3(numeric_in,
-								   CStringGetDatum(str),
-								   ObjectIdGetDatum(InvalidOid),
-								   Int32GetDatum(-1));
-		num = DatumGetNumeric(numd);
-	}
-	PG_CATCH();
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 (errmsg("could not convert value \"%s\" to jsonb", str))));
-	}
-	PG_END_TRY();
-
-	pfree(str);
+	jbvNum->val.numeric = PLyNumber_ToNumeric(obj);
 
 	/*
 	 * jsonb doesn't allow NaN (per JSON specification), so we have to prevent
 	 * it here explicitly.  (Infinity is also not allowed in jsonb, but
 	 * numeric_in above already catches that.)
 	 */
-	if (numeric_is_nan(num))
+	if (numeric_is_nan(jbvNum->val.numeric))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 (errmsg("cannot convert NaN to jsonb"))));
-
-	jbvNum->val.numeric = num;
 
 	return jbvNum;
 }
