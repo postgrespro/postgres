@@ -28,4 +28,7 @@ extern PLyExecutionContext *PLy_current_execution_context(void);
 /* Get the scratch memory context for specified execution context */
 extern MemoryContext PLy_get_scratch_context(PLyExecutionContext *context);
 
+/* Get the global memory context */
+extern MemoryContext PLy_get_global_memory_context(void);
+
 #endif							/* PLPY_MAIN_H */

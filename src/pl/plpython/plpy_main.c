@@ -53,6 +53,7 @@ PyObject   *PLy_interp_globals = NULL;
 /* this doesn't need to be global; use PLy_current_execution_context() */
 static PLyExecutionContext *PLy_execution_contexts = NULL;
 
+static MemoryContext PLy_memory_context;
 
 void
 _PG_init(void)
@@ -416,4 +417,15 @@ PLy_pop_execution_context(void)
 	if (context->scratch_ctx)
 		MemoryContextDelete(context->scratch_ctx);
 	pfree(context);
+}
+
+MemoryContext
+PLy_get_global_memory_context(void)
+{
+	if (!PLy_memory_context)
+		PLy_memory_context = AllocSetContextCreate(TopMemoryContext,
+												   "PL/Python global context",
+													ALLOCSET_DEFAULT_SIZES);
+
+	return PLy_memory_context;
 }
