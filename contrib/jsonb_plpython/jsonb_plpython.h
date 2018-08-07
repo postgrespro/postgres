@@ -8,6 +8,9 @@ typedef struct PLyJsonb
 	PyObject_HEAD
 	JsonbContainer *data;
 	size_t		len;
+	PyObject   *cache;
+	int			ncached;
+	bool		fully_cached;
 } PLyJsonb;
 
 /* Python types based on PLyJsonb structure */
@@ -32,3 +35,7 @@ extern PyObject *PLyObject_FromJsonbValue(JsonbValue *jsonbValue);
 
 typedef MemoryContext (*PLy_get_global_memory_context_t) (void);
 extern PLy_get_global_memory_context_t PLy_get_global_memory_context_p;
+
+/* for PLyObject_AsString in plpy_typeio.c */
+typedef char *(*PLyObject_AsString_t) (PyObject *plrv);
+extern PLyObject_AsString_t PLyObject_AsString_p;
