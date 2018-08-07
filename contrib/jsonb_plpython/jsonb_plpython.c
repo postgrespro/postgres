@@ -11,14 +11,11 @@
 
 PG_MODULE_MAGIC;
 
-/* for PLyObject_AsString in plpy_typeio.c */
-typedef char *(*PLyObject_AsString_t) (PyObject *plrv);
-static PLyObject_AsString_t PLyObject_AsString_p;
-
 typedef void (*PLy_elog_impl_t) (int elevel, const char *fmt,...);
 static PLy_elog_impl_t PLy_elog_impl_p;
 
 PLy_get_global_memory_context_t PLy_get_global_memory_context_p;
+PLyObject_AsString_t PLyObject_AsString_p;
 
 /*
  * decimal_constructor is a function from python library and used

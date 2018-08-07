@@ -7,6 +7,10 @@
 #define PLPY_JSONB_TYPE_NAME(type) PLPY_JSONB_TYPE_NAME_PREFIX type
 
 #define PLy_get_global_memory_context (PLy_get_global_memory_context_p)
+#define PLyObject_AsString (PLyObject_AsString_p)
+
+static PyObject *
+PLyJsonbArray_get_or_transform_item(PLyJsonb *jb, int index, JsonbValue *jbv);
 
 /* Implementation of JsonbArray/JsonbObject type's tp_new(). */
 static PyObject *
@@ -19,6 +23,7 @@ PLyJsonb_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 static void
 PLyJsonb_dealloc(PLyJsonb *self)
 {
+	Py_DECREF(self->cache);
 	JsonContainerFree(self->data);
 	//PyMem_Free(self->data);
 	Py_TYPE(self)->tp_free((PyObject *) self);
@@ -34,6 +39,24 @@ PLyJsonb_repr(PLyJsonb *obj)
 	pfree(str);
 
 	return res;
+}
+
+/* Returns borrowed reference. */
+static PyObject *
+PLyJsonbObject_getkey_cached(PLyJsonb *self, PyObject *key)
+{
+	return PyDict_GetItem(self->cache, key);
+}
+
+static PyObject *
+PLyJsonbObject_cache_key(PLyJsonb *self, PyObject *key, PyObject *val)
+{
+	if (PyDict_SetItem(self->cache, key, val) < 0)
+		return NULL;
+
+	self->fully_cached = PyDict_Size(self->cache) >= JsonContainerSize(self->data);
+
+	return val;
 }
 
 /* Returns false on error, true otherwise. */
@@ -78,16 +101,64 @@ PLyJsonbObject_getkey(PyObject *obj, PyObject *key, bool throwError,
 	return true;
 }
 
-/* Implementation of mp_subscript() method for JsonbObject */
+static bool
+PLyJsonbObject_subscript_cached(PyObject *obj, PyObject *key, bool throwError,
+								PyObject **res)
+{
+	PLyJsonb   *self = (PLyJsonb *) obj;
+	PyObject   *val = PLyJsonbObject_getkey_cached(self, key);
+	JsonbValue *jbv;
+
+	if (val)
+	{
+		Py_INCREF(val);
+		*res = val;
+		return true;
+	}
+
+	if (self->fully_cached)
+	{
+		*res = NULL;
+		return true;
+	}
+
+	if (!PLyJsonbObject_getkey(obj, key, throwError, &jbv))
+		return false;
+
+	if (!jbv)
+	{
+		*res = NULL;
+		return true;
+	}
+
+	*res = val = PLyObject_FromJsonbValue(jbv); // PLyJsonb_FromJsonbValue(jbv);
+
+	return PLyJsonbObject_cache_key(self, key, val) != NULL;
+}
+
 static PyObject *
 PLyJsonbObject_subscript(PyObject *obj, PyObject *key)
 {
-	JsonbValue *retval;
+	PyObject   *val;
 
-	if (!PLyJsonbObject_getkey(obj, key, true, &retval))
+#if PY_MAJOR_VERSION >= 3
+	if (!PyUnicode_Check(key))
+#else
+	if (!PyString_Check(key))
+#endif
+		return PyErr_Format(PyExc_KeyError,
+							"key '%s' is absent in JsonbObject",
+							 PLyObject_AsString(key));
+
+	if (!PLyJsonbObject_subscript_cached(obj, key, true, &val))
 		return NULL;
 
-	return retval ? PLyObject_FromJsonbValue(retval) : NULL;
+	if (!val)
+		return PyErr_Format(PyExc_KeyError,
+							"key '%s' is absent in JsonbObject",
+							 PLyObject_AsString(key));
+
+	return val;
 }
 
 /* Implementation of sq_contains() method for JsonbObject */
@@ -109,18 +180,16 @@ PLyJsonbObject_get(PyObject *self, PyObject *args)
 	PyObject   *val;
 	PyObject   *key = NULL;
 	PyObject   *default_value = NULL;
-	JsonbValue *jbv;
 
 	if (!PyArg_ParseTuple(args, "O|O", &key, &default_value))
 		return NULL;
 
-	if (!PLyJsonbObject_getkey(self, key, false, &jbv))
+	if (!PLyJsonbObject_subscript_cached(self, key, false, &val))
 		return NULL;
 
-	if (jbv)
-		return PLyObject_FromJsonbValue(jbv);
+	if (!val)
+		val = default_value ? default_value : Py_None;
 
-	val = default_value ? default_value : Py_None;
 	Py_INCREF(val);
 
 	return val;
@@ -142,6 +211,7 @@ typedef struct PLyJsonbIter
 	PLyJsonb    *object;
 	JsonbIterator *iter;
 	IterType	type;
+	int			index;
 } PLyJsonbIter;
 
 static PyObject *
@@ -187,7 +257,7 @@ PLyJsonb_iterKeyValue(JsonbValue *jbvkey, JsonbValue *jbvval, IterType iterType)
 	{
 		return PLyObject_FromJsonbValue(jbvval);
 	}
-	else
+	else if (iterType == PLPY_JSONB_ITER_ITEMS)
 	{
 		PyObject   *key = PLyObject_FromJsonbValue(jbvkey);
 		PyObject   *val = PLyObject_FromJsonbValue(jbvval);
@@ -208,6 +278,8 @@ PLyJsonb_iterKeyValue(JsonbValue *jbvkey, JsonbValue *jbvval, IterType iterType)
 
 		return pair;
 	}
+	else
+		elog(ERROR, "invalid jsonb iterator type");
 }
 
 /* Implementation of JsonbIterator type's tp_iternext() */
@@ -215,6 +287,7 @@ static PyObject *
 PLyJsonbIter_iternext(PyObject *self)
 {
 	PLyJsonbIter *iter = (PLyJsonbIter *) self;
+	PLyJsonb   *jb = iter->object;
 	JsonbValue	jbvkey;
 	JsonbValue	jbvval;
 
@@ -226,17 +299,66 @@ PLyJsonbIter_iternext(PyObject *self)
 		case WJB_END_OBJECT:
 		case WJB_END_ARRAY:
 		case WJB_DONE:
+			if (iter->type != PLPY_JSONB_ITER_KEYS)
+				jb->fully_cached = true;
 			return NULL;	/* end of iteration */
 
 		case WJB_KEY:
+		{
+			PyObject *key = PLyObject_FromJsonbValue(&jbvkey);
+
 			if (JsonbIteratorNext(&iter->iter, &jbvval, true) != WJB_VALUE)
 				break;
 
-			return PLyJsonb_iterKeyValue(&jbvkey, &jbvval, iter->type);
+			if (iter->type == PLPY_JSONB_ITER_KEYS)
+			{
+				return key;
+			}
+			else if (iter->type != PLPY_JSONB_ITER_ELEMENTS)
+			{
+				PyObject   *val = PLyJsonbObject_getkey_cached(jb, key);
+				PyObject   *res;
+
+				if (val)
+				{
+					if (iter->type == PLPY_JSONB_ITER_VALUES)
+					{
+						Py_INCREF(val);
+						res = val;
+					}
+					else
+						res = PyTuple_Pack(2, key, val);
+				}
+				else
+				{
+					val = PLyObject_FromJsonbValue(&jbvval);
+
+					if (val)
+					{
+						if (!PLyJsonbObject_cache_key(jb, key, val))
+							res = NULL;
+						else if (iter->type == PLPY_JSONB_ITER_VALUES)
+							res = val;
+						else
+						{
+							res = PyTuple_Pack(2, key, val);
+							Py_DECREF(val);
+						}
+					}
+					else
+						res = NULL;
+				}
+
+				Py_DECREF(key);
+
+				return res;
+			}
+		}
+		/* FALLTHROUGH */
 
 		case WJB_ELEM:
 			Assert(iter->type == PLPY_JSONB_ITER_ELEMENTS);
-			return PLyObject_FromJsonbValue(&jbvkey);
+			return PLyJsonbArray_get_or_transform_item(jb, iter->index++, &jbvkey);
 
 		default:
 			break;
@@ -267,6 +389,7 @@ PLyJsonb_makeIter(PyObject *self, IterType type)
 	iter->object = obj;
 	iter->type = type;
 	iter->iter= NULL;
+	iter->index = 0;
 
 	/* Allocate JsonbIteratorContext in the global PL/Python memory context. */
 	PG_TRY();
@@ -376,6 +499,11 @@ PLyJsonbObject_values(PyObject *self, PyObject *args)
 static PyObject *
 PLyJsonbObject_iteritems(PyObject *self, PyObject *args)
 {
+	PLyJsonb   *arr = (PLyJsonb *) self;
+
+	if (arr->fully_cached)
+		return PyObject_CallMethod(arr->cache, "iteritems", NULL);
+
 	return PLyJsonb_makeIter(self, PLPY_JSONB_ITER_ITEMS);
 }
 
@@ -383,6 +511,11 @@ PLyJsonbObject_iteritems(PyObject *self, PyObject *args)
 static PyObject *
 PLyJsonbObject_iterkeys(PyObject *self, PyObject *args)
 {
+	PLyJsonb   *arr = (PLyJsonb *) self;
+
+	if (arr->fully_cached)
+		return PyObject_CallMethod(arr->cache, "iterkeys", NULL);
+
 	return PLyJsonb_makeIter(self, PLPY_JSONB_ITER_KEYS);
 }
 
@@ -390,6 +523,11 @@ PLyJsonbObject_iterkeys(PyObject *self, PyObject *args)
 static PyObject *
 PLyJsonbObject_itervalues(PyObject *self, PyObject *args)
 {
+	PLyJsonb   *arr = (PLyJsonb *) self;
+
+	if (arr->fully_cached)
+		return PyObject_CallMethod(arr->cache, "itervalues", NULL);
+
 	return PLyJsonb_makeIter(self, PLPY_JSONB_ITER_VALUES);
 }
 
@@ -397,6 +535,12 @@ PLyJsonbObject_itervalues(PyObject *self, PyObject *args)
 static PyObject *
 PLyJsonbObject_iter(PyObject *self)
 {
+	PLyJsonb   *arr = (PLyJsonb *) self;
+
+	if (arr->fully_cached)
+		return PyObject_GetIter(arr->cache);
+		//return PyObject_CallMethod(arr->cache, "iterkeys", NULL);
+
 	return PLyJsonb_makeIter(self, PLPY_JSONB_ITER_KEYS);
 }
 
@@ -448,21 +592,77 @@ PLyJsonbArray_length(PyObject *obj)
 
 /* Implementation of sq_item() sequence method for JsonbArray. */
 static PyObject *
+PLyJsonbArray_item_cached(PLyJsonb *jb, Py_ssize_t index)
+{
+	PyObject *res = PyList_GET_ITEM(jb->cache, index);
+
+	if (res)
+		Py_INCREF(res);
+
+	return res;
+}
+
+static PyObject *
+PLyJsonbArray_cache_item(PLyJsonb *jb, Py_ssize_t index, PyObject *item)
+{
+	Py_INCREF(item);
+	PyList_SetItem(jb->cache, index, item);
+
+	if (++jb->ncached >= JsonContainerSize(jb->data))
+		jb->fully_cached = true;
+
+	return item;
+}
+
+static PyObject *
+PLyJsonbArray_get_or_transform_item(PLyJsonb *jb, int index, JsonbValue *jbv)
+{
+	PyObject *res = PLyJsonbArray_item_cached(jb, index);
+
+	if (!res)
+	{
+		res = PLyObject_FromJsonbValue(jbv);
+
+		if (PyList_GET_SIZE(jb->cache) <= index)
+			elog(ERROR, "jsonb iterator returned extra elements");
+
+		PLyJsonbArray_cache_item(jb, index, res);
+	}
+
+	return res;
+}
+
+static PyObject *
 PLyJsonbArray_item(PyObject *obj, Py_ssize_t i)
 {
 	PLyJsonb   *jb = (PLyJsonb *) obj;
+	PyObject   *val;
 	JsonbValue *retval;
+	int32		size = JsonContainerSize(jb->data);
 
 	if (i < 0)
-		i += JsonContainerSize(jb->data);
+		i += size;
 
-	retval = i < 0 || i > PG_UINT32_MAX ? NULL :
-		getIthJsonbValueFromContainer(jb->data, (uint32) i);
+	if (i < 0 || i >= size)
+		retval = NULL;
+	else
+	{
+		val = PLyJsonbArray_item_cached(jb, i);
+
+		if (val)
+			return val;
+
+		retval = getIthJsonbValueFromContainer(jb->data, (uint32) i);
+	}
 
 	if (!retval)
 		return PyErr_Format(PyExc_IndexError, "JsonbArray index out of range");
 
-	return PLyObject_FromJsonbValue(retval);
+	val = PLyObject_FromJsonbValue(retval); // PLyJsonb_FromJsonbValue(retval);
+
+	PLyJsonbArray_cache_item(jb, i, val);
+
+	return val;
 }
 
 /* Implementation of Sequence protocol for JsonbArray. */
@@ -793,14 +993,8 @@ PLyJsonbArray_slice(PyObject *self, PyObject *slice)
 
 		for (i = start; step > 0 ? i < stop : i > stop; i += step)
 		{
-			PyObject   *elem;
-			JsonbValue *v = i < 0 || i > PG_UINT32_MAX ? NULL :
-				getIthJsonbValueFromContainer(jbc, (uint32) i);
+			PyObject   *elem = PLyJsonbArray_item(self, i);
 
-			if (!v)
-				continue;
-
-			elem = PLyObject_FromJsonbValue(v);
 			if (!elem)
 			{
 				Py_DECREF(result);
@@ -850,7 +1044,8 @@ PLyJsonbArray_subscript(PyObject *self, PyObject *key)
 static PyObject *
 PLyJsonbArray_index_count(PyObject *self, PyObject *value, bool index)
 {
-	JsonbContainer *jbc = ((PLyJsonb *) self)->data;
+	PLyJsonb   *jb = (PLyJsonb *) self;
+	JsonbContainer *jbc = jb->data;
 	JsonbIterator *it;
 	JsonbIteratorToken r;
 	JsonbValue	v;
@@ -863,7 +1058,7 @@ PLyJsonbArray_index_count(PyObject *self, PyObject *value, bool index)
 	{
 		if (r == WJB_ELEM)
 		{
-			PyObject   *elem = PLyObject_FromJsonbValue(&v);
+			PyObject   *elem = PLyJsonbArray_get_or_transform_item(jb, i, &v);
 			int			cmp;
 
 			if (!elem)
@@ -911,6 +1106,11 @@ PLyJsonbArray_count(PyObject *self, PyObject *value)
 static PyObject *
 PLyJsonbArray_iter(PyObject *self)
 {
+	PLyJsonb *arr = (PLyJsonb *) self;
+
+	if (arr->fully_cached)
+		return PyObject_GetIter(arr->cache);
+
 	return PLyJsonb_makeIter(self, PLPY_JSONB_ITER_ELEMENTS);
 }
 
@@ -1015,6 +1215,10 @@ PLyJsonb_FromJsonbContainer(JsonbContainer *jbc)
 	res->data = JsonCopy(jbc); // FIXME memcpy(PyMem_Malloc(len), jbc, len);
 	//res->len = len;
 	MemoryContextSwitchTo(oldcxt);
+
+	res->cache = JsonContainerIsObject(jbc) ? PyDict_New() : PyList_New(JsonContainerSize(jbc));
+	res->ncached = 0;
+	res->fully_cached = !JsonContainerSize(jbc);
 
 	return (PyObject *) res;
 }
