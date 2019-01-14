@@ -169,53 +169,80 @@ PLyObject_FromJsonbContainer(JsonbContainer *jsonb)
 				if (!result)
 					return NULL;
 
-				while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
+				PG_TRY();
 				{
-					if (r == WJB_ELEM)
+					while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 					{
-						PyObject   *elem = PLyObject_FromJsonbValue(&v);
+						if (r == WJB_ELEM)
+						{
+							PyObject   *elem = PLyObject_FromJsonbValue(&v);
 
-						PyList_Append(result, elem);
-						Py_XDECREF(elem);
+							if (!elem || PyList_Append(result, elem))
+							{
+								Py_XDECREF(elem);
+								Py_DECREF(result);
+								return NULL;
+							}
+
+							Py_DECREF(elem);
+						}
 					}
 				}
+				PG_CATCH();
+				{
+					Py_DECREF(result);
+					PG_RE_THROW();
+				}
+				PG_END_TRY();
 			}
 			break;
 
 		case WJB_BEGIN_OBJECT:
-			result = PyDict_New();
-			if (!result)
-				return NULL;
-
-			while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 			{
-				if (r == WJB_KEY)
+				PyObject   *volatile key = NULL;
+
+				result = PyDict_New();
+				if (!result)
+					return NULL;
+
+				PG_TRY();
 				{
-					PyObject   *key = PLyString_FromJsonbValue(&v);
-
-					if (!key)
-						return NULL;
-
-					r = JsonbIteratorNext(&it, &v, true);
-
-					if (r == WJB_VALUE)
+					while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 					{
-						PyObject   *value = PLyObject_FromJsonbValue(&v);
+						JsonbValue	v2;
+						PyObject   *val = NULL;
 
-						if (!value)
+						if (r != WJB_KEY)
+							continue;
+
+						if ((r = JsonbIteratorNext(&it, &v2, true)) != WJB_VALUE)
+							elog(ERROR, "unexpected jsonb token: %d", r);
+
+						if (!(key = PLyString_FromJsonbValue(&v)) ||
+							!(val = PLyObject_FromJsonbValue(&v2)) ||
+							PyDict_SetItem(result, key, val))
 						{
 							Py_XDECREF(key);
+							Py_XDECREF(val);
+							Py_DECREF(result);
 							return NULL;
 						}
 
-						PyDict_SetItem(result, key, value);
-						Py_XDECREF(value);
+						Py_DECREF(val);
+						Py_DECREF(key);
+						key = NULL;
 					}
-
-					Py_XDECREF(key);
 				}
+				PG_CATCH();
+				{
+					Py_XDECREF(key);
+					Py_DECREF(result);
+					PG_RE_THROW();
+				}
+				PG_END_TRY();
+
+				break;
 			}
-			break;
 
 		default:
 			elog(ERROR, "unexpected jsonb token: %d", r);
@@ -233,30 +260,40 @@ PLyObject_FromJsonbContainer(JsonbContainer *jsonb)
 static JsonbValue *
 PLyMapping_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 {
-	Py_ssize_t	pcount;
-	JsonbValue *out = NULL;
+	JsonbValue *out;
+	PyObject   *items;
+	Py_ssize_t	pcount = PyMapping_Size(obj);
 
-	/* We need it volatile, since we use it after longjmp */
-	volatile PyObject *items_v = NULL;
+	if (pcount < 0)
+		PLy_elog(ERROR, "PyMapping_Size() failed, while converting mapping into jsonb");
 
-	pcount = PyMapping_Size(obj);
-	items_v = PyMapping_Items(obj);
+	items = PyMapping_Items(obj);
+
+	if (!items)
+		PLy_elog(ERROR, "PyMapping_Items() failed, while converting mapping into jsonb");
 
 	PG_TRY();
 	{
 		Py_ssize_t	i;
-		PyObject   *items;
-
-		items = (PyObject *) items_v;
 
 		pushJsonbValue(jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 		for (i = 0; i < pcount; i++)
 		{
 			JsonbValue	jbvKey;
-			PyObject   *item = PyList_GetItem(items, i);
-			PyObject   *key = PyTuple_GetItem(item, 0);
-			PyObject   *value = PyTuple_GetItem(item, 1);
+			PyObject   *item;
+			PyObject   *key;
+			PyObject   *value;
+
+			item =  PyList_GetItem(items, i);	/* borrowed reference */
+			if (!item)
+				PLy_elog(ERROR, "PyList_GetItem() failed, while converting mapping into jsonb");
+
+			key = PyTuple_GetItem(item, 0);	/* borrowed references */
+			value = PyTuple_GetItem(item, 1);
+
+			if (!key || !value)
+				PLy_elog(ERROR, "PyTuple_GetItem() failed, while converting mapping into jsonb");
 
 			/* Python dictionary can have None as key */
 			if (key == Py_None)
@@ -279,10 +316,12 @@ PLyMapping_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 	}
 	PG_CATCH();
 	{
-		Py_DECREF(items_v);
+		Py_DECREF(items);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+
+	Py_DECREF(items);
 
 	return out;
 }
@@ -296,21 +335,36 @@ PLyMapping_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 static JsonbValue *
 PLySequence_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 {
-	Py_ssize_t	i;
-	Py_ssize_t	pcount;
+	PyObject   *seq = PySequence_Fast(obj, "object is not a sequence");
 
-	pcount = PySequence_Size(obj);
+	if (!seq)
+		PLy_elog(ERROR, "PySequence_Fast() failed, while converting sequence into jsonb");
 
-	pushJsonbValue(jsonb_state, WJB_BEGIN_ARRAY, NULL);
-
-	for (i = 0; i < pcount; i++)
+	PG_TRY();
 	{
-		PyObject   *value = PySequence_GetItem(obj, i);
+		Py_ssize_t	i;
+		Py_ssize_t	pcount = PySequence_Fast_GET_SIZE(seq);
 
-		(void) PLyObject_ToJsonbValue(value, jsonb_state, true);
+		pushJsonbValue(jsonb_state, WJB_BEGIN_ARRAY, NULL);
 
-		Py_XDECREF(value);
+		for (i = 0; i < pcount; i++)
+		{
+			PyObject   *value = PySequence_Fast_GET_ITEM(seq, i);	/* borrowed reference */
+
+			if (!value)
+				PLy_elog(ERROR, "PySequence_Fast_GET_ITEM() failed, while converting sequence into jsonb");
+
+			(void) PLyObject_ToJsonbValue(value, jsonb_state, true);
+		}
 	}
+	PG_CATCH();
+	{
+		Py_DECREF(seq);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	Py_DECREF(seq);
 
 	return pushJsonbValue(jsonb_state, WJB_END_ARRAY, NULL);
 }
