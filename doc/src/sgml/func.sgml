@@ -12522,6 +12522,14 @@ table2-mapping
      described in <xref linkend="jsonpath-regular-expressions"/>.
     </para>
    </listitem>
+
+   <listitem>
+    <para>
+     Enclosing the path specification into square brackets
+     <literal>[]</literal> automatically wraps the path evaluation
+     result into an array.
+    </para>
+   </listitem>
   </itemizedlist>
 
    <sect3 id="strict-and-lax-modes">
