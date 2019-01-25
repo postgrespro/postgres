@@ -254,6 +254,7 @@ static JsonbValue *JsonbInitBinary(JsonbValue *jbv, Jsonb *jb);
 static int	JsonbType(JsonbValue *jb);
 static JsonbValue *getScalar(JsonbValue *scalar, enum jbvType type);
 static JsonbValue *wrapItemsInArray(const JsonValueList *items);
+static JsonbValue *wrapJsonObjectOrArray(JsonbValue *jbv, JsonbValue *buf);
 static int	compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
 							bool useTz, bool *have_error);
 
@@ -646,7 +647,14 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			}
 
 		case jpiKey:
-			if (JsonbType(jb) == jbvObject)
+			if (jb->type == jbvObject)
+			{
+				JsonbValue	obj;
+
+				jb = wrapJsonObjectOrArray(jb, &obj);
+				return executeItemOptUnwrapTarget(cxt, jsp, jb, found, unwrap);
+			}
+			else if (jb->type == jbvBinary && JsonbType(jb) == jbvObject)
 			{
 				JsonbValue *v;
 				JsonbValue	key;
@@ -725,6 +733,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				int			innermostArraySize = cxt->innermostArraySize;
 				int			i;
 				int			size = JsonbArraySize(jb);
+				bool		binary = jb->type == jbvBinary;
 				bool		singleton = size < 0;
 				bool		hasNext = jspGetNext(jsp, &elem);
 
@@ -784,7 +793,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 							v = jb;
 							copy = true;
 						}
-						else
+						else if (binary)
 						{
 							v = getIthJsonbValueFromContainer(jb->val.binary.data,
 															  (uint32) index);
@@ -793,6 +802,11 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 								continue;
 
 							copy = false;
+						}
+						else
+						{
+							v = &jb->val.array.elems[index];
+							copy = true;
 						}
 
 						if (!hasNext && !found)
@@ -856,10 +870,10 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 		case jpiAnyKey:
 			if (JsonbType(jb) == jbvObject)
 			{
+				JsonbValue	bin;
 				bool		hasNext = jspGetNext(jsp, &elem);
 
-				if (jb->type != jbvBinary)
-					elog(ERROR, "invalid jsonb object type: %d", jb->type);
+				jb = wrapJsonObjectOrArray(jb, &bin);
 
 				return executeAnyItem
 					(cxt, hasNext ? &elem : NULL,
@@ -924,7 +938,10 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 		case jpiAny:
 			{
+				JsonbValue	bin;
 				bool		hasNext = jspGetNext(jsp, &elem);
+
+				jb = wrapJsonObjectOrArray(jb, &bin);
 
 				/* first try without any intermediate steps */
 				if (jsp->content.anybounds.first == 0)
@@ -1128,10 +1145,34 @@ executeItemUnwrapTargetArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
 							 JsonbValue *jb, JsonValueList *found,
 							 bool unwrapElements)
 {
-	if (jb->type != jbvBinary)
+	if (jb->type == jbvArray)
 	{
-		Assert(jb->type != jbvArray);
-		elog(ERROR, "invalid jsonb array value type: %d", jb->type);
+		JsonPathExecResult res = jperNotFound;
+		JsonbValue *elem = jb->val.array.elems;
+		JsonbValue *last = elem + jb->val.array.nElems;
+
+		for (; elem < last; elem++)
+		{
+			if (jsp)
+			{
+				res = executeItemOptUnwrapTarget(cxt, jsp, elem, found,
+												 unwrapElements);
+
+				if (jperIsError(res))
+					break;
+				if (res == jperOk && !found)
+					break;
+			}
+			else
+			{
+				if (found)
+					JsonValueListAppend(found, copyJsonbValue(elem));
+				else
+					return jperOk;
+			}
+		}
+
+		return res;
 	}
 
 	return executeAnyItem
@@ -1192,8 +1233,6 @@ executeItemOptUnwrapResult(JsonPathExecContext *cxt, JsonPathItem *jsp,
 		JsonValueListInitIterator(&seq, &it);
 		while ((item = JsonValueListNext(&seq, &it)))
 		{
-			Assert(item->type != jbvArray);
-
 			if (JsonbType(item) == jbvArray)
 				executeItemUnwrapTargetArray(cxt, NULL, item, found, false);
 			else
@@ -1947,6 +1986,7 @@ executeKeyValueMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	JsonPathExecResult res = jperNotFound;
 	JsonPathItem next;
 	JsonbContainer *jbc;
+	JsonbValue	bin;
 	JsonbValue	key;
 	JsonbValue	val;
 	JsonbValue	idval;
@@ -1958,12 +1998,13 @@ executeKeyValueMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	int64		id;
 	bool		hasNext;
 
-	if (JsonbType(jb) != jbvObject || jb->type != jbvBinary)
+	if (JsonbType(jb) != jbvObject)
 		RETURN_ERROR(ereport(ERROR,
 							 (errcode(ERRCODE_SQL_JSON_OBJECT_NOT_FOUND),
 							  errmsg("jsonpath item method .%s() can only be applied to an object",
 									 jspOperationName(jsp->type)))));
 
+	jb = wrapJsonObjectOrArray(jb, &bin);
 	jbc = jb->val.binary.data;
 
 	if (!JsonContainerSize(jbc))
@@ -2159,7 +2200,8 @@ getJsonPathVariable(JsonPathExecContext *cxt, JsonPathItem *variable,
 static int
 JsonbArraySize(JsonbValue *jb)
 {
-	Assert(jb->type != jbvArray);
+	if (jb->type == jbvArray)
+		return jb->val.array.nElems;
 
 	if (jb->type == jbvBinary)
 	{
@@ -2536,6 +2578,33 @@ JsonbInitBinary(JsonbValue *jbv, Jsonb *jb)
 }
 
 /*
+ * Transform a JsonbValue into a binary JsonbValue by encoding it to a
+ * binary jsonb container.
+ */
+static JsonbValue *
+JsonbWrapInBinary(JsonbValue *jbv, JsonbValue *out)
+{
+	Jsonb	   *jb;
+
+	if (!out)
+		out = palloc(sizeof(*out));
+
+	jb = JsonbValueToJsonb(jbv);
+	JsonbInitBinary(out, jb);
+
+	return out;
+}
+
+static JsonbValue *
+wrapJsonObjectOrArray(JsonbValue *jbv, JsonbValue *buf)
+{
+	if (jbv->type != jbvObject && jbv->type != jbvArray)
+		return jbv;
+
+	return JsonbWrapInBinary(jbv, buf);
+}
+
+/*
  * Returns jbv* type of JsonbValue. Note, it never returns jbvBinary as is.
  */
 static int
@@ -2584,7 +2653,12 @@ wrapItemsInArray(const JsonValueList *items)
 
 	JsonValueListInitIterator(items, &it);
 	while ((jbv = JsonValueListNext(items, &it)))
+	{
+		JsonbValue	bin;
+
+		jbv = wrapJsonObjectOrArray(jbv, &bin);
 		pushJsonbValue(&ps, WJB_ELEM, jbv);
+	}
 
 	return pushJsonbValue(&ps, WJB_END_ARRAY, NULL);
 }
