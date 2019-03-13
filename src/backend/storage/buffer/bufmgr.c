@@ -36,6 +36,7 @@
 #include "access/tableam.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
+#include "catalog/pg_class.h"
 #include "catalog/storage.h"
 #include "executor/instrument.h"
 #include "lib/binaryheap.h"
@@ -54,7 +55,7 @@
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
 #include "utils/timestamp.h"
-
+#include "utils/lsyscache.h"
 
 /* Note: these two macros only work on shared buffers, not local ones! */
 #define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
@@ -861,7 +862,19 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 		bufHdr = BufferAlloc(smgr, relpersistence, forkNum, blockNum,
 							 strategy, &found);
 		if (found)
+		{
 			pgBufferUsage.shared_blks_hit++;
+			if (pgBufferUsage.need_blocks_by_type && smgr->smgr_rnode.node.relNode != ClassOidIndexId)
+			switch (get_rel_relkind(smgr->smgr_rnode.node.relNode))
+			{
+				case RELKIND_RELATION:
+					pgBufferUsage.shared_heap_blks_hit++;
+					break;
+				case RELKIND_INDEX:
+					pgBufferUsage.shared_idx_blks_hit++;
+					break;
+			}
+		}
 		else if (isExtend)
 			pgBufferUsage.shared_blks_written++;
 		else if (mode == RBM_NORMAL || mode == RBM_NORMAL_NO_LOG ||

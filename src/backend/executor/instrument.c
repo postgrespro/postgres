@@ -73,7 +73,10 @@ InstrStartNode(Instrumentation *instr)
 
 	/* save buffer usage totals at node entry, if needed */
 	if (instr->need_bufusage)
+	{
 		instr->bufusage_start = pgBufferUsage;
+		pgBufferUsage.need_blocks_by_type = true;
+	}
 
 	if (instr->need_walusage)
 		instr->walusage_start = pgWalUsage;
@@ -103,8 +106,11 @@ InstrStopNode(Instrumentation *instr, double nTuples)
 
 	/* Add delta of buffer usage since entry to node's totals */
 	if (instr->need_bufusage)
+	{
 		BufferUsageAccumDiff(&instr->bufusage,
 							 &pgBufferUsage, &instr->bufusage_start);
+		pgBufferUsage.need_blocks_by_type = false;
+	}
 
 	if (instr->need_walusage)
 		WalUsageAccumDiff(&instr->walusage,
@@ -226,6 +232,8 @@ static void
 BufferUsageAdd(BufferUsage *dst, const BufferUsage *add)
 {
 	dst->shared_blks_hit += add->shared_blks_hit;
+	dst->shared_heap_blks_hit += add->shared_heap_blks_hit;
+	dst->shared_idx_blks_hit += add->shared_idx_blks_hit;
 	dst->shared_blks_read += add->shared_blks_read;
 	dst->shared_blks_dirtied += add->shared_blks_dirtied;
 	dst->shared_blks_written += add->shared_blks_written;
@@ -246,6 +254,8 @@ BufferUsageAccumDiff(BufferUsage *dst,
 					 const BufferUsage *sub)
 {
 	dst->shared_blks_hit += add->shared_blks_hit - sub->shared_blks_hit;
+	dst->shared_heap_blks_hit += add->shared_heap_blks_hit - sub->shared_heap_blks_hit;
+	dst->shared_idx_blks_hit += add->shared_idx_blks_hit - sub->shared_idx_blks_hit;
 	dst->shared_blks_read += add->shared_blks_read - sub->shared_blks_read;
 	dst->shared_blks_dirtied += add->shared_blks_dirtied - sub->shared_blks_dirtied;
 	dst->shared_blks_written += add->shared_blks_written - sub->shared_blks_written;

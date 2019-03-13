@@ -24,6 +24,8 @@
 typedef struct BufferUsage
 {
 	int64		shared_blks_hit;	/* # of shared buffer hits */
+	int64		shared_heap_blks_hit;   /* # of shared heap buffer hits */
+	int64		shared_idx_blks_hit;    /* # of shared index buffer hits */
 	int64		shared_blks_read;	/* # of shared disk blocks read */
 	int64		shared_blks_dirtied;	/* # of shared blocks dirtied */
 	int64		shared_blks_written;	/* # of shared disk blocks written */
@@ -35,6 +37,7 @@ typedef struct BufferUsage
 	int64		temp_blks_written;	/* # of temp blocks written */
 	instr_time	blk_read_time;	/* time spent reading */
 	instr_time	blk_write_time; /* time spent writing */
+	bool		need_blocks_by_type;
 } BufferUsage;
 
 /*

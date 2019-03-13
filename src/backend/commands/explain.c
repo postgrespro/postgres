@@ -3523,6 +3523,12 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage, bool planning)
 				if (usage->shared_blks_hit > 0)
 					appendStringInfo(es->str, " hit=%lld",
 									 (long long) usage->shared_blks_hit);
+				if (usage->shared_heap_blks_hit > 0)
+					appendStringInfo(es->str, " heap hit=%lld",
+									 (long long) usage->shared_heap_blks_hit);
+				if (usage->shared_idx_blks_hit > 0)
+					appendStringInfo(es->str, " index hit=%lld",
+									 (long long) usage->shared_idx_blks_hit);
 				if (usage->shared_blks_read > 0)
 					appendStringInfo(es->str, " read=%lld",
 									 (long long) usage->shared_blks_read);
@@ -3587,6 +3593,10 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage, bool planning)
 	{
 		ExplainPropertyInteger("Shared Hit Blocks", NULL,
 							   usage->shared_blks_hit, es);
+		ExplainPropertyInteger("Shared Hit Heap Blocks", NULL,
+							   usage->shared_heap_blks_hit, es);
+		ExplainPropertyInteger("Shared Hit Index Blocks", NULL,
+							   usage->shared_idx_blks_hit, es);
 		ExplainPropertyInteger("Shared Read Blocks", NULL,
 							   usage->shared_blks_read, es);
 		ExplainPropertyInteger("Shared Dirtied Blocks", NULL,
