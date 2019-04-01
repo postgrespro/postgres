@@ -826,6 +826,37 @@ SELECT count(*) FROM testjsonb WHERE j @? '$';
 SELECT count(*) FROM testjsonb WHERE j @? '$.public';
 SELECT count(*) FROM testjsonb WHERE j @? '$.bar';
 
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25');
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25', vars => '{"age": 34 }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $age', vars => '{"age": 25 }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $age', vars => '{"age": [25] }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $x || $.age == $y', vars => '{"x": 25, "y": 34}', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb t1, testjsonb t2 WHERE jsonb_path_match(t1.j, '$.age == $age', vars => t2.j, silent => true);
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)');
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)', vars => '{"age": 34 }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $age)', vars => '{"age": 25 }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $age)', vars => '{"age": [25] }', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $x || $.age == $y)', vars => '{"x": 25, "y": 34}', silent => true);
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb t1, testjsonb t2 WHERE jsonb_path_exists(t1.j, '$ ? (@.age == $age)', vars => t2.j, silent => true);
+
+
 -- array exists - array elements should behave as keys (for GIN index scans too)
 CREATE INDEX jidx_array ON testjsonb USING gin((j->'array'));
 SELECT count(*) from testjsonb  WHERE j->'array' ? 'bar';

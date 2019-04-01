@@ -3167,6 +3167,142 @@ SELECT count(*) FROM testjsonb WHERE j @? '$.bar';
      0
 (1 row)
 
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25');
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Seq Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == 25)'::jsonpath, '{}'::jsonb, false)
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25', silent => true);
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == 25)'::jsonpath, '{}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @@ '($."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == 25', vars => '{"age": 34 }', silent => true);
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == 25)'::jsonpath, '{"age": 34}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @@ '($."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $age', vars => '{"age": 25 }', silent => true);
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == $"age")'::jsonpath, '{"age": 25}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @@ '($."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $age', vars => '{"age": [25] }', silent => true);
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Seq Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == $"age")'::jsonpath, '{"age": [25]}'::jsonb, true)
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_match(j, '$.age == $x || $.age == $y', vars => '{"x": 25, "y": 34}', silent => true);
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_match(j, '($."age" == $"x" || $."age" == $"y")'::jsonpath, '{"x": 25, "y": 34}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @@ '($."age" == 25 || $."age" == 34)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb t1, testjsonb t2 WHERE jsonb_path_match(t1.j, '$.age == $age', vars => t2.j, silent => true);
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on testjsonb t2
+   ->  Bitmap Heap Scan on testjsonb t1
+         Filter: jsonb_path_match(j, '($."age" == $"age")'::jsonpath, t2.j, true)
+         ->  Bitmap Index Scan on jidx
+               Index Cond: (j @@ jsonpath_embed_vars('($."age" == $"age")'::jsonpath, t2.j))
+(6 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)');
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Seq Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == 25)'::jsonpath, '{}'::jsonb, false)
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)', silent => true);
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == 25)'::jsonpath, '{}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @? '$?(@."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == 25)', vars => '{"age": 34 }', silent => true);
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == 25)'::jsonpath, '{"age": 34}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @? '$?(@."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $age)', vars => '{"age": 25 }', silent => true);
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == $"age")'::jsonpath, '{"age": 25}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @? '$?(@."age" == 25)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $age)', vars => '{"age": [25] }', silent => true);
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Seq Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == $"age")'::jsonpath, '{"age": [25]}'::jsonb, true)
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb WHERE jsonb_path_exists(j, '$ ? (@.age == $x || $.age == $y)', vars => '{"x": 25, "y": 34}', silent => true);
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on testjsonb
+   Filter: jsonb_path_exists(j, '$?(@."age" == $"x" || $."age" == $"y")'::jsonpath, '{"x": 25, "y": 34}'::jsonb, true)
+   ->  Bitmap Index Scan on jidx
+         Index Cond: (j @? '$?(@."age" == 25 || $."age" == 34)'::jsonpath)
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM testjsonb t1, testjsonb t2 WHERE jsonb_path_exists(t1.j, '$ ? (@.age == $age)', vars => t2.j, silent => true);
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on testjsonb t2
+   ->  Bitmap Heap Scan on testjsonb t1
+         Filter: jsonb_path_exists(j, '$?(@."age" == $"age")'::jsonpath, t2.j, true)
+         ->  Bitmap Index Scan on jidx
+               Index Cond: (j @? jsonpath_embed_vars('$?(@."age" == $"age")'::jsonpath, t2.j))
+(6 rows)
+
 -- array exists - array elements should behave as keys (for GIN index scans too)
 CREATE INDEX jidx_array ON testjsonb USING gin((j->'array'));
 SELECT count(*) from testjsonb  WHERE j->'array' ? 'bar';
