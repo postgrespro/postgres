@@ -179,3 +179,11 @@ select '1..e'::jsonpath;
 select '1..e3'::jsonpath;
 select '(1.).e'::jsonpath;
 select '(1.).e3'::jsonpath;
+
+select jsonpath_embed_vars('$.a + $a', '"aaa"');
+select jsonpath_embed_vars('$.a + $a', '{"b": "abc"}');
+select jsonpath_embed_vars('$.a + $a', '{"a": "abc"}');
+select jsonpath_embed_vars('$.a + $a.double()', '{"a": "abc"}');
+select jsonpath_embed_vars('$.a + $a.x.double()', '{"a": {"x": -12.34}}');
+select jsonpath_embed_vars('$[*] ? (@ > $min && @ <= $max)', '{"min": -1.23, "max": 5.0}');
+select jsonpath_embed_vars(jsonpath_embed_vars('$[*] ? (@ > $min && @ <= $max)', '{"min": -1.23}'), '{"max": 5.0}');

@@ -9503,6 +9503,10 @@
   proname => 'jsonb_path_match_opr', prorettype => 'bool',
   proargtypes => 'jsonb jsonpath', prosrc => 'jsonb_path_match_opr' },
 
+{ oid => '4035', descr => 'embed variable values into jsonpath',
+  proname => 'jsonpath_embed_vars', prorettype => 'jsonpath',
+  proargtypes => 'jsonpath jsonb', prosrc => 'jsonpath_embed_vars' },
+
 # historical int8/txid_snapshot variants of xid8 functions
 { oid => '2939', descr => 'I/O',
   proname => 'txid_snapshot_in', prorettype => 'txid_snapshot',

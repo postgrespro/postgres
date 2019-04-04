@@ -962,3 +962,42 @@ select '(1.).e3'::jsonpath;
 ERROR:  syntax error, unexpected ')' at or near ")" of jsonpath input
 LINE 1: select '(1.).e3'::jsonpath;
                ^
+DETAIL:  syntax error, unexpected ')' at or near ")"
+select jsonpath_embed_vars('$.a + $a', '"aaa"');
+ jsonpath_embed_vars 
+---------------------
+ ($."a" + $"a")
+(1 row)
+
+select jsonpath_embed_vars('$.a + $a', '{"b": "abc"}');
+ jsonpath_embed_vars 
+---------------------
+ ($."a" + $"a")
+(1 row)
+
+select jsonpath_embed_vars('$.a + $a', '{"a": "abc"}');
+ jsonpath_embed_vars 
+---------------------
+ ($."a" + "abc")
+(1 row)
+
+select jsonpath_embed_vars('$.a + $a.double()', '{"a": "abc"}');
+   jsonpath_embed_vars    
+--------------------------
+ ($."a" + "abc".double())
+(1 row)
+
+select jsonpath_embed_vars('$.a + $a.x.double()', '{"a": {"x": -12.34}}');
+ERROR:  cannot embed jsonpath variables
+select jsonpath_embed_vars('$[*] ? (@ > $min && @ <= $max)', '{"min": -1.23, "max": 5.0}');
+     jsonpath_embed_vars      
+------------------------------
+ $[*]?(@ > -1.23 && @ <= 5.0)
+(1 row)
+
+select jsonpath_embed_vars(jsonpath_embed_vars('$[*] ? (@ > $min && @ <= $max)', '{"min": -1.23}'), '{"max": 5.0}');
+     jsonpath_embed_vars      
+------------------------------
+ $[*]?(@ > -1.23 && @ <= 5.0)
+(1 row)
+

@@ -85,6 +85,8 @@ typedef enum JsonPathItemType
 	jpiLast,					/* LAST array subscript */
 	jpiStartsWith,				/* STARTS WITH predicate */
 	jpiLikeRegex,				/* LIKE_REGEX predicate */
+
+	jpiBinary = 0xFF			/* for implementation of jsonpath operators */
 } JsonPathItemType;
 
 /* XQuery regex mode flags for LIKE_REGEX predicate */
@@ -190,6 +192,7 @@ struct JsonPathParseItem
 
 	union
 	{
+		JsonPath   *binary;
 
 		/* classic operator with two operands: and, or etc */
 		struct
@@ -205,7 +208,7 @@ struct JsonPathParseItem
 		struct
 		{
 			int			nelems;
-			struct
+			struct JsonPathParseArraySubscript
 			{
 				JsonPathParseItem *from;
 				JsonPathParseItem *to;
