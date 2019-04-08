@@ -102,14 +102,19 @@ typedef JsonContainer JsonbContainer;
 #define DatumGetJsonbP(datum)		DatumGetJson(datum, &jsonbContainerOps, NULL)
 #define DatumGetJsontP(datum)		DatumGetJson(datum, &jsontContainerOps, NULL)
 
-#define DatumGetJsonbPCopy(datum)	DatumGetJsonbP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
+#define DatumGetJsonbPCopy(datum)	DatumGetJsonbPC(datum, NULL, true)
 #define DatumGetJsontPCopy(datum)	DatumGetJsontP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
 
 #define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonbPGetDatum(x))
 #define PG_RETURN_JSONB_VALUE_P(x)	PG_RETURN_DATUM(JsonValueToJsonbDatum(x))
 #define PG_RETURN_JSONB_VALUE_P_SAFE(x, escontext)	PG_RETURN_DATUM(JsonValueToJsonbDatumSafe(x, escontext))
 
-#define PG_GETARG_JSONB_P(n)		DatumGetJson(PG_GETARG_DATUM(n), &jsonbContainerOps, alloca(sizeof(Json))) /* FIXME conditional alloca() */
+#if 1
+#define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONB_PC(n)
+#else
+#define PG_GETARG_JSONB_P(n)		DatumGetJsonbP(PG_GETARG_DATUM(n), alloca(sizeof(Json)), false) /* FIXME conditional alloca() */
+#endif
+#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), alloca(sizeof(Json)), false) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
 
 #define PG_FREE_IF_COPY_JSONB(json, n) JsonFree(json)
@@ -320,7 +325,12 @@ extern int lengthCompareJsonbStringValue(const void *a, const void *b);
 extern int lengthCompareJsonbString(const char *val1, int len1,
 									const char *val2, int len2);
 
-extern JsonContainerOps jsonbContainerOps;
+extern Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
+						JsonContainerOps *ops);
+extern Json *DatumGetJsonbPC(Datum datum, Json *tmp, bool copy);
+
+extern PGDLLIMPORT JsonContainerOps jsonbContainerOps;
+extern PGDLLIMPORT JsonContainerOps jsonbzContainerOps;
 
 #define JSON_TOASTER_MAGIC 0x20211223
 

@@ -16,9 +16,6 @@
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
 
-static Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
-						JsonContainerOps *ops);
-
 JsonValue *
 JsonExtractScalar(JsonContainer *jc, JsonValue *scalar)
 {
@@ -87,7 +84,7 @@ JsonInit(Json *json)
 	json->root.ops->init(&json->root, json->obj.value);
 }
 
-static Json *
+Json *
 JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 {
 	Json		   *json = tmp ? tmp : (Json *) palloc(JsonAllocSize(ops->data_size));

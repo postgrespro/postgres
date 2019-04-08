@@ -1516,3 +1516,104 @@ select '12345.0000000000000000000000000000000000000000000005'::jsonb::float8;
 select '12345.0000000000000000000000000000000000000000000005'::jsonb::int2;
 select '12345.0000000000000000000000000000000000000000000005'::jsonb::int4;
 select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
+
+
+-- test partial decompression
+create table test_jsonbz_obj as
+select
+  jsonb_build_object('a',
+    jsonb_object_agg(i, repeat('a', pow(2, 10 + i)::int))) js
+from
+  generate_series(0, 9) i,
+  generate_series(0, 9) j
+group by j
+order by j;
+
+select
+  i,
+  js->'a'->>(i::text) = repeat('a', pow(2, 10 + i)::int) ok
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  generate_series(0, 9) i;
+
+select
+  kv.key::int,
+  kv.value = repeat('a', pow(2, kv.key::int + 10)::int)
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  jsonb_each_text(js->'a') kv;
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int)
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  jsonb_path_query(js, '$.a.*') with ordinality as elems(elem, index);
+
+select
+  kv->>'key',
+  kv->>'value' = repeat('a', pow(2, (kv->>'key')::int + 10)::int)
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  jsonb_path_query(js, '$.a.keyvalue()') as kv;
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int) ok
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  jsonb_path_query(js, '$.** ? (@.type() == "string")') with ordinality as elems(elem, index);
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int) ok
+from
+  (select js from test_jsonbz_obj limit 1) t,
+  jsonb_path_query(js, '$.**{2}') with ordinality as elems(elem, index);
+
+
+create table test_jsonbz_arr as
+select
+  jsonb_build_object('a',
+    jsonb_agg(repeat('a', pow(2, 10 + i)::int))) js
+from
+  generate_series(0, 9) i,
+  generate_series(0, 9) j
+group by j
+order by j;
+
+select
+  i,
+  js->'a'->>i = repeat('a', pow(2, 10 + i)::int) ok
+from
+  (select js from test_jsonbz_arr limit 1) t,
+  generate_series(0, 9) i;
+
+select
+  idx,
+  val = repeat('a', pow(2, idx + 9)::int) ok
+from
+  (select js from test_jsonbz_arr limit 1) t,
+  jsonb_array_elements_text(js->'a') with ordinality as elems(val, idx);
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int) ok
+from
+  (select js from test_jsonbz_arr limit 1) t,
+  jsonb_path_query(js, '$.a[*]') with ordinality as elems(elem, index);
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int) ok
+from
+  (select js from test_jsonbz_arr limit 1) t,
+  jsonb_path_query(js, '$.** ? (@.type() == "string")') with ordinality as elems(elem, index)
+limit 10;
+
+select
+  index,
+  elem->>0 = repeat('a', pow(2, index + 9)::int) ok
+from
+  (select js from test_jsonbz_arr limit 1) t,
+  jsonb_path_query(js, '$.**{2}') with ordinality as elems(elem, index);
