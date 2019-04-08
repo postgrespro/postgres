@@ -118,7 +118,12 @@ typedef struct Json
 #define PG_GETARG_JSONX_TMP(n, tmp)	DatumGetJsonxTmp(PG_GETARG_DATUM(n), tmp)
 
 #undef	PG_GETARG_JSONB_P
+#if 1
+#define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONB_PC(n)
+#else
 #define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
+#endif
+#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #undef	PG_GETARG_JSONB_P_COPY
@@ -226,8 +231,11 @@ JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
 extern PGDLLIMPORT JsonContainerOps jsonbContainerOps;
 extern PGDLLIMPORT JsonContainerOps jsontContainerOps;
 extern PGDLLIMPORT JsonContainerOps jsonvContainerOps;
+extern PGDLLIMPORT JsonContainerOps jsonbzContainerOps;
 
 extern Json *DatumGetJson(Datum val, JsonContainerOps *ops, Json *tmp);
+extern Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
+						JsonContainerOps *ops);
 
 extern void JsonFree(Json *json);
 extern Json *JsonCopyTemporary(Json *tmp);
@@ -509,5 +517,7 @@ extern void JsonbEncode(StringInfo, const JsonValue *);
 extern int lengthCompareJsonbStringValue(const void *a, const void *b);
 extern int lengthCompareJsonbString(const char *val1, int len1,
 									const char *val2, int len2);
+
+extern Json *DatumGetJsonbPC(Datum datum, Json *tmp, bool copy);
 
 #endif /* UTILS_JSON_GENERIC_H */

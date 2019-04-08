@@ -15,10 +15,13 @@
 
 #define JSONB_UTIL_C
 
+#include "access/detoast.h"
+#include "access/toast_internals.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/jsonapi.h"
+#include "common/pg_lzcompress.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/datetime.h"
@@ -48,12 +51,29 @@ struct JsonbParseState
 	struct JsonbParseState *next;
 };
 
+typedef struct CompressedDatum
+{
+	struct varlena *compressed;
+	void	   *data;
+	void	   *state;
+	int			total_len;
+	int			decompressed_len;
+} CompressedDatum;
+
+typedef struct CompressedJsonb
+{
+	CompressedDatum *datum;
+	int			offset;
+} CompressedJsonb;
+
 struct JsonbIterator
 {
 	JsonIterator	ji;
 
 	/* Container being iterated */
 	const JsonbContainer *container;
+
+	CompressedJsonb *compressed;	/* compressed jsonb container, if any */
 
 	uint32		nElems;			/* Number of elements in children array (will
 								 * be nPairs for objects) */
@@ -79,7 +99,7 @@ struct JsonbIterator
 	JsonbIterState state;
 };
 
-static void fillJsonbValue(const JsonbContainer *container, int index,
+void fillJsonbValue(const JsonbContainer *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
 static int	compareJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
@@ -98,6 +118,7 @@ static JsonbParseState *pushState(JsonbParseState **pstate);
 static void appendKey(JsonbParseState *pstate, const JsonbValue *scalarVal);
 static void appendValue(JsonbParseState *pstate, const JsonbValue *scalarVal);
 static void appendElement(JsonbParseState *pstate, const JsonbValue *scalarVal);
+int	lengthCompareJsonbStringValue(const void *a, const void *b);
 static int	lengthCompareJsonbPair(const void *a, const void *b, void *arg);
 static void uniqueifyJsonbObject(JsonbValue *object);
 static JsonValue *JsonValueUniquify(JsonValue *res, const JsonValue *val);
@@ -108,6 +129,14 @@ static JsonbValue *pushSingleScalarJsonbValue(JsonbParseState **pstate,
 											  const JsonbValue *jbval,
 											  bool unpackBinary);
 static void jsonbInitContainer(JsonContainerData *jc, JsonbContainer *jbc, int len);
+
+static void CompressedDatumDecompress(CompressedDatum *cd, Size offset);
+static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
+											const JsonbContainer *container,
+											int index, char *base_addr,
+											uint32 offset, JsonValue *result);
+static JsonbContainer *jsonbzDecompress(JsonContainer *jc);
+
 
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
@@ -439,9 +468,9 @@ JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i)
 }
 
 static JsonbValue *
-jsonbFindValueInArray(JsonContainer *jsc, const JsonbValue *key)
+jsonbFindValueInArrayContainer(const JsonbContainer *container,
+							   const JsonbValue *key)
 {
-	const JsonbContainer *container = jsc->data;
 	JsonbArrayIterator	it;
 	JsonbValue		   *result = palloc(sizeof(JsonbValue));
 
@@ -458,6 +487,12 @@ jsonbFindValueInArray(JsonContainer *jsc, const JsonbValue *key)
 
 	pfree(result);
 	return NULL;
+}
+
+static JsonbValue *
+jsonbFindValueInArray(JsonContainer *jsc, const JsonbValue *key)
+{
+	return jsonbFindValueInArrayContainer(jsc->data, key);
 }
 
 /*
@@ -612,7 +647,7 @@ jsonbGetArrayElement(JsonContainer *jsc, uint32 i)
  * A nested array or object will be returned as jbvBinary, ie. it won't be
  * expanded.
  */
-static void
+void
 fillJsonbValue(const JsonbContainer *container, int index,
 			   char *base_addr, uint32 offset,
 			   JsonbValue *result)
@@ -648,12 +683,15 @@ fillJsonbValue(const JsonbContainer *container, int index,
 	else
 	{
 		JsonContainerData *cont = JsonContainerAlloc();
+
 		Assert(JBE_ISCONTAINER(entry));
+
 		jsonbInitContainer(cont,
-				/* Remove alignment padding from data pointer and length */
+			/* Remove alignment padding from data pointer and length */
 						   (JsonbContainer *)(base_addr + INTALIGN(offset)),
 						   getJsonbLength(container, index) -
-								(INTALIGN(offset) - offset));
+						   (INTALIGN(offset) - offset));
+
 		JsonValueInitBinary(result, cont);
 	}
 }
@@ -1086,9 +1124,9 @@ recurse:
 				return WJB_END_ARRAY;
 			}
 
-			fillJsonbValue((*it)->container, (*it)->curIndex,
-						   (*it)->dataProper, (*it)->curDataOffset,
-						   val);
+			fillCompressedJsonbValue((*it)->compressed, (*it)->container,
+									 (*it)->curIndex, (*it)->dataProper,
+									 (*it)->curDataOffset, val);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
@@ -1140,9 +1178,10 @@ recurse:
 			else
 			{
 				/* Return key of a key/value pair.  */
-				fillJsonbValue((*it)->container, (*it)->curIndex,
-							   (*it)->dataProper, (*it)->curDataOffset,
-							   val);
+				fillCompressedJsonbValue((*it)->compressed, (*it)->container,
+										 (*it)->curIndex, (*it)->dataProper,
+										 (*it)->curDataOffset, val);
+
 				if (val->type != jbvString)
 					elog(ERROR, "unexpected jsonb type as object key");
 
@@ -1155,9 +1194,10 @@ recurse:
 			/* Set state for next call */
 			(*it)->state = JBI_OBJECT_KEY;
 
-			fillJsonbValue((*it)->container, (*it)->curIndex + (*it)->nElems,
-						   (*it)->dataProper, (*it)->curValueOffset,
-						   val);
+			fillCompressedJsonbValue((*it)->compressed, (*it)->container,
+									 (*it)->curIndex + (*it)->nElems,
+									 (*it)->dataProper, (*it)->curValueOffset,
+									 val);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
@@ -1198,9 +1238,9 @@ iteratorFromContainer(JsonContainer *container, JsonbIterator *parent)
  * See JsonbIteratorNext() for notes on memory management.
  */
 static JsonIterator *
-JsonbIteratorInit(JsonContainer *cont)
+jsonbIteratorInit(JsonContainer *cont, const JsonbContainer *container,
+				  struct CompressedJsonb *cjb)
 {
-	const JsonbContainer *container = cont->data;
 	JsonbIterator *it;
 
 	it = palloc0(sizeof(JsonbIterator));
@@ -1209,6 +1249,7 @@ JsonbIteratorInit(JsonContainer *cont)
 	it->ji.next = JsonbIteratorNext;
 	it->container = container;
 	it->nElems = container->header & JB_CMASK;
+	it->compressed = cjb;
 
 	/* Array starts just after header */
 	it->children = container->children;
@@ -1235,7 +1276,17 @@ JsonbIteratorInit(JsonContainer *cont)
 			elog(ERROR, "unknown type of jsonb container");
 	}
 
+	if (it->dataProper && cjb)
+		CompressedDatumDecompress(cjb->datum,
+								  it->dataProper - (char *) cjb->datum->data);
+
 	return (JsonIterator *) it;
+}
+
+static JsonIterator *
+JsonbIteratorInit(JsonContainer *cont)
+{
+	return jsonbIteratorInit(cont, (const JsonbContainer *) cont->data, NULL);
 }
 
 /*
@@ -2075,11 +2126,17 @@ convertJsonbBinary(StringInfo buffer, JEntry *pheader, const JsonbValue *val,
 
 	Assert(val->type == jbvBinary);
 
-	if (jc->ops == &jsonbContainerOps && !JsonContainerIsScalar(jc))
+	if ((jc->ops == &jsonbContainerOps ||
+		 jc->ops == &jsonbzContainerOps) && !JsonContainerIsScalar(jc))
 	{
-		int base_offset = buffer->len;
+		JsonbContainer *jbc;
+		int			base_offset = buffer->len;
+
+		jbc = jc->ops == &jsonbzContainerOps ?
+			jsonbzDecompress(jc) : JsonContainerDataPtr(jc);
+
 		padBufferToInt(buffer);
-		appendToBuffer(buffer, jc->data, jc->len);
+		appendToBuffer(buffer, jbc, jc->len);
 		*pheader = JENTRY_ISCONTAINER | (buffer->len - base_offset);
 	}
 	else
@@ -2295,7 +2352,8 @@ jsonbInitContainer(JsonContainerData *jc, JsonbContainer *jbc, int len)
 static void
 jsonbInit(JsonContainerData *jc, Datum value)
 {
-	Jsonb  *jb = (Jsonb *) DatumGetPointer(value);
+	Jsonb	   *jb = (Jsonb *) DatumGetPointer(value);
+
 	jsonbInitContainer(jc, &jb->root, VARSIZE_ANY_EXHDR(jb));
 }
 
@@ -2311,3 +2369,402 @@ jsonbContainerOps =
 	JsonbToCStringRaw,
 	JsonCopyFlat,
 };
+
+static void
+CompressedDatumInit(CompressedDatum *cd, Datum d)
+{
+	struct varlena *data = detoast_external_attr((struct varlena *) DatumGetPointer(d));
+
+	if (VARATT_IS_COMPRESSED(data))
+	{
+		cd->compressed = data;
+		cd->data = NULL;
+		cd->state = NULL;
+		cd->decompressed_len = 0;
+		cd->total_len = TOAST_COMPRESS_RAWSIZE(data) + VARHDRSZ;
+	}
+	else
+	{
+		if (VARATT_IS_SHORT(data))
+		{
+			struct varlena *short_data = data;
+
+			data = detoast_attr(data);
+
+			if (DatumGetPointer(d) != (Pointer) short_data)
+				pfree(short_data);
+		}
+
+		cd->compressed = NULL;
+		cd->data = data;
+		cd->state = NULL;
+		cd->total_len = cd->decompressed_len = VARSIZE(data);
+	}
+}
+
+static void
+CompressedDatumDecompress(CompressedDatum *cd, Size offset)
+{
+	int			res;
+
+	if (!cd->compressed || offset <= cd->decompressed_len)
+		return;
+
+#if 0
+	cd->data = detoast_attr_slice(cd->compressed, 0, offset - VARHDRSZ);
+#else
+	if (!cd->data)
+	{
+		cd->data = palloc(cd->total_len);
+		SET_VARSIZE(cd->data, cd->total_len);
+	}
+
+	res = pglz_decompress_state(TOAST_COMPRESS_RAWDATA(cd->compressed),
+								VARSIZE(cd->compressed) - TOAST_COMPRESS_HDRSZ,
+								VARDATA(cd->data), offset - VARHDRSZ,
+								false, &cd->state);
+
+	if (res < 0)
+		elog(ERROR, "corrupt compressed data");
+
+	if (res != offset - VARHDRSZ)
+		elog(ERROR, "premature end of compressed data");
+#endif
+
+	cd->decompressed_len = offset;
+}
+
+static void
+CompressedDatumDecompressAll(CompressedDatum *cd)
+{
+	if (!cd->compressed || cd->decompressed_len >= cd->total_len)
+		return;
+
+	if (cd->data)
+		CompressedDatumDecompress(cd, cd->total_len);
+	else
+	{
+		cd->data = detoast_attr(cd->compressed);
+		cd->decompressed_len = cd->total_len;
+	}
+}
+
+static void
+jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb, int len)
+{
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	JsonbContainer *jbc = (JsonbContainer *)((char *) jb + cjb->offset);
+
+	*(CompressedJsonb *) &jc->_data = *cjb;
+
+	jc->ops = &jsonbzContainerOps;
+	jc->len = len;
+	jc->size = jbc->header & JB_CMASK;
+	jc->type = jbc->header & JB_FOBJECT ? jbvObject :
+			   jbc->header & JB_FSCALAR ? jbvArray | jbvScalar :
+										  jbvArray;
+}
+
+static JsonbContainer *
+jsonbzDecompress(JsonContainer *jc)
+{
+	CompressedJsonb *cjb = (void *) &jc->_data;
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	JsonbContainer *container = (JsonbContainer *)((char *) jb + cjb->offset);
+
+	CompressedDatumDecompress(cjb->datum, cjb->offset + jc->len);
+
+	return container;
+}
+
+static JsonbValue *
+fillCompressedJsonbValue(CompressedJsonb *cjb, const JsonbContainer *container,
+						 int index, char *base_addr, uint32 offset,
+						 JsonValue *result)
+{
+	JEntry		entry = container->children[index];
+	uint32		len = getJsonbLength(container, index);
+	Size		base_offset;
+
+	if (!cjb)
+	{
+		fillJsonbValue(container, index, base_addr, offset, result);
+		return result;
+	}
+
+	base_offset = base_addr - (char *) cjb->datum->data;
+
+	if (JBE_ISCONTAINER(entry) /* && len > JSONBZ_MIN_CONTAINER_LEN */)
+	{
+		JsonContainerData *cont = JsonContainerAlloc(&jsonbzContainerOps);
+		CompressedJsonb cjb2;
+
+		cjb2.datum = cjb->datum;
+		/* Remove alignment padding from data pointer and length */
+		cjb2.offset = base_offset + INTALIGN(offset);
+
+		len -= INTALIGN(offset) - offset;
+
+		CompressedDatumDecompress(cjb->datum, cjb2.offset +
+								  offsetof(JsonbContainer, children));
+
+		jsonbzInitContainer(cont, &cjb2, len);
+		JsonValueInitBinary(result, cont);
+	}
+	else
+	{
+		//CompressedDatumDecompressAll(cjb->datum);
+		CompressedDatumDecompress(cjb->datum, base_offset + offset + len);
+		fillJsonbValue(container, index, base_addr, offset, result);
+	}
+
+	return result;
+}
+
+static JsonbValue *
+findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int keylen)
+{
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	JsonbContainer *container = (JsonbContainer *)((char *) jb + cjb->offset);
+	JsonbValue	key;
+	JEntry	   *children = container->children;
+	int			count = container->header & JB_CMASK;
+	/* Since this is an object, account for *Pairs* of Jentrys */
+	char	   *base_addr = (char *) (children + count * 2);
+	Size		base_offset = base_addr - (char *) jb;
+	uint32		stopLow = 0,
+				stopHigh = count;
+
+	Assert(JB_ROOT_IS_OBJECT(jb));
+
+	/* Quick out if object/array is empty */
+	if (count <= 0)
+		return NULL;
+
+	key.type = jbvString;
+	key.val.string.val = keystr;
+	key.val.string.len = keylen;
+
+	Assert(cjb->datum->compressed);
+		//return findJsonbValueFromContainer(container, JB_FOBJECT, &key);
+
+	CompressedDatumDecompress(cjb->datum, base_offset);
+
+	/* Binary search on object/pair keys *only* */
+	while (stopLow < stopHigh)
+	{
+		uint32		stopMiddle;
+		int			difference;
+		uint32		offset;
+		uint32		len;
+
+		stopMiddle = stopLow + (stopHigh - stopLow) / 2;
+
+		offset = getJsonbOffset(container, stopMiddle);
+		len = getJsonbLength(container, stopMiddle);
+
+		CompressedDatumDecompress(cjb->datum, base_offset + offset + len);
+
+		difference = lengthCompareJsonbString(base_addr + offset, len,
+											  key.val.string.val,
+											  key.val.string.len);
+
+		if (difference == 0)
+		{
+			/* Found our key, return corresponding value */
+			int			index = stopMiddle + count;
+
+			return fillCompressedJsonbValue(cjb, container, index, base_addr,
+											getJsonbOffset(container, index),
+											palloc(sizeof(JsonbValue)));
+		}
+		else
+		{
+			if (difference < 0)
+				stopLow = stopMiddle + 1;
+			else
+				stopHigh = stopMiddle;
+		}
+	}
+
+	return NULL;
+}
+
+static JsonValue *
+jsonbzFindKeyInObject(JsonContainer *jc, const char *key, int len)
+{
+	CompressedJsonb *cjb = (void *) &jc->_data;
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	JsonbContainer *jbc = (JsonbContainer *)((char *) jb + cjb->offset);
+
+	if (!cjb->datum->compressed)
+	{
+		JsonContainerData jcd;
+
+		jsonbInitContainer(&jcd, jbc, jc->len);
+
+		return jsonbFindKeyInObject(&jcd, key, len);
+	}
+
+	return findValueInCompressedJsonbObject(cjb, key, len);
+}
+
+typedef struct JsonbzArrayIterator
+{
+	CompressedJsonb *cjb;
+	const JsonbContainer *container;
+	char	   *base_addr;
+	int			index;
+	int			count;
+	uint32		offset;
+} JsonbzArrayIterator;
+
+static void
+JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
+{
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	const JsonbContainer *jbc = (const JsonbContainer *)((char *) jb + cjb->offset);
+
+	it->cjb = cjb;
+	it->container = jbc;
+	it->index = 0;
+	it->count = (jbc->header & JB_CMASK);
+	it->offset = 0;
+	it->base_addr = (char *) &jbc->children[it->count];
+}
+
+static bool
+JsonbzArrayIteratorNext(JsonbzArrayIterator *it, JsonValue *result)
+{
+	if (it->index >= it->count)
+		return false;
+
+	fillCompressedJsonbValue(it->cjb, it->container, it->index, it->base_addr,
+							 it->offset, result);
+
+	JBE_ADVANCE_OFFSET(it->offset, it->container->children[it->index]);
+	it->index++;
+
+	return true;
+}
+
+static JsonValue *
+JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index)
+{
+	if (index >= it->count)
+		return NULL;
+
+	return fillCompressedJsonbValue(it->cjb, it->container, index,
+									it->base_addr,
+									getJsonbOffset(it->container, index),
+									palloc(sizeof(JsonValue)));
+}
+
+static JsonValue *
+jsonbzFindValueInArray(JsonContainer *jc, const JsonValue *val)
+{
+	CompressedJsonb *cjb = (void *) &jc->_data;
+	JsonbzArrayIterator it;
+	JsonValue  *result = palloc(sizeof(JsonValue));
+
+	JsonbzArrayIteratorInit(&it, cjb);
+
+	while (JsonbzArrayIteratorNext(&it, result))
+	{
+		if (val->type == result->type &&
+			equalsJsonbScalarValue(val, result))
+			return result;
+	}
+
+	pfree(result);
+	return NULL;
+}
+
+static JsonValue *
+jsonbzGetArrayElement(JsonContainer *jc, uint32 index)
+{
+	CompressedJsonb *cjb = (void *) &jc->_data;
+	JsonbzArrayIterator it;
+
+	if (!JsonContainerIsArray(jc))
+		elog(ERROR, "not a jsonb array");
+
+	JsonbzArrayIteratorInit(&it, cjb);
+
+	return JsonbzArrayIteratorGetIth(&it, index);
+}
+
+static JsonIterator *
+jsonbzIteratorInit(JsonContainer *jc)
+{
+	CompressedJsonb *cjb = (void *) &jc->_data;
+	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
+	JsonbContainer *jbc = (JsonbContainer *)((char *) jb + cjb->offset);
+
+	//CompressedDatumDecompressAll(cjb->datum);
+
+	return jsonbIteratorInit(jc, jbc, cjb);
+}
+
+static void
+jsonbzInit(JsonContainerData *jc, Datum value)
+{
+	CompressedJsonb *cjb = palloc(sizeof(*cjb));
+	CompressedDatum *cd = palloc(sizeof(*cd));
+
+	cjb->datum = cd;
+	cjb->offset = offsetof(Jsonb, root);
+
+	CompressedDatumInit(cd, value);
+	CompressedDatumDecompress(cd, 256);
+
+	jsonbzInitContainer(jc, cjb, VARSIZE_ANY_EXHDR(cd->data)); // cd->total_len - VARHDRSZ
+}
+
+JsonContainerOps
+jsonbzContainerOps =
+{
+	sizeof(CompressedJsonb),
+	jsonbzInit,
+	jsonbzIteratorInit,
+	jsonbzFindKeyInObject,
+	jsonbzFindValueInArray,
+	jsonbzGetArrayElement,
+	NULL,
+	JsonbToCStringRaw,
+	JsonCopyFlat,	// FIXME
+};
+
+Json *
+DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
+{
+	CompressedDatum cd;
+	Json	   *js;
+
+	if (copy)
+	{
+		struct varlena *src = (struct varlena *) DatumGetPointer(datum);
+
+		if (VARATT_IS_EXTERNAL_ONDISK(src) || VARATT_IS_COMPRESSED(src))
+		{
+			Size		len = VARSIZE_ANY(src);
+			struct varlena *result = (struct varlena *) palloc(len);
+
+			memcpy(result, src, len);
+			datum = PointerGetDatum(result);
+		}
+		else
+			datum = PointerGetDatum(pg_detoast_datum_copy(src));
+	}
+
+	CompressedDatumInit(&cd, datum);
+
+	if (!cd.compressed)
+		return DatumGetJson(PointerGetDatum(cd.data), &jsonbContainerOps, tmp);
+
+	js = JsonExpand(tmp, (Datum) 0, false, &jsonbzContainerOps);
+
+	jsonbzInit(&js->root, datum);
+
+	return js;
+}

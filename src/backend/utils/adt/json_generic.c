@@ -743,7 +743,7 @@ JsonInit(Json *json)
 	json->root.ops->init(&json->root, json->obj.value);
 }
 
-static Json *
+Json *
 JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 {
 	Json		   *json;
@@ -799,7 +799,8 @@ JsonExpandDatum(Datum value, JsonContainerOps *ops, Json *tmp)
 Json *
 DatumGetJson(Datum value, JsonContainerOps *ops, Json *tmp)
 {
-	Json *json = JsonExpandDatum(value, ops, tmp);
+	Json	   *json = JsonExpandDatum(value, ops, tmp);
+
 	JsonInit(json);
 
 	return json;
@@ -832,17 +833,21 @@ JsonValueToJson(JsonValue *val)
 {
 	if (val->type == jbvBinary)
 	{
-		JsonContainer  *jc = val->val.binary.data;
-		Json		   *json = JsonExpand(NULL, PointerGetDatum(NULL), false,
-										  jc->ops);
+		JsonContainer *jc = val->val.binary.data;
+		Json	   *json = JsonExpand(NULL, PointerGetDatum(NULL), false,
+									  jc->ops);
+
 		json->root = *jc;
+
 		return json;
 	}
 	else
 	{
-		Json *json = JsonExpand(NULL, PointerGetDatum(NULL), false,
-								&jsonvContainerOps);
+		Json	   *json = JsonExpand(NULL, PointerGetDatum(NULL), false,
+									  &jsonvContainerOps);
+
 		jsonvInitContainer(&json->root, val);
+
 		return json;
 	}
 }
