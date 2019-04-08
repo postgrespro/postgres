@@ -629,9 +629,6 @@ report_json_context(JsonLexContext *lex)
 static JsonValue *
 json_object_field_internal(Json *jb, text *key)
 {
-	JsonbValue *v;
-	JsonbValue	vbuf;
-
 	if (!JB_ROOT_IS_OBJECT(jb))
 		return NULL;
 
@@ -643,7 +640,7 @@ json_object_field_internal(Json *jb, text *key)
 Datum
 jsonb_object_field(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_P(0),
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_PC(0),
 												 PG_GETARG_TEXT_PP(1));
 
 	if (res)
@@ -667,7 +664,7 @@ json_object_field(PG_FUNCTION_ARGS)
 Datum
 jsonb_object_field_text(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_P(0),
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_PC(0),
 												 PG_GETARG_TEXT_PP(1));
 
 	if (res && res->type != jbvNull)
