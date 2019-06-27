@@ -1266,6 +1266,7 @@ JsonParseExpr
 JsonPath
 JsonPathBool
 JsonPathDatatypeStatus
+JsonPathEncodingContext
 JsonPathExecContext
 JsonPathExecResult
 JsonPathGinAddPathItemFunc

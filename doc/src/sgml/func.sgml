@@ -17516,6 +17516,35 @@ strict $.**.HR
 
    </sect3>
 
+   <sect3 id="pg-extensions">
+    <title>Extensions</title>
+    <para>
+     <productname>PostgreSQL</productname> has some extensions to the SQL/JSON
+     Path standard.  These syntax extensions that can enabled by the specifying
+     additional <literal>pg</literal> modifier before the
+     <literal>strict</literal>/<literal>lax</literal> flags.
+     <xref linkend="functions-jsonpath-extensions"/> shows these
+     extensions with examples.
+    </para>
+
+    <table id="functions-jsonpath-extensions">
+    <title><type>jsonpath</type> Syntax Extensions</title>
+     <tgroup cols="5">
+      <thead>
+       <row>
+        <entry>Name</entry>
+        <entry>Description</entry>
+        <entry>Example JSON</entry>
+        <entry>Example JSON path</entry>
+        <entry>Result</entry>
+       </row>
+      </thead>
+      <tbody>
+      </tbody>
+     </tgroup>
+    </table>
+   </sect3>
+
    <sect3 id="jsonpath-regular-expressions">
     <title>SQL/JSON Regular Expressions</title>
 
