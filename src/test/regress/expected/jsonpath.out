@@ -21,6 +21,24 @@ select 'lax $'::jsonpath;
  $
 (1 row)
 
+select 'pg $'::jsonpath;
+ jsonpath 
+----------
+ pg $
+(1 row)
+
+select 'pg strict $'::jsonpath;
+  jsonpath   
+-------------
+ pg strict $
+(1 row)
+
+select 'pg lax $'::jsonpath;
+ jsonpath 
+----------
+ pg $
+(1 row)
+
 select '$.a'::jsonpath;
  jsonpath 
 ----------

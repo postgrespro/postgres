@@ -1130,6 +1130,7 @@ JsonLikeRegexContext
 JsonParseContext
 JsonPath
 JsonPathBool
+JsonPathEncodingContext
 JsonPathExecContext
 JsonPathExecResult
 JsonPathGinAddPathItemFunc
