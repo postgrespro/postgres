@@ -101,6 +101,8 @@ typedef struct JsonPathExecContext
 	int			innermostArraySize; /* for LAST array index evaluation */
 	bool		laxMode;		/* true for "lax" mode, false for "strict"
 								 * mode */
+	bool		useExtensions;	/* use PostgreSQL-specific extensions?
+								 * (enabled by 'pg' modifier in jsonpath) */
 	bool		ignoreStructuralErrors; /* with "true" structural errors such
 										 * as absence of required json item or
 										 * unexpected json item type are
@@ -157,6 +159,7 @@ typedef struct JsonValueListIterator
 #define jspAutoWrap(cxt)				((cxt)->laxMode)
 #define jspIgnoreStructuralErrors(cxt)	((cxt)->ignoreStructuralErrors)
 #define jspThrowErrors(cxt)				((cxt)->throwErrors)
+#define jspUseExtensions(cxt)			((cxt)->useExtensions)
 
 /* Convenience macro: return or throw error depending on context */
 #define RETURN_ERROR(throw_error) \
@@ -559,6 +562,7 @@ executeJsonPath(JsonPath *path, Jsonb *vars, Jsonb *json, bool throwErrors,
 
 	cxt.vars = vars;
 	cxt.laxMode = (path->header & JSONPATH_LAX) != 0;
+	cxt.useExtensions = (path->header & JSONPATH_EXT) != 0;
 	cxt.ignoreStructuralErrors = cxt.laxMode;
 	cxt.root = &jbv;
 	cxt.current = &jbv;
