@@ -25,8 +25,10 @@ typedef struct
 	char		data[FLEXIBLE_ARRAY_MEMBER];
 } JsonPath;
 
-#define JSONPATH_VERSION	(0x01)
-#define JSONPATH_LAX		(0x80000000)
+#define JSONPATH_VERSION	0x01
+#define JSONPATH_LAX		0x80000000		/* lax/strict mode */
+#define JSONPATH_EXT		0x40000000		/* PG extensions */
+#define JSONPATH_VERSION_MASK (~(JSONPATH_LAX | JSONPATH_EXT))
 #define JSONPATH_HDRSZ		(offsetof(JsonPath, data))
 
 static inline JsonPath *
@@ -251,7 +253,8 @@ struct JsonPathParseItem
 typedef struct JsonPathParseResult
 {
 	JsonPathParseItem *expr;
-	bool		lax;
+	bool		lax;		/* lax/strict mode */
+	bool		ext;		/* PostgreSQL extensions */
 } JsonPathParseResult;
 
 extern JsonPathParseResult *parsejsonpath(const char *str, int len,

@@ -366,6 +366,7 @@ typedef struct JsonPathKeyword
  */
 static const JsonPathKeyword keywords[] = {
 	{ 2, false,	IS_P,		"is"},
+	{ 2, false,	PG_P,		"pg"},
 	{ 2, false,	TO_P,		"to"},
 	{ 3, false,	ABS_P,		"abs"},
 	{ 3, false,	LAX_P,		"lax"},

@@ -73,10 +73,18 @@
 #include "utils/jsonpath.h"
 
 
+/* Context for jsonpath encoding. */
+typedef struct JsonPathEncodingContext
+{
+	StringInfo	buf;		/* output buffer */
+	bool		ext;		/* PG extensions are enabled? */
+} JsonPathEncodingContext;
+
 static Datum jsonPathFromCstring(char *in, int len, struct Node *escontext);
 static char *jsonPathToCstring(StringInfo out, JsonPath *in,
 							   int estimated_len);
-static bool	flattenJsonPathParseItem(StringInfo buf, int *result,
+static bool	flattenJsonPathParseItem(JsonPathEncodingContext *cxt,
+									 int *result,
 									 struct Node *escontext,
 									 JsonPathParseItem *item,
 									 int nestingLevel, bool insideArraySubscript);
@@ -170,6 +178,7 @@ jsonpath_send(PG_FUNCTION_ARGS)
 static Datum
 jsonPathFromCstring(char *in, int len, struct Node *escontext)
 {
+	JsonPathEncodingContext cxt;
 	JsonPathParseResult *jsonpath = parsejsonpath(in, len, escontext);
 	JsonPath   *res;
 	StringInfoData buf;
@@ -188,7 +197,10 @@ jsonPathFromCstring(char *in, int len, struct Node *escontext)
 
 	appendStringInfoSpaces(&buf, JSONPATH_HDRSZ);
 
-	if (!flattenJsonPathParseItem(&buf, NULL, escontext,
+	cxt.buf = &buf;
+	cxt.ext = jsonpath->ext;
+
+	if (!flattenJsonPathParseItem(&cxt, NULL, escontext,
 								  jsonpath->expr, 0, false))
 		return (Datum) 0;
 
@@ -197,6 +209,8 @@ jsonPathFromCstring(char *in, int len, struct Node *escontext)
 	res->header = JSONPATH_VERSION;
 	if (jsonpath->lax)
 		res->header |= JSONPATH_LAX;
+	if (jsonpath->ext)
+		res->header |= JSONPATH_EXT;
 
 	PG_RETURN_JSONPATH_P(res);
 }
@@ -220,6 +234,8 @@ jsonPathToCstring(StringInfo out, JsonPath *in, int estimated_len)
 	}
 	enlargeStringInfo(out, estimated_len);
 
+	if (in->header & JSONPATH_EXT)
+		appendBinaryStringInfo(out, "pg ", 3);
 	if (!(in->header & JSONPATH_LAX))
 		appendStringInfoString(out, "strict ");
 
@@ -229,15 +245,29 @@ jsonPathToCstring(StringInfo out, JsonPath *in, int estimated_len)
 	return out->data;
 }
 
+static void
+checkJsonPathExtensionsEnabled(JsonPathEncodingContext *cxt,
+							   JsonPathItemType type)
+{
+	if (!cxt->ext)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("%s contains extended operators that were not enabled", "jsonpath"),
+				 errhint("use \"%s\" modifier at the start of %s string to enable extensions",
+						 "pg", "jsonpath")));
+}
+
 /*
  * Recursive function converting given jsonpath parse item and all its
  * children into a binary representation.
  */
 static bool
-flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
+flattenJsonPathParseItem(JsonPathEncodingContext *cxt,
+						 int *result, struct Node *escontext,
 						 JsonPathParseItem *item, int nestingLevel,
 						 bool insideArraySubscript)
 {
+	StringInfo	buf = cxt->buf;
 	/* position from beginning of jsonpath data */
 	int32		pos = buf->len - JSONPATH_HDRSZ;
 	int32		chld;
@@ -306,7 +336,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 
 				if (!item->value.args.left)
 					chld = pos;
-				else if (! flattenJsonPathParseItem(buf, &chld, escontext,
+				else if (! flattenJsonPathParseItem(cxt, &chld, escontext,
 													item->value.args.left,
 													nestingLevel + argNestingLevel,
 													insideArraySubscript))
@@ -315,7 +345,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 
 				if (!item->value.args.right)
 					chld = pos;
-				else if (! flattenJsonPathParseItem(buf, &chld, escontext,
+				else if (! flattenJsonPathParseItem(cxt, &chld, escontext,
 													item->value.args.right,
 													nestingLevel + argNestingLevel,
 													insideArraySubscript))
@@ -338,7 +368,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 									   item->value.like_regex.patternlen);
 				appendStringInfoChar(buf, '\0');
 
-				if (! flattenJsonPathParseItem(buf, &chld, escontext,
+				if (! flattenJsonPathParseItem(cxt, &chld, escontext,
 											   item->value.like_regex.expr,
 											   nestingLevel,
 											   insideArraySubscript))
@@ -360,7 +390,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 
 				if (!item->value.arg)
 					chld = pos;
-				else if (! flattenJsonPathParseItem(buf, &chld, escontext,
+				else if (! flattenJsonPathParseItem(cxt, &chld, escontext,
 													item->value.arg,
 													nestingLevel + argNestingLevel,
 													insideArraySubscript))
@@ -405,7 +435,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 					int32		topos;
 					int32		frompos;
 
-					if (! flattenJsonPathParseItem(buf, &frompos, escontext,
+					if (! flattenJsonPathParseItem(cxt, &frompos, escontext,
 												   item->value.array.elems[i].from,
 												   nestingLevel, true))
 						return false;
@@ -413,7 +443,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 
 					if (item->value.array.elems[i].to)
 					{
-						if (! flattenJsonPathParseItem(buf, &topos, escontext,
+						if (! flattenJsonPathParseItem(cxt, &topos, escontext,
 													   item->value.array.elems[i].to,
 													   nestingLevel, true))
 							return false;
@@ -451,7 +481,7 @@ flattenJsonPathParseItem(StringInfo buf,  int *result, struct Node *escontext,
 
 	if (item->next)
 	{
-		if (! flattenJsonPathParseItem(buf, &chld, escontext,
+		if (! flattenJsonPathParseItem(cxt, &chld, escontext,
 									   item->next, nestingLevel,
 									   insideArraySubscript))
 			return false;
@@ -868,7 +898,7 @@ operationPriority(JsonPathItemType op)
 void
 jspInit(JsonPathItem *v, JsonPath *js)
 {
-	Assert((js->header & ~JSONPATH_LAX) == JSONPATH_VERSION);
+	Assert((js->header & JSONPATH_VERSION_MASK) == JSONPATH_VERSION);
 	jspInitByBuffer(v, js->data, 0);
 }
 
