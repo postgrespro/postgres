@@ -24,6 +24,9 @@
 #include "common/logging.h"
 #else
 #include "miscadmin.h"
+#include "utils/builtins.h"
+#include "utils/json_generic.h"
+#include "utils/jsonfuncs.h"
 #endif
 
 #ifdef FRONTEND
@@ -1146,3 +1149,469 @@ extract_token(JsonLexContext *lex)
 	token[toklen] = '\0';
 	return token;
 }
+
+#ifndef FRONTEND
+
+/*
+ * lex_accept
+ *
+ * move the lexer to the next token if the current look_ahead token matches
+ * the parameter token. Otherwise, return false.
+ */
+static inline bool
+lex_accept(JsonLexContext *lex, JsonTokenType token)
+{
+	JsonParseErrorType error;
+
+	if (lex_peek(lex) != token)
+		return false;
+
+	if ((error = json_lex(lex)) != JSON_SUCCESS)
+		json_ereport_error(error, lex);
+
+	return true;
+}
+
+extern JsonContainerOps jsontContainerOps;
+
+static void
+jsontInitContainer(JsonContainerData *jc, char *json, int len,
+				   JsonValueType type, int size)
+{
+	jc->ops = &jsontContainerOps;
+	jc->data = json;
+	jc->len = len;
+	jc->type = type;
+	jc->size = size;
+}
+
+static void
+jsontInit(JsonContainerData *jc, Datum value)
+{
+	text		   *json = DatumGetTextP(value);
+	JsonLexContext *lex = makeJsonLexContextCstringLen(VARDATA_ANY(json),
+													   VARSIZE_ANY_EXHDR(json),
+													   GetDatabaseEncoding(),
+													   false);
+	JsonTokenType	tok;
+	JsonValueType	type;
+	JsonParseErrorType error;
+	int				size = -1;
+
+	/* Lex exactly one token from the input and check its type. */
+	if ((error = json_lex(lex)) != JSON_SUCCESS)
+		json_ereport_error(error, lex);
+
+	tok = lex_peek(lex);
+
+	switch (tok)
+	{
+		case JSON_TOKEN_OBJECT_START:
+			type = jbvObject;
+			if ((error = json_lex(lex)) != JSON_SUCCESS)
+				json_ereport_error(error, lex);
+			if (lex_peek(lex) == JSON_TOKEN_OBJECT_END)
+				size = 0;
+			break;
+		case JSON_TOKEN_ARRAY_START:
+			type = jbvArray;
+			if ((error = json_lex(lex)) != JSON_SUCCESS)
+				json_ereport_error(error, lex);
+			if (lex_peek(lex) == JSON_TOKEN_ARRAY_END)
+				size = 0;
+			break;
+		case JSON_TOKEN_STRING:
+		case JSON_TOKEN_NUMBER:
+		case JSON_TOKEN_TRUE:
+		case JSON_TOKEN_FALSE:
+		case JSON_TOKEN_NULL:
+			type = jbvArray | jbvScalar;
+			size = 1;
+			break;
+		default:
+			elog(ERROR, "unexpected json token: %d", tok);
+			type = jbvNull;
+			break;
+	}
+
+	/* FIXME free lex */
+
+	jsontInitContainer(jc, VARDATA(json), VARSIZE(json) - VARHDRSZ, type, size);
+}
+
+static char *
+jsontToString(StringInfo out, JsonContainer *jc, int estimated_len)
+{
+	if (out)
+	{
+		appendBinaryStringInfo(out, jc->data, jc->len);
+		return out->data;
+	}
+	else
+	{
+		char *str = palloc(jc->len + 1);
+
+		memcpy(str, jc->data, jc->len);
+		str[jc->len] = 0;
+
+		return str;
+	}
+}
+
+typedef enum
+{
+	JTI_ARRAY_START,
+	JTI_ARRAY_ELEM,
+	JTI_ARRAY_ELEM_SCALAR,
+	JTI_ARRAY_ELEM_AFTER,
+	JTI_ARRAY_END,
+	JTI_OBJECT_START,
+	JTI_OBJECT_KEY,
+	JTI_OBJECT_VALUE,
+	JTI_OBJECT_VALUE_AFTER,
+} JsontIterState;
+
+typedef struct JsontIterator
+{
+	JsonIterator	ji;
+	JsonLexContext *lex;
+	JsontIterState	state;
+	bool			isScalar;
+} JsontIterator;
+
+static JsonIterator *
+JsontIteratorInitFromLex(JsonContainer *jc, JsonLexContext *lex,
+						 JsonIterator *parent);
+
+static bool
+jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
+			   JsontIterState nextState)
+{
+	JsontIterator  *it = (JsontIterator *) *pit;
+	JsonLexContext *lex = it->lex;
+	JsonTokenType	tok = lex_peek(lex);
+	JsonParseErrorType error;
+
+	switch (tok)
+	{
+		case JSON_TOKEN_NULL:
+			res->type = jbvNull;
+			break;
+
+		case JSON_TOKEN_TRUE:
+			res->type = jbvBool;
+			res->val.boolean = true;
+			break;
+
+		case JSON_TOKEN_FALSE:
+			res->type = jbvBool;
+			res->val.boolean = false;
+			break;
+
+		case JSON_TOKEN_STRING:
+		{
+			char *token = lex_peek_value(lex);
+			res->type = jbvString;
+			res->val.string.val = token;
+			res->val.string.len = strlen(token);
+			break;
+		}
+
+		case JSON_TOKEN_NUMBER:
+		{
+			char *token = lex_peek_value(lex);
+			res->type = jbvNumeric;
+			res->val.numeric = DatumGetNumeric(DirectFunctionCall3(
+					numeric_in, CStringGetDatum(token), 0, -1));
+			break;
+		}
+
+		case JSON_TOKEN_OBJECT_START:
+		case JSON_TOKEN_ARRAY_START:
+		{
+			char   *token_start = lex->token_start;
+			int		len;
+
+			res->type = jbvBinary;
+			res->val.binary.len = 0;
+			res->val.binary.data = (JsonContainer *)
+							palloc(sizeof(JsonContainer));
+
+			if (skipNested)
+			{
+				if (tok == JSON_TOKEN_OBJECT_START)
+					parse_object(lex, &nullSemAction);
+				else
+					parse_array(lex, &nullSemAction);
+
+				len = lex->token_start - token_start;
+			}
+			else
+				len = lex->input_length - (lex->token_start - lex->input);
+
+			jsontInitContainer((JsonContainerData *) res->val.binary.data,
+								token_start, len,
+								tok == JSON_TOKEN_OBJECT_START ? jbvObject
+															   : jbvArray,
+							   -1);
+
+			res->val.binary.len = res->val.binary.data->len;
+
+			if (skipNested)
+				return false;
+
+			/* Recurse into container. */
+			it->state = nextState;
+			*pit = JsontIteratorInitFromLex(res->val.binary.data, lex, *pit);
+			return true;
+		}
+
+		default:
+			report_parse_error(JSON_PARSE_VALUE, lex);
+	}
+
+	if ((error = json_lex(lex)) != JSON_SUCCESS)
+		json_ereport_error(error, lex);
+
+	return false;
+}
+
+static JsonIteratorToken
+JsontIteratorNext(JsonIterator **pit, JsonValue *val, bool skipNested)
+{
+	JsontIterator *it;
+	JsonParseErrorType error;
+
+	if (*pit == NULL)
+		return WJB_DONE;
+
+recurse:
+	it = (JsontIterator *) *pit;
+
+	/* parse by recursive descent */
+	switch (it->state)
+	{
+		case JTI_ARRAY_START:
+			val->type = jbvArray;
+			val->val.array.nElems = it->ji.container->size;
+			val->val.array.rawScalar = it->isScalar;
+			val->val.array.elems = NULL;
+			it->state = it->isScalar ? JTI_ARRAY_ELEM_SCALAR : JTI_ARRAY_ELEM;
+			return WJB_BEGIN_ARRAY;
+
+		case JTI_ARRAY_ELEM_SCALAR:
+		{
+			(void) jsontFillValue(pit, val, skipNested, JTI_ARRAY_END);
+			it->state = JTI_ARRAY_END;
+			return WJB_ELEM;
+		}
+
+		case JTI_ARRAY_END:
+			if (!it->ji.parent && lex_peek(it->lex) != JSON_TOKEN_END)
+				report_parse_error(JSON_PARSE_END, it->lex);
+			*pit = JsonIteratorFreeAndGetParent(*pit);
+			return WJB_END_ARRAY;
+
+		case JTI_ARRAY_ELEM:
+			if (lex_accept(it->lex, JSON_TOKEN_ARRAY_END))
+			{
+				it->state = JTI_ARRAY_END;
+				goto recurse;
+			}
+
+			if (jsontFillValue(pit, val, skipNested, JTI_ARRAY_ELEM_AFTER))
+				goto recurse;
+
+			/* fall through */
+
+		case JTI_ARRAY_ELEM_AFTER:
+			if (!lex_accept(it->lex, JSON_TOKEN_COMMA))
+			{
+				if (lex_peek(it->lex) != JSON_TOKEN_ARRAY_END)
+					report_parse_error(JSON_PARSE_ARRAY_NEXT, it->lex);
+			}
+
+			if (it->state == JTI_ARRAY_ELEM_AFTER)
+			{
+				it->state = JTI_ARRAY_ELEM;
+				goto recurse;
+			}
+
+			return WJB_ELEM;
+
+		case JTI_OBJECT_START:
+			val->type = jbvObject;
+			val->val.object.nPairs = -1;
+			val->val.object.pairs = NULL;
+			it->state = JTI_OBJECT_KEY;
+			return WJB_BEGIN_OBJECT;
+
+		case JTI_OBJECT_KEY:
+			if (lex_accept(it->lex, JSON_TOKEN_OBJECT_END))
+			{
+				if (!it->ji.parent && lex_peek(it->lex) != JSON_TOKEN_END)
+					json_ereport_error(report_parse_error(JSON_PARSE_END, it->lex), it->lex);
+
+				*pit = JsonIteratorFreeAndGetParent(*pit);
+				return WJB_END_OBJECT;
+			}
+
+			if (lex_peek(it->lex) != JSON_TOKEN_STRING)
+				json_ereport_error(report_parse_error(JSON_PARSE_OBJECT_START, it->lex), it->lex);
+
+			(void) jsontFillValue(pit, val, true, JTI_OBJECT_VALUE);
+
+			if ((error = lex_expect(JSON_PARSE_OBJECT_LABEL, it->lex, JSON_TOKEN_COLON)) != JSON_SUCCESS)
+				json_ereport_error(error, it->lex);
+
+			it->state = JTI_OBJECT_VALUE;
+			return WJB_KEY;
+
+		case JTI_OBJECT_VALUE:
+			if (jsontFillValue(pit, val, skipNested, JTI_OBJECT_VALUE_AFTER))
+				goto recurse;
+
+			/* fall through */
+
+		case JTI_OBJECT_VALUE_AFTER:
+			if (!lex_accept(it->lex, JSON_TOKEN_COMMA))
+			{
+				if (lex_peek(it->lex) != JSON_TOKEN_OBJECT_END)
+					json_ereport_error(report_parse_error(JSON_PARSE_OBJECT_NEXT, it->lex), it->lex);
+			}
+
+			if (it->state == JTI_OBJECT_VALUE_AFTER)
+			{
+				it->state = JTI_OBJECT_KEY;
+				goto recurse;
+			}
+
+			it->state = JTI_OBJECT_KEY;
+			return WJB_VALUE;
+
+		default:
+			break;
+	}
+
+	return WJB_DONE;
+}
+
+static JsonIterator *
+JsontIteratorInitFromLex(JsonContainer *jc, JsonLexContext *lex,
+						 JsonIterator *parent)
+{
+	JsontIterator  *it = palloc(sizeof(JsontIterator));
+	JsonTokenType	tok;
+	JsonParseErrorType error;
+
+	it->ji.container = jc;
+	it->ji.next = JsontIteratorNext;
+	it->ji.parent = parent;
+
+	it->lex = lex;
+
+	tok = lex_peek(it->lex);
+
+	switch (tok)
+	{
+		case JSON_TOKEN_OBJECT_START:
+			it->isScalar = false;
+			it->state = JTI_OBJECT_START;
+			if ((error = json_lex(lex)) != JSON_SUCCESS)
+				json_ereport_error(error, lex);
+			break;
+		case JSON_TOKEN_ARRAY_START:
+			it->isScalar = false;
+			it->state = JTI_ARRAY_START;
+			if ((error = json_lex(lex)) != JSON_SUCCESS)
+				json_ereport_error(error, lex);
+			break;
+		case JSON_TOKEN_STRING:
+		case JSON_TOKEN_NUMBER:
+		case JSON_TOKEN_TRUE:
+		case JSON_TOKEN_FALSE:
+		case JSON_TOKEN_NULL:
+			it->isScalar = true;
+			it->state = JTI_ARRAY_START;
+			break;
+		default:
+			json_ereport_error(report_parse_error(JSON_PARSE_VALUE, it->lex), it->lex);
+	}
+
+	return &it->ji;
+}
+
+static JsonIterator *
+JsontIteratorInit(JsonContainer *jc)
+{
+	JsonLexContext *lex = makeJsonLexContextCstringLen(jc->data, jc->len,
+													   GetDatabaseEncoding(),
+													   true);
+	json_lex(lex);
+	return JsontIteratorInitFromLex(jc, lex, NULL);
+}
+
+typedef struct jsontGetArraySizeState
+{
+	int		level;
+	uint32	size;
+} jsontGetArraySizeState;
+
+static void
+jsontGetArraySize_array_start(void *state)
+{
+	((jsontGetArraySizeState *) state)->level++;
+}
+
+static void
+jsontGetArraySize_array_end(void *state)
+{
+	((jsontGetArraySizeState *) state)->level--;
+}
+
+static void
+jsontGetArraySize_array_element_start(void *state, bool isnull)
+{
+	jsontGetArraySizeState *s = state;
+	if (s->level == 1)
+		s->size++;
+}
+
+static uint32
+jsontGetArraySize(JsonContainer *jc)
+{
+	JsonLexContext *lex = makeJsonLexContextCstringLen(jc->data, jc->len,
+													   GetDatabaseEncoding(),
+													   false);
+	JsonSemAction	sem;
+	jsontGetArraySizeState state;
+
+	state.level = 0;
+	state.size = 0;
+
+	memset(&sem, 0, sizeof(sem));
+	sem.semstate = &state;
+	sem.array_start			= jsontGetArraySize_array_start;
+	sem.array_end 			= jsontGetArraySize_array_end;
+	sem.array_element_end	= jsontGetArraySize_array_element_start;
+
+	json_lex(lex);
+	parse_array(lex, &sem);
+
+	return state.size;
+}
+
+JsonContainerOps
+jsontContainerOps =
+{
+	JsonContainerJsont,
+	jsontInit,
+	JsontIteratorInit,
+	jsonFindLastKeyInObject,
+	jsonFindValueInArray,
+	jsonGetArrayElement,
+	jsontGetArraySize,
+	jsontToString,
+};
+
+#endif

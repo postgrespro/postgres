@@ -24,6 +24,7 @@
 #include "utils/datetime.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 #include "utils/jsonfuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -140,7 +141,7 @@ jsonb_out(PG_FUNCTION_ARGS)
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	char	   *out;
 
-	out = JsonbToCString(NULL, JsonbRoot(jb), JsonbGetSize(jb));
+	out = JsonToCString(JsonbRoot(jb));
 
 	PG_RETURN_CSTRING(out);
 }
@@ -185,7 +186,7 @@ JsonbContainerTypeName(JsonbContainer *jbc)
 		return "object";
 	else
 	{
-		elog(ERROR, "invalid jsonb container type: 0x%08x", jbc->header);
+		elog(ERROR, "invalid jsonb container type");
 		return "unknown";
 	}
 }
@@ -251,7 +252,7 @@ jsonb_typeof(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
-static JsonbValue *
+JsonbValue *
 JsonValueFromCString(char *json, int len)
 {
 	JsonLexContext *lex;
@@ -348,9 +349,16 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 			escape_json(out, pnstrdup(scalarVal->val.string.val, scalarVal->val.string.len));
 			break;
 		case jbvNumeric:
-			appendStringInfoString(out,
-								   DatumGetCString(DirectFunctionCall1(numeric_out,
-																	   PointerGetDatum(scalarVal->val.numeric))));
+			/* replace numeric NaN with string "NaN" */
+			if (numeric_is_nan(scalarVal->val.numeric))
+				appendBinaryStringInfo(out, "\"NaN\"", 5);
+			else
+			{
+				Datum		num = DirectFunctionCall1(numeric_out,
+													  PointerGetDatum(scalarVal->val.numeric));
+
+				appendStringInfoString(out, DatumGetCString(num));
+			}
 			break;
 		case jbvBool:
 			if (scalarVal->val.boolean)
@@ -358,6 +366,17 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 			else
 				appendBinaryStringInfo(out, "false", 5);
 			break;
+		case jbvDatetime:
+			{
+				char		buf[MAXDATELEN + 1];
+
+				JsonEncodeDateTime(buf,
+								   scalarVal->val.datetime.value,
+								   scalarVal->val.datetime.typid,
+								   &scalarVal->val.datetime.tz);
+				escape_json(out, buf);
+				break;
+			}
 		default:
 			elog(ERROR, "unknown jsonb scalar type");
 	}
