@@ -21,6 +21,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_expr.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 #include "utils/jsonfuncs.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -273,8 +274,8 @@ jsonb_subscript_assign(ExprState *state,
 	if (sbsrefstate->replacenull)
 		replacevalue.type = jbvNull;
 	else
-		JsonbToJsonbValue(DatumGetJsonbP(sbsrefstate->replacevalue),
-						  &replacevalue);
+		JsonToJsonValue(DatumGetJsonbP(sbsrefstate->replacevalue),
+						&replacevalue);
 
 	/*
 	 * In case if the input container is null, set up an empty jsonb and
