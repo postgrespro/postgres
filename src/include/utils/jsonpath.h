@@ -17,6 +17,7 @@
 #include "fmgr.h"
 #include "nodes/pg_list.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 
 typedef struct
 {

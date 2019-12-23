@@ -31,6 +31,7 @@
 #include "utils/hsearch.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 #include "utils/jsonfuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -824,10 +825,9 @@ jsonb_object_field(PG_FUNCTION_ARGS)
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
 
-	v = getKeyJsonValueFromContainer(JsonbRoot(jb),
-									 VARDATA_ANY(key),
-									 VARSIZE_ANY_EXHDR(key),
-									 &vbuf);
+	v = JsonFindKeyInObject(JsonbRoot(jb),
+							VARDATA_ANY(key),
+							VARSIZE_ANY_EXHDR(key));
 
 	if (v != NULL)
 		PG_RETURN_JSONB_P(JsonbValueToJsonb(v));
@@ -862,10 +862,9 @@ jsonb_object_field_text(PG_FUNCTION_ARGS)
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
 
-	v = getKeyJsonValueFromContainer(JsonbRoot(jb),
-									 VARDATA_ANY(key),
-									 VARSIZE_ANY_EXHDR(key),
-									 &vbuf);
+	v = JsonFindKeyInObject(JsonbRoot(jb),
+							VARDATA_ANY(key),
+							VARSIZE_ANY_EXHDR(key));
 
 	if (v != NULL && v->type != jbvNull)
 		PG_RETURN_TEXT_P(JsonbValueAsText(v));
@@ -1516,10 +1515,9 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 	{
 		if (have_object)
 		{
-			jbvp = getKeyJsonValueFromContainer(container,
-												VARDATA(path[i]),
-												VARSIZE(path[i]) - VARHDRSZ,
-												NULL);
+			jbvp = JsonFindKeyInObject(container,
+									   VARDATA(path[i]),
+									   VARSIZE(path[i]) - VARHDRSZ);
 		}
 		else if (have_array)
 		{
@@ -1546,10 +1544,13 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 				uint32		nelements;
 
 				/* Container must be array, but make sure */
+
 				if (!JsonContainerIsArray(container))
 					elog(ERROR, "not a jsonb array");
 
-				nelements = JsonContainerSize(container);
+				nelements = JsonContainerSize(container) >= 0 ?
+							JsonContainerSize(container) :
+							JsonGetArraySize(container);
 
 				if (lindex == INT_MIN || -lindex > nelements)
 				{
@@ -3041,7 +3042,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			 */
 			Jsonb	   *jsonb = JsonbValueToJsonb(jbv);
 
-			str = JsonbToCString(NULL, JsonbRoot(jsonb), JsonbGetSize(jsonb));
+			str = JsonbToCString(NULL, &jsonb->root, -1);
 		}
 		else if (jbv->type == jbvString)	/* quotes are stripped */
 			str = pnstrdup(jbv->val.string.val, jbv->val.string.len);
@@ -3281,8 +3282,7 @@ JsObjectGetField(JsObject *obj, char *field, JsValue *jsv)
 	else
 	{
 		jsv->val.jsonb = !obj->val.jsonb_cont ? NULL :
-			getKeyJsonValueFromContainer(obj->val.jsonb_cont, field, strlen(field),
-										 NULL);
+			JsonFindKeyInObject(obj->val.jsonb_cont, field, strlen(field));
 
 		return jsv->val.jsonb != NULL;
 	}
@@ -3555,8 +3555,8 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 
 		/* fill binary jsonb value pointing to jb */
 		jbv.type = jbvBinary;
-		jbv.val.binary.data = JsonbRoot(jb);
-		jbv.val.binary.len = VARSIZE(jb) - VARHDRSZ;
+		jbv.val.binary.data = &jb->root;
+		jbv.val.binary.len = jb->root.len;
 	}
 
 	rettuple = populate_composite(&cache->c.io.composite, cache->argtype,
@@ -4583,7 +4583,7 @@ jsonb_set(PG_FUNCTION_ARGS)
 	JsonbIterator *it;
 	JsonbParseState *st = NULL;
 
-	JsonbToJsonbValue(newjsonb, &newval);
+	JsonToJsonValue(newjsonb, &newval);
 
 	if (ARR_NDIM(path) > 1)
 		ereport(ERROR,
@@ -4744,7 +4744,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
 	JsonbIterator *it;
 	JsonbParseState *st = NULL;
 
-	JsonbToJsonbValue(newjsonb, &newval);
+	JsonToJsonValue(newjsonb, &newval);
 
 	if (ARR_NDIM(path) > 1)
 		ereport(ERROR,

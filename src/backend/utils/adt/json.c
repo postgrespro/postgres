@@ -24,6 +24,7 @@
 #include "utils/datetime.h"
 #include "utils/json.h"
 #include "utils/jsonfuncs.h"
+#include "utils/json_generic.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
