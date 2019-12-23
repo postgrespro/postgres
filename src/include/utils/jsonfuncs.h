@@ -16,6 +16,7 @@
 
 #include "common/jsonapi.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 
 /*
  * Flag types for iterate_json(b)_values to specify what elements from a
@@ -31,10 +32,10 @@ typedef enum JsonToIndex
 } JsonToIndex;
 
 /* an action that will be applied to each value in iterate_json(b)_values functions */
-typedef void (*JsonIterateStringValuesAction) (void *state, char *elem_value, int elem_len);
+typedef void (*JsonIterateStringValuesAction) (void *state, const char *elem_value, int elem_len);
 
 /* an action that will be applied to each value in transform_json(b)_values functions */
-typedef text *(*JsonTransformStringValuesAction) (void *state, char *elem_value, int elem_len);
+typedef text *(*JsonTransformStringValuesAction) (void *state, const char *elem_value, int elem_len);
 
 /* build a JsonLexContext from a text datum */
 extern JsonLexContext *makeJsonLexContext(text *json, bool need_escapes);
@@ -61,5 +62,10 @@ extern text *transform_json_string_values(text *json, void *action_state,
 extern Datum json_populate_type(Datum json_val, Oid json_type,
 								Oid typid, int32 typmod,
 								void **cache, MemoryContext mcxt, bool *isnull);
+
+extern Datum jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
+							   JsonbValue *newval);
+extern Datum jsonb_get_element(Jsonb *jb, Datum *path, int npath,
+							   bool *isnull, bool as_text);
 
 #endif
