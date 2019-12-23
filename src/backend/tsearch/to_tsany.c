@@ -42,7 +42,7 @@ typedef struct TSVectorBuildState
 	Oid			cfgId;
 } TSVectorBuildState;
 
-static void add_to_tsvector(void *_state, char *elem_value, int elem_len);
+static void add_to_tsvector(void *_state, const char *elem_value, int elem_len);
 
 
 Datum
@@ -439,7 +439,7 @@ json_to_tsvector(PG_FUNCTION_ARGS)
  * Parse lexemes in an element of a json(b) value, add to TSVectorBuildState.
  */
 static void
-add_to_tsvector(void *_state, char *elem_value, int elem_len)
+add_to_tsvector(void *_state, const char *elem_value, int elem_len)
 {
 	TSVectorBuildState *state = (TSVectorBuildState *) _state;
 	ParsedText *prs = state->prs;
@@ -459,7 +459,7 @@ add_to_tsvector(void *_state, char *elem_value, int elem_len)
 
 	prevwords = prs->curwords;
 
-	parsetext(state->cfgId, prs, elem_value, elem_len);
+	parsetext(state->cfgId, prs, (char *) elem_value, elem_len);
 
 	/*
 	 * If we extracted any words from this JSON element, advance pos to create
