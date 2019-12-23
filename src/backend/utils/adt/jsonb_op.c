@@ -17,6 +17,7 @@
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
+#include "utils/json_generic.h"
 
 Datum
 jsonb_exists(PG_FUNCTION_ARGS)
