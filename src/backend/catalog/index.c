@@ -3474,11 +3474,23 @@ reindex_index(Oid indexId, Oid tablespaceOid, bool skip_constraint_checks,
 			 RelationGetRelationName(iRel));
 
 	/*
-	 * We don't support moving system relations into different tablespaces,
-	 * unless allow_system_table_mods=1.
+	 * Skip tablespace change of all indexes on TOAST tables, unless
+	 * allow_system_table_mods=1, but error out on system catalog.
 	 */
-	if (set_tablespace &&
-		!allowSystemTableMods && IsSystemRelation(iRel))
+	if (set_tablespace && IsToastRelation(iRel))
+	{
+		if (!allowSystemTableMods)
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("skipping tablespace change of \"%s\"",
+							RelationGetRelationName(iRel)),
+					 errdetail("Cannot move system relation, only REINDEX is performed.")));
+			set_tablespace = false;
+		}
+	}
+	else if (set_tablespace &&
+			 IsCatalogRelationOid(indexId) && !allowSystemTableMods)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied: \"%s\" is a system catalog",

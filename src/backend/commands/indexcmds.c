@@ -3061,14 +3061,17 @@ ReindexRelationConcurrently(Oid relationOid, Oid tablespaceOid, int options)
 
 		/*
 		 * We don't support moving system relations into different tablespaces,
-		 * unless allow_system_table_mods=1.
+		 * unless allow_system_table_mods=1.  Reindexing concurrently is not
+		 * allowed for system catalog, so we only check for indexes on
+		 * TOAST tables here.
 		 */
-		if (OidIsValid(tablespaceOid) &&
-			!allowSystemTableMods && IsSystemRelation(indexRel))
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("permission denied: \"%s\" is a system catalog",
-							RelationGetRelationName(indexRel))));
+		if (OidIsValid(tablespaceOid)
+			&& IsToastRelation(indexRel) && !allowSystemTableMods)
+			ereport(WARNING,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("skipping tablespace change of \"%s\"",
+							RelationGetRelationName(indexRel)),
+					 errdetail("Cannot move system relation, only REINDEX CONCURRENTLY is performed.")));
 
 		/*
 		 * We cannot support moving mapped relations into different tablespaces.
@@ -3099,7 +3102,8 @@ ReindexRelationConcurrently(Oid relationOid, Oid tablespaceOid, int options)
 		/* Create new index definition based on given index */
 		newIndexId = index_concurrently_create_copy(heapRel,
 													indexId,
-													tablespaceOid,
+													IsToastRelation(indexRel) && !allowSystemTableMods ?
+														InvalidOid : tablespaceOid,
 													concurrentName);
 
 		/*
