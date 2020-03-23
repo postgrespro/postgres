@@ -17,6 +17,42 @@ ALTER TABLESPACE regress_tblspace SET (some_nonexistent_parameter = true);  -- f
 ALTER TABLESPACE regress_tblspace RESET (random_page_cost = 2.0); -- fail
 ALTER TABLESPACE regress_tblspace RESET (random_page_cost, effective_io_concurrency); -- ok
 
+-- create table to test REINDEX with TABLESPACE change
+CREATE TABLE regress_tblspace_test_tbl (num1 bigint, num2 double precision, num3 double precision);
+INSERT INTO regress_tblspace_test_tbl (num1, num2, num3)
+  SELECT round(random()*100), random(), random()*42
+  FROM generate_series(1, 20000) s(i);
+CREATE INDEX regress_tblspace_test_tbl_idx ON regress_tblspace_test_tbl (num1);
+
+-- check that REINDEX with TABLESPACE change is transactional
+BEGIN;
+REINDEX INDEX regress_tblspace_test_tbl_idx TABLESPACE regress_tblspace;
+REINDEX TABLE regress_tblspace_test_tbl TABLESPACE regress_tblspace;
+ROLLBACK;
+SELECT relname FROM pg_class
+WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace');
+
+-- check REINDEX with TABLESPACE change
+REINDEX INDEX regress_tblspace_test_tbl_idx TABLESPACE regress_tblspace; -- ok
+REINDEX TABLE regress_tblspace_test_tbl TABLESPACE regress_tblspace; -- ok
+REINDEX TABLE pg_authid TABLESPACE regress_tblspace; -- fail
+REINDEX SYSTEM CONCURRENTLY postgres TABLESPACE regress_tblspace; -- fail
+REINDEX TABLE CONCURRENTLY pg_am TABLESPACE regress_tblspace; -- fail
+REINDEX INDEX regress_tblspace_test_tbl_idx TABLESPACE pg_global; -- fail
+REINDEX TABLE pg_am TABLESPACE regress_tblspace; -- fail
+
+-- check that all relations moved to new tablespace
+SELECT relname FROM pg_class
+WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace')
+ORDER BY relname;
+
+-- move indexes back to pg_default tablespace
+REINDEX TABLE CONCURRENTLY regress_tblspace_test_tbl TABLESPACE pg_default; -- ok
+
+-- check that all relations moved back to pg_default
+SELECT relname FROM pg_class
+WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace');
+
 -- create a schema we can use
 CREATE SCHEMA testschema;
 
@@ -278,6 +314,9 @@ ALTER TABLE ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPACE pg_default
 
 -- Should succeed
 DROP TABLESPACE regress_tblspace_renamed;
+
+DROP INDEX regress_tblspace_test_tbl_idx;
+DROP TABLE regress_tblspace_test_tbl;
 
 DROP SCHEMA testschema CASCADE;
 

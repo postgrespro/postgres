@@ -8385,31 +8385,33 @@ DropTransformStmt: DROP TRANSFORM opt_if_exists FOR Typename LANGUAGE name opt_d
  *
  *		QUERY:
  *
- *		REINDEX [ (options) ] type [CONCURRENTLY] <name>
+ *		REINDEX [ (options) ] type [CONCURRENTLY] <name> [ TABLESPACE <tablespace_name> ]
  *****************************************************************************/
 
 ReindexStmt:
-			REINDEX reindex_target_type opt_concurrently qualified_name
+			REINDEX reindex_target_type opt_concurrently qualified_name OptTableSpace
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 					n->kind = $2;
 					n->concurrent = $3;
 					n->relation = $4;
+					n->tablespacename = $5;
 					n->name = NULL;
 					n->options = 0;
 					$$ = (Node *)n;
 				}
-			| REINDEX reindex_target_multitable opt_concurrently name
+			| REINDEX reindex_target_multitable opt_concurrently name OptTableSpace
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 					n->kind = $2;
 					n->concurrent = $3;
 					n->name = $4;
+					n->tablespacename = $5;
 					n->relation = NULL;
 					n->options = 0;
 					$$ = (Node *)n;
 				}
-			| REINDEX '(' reindex_option_list ')' reindex_target_type opt_concurrently qualified_name
+			| REINDEX '(' reindex_option_list ')' reindex_target_type opt_concurrently qualified_name OptTableSpace
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 					n->kind = $5;
@@ -8417,9 +8419,10 @@ ReindexStmt:
 					n->relation = $7;
 					n->name = NULL;
 					n->options = $3;
+					n->tablespacename = $8;
 					$$ = (Node *)n;
 				}
-			| REINDEX '(' reindex_option_list ')' reindex_target_multitable opt_concurrently name
+			| REINDEX '(' reindex_option_list ')' reindex_target_multitable opt_concurrently name OptTableSpace
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 					n->kind = $5;
@@ -8427,6 +8430,7 @@ ReindexStmt:
 					n->name = $7;
 					n->relation = NULL;
 					n->options = $3;
+					n->tablespacename = $8;
 					$$ = (Node *)n;
 				}
 		;
