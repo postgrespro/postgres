@@ -3202,6 +3202,7 @@ typedef struct ClusterStmt
 	NodeTag		type;
 	RangeVar   *relation;		/* relation being indexed, or NULL if all */
 	char	   *indexname;		/* original index defined */
+	char	   *tablespacename; /* tablespace name to use for clustered relation */
 	int			options;		/* OR of ClusterOption flags */
 } ClusterStmt;
 
@@ -3218,6 +3219,7 @@ typedef struct VacuumStmt
 	List	   *options;		/* list of DefElem nodes */
 	List	   *rels;			/* list of VacuumRelation, or NIL for all */
 	bool		is_vacuumcmd;	/* true for VACUUM, false for ANALYZE */
+	char	   *tablespacename; /* tablespace name to use for vacuumed relation */
 } VacuumStmt;
 
 /*

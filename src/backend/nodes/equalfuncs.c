@@ -1215,6 +1215,7 @@ _equalClusterStmt(const ClusterStmt *a, const ClusterStmt *b)
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_STRING_FIELD(indexname);
 	COMPARE_SCALAR_FIELD(options);
+	COMPARE_SCALAR_FIELD(tablespacename);
 
 	return true;
 }
@@ -1702,6 +1703,7 @@ _equalVacuumStmt(const VacuumStmt *a, const VacuumStmt *b)
 	COMPARE_NODE_FIELD(options);
 	COMPARE_NODE_FIELD(rels);
 	COMPARE_SCALAR_FIELD(is_vacuumcmd);
+	COMPARE_SCALAR_FIELD(tablespacename);
 
 	return true;
 }

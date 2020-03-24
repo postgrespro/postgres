@@ -10589,14 +10589,14 @@ CreateConversionStmt:
 /*****************************************************************************
  *
  *		QUERY:
- *				CLUSTER [VERBOSE] <qualified_name> [ USING <index_name> ]
- *				CLUSTER [VERBOSE]
+ *				CLUSTER [VERBOSE] <qualified_name> [ USING <index_name> ] [ TABLESPACE <tablespace_name> ]
+ *				CLUSTER [VERBOSE] [ TABLESPACE <tablespace_name> ]
  *				CLUSTER [VERBOSE] <index_name> ON <qualified_name> (for pre-8.3)
  *
  *****************************************************************************/
 
 ClusterStmt:
-			CLUSTER opt_verbose qualified_name cluster_index_specification
+			CLUSTER opt_verbose qualified_name cluster_index_specification OptTableSpace
 				{
 					ClusterStmt *n = makeNode(ClusterStmt);
 					n->relation = $3;
@@ -10604,6 +10604,7 @@ ClusterStmt:
 					n->options = 0;
 					if ($2)
 						n->options |= CLUOPT_VERBOSE;
+					n->tablespacename = $5;
 					$$ = (Node*)n;
 				}
 			| CLUSTER opt_verbose
@@ -10614,6 +10615,7 @@ ClusterStmt:
 					n->options = 0;
 					if ($2)
 						n->options |= CLUOPT_VERBOSE;
+					n->tablespacename = NULL;
 					$$ = (Node*)n;
 				}
 			/* kept for pre-8.3 compatibility */
@@ -10625,6 +10627,7 @@ ClusterStmt:
 					n->options = 0;
 					if ($2)
 						n->options |= CLUOPT_VERBOSE;
+					n->tablespacename = NULL;
 					$$ = (Node*)n;
 				}
 		;
@@ -10639,6 +10642,8 @@ cluster_index_specification:
  *
  *		QUERY:
  *				VACUUM
+ *				VACUUM FULL [ TABLESPACE <tablespace_name> ] [ <table_and_columns> [, ...] ]
+ *				VACUUM (FULL) [ TABLESPACE <tablespace_name> ] [ <table_and_columns> [, ...] ]
  *				ANALYZE
  *
  *****************************************************************************/
@@ -10661,6 +10666,28 @@ VacuumStmt: VACUUM opt_full opt_freeze opt_verbose opt_analyze opt_vacuum_relati
 											 makeDefElem("analyze", NULL, @5));
 					n->rels = $6;
 					n->is_vacuumcmd = true;
+					n->tablespacename = NULL;
+					$$ = (Node *)n;
+				}
+			| VACUUM opt_full opt_freeze opt_verbose opt_analyze TABLESPACE name opt_vacuum_relation_list
+				{
+					VacuumStmt *n = makeNode(VacuumStmt);
+					n->options = NIL;
+					if ($2)
+						n->options = lappend(n->options,
+								makeDefElem("full", NULL, @2));
+					if ($3)
+						n->options = lappend(n->options,
+								makeDefElem("freeze", NULL, @3));
+					if ($4)
+						n->options = lappend(n->options,
+								makeDefElem("verbose", NULL, @4));
+					if ($5)
+						n->options = lappend(n->options,
+								makeDefElem("analyze", NULL, @5));
+					n->tablespacename = $7;
+					n->rels = $8;
+					n->is_vacuumcmd = true;
 					$$ = (Node *)n;
 				}
 			| VACUUM '(' vac_analyze_option_list ')' opt_vacuum_relation_list
@@ -10668,6 +10695,16 @@ VacuumStmt: VACUUM opt_full opt_freeze opt_verbose opt_analyze opt_vacuum_relati
 					VacuumStmt *n = makeNode(VacuumStmt);
 					n->options = $3;
 					n->rels = $5;
+					n->is_vacuumcmd = true;
+					n->tablespacename = NULL;
+					$$ = (Node *) n;
+				}
+			| VACUUM '(' vac_analyze_option_list ')' TABLESPACE name opt_vacuum_relation_list
+				{
+					VacuumStmt *n = makeNode(VacuumStmt);
+					n->options = $3;
+					n->tablespacename = $6;
+					n->rels = $7;
 					n->is_vacuumcmd = true;
 					$$ = (Node *) n;
 				}
@@ -10682,6 +10719,7 @@ AnalyzeStmt: analyze_keyword opt_verbose opt_vacuum_relation_list
 											 makeDefElem("verbose", NULL, @2));
 					n->rels = $3;
 					n->is_vacuumcmd = false;
+					n->tablespacename = NULL;
 					$$ = (Node *)n;
 				}
 			| analyze_keyword '(' vac_analyze_option_list ')' opt_vacuum_relation_list
@@ -10690,6 +10728,7 @@ AnalyzeStmt: analyze_keyword opt_verbose opt_vacuum_relation_list
 					n->options = $3;
 					n->rels = $5;
 					n->is_vacuumcmd = false;
+					n->tablespacename = NULL;
 					$$ = (Node *) n;
 				}
 		;

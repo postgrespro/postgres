@@ -20,7 +20,7 @@ ERROR:  unrecognized parameter "some_nonexistent_parameter"
 ALTER TABLESPACE regress_tblspace RESET (random_page_cost = 2.0); -- fail
 ERROR:  RESET must not include values for parameters
 ALTER TABLESPACE regress_tblspace RESET (random_page_cost, effective_io_concurrency); -- ok
--- create table to test REINDEX with TABLESPACE change
+-- create table to test REINDEX, CLUSTER and VACUUM FULL with TABLESPACE change
 CREATE TABLE regress_tblspace_test_tbl (num1 bigint, num2 double precision, num3 double precision);
 INSERT INTO regress_tblspace_test_tbl (num1, num2, num3)
   SELECT round(random()*100), random(), random()*42
@@ -50,7 +50,42 @@ REINDEX INDEX regress_tblspace_test_tbl_idx TABLESPACE pg_global; -- fail
 ERROR:  cannot move non-shared relation to tablespace "pg_global"
 REINDEX TABLE pg_am TABLESPACE regress_tblspace; -- fail
 ERROR:  permission denied: "pg_am_name_index" is a system catalog
+-- check that all indexes moved to new tablespace
+SELECT relname FROM pg_class
+WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace')
+ORDER BY relname;
+            relname            
+-------------------------------
+ regress_tblspace_test_tbl_idx
+(1 row)
+
+-- check CLUSTER with TABLESPACE change
+CLUSTER regress_tblspace_test_tbl USING regress_tblspace_test_tbl_idx TABLESPACE regress_tblspace; -- ok
+CLUSTER pg_authid USING pg_authid_rolname_index TABLESPACE regress_tblspace; -- fail
+ERROR:  cannot cluster a shared catalog
+CLUSTER regress_tblspace_test_tbl USING regress_tblspace_test_tbl_idx TABLESPACE pg_global; -- fail
+ERROR:  cannot move non-shared relation to tablespace "pg_global"
 -- check that all relations moved to new tablespace
+SELECT relname FROM pg_class
+WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace')
+ORDER BY relname;
+            relname            
+-------------------------------
+ regress_tblspace_test_tbl
+ regress_tblspace_test_tbl_idx
+(2 rows)
+
+-- check VACUUM with TABLESPACE change
+VACUUM (FULL, ANALYSE, FREEZE) TABLESPACE pg_default regress_tblspace_test_tbl; -- ok
+VACUUM (FULL) TABLESPACE pg_default pg_authid; -- skip with warning
+WARNING:  skipping tablespace change of "pg_authid"
+DETAIL:  Cannot move system relation, only VACUUM is performed.
+VACUUM (ANALYSE) TABLESPACE pg_default; -- fail
+ERROR:  incompatible TABLESPACE option
+DETAIL:  You can only use TABLESPACE with VACUUM FULL.
+VACUUM (FULL) TABLESPACE pg_global regress_tblspace_test_tbl; -- fail
+ERROR:  cannot move non-shared relation to tablespace "pg_global"
+-- check that all tables moved back to pg_default
 SELECT relname FROM pg_class
 WHERE reltablespace=(SELECT oid FROM pg_tablespace WHERE spcname='regress_tblspace')
 ORDER BY relname;
