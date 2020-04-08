@@ -3358,6 +3358,7 @@ _copyClusterStmt(const ClusterStmt *from)
 	COPY_NODE_FIELD(relation);
 	COPY_STRING_FIELD(indexname);
 	COPY_SCALAR_FIELD(options);
+	COPY_STRING_FIELD(tablespacename);
 
 	return newnode;
 }
@@ -3945,6 +3946,7 @@ _copyVacuumStmt(const VacuumStmt *from)
 	COPY_NODE_FIELD(options);
 	COPY_NODE_FIELD(rels);
 	COPY_SCALAR_FIELD(is_vacuumcmd);
+	COPY_STRING_FIELD(tablespacename);
 
 	return newnode;
 }
@@ -4450,6 +4452,7 @@ _copyReindexStmt(const ReindexStmt *from)
 	COPY_STRING_FIELD(name);
 	COPY_SCALAR_FIELD(options);
 	COPY_SCALAR_FIELD(concurrent);
+	COPY_STRING_FIELD(tablespacename);
 
 	return newnode;
 }

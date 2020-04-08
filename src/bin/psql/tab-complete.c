@@ -3436,6 +3436,12 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_QUERY(Query_for_list_of_schemas);
 	else if (Matches("REINDEX", "SYSTEM|DATABASE", "CONCURRENTLY"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_databases);
+	else if (Matches("REINDEX", MatchAny, "CONCURRENTLY", MatchAny))
+		COMPLETE_WITH("TABLESPACE");
+	else if (Matches("REINDEX", MatchAny, MatchAny))
+		COMPLETE_WITH("TABLESPACE");
+	else if (TailMatches("TABLESPACE"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_tablespaces);
 
 /* SECURITY LABEL */
 	else if (Matches("SECURITY"))

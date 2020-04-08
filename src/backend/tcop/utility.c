@@ -924,10 +924,10 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				switch (stmt->kind)
 				{
 					case REINDEX_OBJECT_INDEX:
-						ReindexIndex(stmt->relation, stmt->options, stmt->concurrent);
+						ReindexIndex(stmt->relation, stmt->tablespacename, stmt->options, stmt->concurrent);
 						break;
 					case REINDEX_OBJECT_TABLE:
-						ReindexTable(stmt->relation, stmt->options, stmt->concurrent);
+						ReindexTable(stmt->relation, stmt->tablespacename, stmt->options, stmt->concurrent);
 						break;
 					case REINDEX_OBJECT_SCHEMA:
 					case REINDEX_OBJECT_SYSTEM:
@@ -943,7 +943,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 												  (stmt->kind == REINDEX_OBJECT_SCHEMA) ? "REINDEX SCHEMA" :
 												  (stmt->kind == REINDEX_OBJECT_SYSTEM) ? "REINDEX SYSTEM" :
 												  "REINDEX DATABASE");
-						ReindexMultipleTables(stmt->name, stmt->kind, stmt->options, stmt->concurrent);
+						ReindexMultipleTables(stmt->name, stmt->kind, stmt->tablespacename, stmt->options, stmt->concurrent);
 						break;
 					default:
 						elog(ERROR, "unrecognized object type: %d",

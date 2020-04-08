@@ -21,7 +21,7 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-CLUSTER [VERBOSE] <replaceable class="parameter">table_name</replaceable> [ USING <replaceable class="parameter">index_name</replaceable> ]
+CLUSTER [VERBOSE] <replaceable class="parameter">table_name</replaceable> [ USING <replaceable class="parameter">index_name</replaceable> ] [ TABLESPACE <replaceable class="parameter">new_tablespace</replaceable> ]
 CLUSTER [VERBOSE]
 </synopsis>
  </refsynopsisdiv>
@@ -95,6 +95,15 @@ CLUSTER [VERBOSE]
     <listitem>
      <para>
       The name of an index.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_tablespace</replaceable></term>
+    <listitem>
+     <para>
+      The name of a specific tablespace to store clustered relations.
      </para>
     </listitem>
    </varlistentry>

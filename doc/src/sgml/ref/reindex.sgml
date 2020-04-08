@@ -21,7 +21,7 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable class="parameter">name</replaceable>
+REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable class="parameter">name</replaceable> [ TABLESPACE <replaceable class="parameter">new_tablespace</replaceable> ]
 
 <phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
 
@@ -170,6 +170,28 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { IN
       For temporary tables, <command>REINDEX</command> is always
       non-concurrent, as no other session can access them, and
       non-concurrent reindex is cheaper.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>TABLESPACE</literal></term>
+    <listitem>
+     <para>
+      This specifies a tablespace, where all rebuilt indexes will be created.
+      Cannot be used with "mapped" relations. If <literal>SCHEMA</literal>,
+      <literal>DATABASE</literal> or <literal>SYSTEM</literal> is specified, then
+      all unsuitable relations will be skipped and a single <literal>WARNING</literal>
+      will be generated.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_tablespace</replaceable></term>
+    <listitem>
+     <para>
+      The name of a specific tablespace to store rebuilt indexes.
      </para>
     </listitem>
    </varlistentry>

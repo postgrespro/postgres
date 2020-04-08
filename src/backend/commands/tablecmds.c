@@ -1872,7 +1872,7 @@ ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 			/*
 			 * Reconstruct the indexes to match, and we're done.
 			 */
-			reindex_relation(heap_relid, REINDEX_REL_PROCESS_TOAST, 0);
+			reindex_relation(heap_relid, InvalidOid, REINDEX_REL_PROCESS_TOAST, 0);
 		}
 
 		pgstat_count_truncate(rel);

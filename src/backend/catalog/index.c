@@ -1247,9 +1247,13 @@ index_create(Relation heapRelation,
  * Create concurrently an index based on the definition of the one provided by
  * caller.  The index is inserted into catalogs and needs to be built later
  * on.  This is called during concurrent reindex processing.
+ *
+ * "tablespaceOid" is the new tablespace to use for this index.  If
+ * InvalidOid, use the tablespace in-use instead.
  */
 Oid
-index_concurrently_create_copy(Relation heapRelation, Oid oldIndexId, const char *newName)
+index_concurrently_create_copy(Relation heapRelation, Oid oldIndexId,
+							   Oid tablespaceOid, const char *newName)
 {
 	Relation	indexRelation;
 	IndexInfo  *oldInfo,
@@ -1379,7 +1383,8 @@ index_concurrently_create_copy(Relation heapRelation, Oid oldIndexId, const char
 							  newInfo,
 							  indexColNames,
 							  indexRelation->rd_rel->relam,
-							  indexRelation->rd_rel->reltablespace,
+							  OidIsValid(tablespaceOid) ?
+								tablespaceOid : indexRelation->rd_rel->reltablespace,
 							  indexRelation->rd_indcollation,
 							  indclass->values,
 							  indcoloptions->values,
@@ -3429,10 +3434,12 @@ IndexGetRelation(Oid indexId, bool missing_ok)
 
 /*
  * reindex_index - This routine is used to recreate a single index
+ *
+ * See comments of reindex_relation() for details about "tablespaceOid".
  */
 void
-reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
-			  int options)
+reindex_index(Oid indexId, Oid tablespaceOid, bool skip_constraint_checks,
+			  char persistence, int options)
 {
 	Relation	iRel,
 				heapRelation;
@@ -3441,6 +3448,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	volatile bool skipped_constraint = false;
 	PGRUsage	ru0;
 	bool		progress = (options & REINDEXOPT_REPORT_PROGRESS) != 0;
+	bool		set_tablespace = OidIsValid(tablespaceOid);
 
 	pg_rusage_init(&ru0);
 
@@ -3480,6 +3488,39 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 			 RelationGetRelationName(iRel));
 
 	/*
+	 * Skip tablespace change of all indexes on TOAST tables, unless
+	 * allow_system_table_mods=1, but error out on system catalog.
+	 */
+	if (set_tablespace && IsToastRelation(iRel))
+	{
+		if (!allowSystemTableMods)
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("skipping tablespace change of \"%s\"",
+							RelationGetRelationName(iRel)),
+					 errdetail("Cannot move system relation, only REINDEX is performed.")));
+			set_tablespace = false;
+		}
+	}
+	else if (set_tablespace &&
+			 IsCatalogRelationOid(indexId) && !allowSystemTableMods)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied: \"%s\" is a system catalog",
+						RelationGetRelationName(iRel))));
+
+	/*
+	 * We cannot support moving mapped relations into different tablespaces.
+	 * (In particular this eliminates all shared catalogs.)
+	 */
+	if (set_tablespace && RelationIsMapped(iRel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot change tablespace of mapped relation \"%s\"",
+						RelationGetRelationName(iRel))));
+
+	/*
 	 * Don't allow reindex on temp tables of other backends ... their local
 	 * buffer manager is not going to cope.
 	 */
@@ -3504,6 +3545,47 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	 * don't want to reindex underneath an open indexscan.
 	 */
 	CheckTableNotInUse(iRel, "REINDEX INDEX");
+
+	if (tablespaceOid == MyDatabaseTableSpace)
+		tablespaceOid = InvalidOid;
+
+	/*
+	 * Set the new tablespace for the relation.  Do that only in the
+	 * case where the reindex caller wishes to enforce a new tablespace.
+	 */
+	if (set_tablespace &&
+		tablespaceOid != iRel->rd_rel->reltablespace)
+	{
+		Relation		pg_class;
+		Form_pg_class	rd_rel;
+		HeapTuple		tuple;
+
+		/* First get a modifiable copy of the relation's pg_class row */
+		pg_class = table_open(RelationRelationId, RowExclusiveLock);
+
+		tuple = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(indexId));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for relation %u", indexId);
+		rd_rel = (Form_pg_class) GETSTRUCT(tuple);
+
+		/*
+		 * Mark the relation as ready to be dropped at transaction commit,
+		 * before making visible the new tablespace change so as this won't
+		 * miss things.
+		 */
+		RelationDropStorage(iRel);
+
+		/* Update the pg_class row */
+		rd_rel->reltablespace = tablespaceOid;
+		CatalogTupleUpdate(pg_class, &tuple->t_self, tuple);
+
+		heap_freetuple(tuple);
+
+		table_close(pg_class, RowExclusiveLock);
+
+		/* Make sure the reltablespace change is visible */
+		CommandCounterIncrement();
+	}
 
 	/*
 	 * All predicate locks on the index are about to be made invalid. Promote
@@ -3643,6 +3725,10 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
  * reindex_relation - This routine is used to recreate all indexes
  * of a relation (and optionally its toast relation too, if any).
  *
+ * "tablespaceOid" defines the new tablespace where the indexes of
+ * the relation will be rebuilt.  If InvalidOid is used, the current
+ * tablespace of each index is used instead.
+ *
  * "flags" is a bitmask that can include any combination of these bits:
  *
  * REINDEX_REL_PROCESS_TOAST: if true, process the toast table too (if any).
@@ -3675,7 +3761,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
  * index rebuild.
  */
 bool
-reindex_relation(Oid relid, int flags, int options)
+reindex_relation(Oid relid, Oid tablespaceOid, int flags, int options)
 {
 	Relation	rel;
 	Oid			toast_relid;
@@ -3766,7 +3852,8 @@ reindex_relation(Oid relid, int flags, int options)
 				continue;
 			}
 
-			reindex_index(indexOid, !(flags & REINDEX_REL_CHECK_CONSTRAINTS),
+			reindex_index(indexOid, tablespaceOid,
+						  !(flags & REINDEX_REL_CHECK_CONSTRAINTS),
 						  persistence, options);
 
 			CommandCounterIncrement();
@@ -3799,7 +3886,7 @@ reindex_relation(Oid relid, int flags, int options)
 	 * still hold the lock on the master table.
 	 */
 	if ((flags & REINDEX_REL_PROCESS_TOAST) && OidIsValid(toast_relid))
-		result |= reindex_relation(toast_relid, flags, options);
+		result |= reindex_relation(toast_relid, tablespaceOid, flags, options);
 
 	return result;
 }
