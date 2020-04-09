@@ -1821,7 +1821,7 @@ executeLikeRegex(JsonPathItem *jsp, JsonbValue *str, JsonbValue *rarg,
 		cxt->cflags = jspConvertRegexFlags(jsp->content.like_regex.flags);
 	}
 
-	if (RE_compile_and_execute(cxt->regex, str->val.string.val,
+	if (RE_compile_and_execute(cxt->regex, unconstify(char *, str->val.string.val),
 							   str->val.string.len,
 							   cxt->cflags, DEFAULT_COLLATION_OID, 0, NULL))
 		return jpbTrue;
