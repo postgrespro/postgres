@@ -1451,7 +1451,7 @@ ProcessUtilitySlow(ParseState *pstate,
 								relkind != RELKIND_FOREIGN_TABLE)
 								elog(ERROR, "unexpected relkind \"%c\" on partition \"%s\"",
 									 relkind, stmt->relation->relname);
-
+/*
 							if (relkind == RELKIND_FOREIGN_TABLE &&
 								(stmt->unique || stmt->primary))
 								ereport(ERROR,
@@ -1459,7 +1459,7 @@ ProcessUtilitySlow(ParseState *pstate,
 										 errmsg("cannot create unique index on partitioned table \"%s\"",
 												stmt->relation->relname),
 										 errdetail("Table \"%s\" contains partitions that are foreign tables.",
-												   stmt->relation->relname)));
+												   stmt->relation->relname)));*/
 						}
 						list_free(inheritors);
 					}

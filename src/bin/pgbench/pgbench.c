@@ -3629,7 +3629,7 @@ initDropTables(PGconn *con)
  * with a known size, so we choose to partition it.
  */
 static void
-createPartitions(PGconn *con)
+createPartitions(PGconn *con, const char *tablename)
 {
 	char		ff[64];
 
@@ -3644,7 +3644,8 @@ createPartitions(PGconn *con)
 	/* we must have to create some partitions */
 	Assert(partitions > 0);
 
-	fprintf(stderr, "creating %d partitions...\n", partitions);
+	fprintf(stderr, "creating %d partitions for relation %s...\n",
+			partitions, tablename);
 
 	for (int p = 1; p <= partitions; p++)
 	{
@@ -3673,18 +3674,20 @@ createPartitions(PGconn *con)
 				sprintf(maxvalue, "maxvalue");
 
 			snprintf(query, sizeof(query),
-					 "create%s table pgbench_accounts_%d\n"
-					 "  partition of pgbench_accounts\n"
+					 "create%s table %s_%d\n"
+					 "  partition of %s\n"
 					 "  for values from (%s) to (%s)%s\n",
-					 unlogged_tables ? " unlogged" : "", p,
+					 unlogged_tables ? " unlogged" : "",
+					 tablename, p, tablename,
 					 minvalue, maxvalue, ff);
 		}
 		else if (partition_method == PART_HASH)
 			snprintf(query, sizeof(query),
-					 "create%s table pgbench_accounts_%d\n"
-					 "  partition of pgbench_accounts\n"
+					 "create%s table %s_%d\n"
+					 "  partition of %s\n"
 					 "  for values with (modulus %d, remainder %d)%s\n",
-					 unlogged_tables ? " unlogged" : "", p,
+					 unlogged_tables ? " unlogged" : "",
+					 tablename, p, tablename,
 					 partitions, p - 1, ff);
 		else					/* cannot get there */
 			Assert(0);
@@ -3753,14 +3756,25 @@ initCreateTables(PGconn *con)
 		char		buffer[256];
 		const struct ddlinfo *ddl = &DDLs[i];
 		const char *cols;
+		const char *partcolname;
 
 		/* Construct new create table statement. */
 		opts[0] = '\0';
 
 		/* Partition pgbench_accounts table */
-		if (partition_method != PART_NONE && strcmp(ddl->table, "pgbench_accounts") == 0)
+		if (partition_method != PART_NONE && strcmp(ddl->table, "pgbench_history") != 0)
+		{
+			if (strcmp(ddl->table, "pgbench_accounts") == 0)
+				partcolname = "aid";
+			else if (strcmp(ddl->table, "pgbench_branches") == 0)
+				partcolname = "bid";
+			else if (strcmp(ddl->table, "pgbench_tellers") == 0)
+				partcolname = "tid";
+
 			snprintf(opts + strlen(opts), sizeof(opts) - strlen(opts),
-					 " partition by %s (aid)", PARTITION_METHOD[partition_method]);
+					 " partition by %s (%s)",
+					 PARTITION_METHOD[partition_method], partcolname);
+		}
 		else if (ddl->declare_fillfactor)
 			/* fillfactor is only expected on actual tables */
 			append_fillfactor(opts, sizeof(opts));
@@ -3783,10 +3797,11 @@ initCreateTables(PGconn *con)
 				 ddl->table, cols, opts);
 
 		executeStatement(con, buffer);
-	}
 
-	if (partition_method != PART_NONE)
-		createPartitions(con);
+		if (partition_method != PART_NONE &&
+			strcmp(ddl->table, "pgbench_history") != 0)
+			createPartitions(con, ddl->table);
+	}
 }
 
 /*

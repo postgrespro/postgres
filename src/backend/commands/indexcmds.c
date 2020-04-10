@@ -1192,14 +1192,14 @@ DefineIndex(Oid relationId,
 				 */
 				if (childrel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
 				{
-					if (stmt->unique || stmt->primary)
+/*					if (stmt->unique || stmt->primary)
 						ereport(ERROR,
 								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 								 errmsg("cannot create unique index on partitioned table \"%s\"",
 										RelationGetRelationName(rel)),
 								 errdetail("Table \"%s\" contains partitions that are foreign tables.",
 										   RelationGetRelationName(rel))));
-
+*/
 					table_close(childrel, lockmode);
 					continue;
 				}
