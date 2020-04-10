@@ -1,0 +1,2 @@
+make clean > /dev/null
+make -C contrib clean > /dev/null
