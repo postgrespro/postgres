@@ -15,9 +15,14 @@ export PGDATABASE=shardman
 export PGHOST=localhost
 export PGUSER=`whoami`
 
-cl=200
+pkill -U `whoami` -9 -e postgres
+pkill -U `whoami` -9 -e pgbench
 
-pgbench -p 5432 -T 20 -P 5 -c $cl -j $cl --select-only -n &
-pgbench -p 5433 -T 20 -P 5 -c $cl -j $cl --select-only -n &
-pgbench -p 5434 -T 20 -P 5 -c $cl -j $cl --select-only -n &
+pg_ctl -D PGDATA1 -l n0.log start
+pg_ctl -o "-p 5433" -D PGDATA2 -l n1.log start
+pg_ctl -o "-p 5434" -D PGDATA3 -l n2.log start
+
+pgbench -p 5432 -T 60 -P 5 -c 100 -j 33 --select-only -n &
+pgbench -p 5433 -T 60 -P 5 -c 100 -j 33 --select-only -n &
+pgbench -p 5434 -T 60 -P 5 -c 100 -j 33 --select-only -n &
 
