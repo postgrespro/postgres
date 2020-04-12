@@ -31,9 +31,9 @@
 
 
 /* "Methods" required for an expanded object */
-static Size ER_get_flat_size(ExpandedObjectHeader *eohptr, void **context);
+static Size ER_get_flat_size(ExpandedObjectHeader *eohptr);
 static void ER_flatten_into(ExpandedObjectHeader *eohptr,
-							void *result, Size allocated_size, void **context);
+							void *result, Size allocated_size);
 
 static const ExpandedObjectMethods ER_methods =
 {
@@ -649,7 +649,7 @@ make_expanded_record_from_datum(Datum recorddatum, MemoryContext parentcontext)
  * memory leaks from activities such as detoasting.
  */
 static Size
-ER_get_flat_size(ExpandedObjectHeader *eohptr, void **context)
+ER_get_flat_size(ExpandedObjectHeader *eohptr)
 {
 	ExpandedRecordHeader *erh = (ExpandedRecordHeader *) eohptr;
 	TupleDesc	tupdesc;
@@ -762,7 +762,7 @@ ER_get_flat_size(ExpandedObjectHeader *eohptr, void **context)
  */
 static void
 ER_flatten_into(ExpandedObjectHeader *eohptr,
-				void *result, Size allocated_size, void **context)
+				void *result, Size allocated_size)
 {
 	ExpandedRecordHeader *erh = (ExpandedRecordHeader *) eohptr;
 	HeapTupleHeader tuphdr = (HeapTupleHeader) result;
