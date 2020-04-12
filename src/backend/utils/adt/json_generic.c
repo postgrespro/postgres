@@ -18,9 +18,6 @@
 
 JsonContainerOps jsonvContainerOps;
 
-static Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
-						JsonContainerOps *ops);
-
 JsonValue *
 JsonValueCopy(JsonValue *res, const JsonValue *val)
 {
@@ -706,7 +703,6 @@ jsonvCopy(JsonContainer *jc)
 JsonContainerOps
 jsonvContainerOps =
 {
-	JsonContainerJsonv,
 	NULL,
 	jsonvIteratorInit,
 	jsonvFindKeyInObject,
@@ -729,88 +725,6 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 	return JsonValueInitBinary(jv, &json->root);
 }
 
-#ifdef JSON_FLATTEN_INTO_JSONEXT
-typedef struct varatt_extended_json
-{
-	varatt_extended_hdr vaext;
-	JsonContainerType	type;
-	char				params[FLEXIBLE_ARRAY_MEMBER];
-} varatt_extended_json;
-
-static Size
-jsonGetExtendedSize(JsonContainer *jc)
-{
-	return VARHDRSZ_EXTERNAL + offsetof(varatt_extended_json, params) + jc->len;
-}
-
-static void
-jsonWriteExtended(JsonContainer *jc, void *ptr, Size allocated_size)
-{
-	varatt_extended_json	extjs,
-						   *pextjs;
-
-	Assert(allocated_size >= jsonGetExtendedSize(jc));
-
-	extjs.vaext.size = jsonGetExtendedSize(jc) - VARHDRSZ_EXTERNAL;
-	extjs.type = JsonContainerGetType(jc);
-	Assert(extjs.type != JsonContainerUnknown);
-
-	SET_VARTAG_EXTERNAL(ptr, VARTAG_EXTENDED);
-	pextjs = (varatt_extended_json *) VARDATA_EXTERNAL(ptr);
-	memcpy(pextjs, &extjs, offsetof(varatt_extended_json, params));
-	memcpy(&pextjs->params, jc->data, jc->len);
-}
-
-static Json *
-JsonInitExtended(Json *tmp, struct varlena *extvalue, bool freeValue)
-{
-	JsonContainerOps	   *ops;
-	CompressionMethodRoutine *cmr;
-	varatt_extended_json   *pextjs,
-							extjs;
-	void				   *val;
-	int						len;
-	Datum					value;
-
-	Assert(VARATT_IS_EXTERNAL_EXTENDED(extvalue));
-
-	pextjs = (varatt_extended_json *) VARDATA_EXTERNAL(extvalue);
-	memcpy(&extjs, pextjs, offsetof(varatt_extended_json, data));
-
-	totalSize = extjs.vaext.size - offsetof(varatt_extended_json, data);
-
-	ops = JsonContainerGetOpsByType(extjs.type);
-
-	if (ops)
-		cmr = NULL;
-	else
-	{
-		cmr = GetCompressionMethodRoutine(extjs.type, InvalidOid);
-
-		if (!cmr)
-			elog(ERROR, "unrecognized json container type %d", extjs.type);
-	}
-
-	len = extjs.vaext.size - offsetof(varatt_extended_json, params);
-
-	val = palloc(VARHDRSZ + len); /* FIXME save value with varlena header */
-	SET_VARSIZE(val, VARHDRSZ + len);
-	memcpy(VARDATA(val), &pextjs->params, len);
-
-	if (freeValue)
-		pfree(extvalue);
-
-	if (ops)
-		return JsonExpand(tmp, value, true, ops);
-
-	value = cmr->decompress(PointerGetDatum(val), NULL);
-
-	Assert(VARATT_IS_EXTERNAL_EXPANDED(DatumGetPointer(value)));
-
-	return (Json *) DatumGetEOHP(value);
-}
-#endif
-
 static void
 JsonInit(Json *json)
 {
@@ -829,233 +743,36 @@ JsonInit(Json *json)
 	json->root.ops->init(&json->root, json->obj.value);
 }
 
-static Size
-jsonGetFlatSizeJsont(Json *json, void **context)
-{
-	Size		size;
-
-	if (json->root.ops == &jsontContainerOps)
-		size = VARHDRSZ + json->root.len;
-	else
-	{
-		char	   *str = JsonToCString(&json->root);
-		size = VARHDRSZ + strlen(str);
-		if (context)
-			*context = str;
-		else
-			pfree(str);
-	}
-
-	return size;
-}
-
-static void *
-jsonFlattenJsont(Json *json, void **context)
-{
-	if (json->root.ops == &jsontContainerOps)
-		return cstring_to_text_with_len(json->root.data, json->root.len);
-	else
-	{
-		char   *str = context ? (char *) *context : JsonToCString(JsonRoot(json));
-		text   *text = cstring_to_text(str);
-		pfree(str);
-		return text;
-	}
-}
-
-static Size
-jsonGetFlatSize2(Json *json, void **context)
-{
-	Size		size;
-
-#ifdef JSON_FLATTEN_INTO_TARGET
-	if (json->is_json)
-#endif
-#if defined(JSON_FLATTEN_INTO_TARGET) || defined(JSON_FLATTEN_INTO_JSONT)
-		size = jsonGetFlatSizeJsont(json, context);
-#endif
-#ifdef JSON_FLATTEN_INTO_TARGET
-	else
-#endif
-#if defined(JSON_FLATTEN_INTO_TARGET) || defined(JSON_FLATTEN_INTO_JSONB)
-	{
-		if (json->root.ops == &jsonbContainerOps)
-			size = VARHDRSZ + json->root.len;
-		else
-		{
-			JsonValue	val;
-			void	   *js = JsonValueToJsonb(JsonToJsonValue(json, &val));
-			size = VARSIZE(js);
-			if (context)
-				*context = js;
-			else
-				pfree(js);
-		}
-	}
-#endif
-
-	return size;
-}
-
-static void *
-jsonFlatten(Json *json, void **context)
-{
-#ifdef JSON_FLATTEN_INTO_TARGET
-	if (json->is_json)
-#endif
-#if defined(JSON_FLATTEN_INTO_TARGET) || defined(JSON_FLATTEN_INTO_JSONT)
-		return jsonFlattenJsont(json, context);
-#endif
-#ifdef JSON_FLATTEN_INTO_TARGET
-	else
-#endif
-#if defined(JSON_FLATTEN_INTO_TARGET) || defined(JSON_FLATTEN_INTO_JSONB)
-	{
-		if (json->root.ops == &jsonbContainerOps)
-		{
-			void	   *res = palloc(VARHDRSZ + json->root.len);
-			SET_VARSIZE(res, VARHDRSZ + json->root.len);
-			memcpy(VARDATA(res), json->root.data, json->root.len);
-			return res;
-		}
-		else if (context)
-			return *context;
-		else
-		{
-			JsonValue	val;
-			return JsonValueToJsonb(JsonToJsonValue(json, &val));
-		}
-	}
-#endif
-}
-
-static Size
-jsonGetFlatSize(ExpandedObjectHeader *eoh, void **context)
-{
-	Json   *json = (Json *) eoh;
-
-	JsonInit(json);
-
-#ifdef JSON_FLATTEN_INTO_JSONEXT
-	{
-		JsonContainer	   *flat = JsonRoot(json);
-		JsonContainerData	tmp;
-
-		if (json->root.ops == &jsonvContainerOps)
-		{
-			JsonValue *val = (JsonValue *) flat->data;
-
-			if (JsonValueIsUniquified(val))
-			{
-				tmp.len = jsonGetFlatSize2(json, context) - VARHDRSZ;
-				tmp.ops = flatContainerOps;
-			}
-			else
-			{
-				tmp.len = jsonGetFlatSizeJsont(json, context) - VARHDRSZ;
-				tmp.ops = &jsontContainerOps;
-			}
-
-			tmp.data = NULL;
-
-			flat = &tmp;
-		}
-
-		return jsonGetExtendedSize(flat);
-	}
-#else
-	return jsonGetFlatSize2(json, context);
-#endif
-}
-
-static void
-jsonFlattenInto(ExpandedObjectHeader *eoh, void *result, Size allocated_size,
-				void **context)
-{
-	Json   *json = (Json *) eoh;
-
-	JsonInit(json);
-
-#ifdef JSON_FLATTEN_INTO_JSONEXT
-	{
-		JsonContainer	   *flat = JsonRoot(json);
-		JsonContainerData	tmp;
-		void			   *tmpData = NULL;
-
-		if (flat->ops == &jsonvContainerOps)
-		{
-			JsonValue *val = (JsonValue *) flat->data;
-
-			if (JsonValueIsUniquified(val))
-			{
-				tmpData = jsonFlatten(json, context);
-				tmp.ops = flatContainerOps;
-			}
-			else
-			{
-				tmpData = jsonFlattenJsont(json, context);
-				tmp.ops = &jsontContainerOps;
-			}
-
-			tmp.data = VARDATA(tmpData);
-			tmp.len = VARSIZE(tmpData) - VARHDRSZ;
-
-			flat = &tmp;
-		}
-
-		jsonWriteExtended(flat, result, allocated_size);
-
-		if (tmpData)
-			pfree(tmpData);
-	}
-#else
-	{
-		void *data = jsonFlatten(json, context);
-		memcpy(result, data, allocated_size);
-		pfree(data);
-	}
-#endif
-}
-
-static ExpandedObjectMethods
-jsonExpandedObjectMethods =
-{
-	jsonGetFlatSize,
-	jsonFlattenInto
-};
-
 static Json *
 JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 {
-	MemoryContext	objcxt;
 	Json		   *json;
 
 	if (tmp)
 	{
 		json = tmp;
-		json->obj.eoh.vl_len_ = 0;
+		json->obj.isTemporary = true;
 	}
 	else
 	{
 #ifndef JSON_EXPANDED_OBJECT_MCXT
 		json = (Json *) palloc(sizeof(Json));
-		objcxt = NULL;
 #else
 		/*
 		 * Allocate private context for expanded object.  We start by assuming
 		 * that the json won't be very large; but if it does grow a lot, don't
 		 * constrain aset.c's large-context behavior.
 		 */
-		objcxt = AllocSetContextCreate(CurrentMemoryContext,
-									   "expanded json",
-									   ALLOCSET_SMALL_MINSIZE,
-									   ALLOCSET_SMALL_INITSIZE,
-									   ALLOCSET_DEFAULT_MAXSIZE);
+		MemoryContext objcxt =
+			AllocSetContextCreate(CurrentMemoryContext,
+								  "expanded json",
+								  ALLOCSET_SMALL_MINSIZE,
+								  ALLOCSET_SMALL_INITSIZE,
+								  ALLOCSET_DEFAULT_MAXSIZE);
 
 		json = (Json *) MemoryContextAlloc(objcxt, sizeof(Json));
 #endif
-
-		EOH_init_header(&json->obj.eoh, &jsonExpandedObjectMethods, objcxt);
+		json->obj.isTemporary = false;
 	}
 
 	json->obj.value = value;
@@ -1074,28 +791,9 @@ static Json *
 JsonExpandDatum(Datum value, JsonContainerOps *ops, Json *tmp)
 {
 	struct varlena *toasted = (struct varlena *) DatumGetPointer(value);
-	Json	   *json;
+	struct varlena *detoasted = pg_detoast_datum(toasted);
 
-	if (VARATT_IS_EXTERNAL_EXPANDED(toasted))
-		json = (Json *) DatumGetEOHP(value);
-	else
-	{
-		struct varlena *detoasted = pg_detoast_datum(toasted);
-
-/*
-		if (VARATT_IS_EXTERNAL_EXTENDED(detoasted))
-#ifdef JSON_FLATTEN_INTO_JSONEXT
-			return JsonInitExtended(tmp, detoasted, toasted != detoasted);
-#else
-			elog(ERROR, "unexpected extended json");
-#endif
-*/
-
-		json = JsonExpand(tmp, PointerGetDatum(detoasted), toasted != detoasted,
-						  ops);
-	}
-
-	return json;
+	return JsonExpand(tmp, PointerGetDatum(detoasted), toasted != detoasted, ops);
 }
 
 Json *
@@ -1124,8 +822,7 @@ JsonCopyTemporary(Json *tmp)
 
 	memcpy(json, tmp, sizeof(Json));
 	tmp->obj.freeValue = false;
-
-	EOH_init_header(&json->obj.eoh, &jsonExpandedObjectMethods, NULL);
+	tmp->obj.isTemporary = false;
 
 	return json;
 }

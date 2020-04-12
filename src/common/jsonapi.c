@@ -1598,7 +1598,6 @@ jsontGetArraySize(JsonContainer *jc)
 JsonContainerOps
 jsontContainerOps =
 {
-	JsonContainerJsont,
 	jsontInit,
 	JsontIteratorInit,
 	jsonFindLastKeyInObject,
