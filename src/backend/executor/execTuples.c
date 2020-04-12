@@ -178,7 +178,7 @@ tts_virtual_materialize(TupleTableSlot *slot)
 			 * slot doesn't depend on it.
 			 */
 			sz = att_align_nominal(sz, att->attalign);
-			sz += EOH_get_flat_size(DatumGetEOHP(val), NULL);
+			sz += EOH_get_flat_size(DatumGetEOHP(val));
 		}
 		else
 		{
@@ -216,12 +216,11 @@ tts_virtual_materialize(TupleTableSlot *slot)
 			 * slot doesn't depend on it.
 			 */
 			ExpandedObjectHeader *eoh = DatumGetEOHP(val);
-			void	   *context;
 
 			data = (char *) att_align_nominal(data,
 											  att->attalign);
-			data_length = EOH_get_flat_size(eoh, &context);
-			EOH_flatten_into(eoh, data, data_length, &context);
+			data_length = EOH_get_flat_size(eoh);
+			EOH_flatten_into(eoh, data, data_length);
 
 			slot->tts_values[natt] = PointerGetDatum(data);
 			data += data_length;

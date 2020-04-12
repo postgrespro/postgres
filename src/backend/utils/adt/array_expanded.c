@@ -21,9 +21,9 @@
 
 
 /* "Methods" required for an expanded object */
-static Size EA_get_flat_size(ExpandedObjectHeader *eohptr, void **context);
+static Size EA_get_flat_size(ExpandedObjectHeader *eohptr);
 static void EA_flatten_into(ExpandedObjectHeader *eohptr,
-							void *result, Size allocated_size, void **context);
+							void *result, Size allocated_size);
 
 static const ExpandedObjectMethods EA_methods =
 {
@@ -230,7 +230,7 @@ copy_byval_expanded_array(ExpandedArrayHeader *eah,
  * get_flat_size method for expanded arrays
  */
 static Size
-EA_get_flat_size(ExpandedObjectHeader *eohptr, void **context)
+EA_get_flat_size(ExpandedObjectHeader *eohptr)
 {
 	ExpandedArrayHeader *eah = (ExpandedArrayHeader *) eohptr;
 	int			nelems;
@@ -291,7 +291,7 @@ EA_get_flat_size(ExpandedObjectHeader *eohptr, void **context)
  */
 static void
 EA_flatten_into(ExpandedObjectHeader *eohptr,
-				void *result, Size allocated_size, void **context)
+				void *result, Size allocated_size)
 {
 	ExpandedArrayHeader *eah = (ExpandedArrayHeader *) eohptr;
 	ArrayType  *aresult = (ArrayType *) result;
