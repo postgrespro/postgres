@@ -842,11 +842,10 @@ coerce_function_result_tuple(PLpgSQL_execstate *estate, TupleDesc tupdesc)
 			 */
 			Size		resultsize;
 			HeapTupleHeader tuphdr;
-			void	   *context;
 
-			resultsize = EOH_get_flat_size(&erh->hdr, &context);
+			resultsize = EOH_get_flat_size(&erh->hdr);
 			tuphdr = (HeapTupleHeader) SPI_palloc(resultsize);
-			EOH_flatten_into(&erh->hdr, (void *) tuphdr, resultsize, &context);
+			EOH_flatten_into(&erh->hdr, (void *) tuphdr, resultsize);
 			HeapTupleHeaderSetTypeId(tuphdr, tupdesc->tdtypeid);
 			HeapTupleHeaderSetTypMod(tuphdr, tupdesc->tdtypmod);
 			estate->retval = PointerGetDatum(tuphdr);

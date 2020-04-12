@@ -83,12 +83,11 @@ detoast_external_attr(struct varlena *attr)
 		 */
 		ExpandedObjectHeader *eoh;
 		Size		resultsize;
-		void	   *context;
 
 		eoh = DatumGetEOHP(PointerGetDatum(attr));
-		resultsize = EOH_get_flat_size(eoh, &context);
+		resultsize = EOH_get_flat_size(eoh);
 		result = (struct varlena *) palloc(resultsize);
-		EOH_flatten_into(eoh, (void *) result, resultsize, &context);
+		EOH_flatten_into(eoh, (void *) result, resultsize);
 	}
 	else
 	{
@@ -526,7 +525,7 @@ toast_raw_datum_size(Datum value)
 	}
 	else if (VARATT_IS_EXTERNAL_EXPANDED(attr))
 	{
-		result = EOH_get_flat_size(DatumGetEOHP(value), NULL);
+		result = EOH_get_flat_size(DatumGetEOHP(value));
 	}
 	else if (VARATT_IS_COMPRESSED(attr))
 	{
@@ -586,7 +585,7 @@ toast_datum_size(Datum value)
 	}
 	else if (VARATT_IS_EXTERNAL_EXPANDED(attr))
 	{
-		result = EOH_get_flat_size(DatumGetEOHP(value), NULL);
+		result = EOH_get_flat_size(DatumGetEOHP(value));
 	}
 	else if (VARATT_IS_SHORT(attr))
 	{
