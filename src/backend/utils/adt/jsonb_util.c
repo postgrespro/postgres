@@ -2239,7 +2239,6 @@ jsonbInit(JsonContainerData *jc, Datum value)
 JsonContainerOps
 jsonbContainerOps =
 {
-	JsonContainerJsonb,
 	jsonbInit,
 	JsonbIteratorInit,
 	jsonbFindKeyInObject,

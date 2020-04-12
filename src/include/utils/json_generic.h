@@ -16,7 +16,6 @@
 #include "postgres.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
-#include "utils/expandeddatum.h"
 #include "utils/jsonb.h"
 
 typedef JsonbPair JsonPair;
@@ -50,19 +49,8 @@ struct JsonIteratorData
 	JsonIteratorNextFunc	next;
 };
 
-typedef enum JsonContainerTypes
-{
-	JsonContainerUnknown = 0,
-	JsonContainerJsont = -1,
-	JsonContainerJsonb = -2,
-	JsonContainerJsonv = -3,
-} JsonContainerTypes;
-
-typedef Oid JsonContainerType;
-
 struct JsonContainerOps
 {
-	JsonContainerType type;
 	void			(*init)(JsonContainerData *jc, Datum value);
 	JsonIterator   *(*iteratorInit)(JsonContainer *jc);
 	JsonValue	   *(*findKeyInObject)(JsonContainer *object,
@@ -78,20 +66,19 @@ struct JsonContainerOps
 
 typedef struct CompressedObject
 {
-	ExpandedObjectHeader	eoh;
-	Datum					value;
-	bool					freeValue;
+	Datum		value;
+	bool		freeValue;
+	bool		isTemporary;
 } CompressedObject;
 
 typedef struct Json
 {
-	CompressedObject	obj;
-	JsonContainerData	root;
-	bool				is_json;	/* json or jsonb */
+	CompressedObject obj;
+	JsonContainerData root;
+	bool		is_json;		/* json or jsonb */
 } Json;
 
-#define JsonIsTemporary(json) \
-		((json)->obj.eoh.vl_len_ != EOH_HEADER_MAGIC)
+#define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
 #ifndef JSONXOID
 # define JSONXOID JSONBOID
@@ -104,38 +91,12 @@ typedef struct Json
 #define JsonFlattenToJsonbDatum(json) \
 		PointerGetDatum(JsonFlatten(json, JsonbEncode, &jsonbContainerOps))
 
-#define JsonGetEOHDatum(json)		EOHPGetRODatum(&JsonGetNonTemporary(json)->obj.eoh)
-
-#define JSON_FLATTEN_INTO_TARGET
-/*
-#define JSON_FLATTEN_INTO_JSONEXT
-#define JSON_FLATTEN_INTO_JSONB
-#define flatContainerOps &jsonbContainerOps
-*/
-
 #undef JsonbPGetDatum
-#ifdef JSON_FLATTEN_INTO_TARGET
-# define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(JsonGetUniquified(json))
-#else
-# define JsonbPGetDatum(json)		JsonGetEOHDatum(JsonGetUniquified(json))
-#endif
-
-#ifdef JSON_FLATTEN_INTO_TARGET
-# define JsontPGetDatum(json)	\
-		PointerGetDatum(cstring_to_text(JsonToCString(JsonRoot(json))))
-#else
-static inline Datum
-JsontPGetDatum(Json *json)
-{
-	json->is_json = true;
-	return JsonGetEOHDatum(json);
-}
-#endif
+#define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(JsonGetUniquified(json))
+#define JsontPGetDatum(json)		PointerGetDatum(cstring_to_text(JsonToCString(JsonRoot(json))))
 
 #ifdef JsonxPGetDatum
 # define JsonGetDatum(json)			JsonxPGetDatum(json)
-#elif defined(JsonxGetUniquified)
-# define JsonGetDatum(json)			JsonGetEOHDatum(JsonxGetUniquified(json))
 #else
 # define JsonGetDatum(json)			JsonbPGetDatum(json)
 #endif
@@ -165,13 +126,7 @@ JsontPGetDatum(Json *json)
 #define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
 #define PG_GETARG_JSONT_P_COPY(x)	DatumGetJsontPCopy(PG_GETARG_DATUM(x))
 
-#define JsonFreeIfCopy(json, datum) \
-		do { \
-			if (!VARATT_IS_EXTERNAL_EXPANDED(DatumGetPointer(datum))) \
-				JsonFree(json); \
-			else \
-				Assert(DatumGetEOHP(datum) == &(json)->obj.eoh); \
-		} while (0)
+#define JsonFreeIfCopy(json, datum) JsonFree(json)
 
 #define PG_FREE_IF_COPY_JSONB(json, n) \
 		JsonFreeIfCopy(json, PG_GETARG_DATUM(n))
@@ -197,11 +152,6 @@ JsontPGetDatum(Json *json)
 #define JsonIsUniquified(json)		JsonContainerIsUniquified(JsonRoot(json))
 
 #define JsonValueIsScalar(jsval)	IsAJsonbScalar(jsval)
-
-#define JsonContainerGetType(jc) ((jc)->ops->type)
-#define JsonContainerGetOpsByType(type) \
-		((type) == JsonContainerJsont ? &jsontContainerOps : \
-		 (type) == JsonContainerJsonb ? &jsonbContainerOps : NULL)
 
 #ifdef JSONB_UTIL_C
 #define JsonbValueToJsonb JsonValueToJsonb
