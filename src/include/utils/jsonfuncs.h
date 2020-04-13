@@ -59,7 +59,7 @@ extern text *transform_json_string_values(text *json, void *action_state,
 
 extern Datum jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
 							   JsonbValue *newval);
-extern Datum jsonb_get_element(Jsonb *jb, Datum *path, int npath,
-							   bool *isnull, bool as_text);
+extern JsonValue *jsonb_get_element(Jsonb *jb, Datum *path, int npath,
+									JsonValue *resbuf);
 
 #endif

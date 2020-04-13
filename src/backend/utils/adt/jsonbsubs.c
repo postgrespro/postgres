@@ -244,16 +244,29 @@ jsonb_subscript_fetch(ExprState *state,
 	SubscriptingRefState *sbsrefstate = op->d.sbsref.state;
 	JsonbSubWorkspace *workspace = (JsonbSubWorkspace *) sbsrefstate->workspace;
 	Jsonb	   *jsonbSource;
+	JsonbValue *res;
+	JsonbValue	resbuf;
 
 	/* Should not get here if source jsonb (or any subscript) is null */
 	Assert(!(*op->resnull));
 
 	jsonbSource = DatumGetJsonbP(*op->resvalue);
-	*op->resvalue = jsonb_get_element(jsonbSource,
-									  workspace->index,
-									  sbsrefstate->numupper,
-									  op->resnull,
-									  false);
+
+	res = jsonb_get_element(jsonbSource,
+							workspace->index,
+							sbsrefstate->numupper,
+							&resbuf);
+
+	if (res != NULL)
+	{
+		*op->resnull = false;
+		*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(res));
+	}
+	else
+	{
+		*op->resnull = true;
+		*op->resvalue = PointerGetDatum(NULL);
+	}
 }
 
 /*
@@ -340,12 +353,22 @@ jsonb_subscript_fetch_old(ExprState *state,
 	else
 	{
 		Jsonb	   *jsonbSource = DatumGetJsonbP(*op->resvalue);
+		JsonbValue	resbuf;
+		JsonbValue *res = jsonb_get_element(jsonbSource,
+											sbsrefstate->upperindex,
+											sbsrefstate->numupper,
+											&resbuf);
 
-		sbsrefstate->prevvalue = jsonb_get_element(jsonbSource,
-												   sbsrefstate->upperindex,
-												   sbsrefstate->numupper,
-												   &sbsrefstate->prevnull,
-												   false);
+		if (res != NULL)
+		{
+			sbsrefstate->prevnull = false;
+			sbsrefstate->prevvalue = JsonbPGetDatum(JsonbValueToJsonb(res));
+		}
+		else
+		{
+			sbsrefstate->prevnull = true;
+			sbsrefstate->prevvalue = PointerGetDatum(NULL);
+		}
 	}
 }
 

@@ -316,18 +316,17 @@ typedef struct JsObject
 
 #define JsObjectFree(jso) ((void) 0)
 
-#ifndef JSON_C
 static int	report_json_context(JsonLexContext *lex);
-#endif
 
-static Datum get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text);
+static JsonValue *get_jsonb_path_all(Json *jb, ArrayType *path,
+									 JsonValue *resbuf);
 static text *JsonbValueAsText(JsonbValue *v);
 
-static Datum each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
-							   bool as_text);
+static Datum each_worker_json(FunctionCallInfo fcinfo, const char *funcname,
+							  bool is_jsonb, bool as_text);
 
-static Datum elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
-								   bool as_text);
+static Datum elements_worker_json(FunctionCallInfo fcinfo, const char *funcname,
+								  bool is_jsonb, bool as_text);
 
 /* worker functions for populate_record, to_record, populate_recordset and to_recordset */
 static Datum populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
@@ -371,7 +370,7 @@ static Datum populate_domain(DomainIOData *io, Oid typid, const char *colname,
 
 /* functions supporting jsonb_delete, jsonb_set and jsonb_concat */
 static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
-								  JsonbParseState **state);
+								  JsonbParseState **state, bool is_jsonb);
 static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
 						   bool *path_nulls, int path_len,
 						   JsonbParseState **st, int level, JsonbValue *newval,
@@ -387,7 +386,6 @@ static void setPathArray(JsonbIterator **it, Datum *path_elems,
 
 static Datum jsonb_strip_nulls_internal(Jsonb *jb);
 
-#ifndef JSON_C
 /*
  * pg_parse_json_or_ereport
  *
@@ -419,7 +417,6 @@ makeJsonLexContext(text *json, bool need_escapes)
 										GetDatabaseEncoding(),
 										need_escapes);
 }
-#endif
 
 /*
  * SQL function json_object_keys
@@ -434,7 +431,8 @@ makeJsonLexContext(text *json, bool need_escapes)
  * be so huge that it has major memory implications.
  */
 static Datum
-jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost)
+jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost,
+							const char * funcname, bool is_jsonb)
 {
 	FuncCallContext *funcctx;
 	OkeysState *state;
@@ -442,7 +440,7 @@ jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost)
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
-		Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+		Jsonb	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 		bool		skipNested = false;
 		JsonbIterator *it;
 		JsonbValue	v;
@@ -453,13 +451,11 @@ jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost)
 			if (JB_ROOT_IS_SCALAR(jb))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("cannot call %s on a scalar",
-								JSONB"_object_keys")));
+						 errmsg("cannot call %s on a scalar", funcname)));
 			else if (JB_ROOT_IS_ARRAY(jb))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("cannot call %s on an array",
-								JSONB"_object_keys")));
+						 errmsg("cannot call %s on an array", funcname)));
 		}
 
 		funcctx = SRF_FIRSTCALL_INIT();
@@ -521,16 +517,27 @@ jsonb_extract_keys_internal(FunctionCallInfo fcinfo, bool outermost)
 Datum
 jsonb_object_keys(PG_FUNCTION_ARGS)
 {
-	return jsonb_extract_keys_internal(fcinfo, true);
+	return jsonb_extract_keys_internal(fcinfo, true, "jsonb_object_keys", true);
 }
 
 Datum
 jsonb_extract_keys(PG_FUNCTION_ARGS)
 {
-	return jsonb_extract_keys_internal(fcinfo, false);
+	return jsonb_extract_keys_internal(fcinfo, false, "jsonb_extract_keys", true);
 }
 
-#ifndef JSON_C
+Datum
+json_object_keys(PG_FUNCTION_ARGS)
+{
+	return jsonb_extract_keys_internal(fcinfo, true, "json_object_keys", false);
+}
+
+Datum
+json_extract_keys(PG_FUNCTION_ARGS)
+{
+	return jsonb_extract_keys_internal(fcinfo, false, "json_extract_keys", false);
+}
+
 /*
  * Report a JSON error.
  */
@@ -612,134 +619,200 @@ report_json_context(JsonLexContext *lex)
 	return errcontext("JSON data, line %d: %s%s%s",
 					  lex->line_number, prefix, ctxt, suffix);
 }
-#endif
 
-
-Datum
-jsonb_object_field(PG_FUNCTION_ARGS)
+static JsonValue *
+json_object_field_internal(Json *jb, text *key)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	text	   *key = PG_GETARG_TEXT_PP(1);
 	JsonbValue *v;
 	JsonbValue	vbuf;
 
 	if (!JB_ROOT_IS_OBJECT(jb))
+		return NULL;
+
+	return JsonFindKeyInObject(JsonbRoot(jb),
+							   VARDATA_ANY(key),
+							   VARSIZE_ANY_EXHDR(key));
+}
+
+Datum
+jsonb_object_field(PG_FUNCTION_ARGS)
+{
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_P(0),
+												 PG_GETARG_TEXT_PP(1));
+
+	if (res)
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	else
 		PG_RETURN_NULL();
+}
 
-	v = JsonFindKeyInObject(JsonbRoot(jb),
-							VARDATA_ANY(key),
-							VARSIZE_ANY_EXHDR(key));
+Datum
+json_object_field(PG_FUNCTION_ARGS)
+{
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONT_P(0),
+												 PG_GETARG_TEXT_PP(1));
 
-	if (v != NULL)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(v));
-
-	PG_RETURN_NULL();
+	if (res)
+		PG_RETURN_JSONT_P(JsonbValueToJsonb(res));
+	else
+		PG_RETURN_NULL();
 }
 
 Datum
 jsonb_object_field_text(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	text	   *key = PG_GETARG_TEXT_PP(1);
-	JsonbValue *v;
-	JsonbValue	vbuf;
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_P(0),
+												 PG_GETARG_TEXT_PP(1));
 
-	if (!JB_ROOT_IS_OBJECT(jb))
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
 		PG_RETURN_NULL();
+}
 
-	v = JsonFindKeyInObject(JsonbRoot(jb),
-							VARDATA_ANY(key),
-							VARSIZE_ANY_EXHDR(key));
+Datum
+json_object_field_text(PG_FUNCTION_ARGS)
+{
+	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONT_P(0),
+												 PG_GETARG_TEXT_PP(1));
 
-	if (v != NULL && v->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(v));
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
+		PG_RETURN_NULL();
+}
 
-	PG_RETURN_NULL();
+static JsonValue *
+json_array_element_internal(Json *jb, int element)
+{
+	JsonbValue *v;
+
+	if (!JB_ROOT_IS_ARRAY(jb))
+		return NULL;
+
+	/* Handle negative subscript */
+	if (element < 0)
+	{
+		int			nelements = JB_ROOT_COUNT(jb);
+
+		if (nelements < 0)
+			nelements = JsonGetArraySize(JsonRoot(jb));
+
+		if (-element > nelements)
+			return NULL;
+		else
+			element += nelements;
+	}
+
+	return getIthJsonbValueFromContainer(JsonbRoot(jb), element);
 }
 
 Datum
 jsonb_array_element(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	int			element = PG_GETARG_INT32(1);
-	JsonbValue *v;
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_P(0),
+												  PG_GETARG_INT32(1));
 
-	if (!JB_ROOT_IS_ARRAY(jb))
+	if (res)
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	else
 		PG_RETURN_NULL();
+}
 
-	/* Handle negative subscript */
-	if (element < 0)
-	{
-		int		nelements = JB_ROOT_COUNT(jb);
-		if (nelements < 0)
-			nelements = JsonGetArraySize(JsonRoot(jb));
+Datum
+json_array_element(PG_FUNCTION_ARGS)
+{
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONT_P(0),
+												  PG_GETARG_INT32(1));
 
-		if (-element > nelements)
-			PG_RETURN_NULL();
-		else
-			element += nelements;
-	}
-
-	v = getIthJsonbValueFromContainer(JsonbRoot(jb), element);
-	if (v != NULL)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(v));
-
-	PG_RETURN_NULL();
+	if (res)
+		PG_RETURN_JSONT_P(JsonbValueToJsonb(res));
+	else
+		PG_RETURN_NULL();
 }
 
 Datum
 jsonb_array_element_text(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	int			element = PG_GETARG_INT32(1);
-	JsonbValue *v;
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_P(0),
+												  PG_GETARG_INT32(1));
 
-	if (!JB_ROOT_IS_ARRAY(jb))
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
 		PG_RETURN_NULL();
+}
 
-	/* Handle negative subscript */
-	if (element < 0)
-	{
-		uint32		nelements = JB_ROOT_COUNT(jb);
-		if (nelements < 0)
-			nelements = JsonGetArraySize(JsonRoot(jb));
+Datum
+json_array_element_text(PG_FUNCTION_ARGS)
+{
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONT_P(0),
+												  PG_GETARG_INT32(1));
 
-		if (-element > nelements)
-			PG_RETURN_NULL();
-		else
-			element += nelements;
-	}
-
-	v = getIthJsonbValueFromContainer(JsonbRoot(jb), element);
-
-	if (v != NULL && v->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(v));
-
-	PG_RETURN_NULL();
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
+		PG_RETURN_NULL();
 }
 
 Datum
 jsonb_extract_path(PG_FUNCTION_ARGS)
 {
-	return get_jsonb_path_all(fcinfo, false);
+	JsonValue		buf;
+	JsonValue	   *res = get_jsonb_path_all(PG_GETARG_JSONB_P(0),
+											 PG_GETARG_ARRAYTYPE_P(1), &buf);
+
+	if (res)
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	else
+		PG_RETURN_NULL();
+}
+
+Datum
+json_extract_path(PG_FUNCTION_ARGS)
+{
+	JsonValue		buf;
+	JsonValue	   *res = get_jsonb_path_all(PG_GETARG_JSONT_P(0),
+											 PG_GETARG_ARRAYTYPE_P(1), &buf);
+
+	if (res)
+		PG_RETURN_JSONT_P(JsonbValueToJsonb(res));
+	else
+		PG_RETURN_NULL();
 }
 
 Datum
 jsonb_extract_path_text(PG_FUNCTION_ARGS)
 {
-	return get_jsonb_path_all(fcinfo, true);
+	JsonValue		buf;
+	JsonValue	   *res = get_jsonb_path_all(PG_GETARG_JSONB_P(0),
+											 PG_GETARG_ARRAYTYPE_P(1), &buf);
+
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
+		PG_RETURN_NULL();
 }
 
-static Datum
-get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
+Datum
+json_extract_path_text(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1);
+	JsonValue		buf;
+	JsonValue	   *res = get_jsonb_path_all(PG_GETARG_JSONT_P(0),
+											 PG_GETARG_ARRAYTYPE_P(1), &buf);
+
+	if (res && res->type != jbvNull)
+		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	else
+		PG_RETURN_NULL();
+}
+
+static JsonValue *
+get_jsonb_path_all(Json *jb, ArrayType *path, JsonValue *resbuf)
+{
 	Datum	   *pathtext;
 	bool	   *pathnulls;
-	bool		isnull;
 	int			npath;
-	Datum		res;
 
 	/*
 	 * If the array contains any null elements, return NULL, on the grounds
@@ -749,29 +822,22 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 	 * regardless of the contents of the rest of the array.)
 	 */
 	if (array_contains_nulls(path))
-		PG_RETURN_NULL();
+		return NULL;
 
 	deconstruct_array(path, TEXTOID, -1, false, TYPALIGN_INT,
 					  &pathtext, &pathnulls, &npath);
 
-	res = jsonb_get_element(jb, pathtext, npath, &isnull, as_text);
-
-	if (isnull)
-		PG_RETURN_NULL();
-	else
-		PG_RETURN_DATUM(res);
+	return jsonb_get_element(jb, pathtext, npath, resbuf);
 }
 
-Datum
-jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
+JsonValue *
+jsonb_get_element(Jsonb *jb, Datum *path, int npath, JsonValue *resbuf)
 {
 	JsonbContainer *container = JsonbRoot(jb);
 	JsonbValue *jbvp = NULL;
 	int			i;
 	bool		have_object = false,
 				have_array = false;
-
-	*isnull = false;
 
 	/* Identify whether we have object, array, or scalar at top-level */
 	if (JB_ROOT_IS_OBJECT(jb))
@@ -795,19 +861,7 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 	 * JsonbValue directly for root-level containers.)
 	 */
 	if (npath <= 0 && jbvp == NULL)
-	{
-		if (as_text)
-		{
-			return PointerGetDatum(cstring_to_text(JsonbToCString(NULL,
-																  container,
-																  JsonbGetSize(jb))));
-		}
-		else
-		{
-			/* not text mode - just hand back the jsonb */
-			PG_RETURN_JSONB_P(jb);
-		}
-	}
+		return JsonValueInitBinary(resbuf, container);
 
 	for (i = 0; i < npath; i++)
 	{
@@ -827,10 +881,7 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 			errno = 0;
 			lindex = strtoint(indextext, &endptr, 10);
 			if (endptr == indextext || *endptr != '\0' || errno != 0)
-			{
-				*isnull = true;
-				return PointerGetDatum(NULL);
-			}
+				return NULL;
 
 			if (lindex >= 0)
 			{
@@ -851,10 +902,7 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 							JsonGetArraySize(container);
 
 				if (lindex == INT_MIN || -lindex > nelements)
-				{
-					*isnull = true;
-					return PointerGetDatum(NULL);
-				}
+					return NULL;
 				else
 					index = nelements + lindex;
 			}
@@ -864,15 +912,11 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 		else
 		{
 			/* scalar, extraction yields a null */
-			*isnull = true;
-			return PointerGetDatum(NULL);
+			return NULL;
 		}
 
 		if (jbvp == NULL)
-		{
-			*isnull = true;
-			return PointerGetDatum(NULL);
-		}
+			return NULL;
 		else if (i == npath - 1)
 			break;
 
@@ -892,23 +936,7 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 		}
 	}
 
-	if (as_text)
-	{
-		if (jbvp->type == jbvNull)
-		{
-			*isnull = true;
-			return PointerGetDatum(NULL);
-		}
-
-		return PointerGetDatum(JsonbValueAsText(jbvp));
-	}
-	else
-	{
-		Jsonb	   *res = JsonbValueToJsonb(jbvp);
-
-		/* not text mode - just hand back the jsonb */
-		PG_RETURN_JSONB_P(res);
-	}
+	return jbvp;
 }
 
 Datum
@@ -1088,11 +1116,9 @@ JsonbValueAsText(JsonbValue *v)
 	}
 }
 
-Datum
-jsonb_array_length(PG_FUNCTION_ARGS)
+static int
+json_array_length_internal(Json *jb)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-
 	if (JB_ROOT_IS_SCALAR(jb))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1102,26 +1128,51 @@ jsonb_array_length(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("cannot get array length of a non-array")));
 
-	PG_RETURN_INT32(JB_ROOT_COUNT(jb) >= 0 ? JB_ROOT_COUNT(jb)
-										   : JsonGetArraySize(JsonRoot(jb)));
+	return JB_ROOT_COUNT(jb) >= 0 ? JB_ROOT_COUNT(jb) :
+		JsonGetArraySize(JsonRoot(jb));
+}
+
+Datum
+jsonb_array_length(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT32(json_array_length_internal(PG_GETARG_JSONB_P(0)));
+}
+
+Datum
+json_array_length(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT32(json_array_length_internal(PG_GETARG_JSONT_P(0)));
 }
 
 Datum
 jsonb_each(PG_FUNCTION_ARGS)
 {
-	return each_worker_jsonb(fcinfo, JSONB"_each", false);
+	return each_worker_json(fcinfo, "jsonb_each", true, false);
 }
 
 Datum
 jsonb_each_text(PG_FUNCTION_ARGS)
 {
-	return each_worker_jsonb(fcinfo, JSONB"_each_text", true);
+	return each_worker_json(fcinfo, "jsonb_each_text", true, true);
+}
+
+Datum
+json_each(PG_FUNCTION_ARGS)
+{
+	return each_worker_json(fcinfo, "json_each", false, false);
+}
+
+Datum
+json_each_text(PG_FUNCTION_ARGS)
+{
+	return each_worker_json(fcinfo, "json_each_text", false, true);
 }
 
 static Datum
-each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
+each_worker_json(FunctionCallInfo fcinfo, const char *funcname,
+				 bool is_jsonb, bool as_text)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Json	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	ReturnSetInfo *rsi;
 	Tuplestorestate *tuple_store;
 	TupleDesc	tupdesc;
@@ -1168,7 +1219,7 @@ each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
 	MemoryContextSwitchTo(old_cxt);
 
 	tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
-									JSONB"_each temporary cxt",
+									"json_each temporary cxt",
 									ALLOCSET_DEFAULT_SIZES);
 
 	it = JsonbIteratorInit(JsonbRoot(jb));
@@ -1214,7 +1265,7 @@ each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
 				/* Not in text mode, just return the Jsonb */
 				Jsonb	   *val = JsonbValueToJsonb(&v);
 
-				values[1] = JsonGetDatum(val);
+				values[1] = is_jsonb ? JsonbPGetDatum(val) : JsontPGetDatum(val);
 			}
 
 			tuple = heap_form_tuple(ret_tdesc, values, nulls);
@@ -1246,20 +1297,32 @@ each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
 Datum
 jsonb_array_elements(PG_FUNCTION_ARGS)
 {
-	return elements_worker_jsonb(fcinfo, JSONB"_array_elements", false);
+	return elements_worker_json(fcinfo, "jsonb_array_elements", true, false);
 }
 
 Datum
 jsonb_array_elements_text(PG_FUNCTION_ARGS)
 {
-	return elements_worker_jsonb(fcinfo, JSONB"_array_elements_text", true);
+	return elements_worker_json(fcinfo, "jsonb_array_elements_text", true, true);
+}
+
+Datum
+json_array_elements(PG_FUNCTION_ARGS)
+{
+	return elements_worker_json(fcinfo, "json_array_elements", false, false);
+}
+
+Datum
+json_array_elements_text(PG_FUNCTION_ARGS)
+{
+	return elements_worker_json(fcinfo, "json_array_elements_text", false, true);
 }
 
 static Datum
-elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
-					  bool as_text)
+elements_worker_json(FunctionCallInfo fcinfo, const char *funcname,
+					 bool is_jsonb, bool as_text)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	Json	   *jb = is_jsonb ? PG_GETARG_JSONB_P(0) : PG_GETARG_JSONT_P(0);
 	ReturnSetInfo *rsi;
 	Tuplestorestate *tuple_store;
 	TupleDesc	tupdesc;
@@ -1340,7 +1403,7 @@ elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
 				/* Not in text mode, just return the Jsonb */
 				Jsonb	   *val = JsonbValueToJsonb(&v);
 
-				values[0] = JsonGetDatum(val);
+				values[0] = is_jsonb ? JsonbPGetDatum(val) : JsontPGetDatum(val);
 			}
 
 			tuple = heap_form_tuple(ret_tdesc, values, nulls);
@@ -1376,15 +1439,25 @@ elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
 Datum
 jsonb_populate_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, JSONB"_populate_record",
-								  JSONXOID == JSONOID, true);
+	return populate_record_worker(fcinfo, "jsonb_populate_record", false, true);
 }
 
 Datum
 jsonb_to_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, JSONB"_to_record",
-								  JSONXOID == JSONOID, false);
+	return populate_record_worker(fcinfo, "jsonb_to_record", false, false);
+}
+
+Datum
+json_populate_record(PG_FUNCTION_ARGS)
+{
+	return populate_record_worker(fcinfo, "json_populate_record", true, true);
+}
+
+Datum
+json_to_record(PG_FUNCTION_ARGS)
+{
+	return populate_record_worker(fcinfo, "json_to_record", true, false);
 }
 
 /* helper function for diagnostics */
@@ -2211,7 +2284,9 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 	}
 
 	{
-		Jsonb	   *jb = PG_GETARG_JSONB_P(json_arg_num);
+		Jsonb	   *jb = is_json ?
+			PG_GETARG_JSONT_P(json_arg_num) :
+			PG_GETARG_JSONB_P(json_arg_num);
 
 		jsv.val.jsonb = &jbv;
 
@@ -2238,15 +2313,29 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 Datum
 jsonb_populate_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, JSONB"_populate_recordset",
+	return populate_recordset_worker(fcinfo, "jsonb_populate_recordset",
 									 false, true);
 }
 
 Datum
 jsonb_to_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, JSONB"_to_recordset",
+	return populate_recordset_worker(fcinfo, "jsonb_to_recordset",
 									 false, false);
+}
+
+Datum
+json_populate_recordset(PG_FUNCTION_ARGS)
+{
+	return populate_recordset_worker(fcinfo, "json_populate_recordset",
+									 true, true);
+}
+
+Datum
+json_to_recordset(PG_FUNCTION_ARGS)
+{
+	return populate_recordset_worker(fcinfo, "json_to_recordset",
+									 true, false);
 }
 
 static void
@@ -2382,7 +2471,9 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 	state->rec = rec;
 
 	{
-		Jsonb	   *jb = PG_GETARG_JSONB_P(json_arg_num);
+		Jsonb	   *jb = is_json ?
+			PG_GETARG_JSONT_P(json_arg_num) :
+			PG_GETARG_JSONB_P(json_arg_num);
 		JsonbIterator *it;
 		JsonbValue	v;
 		bool		skipNested = false;
@@ -2429,7 +2520,6 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 	PG_RETURN_NULL();
 }
 
-#ifdef JSON_C
 /*
  * Semantic actions for json_strip_nulls.
  *
@@ -2532,7 +2622,7 @@ sn_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 json_strip_nulls(PG_FUNCTION_ARGS)
 {
-	Json	   *json = PG_GETARG_JSONB_P(0);
+	Json	   *json = PG_GETARG_JSONT_P(0);
 	StripnullState *state;
 	JsonLexContext *lex;
 	JsonSemAction *sem;
@@ -2565,7 +2655,6 @@ json_strip_nulls(PG_FUNCTION_ARGS)
 											  state->strval->len));
 
 }
-#else
 
 /*
  * SQL function jsonb_strip_nulls(jsonb) -> jsonb
@@ -2575,7 +2664,6 @@ jsonb_strip_nulls(PG_FUNCTION_ARGS)
 {
 	return jsonb_strip_nulls_internal(PG_GETARG_JSONB_P(0));
 }
-#endif
 
 static Datum
 jsonb_strip_nulls_internal(Jsonb *jb)
@@ -2634,38 +2722,53 @@ jsonb_strip_nulls_internal(Jsonb *jb)
  *
  * Pretty-printed text for the jsonb
  */
+static text *
+json_pretty_internal(Json *js)
+{
+	StringInfo	str = makeStringInfo();
+
+	JsonbToCStringIndent(str, JsonRoot(js), JsonGetSize(js));
+
+	return cstring_to_text_with_len(str->data, str->len);
+}
+
 Datum
 jsonb_pretty(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	PG_RETURN_TEXT_P(json_pretty_internal(PG_GETARG_JSONB_P(0)));
+}
+
+Datum
+json_pretty(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_TEXT_P(json_pretty_internal(PG_GETARG_JSONT_P(0)));
+}
+
+static text *
+json_canonical_internal(Json *js)
+{
 	StringInfo	str = makeStringInfo();
 
-	JsonbToCStringIndent(str, JsonbRoot(jb), JsonbGetSize(jb));
+	JsonbToCStringCanonical(str, JsonRoot(js), JsonGetSize(js));
 
-	PG_RETURN_TEXT_P(cstring_to_text_with_len(str->data, str->len));
+	return cstring_to_text_with_len(str->data, str->len);
 }
 
 Datum
 jsonb_canonical(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	StringInfo	str = makeStringInfo();
-
-	JsonbToCStringCanonical(str, JsonbRoot(jb), JsonbGetSize(jb));
-
-	PG_RETURN_TEXT_P(cstring_to_text_with_len(str->data, str->len));
+	PG_RETURN_TEXT_P(json_canonical_internal(PG_GETARG_JSONB_P(0)));
 }
 
-/*
- * SQL function jsonb_concat (jsonb, jsonb)
- *
- * function for || operator
- */
 Datum
-jsonb_concat(PG_FUNCTION_ARGS)
+json_canonical(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb1 = PG_GETARG_JSONB_P(0);
-	Jsonb	   *jb2 = PG_GETARG_JSONB_P(1);
+	PG_RETURN_TEXT_P(json_canonical_internal(PG_GETARG_JSONT_P(0)));
+}
+
+static Json *
+json_concat_internal(Json *jb1, Json *jb2, bool is_jsonb)
+{
 	JsonbParseState *state = NULL;
 	JsonbValue *res;
 	JsonbIterator *it1,
@@ -2680,33 +2783,45 @@ jsonb_concat(PG_FUNCTION_ARGS)
 	if (JB_ROOT_IS_OBJECT(jb1) == JB_ROOT_IS_OBJECT(jb2))
 	{
 		if (JB_ROOT_COUNT(jb1) == 0 && !JB_ROOT_IS_SCALAR(jb2))
-			PG_RETURN_JSONB_P(jb2);
+			return jb2;
 		else if (JB_ROOT_COUNT(jb2) == 0 && !JB_ROOT_IS_SCALAR(jb1))
-			PG_RETURN_JSONB_P(jb1);
+			return jb1;
 	}
 
 	it1 = JsonbIteratorInit(JsonbRoot(jb1));
 	it2 = JsonbIteratorInit(JsonbRoot(jb2));
 
-	res = IteratorConcat(&it1, &it2, &state);
+	res = IteratorConcat(&it1, &it2, &state, is_jsonb);
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
-
 /*
- * SQL function jsonb_delete (jsonb, text)
+ * SQL functions json[b]_concat (json[b], json[b])
  *
- * return a copy of the jsonb with the indicated item
- * removed.
+ * function for || operator
  */
 Datum
-jsonb_delete(PG_FUNCTION_ARGS)
+jsonb_concat(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	text	   *key = PG_GETARG_TEXT_PP(1);
+	PG_RETURN_JSONB_P(json_concat_internal(PG_GETARG_JSONB_P(0),
+										   PG_GETARG_JSONB_P(1),
+										   true));
+}
+
+Datum
+json_concat(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_concat_internal(PG_GETARG_JSONT_P(0),
+										   PG_GETARG_JSONT_P(1),
+										   false));
+}
+
+static Json *
+json_delete_internal(Json *in, text *key)
+{
 	char	   *keyptr = VARDATA_ANY(key);
 	int			keylen = VARSIZE_ANY_EXHDR(key);
 	JsonbParseState *state = NULL;
@@ -2722,7 +2837,7 @@ jsonb_delete(PG_FUNCTION_ARGS)
 				 errmsg("cannot delete from scalar")));
 
 	if (JB_ROOT_COUNT(in) == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -2746,20 +2861,32 @@ jsonb_delete(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
 /*
- * SQL function jsonb_delete (jsonb, variadic text[])
+ * SQL functions json[b]_delete (json[b], text)
  *
- * return a copy of the jsonb with the indicated items
+ * return a copy of the jsonb with the indicated item
  * removed.
  */
 Datum
-jsonb_delete_array(PG_FUNCTION_ARGS)
+jsonb_delete(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	ArrayType  *keys = PG_GETARG_ARRAYTYPE_P(1);
+	PG_RETURN_JSONB_P(json_delete_internal(PG_GETARG_JSONB_P(0),
+										   PG_GETARG_TEXT_PP(1)));
+}
+
+Datum
+json_delete(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_delete_internal(PG_GETARG_JSONT_P(0),
+										   PG_GETARG_TEXT_PP(1)));
+}
+
+static Json *
+json_delete_array_internal(Json *in, ArrayType *keys)
+{
 	Datum	   *keys_elems;
 	bool	   *keys_nulls;
 	int			keys_len;
@@ -2781,13 +2908,13 @@ jsonb_delete_array(PG_FUNCTION_ARGS)
 				 errmsg("cannot delete from scalar")));
 
 	if (JB_ROOT_COUNT(in) == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	deconstruct_array(keys, TEXTOID, -1, false, TYPALIGN_INT,
 					  &keys_elems, &keys_nulls, &keys_len);
 
 	if (keys_len == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -2832,21 +2959,33 @@ jsonb_delete_array(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
+
 /*
- * SQL function jsonb_delete (jsonb, int)
+ * SQL functions json[b]_delete (json[b], variadic text[])
  *
- * return a copy of the jsonb with the indicated item
- * removed. Negative int means count back from the
- * end of the items.
+ * return a copy of the json[b] with the indicated items
+ * removed.
  */
 Datum
-jsonb_delete_idx(PG_FUNCTION_ARGS)
+jsonb_delete_array(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	int			idx = PG_GETARG_INT32(1);
+	PG_RETURN_JSONB_P(json_delete_array_internal(PG_GETARG_JSONB_P(0),
+												 PG_GETARG_ARRAYTYPE_P(1)));
+}
+
+Datum
+json_delete_array(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_delete_array_internal(PG_GETARG_JSONT_P(0),
+												 PG_GETARG_ARRAYTYPE_P(1)));
+}
+
+static Json *
+json_delete_idx_internal(Json *in, int idx)
+{
 	JsonbParseState *state = NULL;
 	JsonbIterator *it;
 	uint32		i = 0,
@@ -2866,7 +3005,7 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 				 errmsg("cannot delete from object using integer index")));
 
 	if (JB_ROOT_COUNT(in) == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -2885,7 +3024,7 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 		}
 
 		if (idx >= n)
-			PG_RETURN_JSONB_P(in);
+			return in;
 	}
 
 	pushJsonbValue(&state, r, NULL);
@@ -2912,20 +3051,35 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 				sizeof(JsonValue) * (res->val.array.nElems - idx));
 	}
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
+
 /*
- * SQL function jsonb_set(jsonb, text[], jsonb, boolean)
+ * SQL functions json[b]_delete (json[b], int)
+ *
+ * return a copy of the json[b] with the indicated item
+ * removed. Negative int means count back from the
+ * end of the items.
  */
 Datum
-jsonb_set(PG_FUNCTION_ARGS)
+jsonb_delete_idx(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1);
-	Jsonb	   *newjsonb = PG_GETARG_JSONB_P(2);
+	PG_RETURN_JSONB_P(json_delete_idx_internal(PG_GETARG_JSONB_P(0),
+											   PG_GETARG_INT32(1)));
+}
+
+Datum
+json_delete_idx(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_delete_idx_internal(PG_GETARG_JSONT_P(0),
+											   PG_GETARG_INT32(1)));
+}
+
+static Json *
+json_set_internal(Json *in, ArrayType *path, Json *newjsonb, bool create)
+{
 	JsonbValue	newval;
-	bool		create = PG_GETARG_BOOL(3);
 	JsonbValue *res = NULL;
 	Datum	   *path_elems;
 	bool	   *path_nulls;
@@ -2946,13 +3100,13 @@ jsonb_set(PG_FUNCTION_ARGS)
 				 errmsg("cannot set path in scalar")));
 
 	if (JB_ROOT_COUNT(in) == 0 && !create)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	deconstruct_array(path, TEXTOID, -1, false, TYPALIGN_INT,
 					  &path_elems, &path_nulls, &path_len);
 
 	if (path_len == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -2961,15 +3115,32 @@ jsonb_set(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
-
 /*
- * SQL function jsonb_set_lax(jsonb, text[], jsonb, boolean, text)
+ * SQL functions json[b]_set(json[b], text[], json[b], boolean)
  */
 Datum
-jsonb_set_lax(PG_FUNCTION_ARGS)
+jsonb_set(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONB_P(json_set_internal(PG_GETARG_JSONB_P(0),
+										PG_GETARG_ARRAYTYPE_P(1),
+										PG_GETARG_JSONB_P(2),
+										PG_GETARG_BOOL(3)));
+}
+
+Datum
+json_set(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_set_internal(PG_GETARG_JSONT_P(0),
+										PG_GETARG_ARRAYTYPE_P(1),
+										PG_GETARG_JSONT_P(2),
+										PG_GETARG_BOOL(3)));
+}
+
+static Datum
+json_set_lax_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 {
 	/* Jsonb	   *in = PG_GETARG_JSONB_P(0); */
 	/* ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1); */
@@ -2989,7 +3160,7 @@ jsonb_set_lax(PG_FUNCTION_ARGS)
 
 	/* if the new value isn't an SQL NULL just call jsonb_set */
 	if (!PG_ARGISNULL(2))
-		return jsonb_set(fcinfo);
+		return (is_jsonb ? jsonb_set : json_set)(fcinfo);
 
 	handle_null = PG_GETARG_TEXT_P(4);
 	handle_val = text_to_cstring(handle_null);
@@ -3007,21 +3178,20 @@ jsonb_set_lax(PG_FUNCTION_ARGS)
 	{
 		Datum		newval;
 
-		newval = DirectFunctionCall1(jsonb_in, CStringGetDatum("null"));
+		newval = DirectFunctionCall1(is_jsonb ? jsonb_in : json_in,
+									 CStringGetDatum("null"));
 
 		fcinfo->args[2].value = newval;
 		fcinfo->args[2].isnull = false;
-		return jsonb_set(fcinfo);
+		return (is_jsonb ? jsonb_set : json_set)(fcinfo);
 	}
 	else if (strcmp(handle_val, "delete_key") == 0)
 	{
-		return jsonb_delete_path(fcinfo);
+		return (is_jsonb ? jsonb_delete_path : json_delete_path)(fcinfo);
 	}
 	else if (strcmp(handle_val, "return_target") == 0)
 	{
-		Jsonb	   *in = PG_GETARG_JSONB_P(0);
-
-		PG_RETURN_JSONB_P(in);
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 	else
 	{
@@ -3033,13 +3203,23 @@ jsonb_set_lax(PG_FUNCTION_ARGS)
 }
 
 /*
- * SQL function jsonb_delete_path(jsonb, text[])
+ * SQL functions jsonb_set_lax(json[b], text[], json[b], boolean, text)
  */
 Datum
-jsonb_delete_path(PG_FUNCTION_ARGS)
+jsonb_set_lax(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1);
+	return json_set_lax_internal(fcinfo, true);
+}
+
+Datum
+json_set_lax(PG_FUNCTION_ARGS)
+{
+	return json_set_lax_internal(fcinfo, false);
+}
+
+static Json *
+json_delete_path_internal(Json *in, ArrayType *path)
+{
 	JsonbValue *res = NULL;
 	Datum	   *path_elems;
 	bool	   *path_nulls;
@@ -3058,13 +3238,13 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
 				 errmsg("cannot delete path in scalar")));
 
 	if (JB_ROOT_COUNT(in) == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	deconstruct_array(path, TEXTOID, -1, false, TYPALIGN_INT,
 					  &path_elems, &path_nulls, &path_len);
 
 	if (path_len == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -3073,20 +3253,30 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
 }
 
 /*
- * SQL function jsonb_insert(jsonb, text[], jsonb, boolean)
+ * SQL functions json[b]_delete_path(json[b], text[])
  */
 Datum
-jsonb_insert(PG_FUNCTION_ARGS)
+jsonb_delete_path(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB_P(0);
-	ArrayType  *path = PG_GETARG_ARRAYTYPE_P(1);
-	Jsonb	   *newjsonb = PG_GETARG_JSONB_P(2);
+	PG_RETURN_JSONB_P(json_delete_path_internal(PG_GETARG_JSONB_P(0),
+												PG_GETARG_ARRAYTYPE_P(1)));
+}
+
+Datum
+json_delete_path(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_delete_path_internal(PG_GETARG_JSONT_P(0),
+												PG_GETARG_ARRAYTYPE_P(1)));
+}
+
+static Json *
+json_insert_internal(Json *in, ArrayType *path, Jsonb *newjsonb, bool after)
+{
 	JsonbValue	newval;
-	bool		after = PG_GETARG_BOOL(3);
 	JsonbValue *res = NULL;
 	Datum	   *path_elems;
 	bool	   *path_nulls;
@@ -3110,7 +3300,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
 					  &path_elems, &path_nulls, &path_len);
 
 	if (path_len == 0)
-		PG_RETURN_JSONB_P(in);
+		return in;
 
 	it = JsonbIteratorInit(JsonbRoot(in));
 
@@ -3119,7 +3309,28 @@ jsonb_insert(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	return JsonbValueToJsonb(res);
+}
+
+/*
+ * SQL functions json[b]_insert(json[b], text[], json[b], boolean)
+ */
+Datum
+jsonb_insert(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONB_P(json_insert_internal(PG_GETARG_JSONB_P(0),
+										   PG_GETARG_ARRAYTYPE_P(1),
+										   PG_GETARG_JSONB_P(2),
+										   PG_GETARG_BOOL(3)));
+}
+
+Datum
+json_insert(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_JSONT_P(json_insert_internal(PG_GETARG_JSONT_P(0),
+										   PG_GETARG_ARRAYTYPE_P(1),
+										   PG_GETARG_JSONT_P(2),
+										   PG_GETARG_BOOL(3)));
 }
 
 /*
@@ -3131,7 +3342,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
  */
 static JsonbValue *
 IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
-			   JsonbParseState **state)
+			   JsonbParseState **state, bool is_jsonb)
 {
 	JsonbValue	v1,
 				v2,
@@ -3371,8 +3582,9 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("cannot replace existing key"),
-							 errhint("Try using the function "JSONB"_set "
-									 "to replace key value.")));
+							 errhint("Try using the function %s to replace key value.",
+									 JsonContainerIsJsonb((*it)->container) ?
+									 "jsonb_set" : "json_set")));
 
 				r = JsonbIteratorNext(it, &v, true);	/* skip value */
 				Assert(r == WJB_VALUE);
@@ -3587,7 +3799,6 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 	}
 }
 
-#ifndef JSON_C
 /*
  * Parse information about what elements of a jsonb document we want to iterate
  * in functions iterate_json(b)_values. This information is presented in jsonb
@@ -3786,4 +3997,3 @@ transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 
 	return JsonbValueToJsonb(res);
 }
-#endif
