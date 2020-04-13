@@ -88,6 +88,9 @@ typedef struct Json
 # define JsonxContainerOps			(&jsonbContainerOps)
 #endif
 
+#define JsonContainerIsJsonb(jsc)	((jsc)->ops == &jsonbContainerOps)
+#define JsonContainerIsJsont(jsc)	((jsc)->ops == &jsontContainerOps)
+
 #define JsonFlattenToJsonbDatum(json) \
 		PointerGetDatum(JsonFlatten(json, JsonbEncode, &jsonbContainerOps))
 
