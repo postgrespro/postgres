@@ -35,34 +35,6 @@
 #define jsonb_object_two_arg		json_object_two_arg
 #define jsonb_typeof				json_typeof
 
-#define jsonb_array_element			json_array_element
-#define jsonb_array_element_text	json_array_element_text
-#define jsonb_array_elements		json_array_elements
-#define jsonb_array_elements_text	json_array_elements_text
-#define jsonb_array_length			json_array_length
-#define jsonb_canonical				json_canonical
-#define jsonb_concat				json_concat
-#define jsonb_delete				json_delete
-#define jsonb_delete_idx			json_delete_idx
-#define jsonb_delete_path			json_delete_path
-#define jsonb_delete_array			json_delete_array
-#define jsonb_each					json_each
-#define jsonb_each_text				json_each_text
-#define jsonb_insert				json_insert
-#define jsonb_extract_path			json_extract_path
-#define jsonb_extract_path_text		json_extract_path_text
-#define jsonb_object_field			json_object_field
-#define jsonb_object_field_text		json_object_field_text
-#define jsonb_object_keys			json_object_keys
-#define jsonb_extract_keys			json_extract_keys
-#define jsonb_populate_record		json_populate_record
-#define jsonb_populate_recordset	json_populate_recordset
-#define jsonb_pretty				json_pretty
-#define jsonb_set					json_set
-#define jsonb_set_lax				json_set_lax
-#define jsonb_to_record				json_to_record
-#define jsonb_to_recordset			json_to_recordset
-
 #define JsonxContainerOps			(&jsontContainerOps)
 #define JsonxGetUniquified(json)	(json)
 #define JsonxPGetDatum(json)		JsontPGetDatum(json)
@@ -289,7 +261,6 @@ escape_json(StringInfo buf, const char *str)
 }
 
 #include "jsonb.c"
-#include "jsonfuncs.c"
 
 /*
  * SQL function array_to_json(row)
