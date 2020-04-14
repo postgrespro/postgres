@@ -12,33 +12,6 @@
  *-------------------------------------------------------------------------
  */
 
-#define JSON_C
-#define JSONB "json"
-
-#define JSONXOID					JSONOID
-
-#define jsonb_in					_json_in
-#define jsonb_recv					_json_recv
-
-#define jsonb_out					json_out
-#define jsonb_send					json_send
-#define to_jsonb					to_json
-#define jsonb_agg_transfn			json_agg_transfn
-#define jsonb_agg_finalfn			json_agg_finalfn
-#define jsonb_object_agg_transfn	json_object_agg_transfn
-#define jsonb_object_agg_finalfn	json_object_agg_finalfn
-#define jsonb_build_object			json_build_object
-#define jsonb_build_object_noargs	json_build_object_noargs
-#define jsonb_build_array			json_build_array
-#define jsonb_build_array_noargs	json_build_array_noargs
-#define jsonb_object				json_object
-#define jsonb_object_two_arg		json_object_two_arg
-#define jsonb_typeof				json_typeof
-
-#define JsonxContainerOps			(&jsontContainerOps)
-#define JsonxGetUniquified(json)	(json)
-#define JsonxPGetDatum(json)		JsontPGetDatum(json)
-
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
@@ -258,83 +231,4 @@ escape_json(StringInfo buf, const char *str)
 		}
 	}
 	appendStringInfoCharMacro(buf, '"');
-}
-
-#include "jsonb.c"
-
-/*
- * SQL function array_to_json(row)
- */
-Datum
-array_to_json(PG_FUNCTION_ARGS)
-{
-	Datum		array = PG_GETARG_DATUM(0);
-	JsonbInState result = {0};
-
-	array_to_jsonb_internal(array, &result, false);
-
-	PG_RETURN_JSONT_P(JsonbValueToJsonb(result.res));
-}
-
-/*
- * SQL function array_to_json(row, prettybool)
- */
-Datum
-array_to_json_pretty(PG_FUNCTION_ARGS)
-{
-	Datum		array = PG_GETARG_DATUM(0);
-	bool		use_line_feeds = PG_GETARG_BOOL(1);
-	JsonbInState result = {0};
-
-	array_to_jsonb_internal(array, &result, false);
-
-	if (use_line_feeds)
-	{
-		result.res->val.array.elementSeparator[0] = '\n';
-		result.res->val.array.elementSeparator[1] = ' ';
-	}
-	else
-		result.res->val.array.elementSeparator[0] = '\0';
-
-	PG_RETURN_JSONT_P(JsonbValueToJsonb(result.res));
-}
-
-/*
- * SQL function row_to_json(row)
- */
-Datum
-row_to_json(PG_FUNCTION_ARGS)
-{
-	Datum		row = PG_GETARG_DATUM(0);
-	JsonbInState result = {0};
-
-	composite_to_jsonb(row, &result, false);
-
-	PG_RETURN_JSONT_P(JsonbValueToJsonb(result.res));
-}
-
-/*
- * SQL function row_to_json(row, prettybool)
- */
-Datum
-row_to_json_pretty(PG_FUNCTION_ARGS)
-{
-	Datum		row = PG_GETARG_DATUM(0);
-	bool		use_line_feeds = PG_GETARG_BOOL(1);
-	JsonbInState result = {0};
-
-	composite_to_jsonb(row, &result, false);
-
-	if (use_line_feeds)
-	{
-		result.res->val.object.fieldSeparator[0] = '\n';
-		result.res->val.object.fieldSeparator[1] = ' ';
-	}
-	else
-	{
-		result.res->val.object.fieldSeparator[0] = ' ';
-		result.res->val.object.fieldSeparator[1] = '\0';
-	}
-
-	PG_RETURN_JSONT_P(JsonbValueToJsonb(result.res));
 }

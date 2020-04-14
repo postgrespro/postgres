@@ -80,10 +80,6 @@ typedef struct Json
 
 #define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
-#ifndef JSONXOID
-# define JSONXOID JSONBOID
-#endif
-
 #ifndef JsonxContainerOps
 # define JsonxContainerOps			(&jsonbContainerOps)
 #endif
