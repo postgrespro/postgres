@@ -48,6 +48,32 @@ json_in(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Output.
+ */
+Datum
+json_out(PG_FUNCTION_ARGS)
+{
+	/* we needn't detoast because text_to_cstring will handle that */
+	Datum		txt = PG_GETARG_DATUM(0);
+
+	PG_RETURN_CSTRING(TextDatumGetCString(txt));
+}
+
+/*
+ * Binary send.
+ */
+Datum
+json_send(PG_FUNCTION_ARGS)
+{
+	text	   *t = PG_GETARG_TEXT_PP(0);
+	StringInfoData buf;
+
+	pq_begintypsend(&buf);
+	pq_sendtext(&buf, VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t));
+	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
+}
+
+/*
  * Binary receive.
  */
 Datum
