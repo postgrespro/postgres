@@ -200,8 +200,8 @@ add_gin_entry(GinEntries *entries, Datum entry)
  *
  */
 
-Datum
-gin_compare_jsonb(PG_FUNCTION_ARGS)
+static Datum
+gin_compare_json_internal(FunctionCallInfo fcinfo)
 {
 	text	   *arg1 = PG_GETARG_TEXT_PP(0);
 	text	   *arg2 = PG_GETARG_TEXT_PP(1);
@@ -227,10 +227,20 @@ gin_compare_jsonb(PG_FUNCTION_ARGS)
 }
 
 Datum
-gin_extract_jsonb(PG_FUNCTION_ARGS)
+gin_compare_jsonb(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = (Jsonb *) PG_GETARG_JSONB_P(0);
-	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
+	return gin_compare_json_internal(fcinfo);
+}
+
+Datum
+gin_compare_json(PG_FUNCTION_ARGS)	/* XXX remove */
+{
+	return gin_compare_json_internal(fcinfo);
+}
+
+static Datum *
+gin_extract_json_internal(Json *jb, int32  *nentries)
+{
 	int			total = JB_ROOT_COUNT(jb);
 	JsonbIterator *it;
 	JsonbValue	v;
@@ -241,7 +251,7 @@ gin_extract_jsonb(PG_FUNCTION_ARGS)
 	if (total == 0)
 	{
 		*nentries = 0;
-		PG_RETURN_POINTER(NULL);
+		return NULL;
 	}
 
 	if (total < 0)
@@ -274,7 +284,21 @@ gin_extract_jsonb(PG_FUNCTION_ARGS)
 
 	*nentries = entries.count;
 
-	PG_RETURN_POINTER(entries.buf);
+	return entries.buf;
+}
+
+Datum
+gin_extract_jsonb(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_POINTER(gin_extract_json_internal(PG_GETARG_JSONB_P(0),
+												(int32 *) PG_GETARG_POINTER(1)));
+}
+
+Datum
+gin_extract_json(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_POINTER(gin_extract_json_internal(PG_GETARG_JSONT_P(0),
+												(int32 *) PG_GETARG_POINTER(1)));
 }
 
 /* Append JsonPathGinPathItem to JsonPathGinPath (jsonb_ops) */
@@ -848,8 +872,8 @@ execute_jsp_gin_node(JsonPathGinNode *node, void *check, bool ternary)
 	}
 }
 
-Datum
-gin_extract_jsonb_query(PG_FUNCTION_ARGS)
+static Datum
+gin_extract_json_query_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 {
 	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	StrategyNumber strategy = PG_GETARG_UINT16(2);
@@ -860,7 +884,9 @@ gin_extract_jsonb_query(PG_FUNCTION_ARGS)
 	{
 		/* Query is a jsonb, so just apply gin_extract_jsonb... */
 		entries = (Datum *)
-			DatumGetPointer(DirectFunctionCall2(gin_extract_jsonb,
+			DatumGetPointer(DirectFunctionCall2(is_jsonb ?
+												gin_extract_jsonb :
+												gin_extract_json,
 												PG_GETARG_DATUM(0),
 												PointerGetDatum(nentries)));
 		/* ...although "contains {}" requires a full index scan */
@@ -931,7 +957,19 @@ gin_extract_jsonb_query(PG_FUNCTION_ARGS)
 }
 
 Datum
-gin_consistent_jsonb(PG_FUNCTION_ARGS)
+gin_extract_jsonb_query(PG_FUNCTION_ARGS)
+{
+	return gin_extract_json_query_internal(fcinfo, true);
+}
+
+Datum
+gin_extract_json_query(PG_FUNCTION_ARGS)
+{
+	return gin_extract_json_query_internal(fcinfo, false);
+}
+
+static Datum
+gin_consistent_json_internal(FunctionCallInfo fcinfo)
 {
 	bool	   *check = (bool *) PG_GETARG_POINTER(0);
 	StrategyNumber strategy = PG_GETARG_UINT16(1);
@@ -1015,7 +1053,19 @@ gin_consistent_jsonb(PG_FUNCTION_ARGS)
 }
 
 Datum
-gin_triconsistent_jsonb(PG_FUNCTION_ARGS)
+gin_consistent_jsonb(PG_FUNCTION_ARGS)
+{
+	return gin_consistent_json_internal(fcinfo);
+}
+
+Datum
+gin_consistent_json(PG_FUNCTION_ARGS)
+{
+	return gin_consistent_json_internal(fcinfo);
+}
+
+static Datum
+gin_triconsistent_json_internal(FunctionCallInfo fcinfo)
 {
 	GinTernaryValue *check = (GinTernaryValue *) PG_GETARG_POINTER(0);
 	StrategyNumber strategy = PG_GETARG_UINT16(1);
@@ -1079,6 +1129,18 @@ gin_triconsistent_jsonb(PG_FUNCTION_ARGS)
 	PG_RETURN_GIN_TERNARY_VALUE(res);
 }
 
+Datum
+gin_triconsistent_jsonb(PG_FUNCTION_ARGS)
+{
+	return gin_triconsistent_json_internal(fcinfo);
+}
+
+Datum
+gin_triconsistent_json(PG_FUNCTION_ARGS)
+{
+	return gin_triconsistent_json_internal(fcinfo);
+}
+
 /*
  *
  * jsonb_path_ops GIN opclass support functions
@@ -1091,11 +1153,9 @@ gin_triconsistent_jsonb(PG_FUNCTION_ARGS)
  *
  */
 
-Datum
-gin_extract_jsonb_path(PG_FUNCTION_ARGS)
+static Datum *
+gin_extract_json_path_internal(Json *jb, int32 *nentries)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
-	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	int			total = JB_ROOT_COUNT(jb);
 	JsonbIterator *it;
 	JsonbValue	v;
@@ -1108,7 +1168,7 @@ gin_extract_jsonb_path(PG_FUNCTION_ARGS)
 	if (total == 0)
 	{
 		*nentries = 0;
-		PG_RETURN_POINTER(NULL);
+		return NULL;
 	}
 
 	if (total < 0)
@@ -1181,11 +1241,25 @@ gin_extract_jsonb_path(PG_FUNCTION_ARGS)
 
 	*nentries = entries.count;
 
-	PG_RETURN_POINTER(entries.buf);
+	return entries.buf;
 }
 
 Datum
-gin_extract_jsonb_query_path(PG_FUNCTION_ARGS)
+gin_extract_jsonb_path(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_POINTER(gin_extract_json_path_internal(PG_GETARG_JSONB_P(0),
+													 (int32 *) PG_GETARG_POINTER(1)));
+}
+
+Datum
+gin_extract_json_path(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_POINTER(gin_extract_json_path_internal(PG_GETARG_JSONT_P(0),
+													 (int32 *) PG_GETARG_POINTER(1)));
+}
+
+static Datum
+gin_extract_json_query_path_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 {
 	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	StrategyNumber strategy = PG_GETARG_UINT16(2);
@@ -1196,7 +1270,9 @@ gin_extract_jsonb_query_path(PG_FUNCTION_ARGS)
 	{
 		/* Query is a jsonb, so just apply gin_extract_jsonb_path ... */
 		entries = (Datum *)
-			DatumGetPointer(DirectFunctionCall2(gin_extract_jsonb_path,
+			DatumGetPointer(DirectFunctionCall2(is_jsonb ?
+												gin_extract_jsonb_path :
+												gin_extract_json_path,
 												PG_GETARG_DATUM(0),
 												PointerGetDatum(nentries)));
 
@@ -1225,7 +1301,19 @@ gin_extract_jsonb_query_path(PG_FUNCTION_ARGS)
 }
 
 Datum
-gin_consistent_jsonb_path(PG_FUNCTION_ARGS)
+gin_extract_jsonb_query_path(PG_FUNCTION_ARGS)
+{
+	return gin_extract_json_query_path_internal(fcinfo, true);
+}
+
+Datum
+gin_extract_json_query_path(PG_FUNCTION_ARGS)
+{
+	return gin_extract_json_query_path_internal(fcinfo, false);
+}
+
+static Datum
+gin_consistent_json_path_internal(FunctionCallInfo fcinfo)
 {
 	bool	   *check = (bool *) PG_GETARG_POINTER(0);
 	StrategyNumber strategy = PG_GETARG_UINT16(1);
@@ -1277,7 +1365,19 @@ gin_consistent_jsonb_path(PG_FUNCTION_ARGS)
 }
 
 Datum
-gin_triconsistent_jsonb_path(PG_FUNCTION_ARGS)
+gin_consistent_jsonb_path(PG_FUNCTION_ARGS)
+{
+	return gin_consistent_json_path_internal(fcinfo);
+}
+
+Datum
+gin_consistent_json_path(PG_FUNCTION_ARGS)
+{
+	return gin_consistent_json_path_internal(fcinfo);
+}
+
+static Datum
+gin_triconsistent_json_path_internal(FunctionCallInfo fcinfo)
 {
 	GinTernaryValue *check = (GinTernaryValue *) PG_GETARG_POINTER(0);
 	StrategyNumber strategy = PG_GETARG_UINT16(1);
@@ -1322,6 +1422,18 @@ gin_triconsistent_jsonb_path(PG_FUNCTION_ARGS)
 		elog(ERROR, "unrecognized strategy number: %d", strategy);
 
 	PG_RETURN_GIN_TERNARY_VALUE(res);
+}
+
+Datum
+gin_triconsistent_jsonb_path(PG_FUNCTION_ARGS)
+{
+	return gin_triconsistent_json_path_internal(fcinfo);
+}
+
+Datum
+gin_triconsistent_json_path(PG_FUNCTION_ARGS)
+{
+	return gin_triconsistent_json_path_internal(fcinfo);
 }
 
 /*
