@@ -282,6 +282,30 @@ eqsel_internal(PG_FUNCTION_ARGS, bool negate)
 }
 
 /*
+ * Call binary boolean function, converting NULL result to FALSE
+ */
+static bool
+BoolFunctionCall2Coll(FmgrInfo *flinfo, Oid collation, Datum arg1, Datum arg2)
+{
+	LOCAL_FCINFO(fcinfo, 2);
+	Datum		result;
+
+	InitFunctionCallInfoData(*fcinfo, flinfo, 2, collation, NULL, NULL);
+
+	fcinfo->args[0].value = arg1;
+	fcinfo->args[0].isnull = false;
+	fcinfo->args[1].value = arg2;
+	fcinfo->args[1].isnull = false;
+
+	result = FunctionCallInvoke(fcinfo);
+
+	if (fcinfo->isnull)
+		return false;
+
+	return DatumGetBool(result);
+}
+
+/*
  * var_eq_const --- eqsel for var = const case
  *
  * This is exported so that some other estimation functions can use it.
@@ -353,15 +377,15 @@ var_eq_const(VariableStatData *vardata, Oid operator,
 			{
 				/* be careful to apply operator right way 'round */
 				if (varonleft)
-					match = DatumGetBool(FunctionCall2Coll(&eqproc,
-														   sslot.stacoll,
-														   sslot.values[i],
-														   constval));
+					match = BoolFunctionCall2Coll(&eqproc,
+												  sslot.stacoll,
+												  sslot.values[i],
+												  constval);
 				else
-					match = DatumGetBool(FunctionCall2Coll(&eqproc,
-														   sslot.stacoll,
-														   constval,
-														   sslot.values[i]));
+					match = BoolFunctionCall2Coll(&eqproc,
+												  sslot.stacoll,
+												  constval,
+												  sslot.values[i]);
 				if (match)
 					break;
 			}
@@ -726,14 +750,14 @@ mcv_selectivity(VariableStatData *vardata, FmgrInfo *opproc,
 		for (i = 0; i < sslot.nvalues; i++)
 		{
 			if (varonleft ?
-				DatumGetBool(FunctionCall2Coll(opproc,
-											   sslot.stacoll,
-											   sslot.values[i],
-											   constval)) :
-				DatumGetBool(FunctionCall2Coll(opproc,
-											   sslot.stacoll,
-											   constval,
-											   sslot.values[i])))
+				BoolFunctionCall2Coll(opproc,
+									  sslot.stacoll,
+									  sslot.values[i],
+									  constval) :
+				BoolFunctionCall2Coll(opproc,
+									  sslot.stacoll,
+									  constval,
+									  sslot.values[i]))
 				mcv_selec += sslot.numbers[i];
 			sumcommon += sslot.numbers[i];
 		}
@@ -804,14 +828,14 @@ histogram_selectivity(VariableStatData *vardata, FmgrInfo *opproc,
 			for (i = n_skip; i < sslot.nvalues - n_skip; i++)
 			{
 				if (varonleft ?
-					DatumGetBool(FunctionCall2Coll(opproc,
-												   sslot.stacoll,
-												   sslot.values[i],
-												   constval)) :
-					DatumGetBool(FunctionCall2Coll(opproc,
-												   sslot.stacoll,
-												   constval,
-												   sslot.values[i])))
+					BoolFunctionCall2Coll(opproc,
+										  sslot.stacoll,
+										  sslot.values[i],
+										  constval) :
+					BoolFunctionCall2Coll(opproc,
+										  sslot.stacoll,
+										  constval,
+										  sslot.values[i]))
 					nmatch++;
 			}
 			result = ((double) nmatch) / ((double) (sslot.nvalues - 2 * n_skip));
@@ -2329,10 +2353,10 @@ eqjoinsel_inner(Oid opfuncoid,
 			{
 				if (hasmatch2[j])
 					continue;
-				if (DatumGetBool(FunctionCall2Coll(&eqproc,
-												   sslot1->stacoll,
-												   sslot1->values[i],
-												   sslot2->values[j])))
+				if (BoolFunctionCall2Coll(&eqproc,
+										  sslot1->stacoll,
+										  sslot1->values[i],
+										  sslot2->values[j]))
 				{
 					hasmatch1[i] = hasmatch2[j] = true;
 					matchprodfreq += sslot1->numbers[i] * sslot2->numbers[j];
@@ -2541,10 +2565,10 @@ eqjoinsel_semi(Oid opfuncoid,
 			{
 				if (hasmatch2[j])
 					continue;
-				if (DatumGetBool(FunctionCall2Coll(&eqproc,
-												   sslot1->stacoll,
-												   sslot1->values[i],
-												   sslot2->values[j])))
+				if (BoolFunctionCall2Coll(&eqproc,
+										  sslot1->stacoll,
+										  sslot1->values[i],
+										  sslot2->values[j]))
 				{
 					hasmatch1[i] = hasmatch2[j] = true;
 					nmatches++;
