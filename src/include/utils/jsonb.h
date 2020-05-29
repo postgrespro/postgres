@@ -407,5 +407,6 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonbContainer *in,
 extern bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res);
 extern const char *JsonbTypeName(JsonbValue *jb);
 
+extern bool json_as_jsonb;	/* GUC */
 
 #endif							/* __JSONB_H__ */

@@ -90,6 +90,8 @@ static JsonbParseState *clone_parse_state(JsonbParseState *state);
 static char *JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool indent);
 static void add_indent(StringInfo out, bool indent, int level);
 
+bool json_as_jsonb;		/* GUC for mapping jsonb to SQL/JSON JSON */
+
 /*
  * jsonb type input function
  */
