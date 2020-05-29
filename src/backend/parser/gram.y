@@ -63,6 +63,7 @@
 #include "storage/lmgr.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
+#include "utils/jsonb.h"
 #include "utils/numeric.h"
 #include "utils/xml.h"
 
@@ -527,7 +528,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>	copy_options
 
 %type <typnam>	Typename SimpleTypename ConstTypename
-				GenericType Numeric opt_float
+				GenericType Numeric opt_float JsonType
 				Character ConstCharacter
 				CharacterWithLength CharacterWithoutLength
 				ConstDatetime ConstInterval
@@ -663,7 +664,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	INNER_P INOUT INPUT_P INSENSITIVE INSERT INSTEAD INT_P INTEGER
 	INTERSECT INTERVAL INTO INVOKER IS ISNULL ISOLATION
 
-	JOIN
+	JOIN JSON
 
 	KEY
 
@@ -775,6 +776,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %left		'*' '/' '%'
 %left		'^'
 /* Unary Operators */
+%nonassoc	JSON
+%left		TEXT_P			/* sets precedence for JSON TEXT */
 %left		AT				/* sets precedence for AT TIME ZONE */
 %left		COLLATE
 %right		UMINUS
@@ -12545,6 +12548,7 @@ SimpleTypename:
 					$$->typmods = list_make2(makeIntConst(INTERVAL_FULL_RANGE, -1),
 											 makeIntConst($3, @3));
 				}
+			| JsonType								{ $$ = $1; }
 		;
 
 /* We have a separate ConstTypename to allow defaulting fixed-length
@@ -12560,6 +12564,7 @@ SimpleTypename:
  */
 ConstTypename:
 			Numeric									{ $$ = $1; }
+			| JsonType								{ $$ = $1; }
 			| ConstBit								{ $$ = $1; }
 			| ConstCharacter						{ $$ = $1; }
 			| ConstDatetime							{ $$ = $1; }
@@ -12928,6 +12933,20 @@ interval_second:
 				{
 					$$ = list_make2(makeIntConst(INTERVAL_MASK(SECOND), @1),
 									makeIntConst($3, @3));
+				}
+		;
+
+/* Mapping of PG jsonb types to SQL/JSON JSON type */
+JsonType:
+			JSON
+				{
+					$$ = SystemTypeName(json_as_jsonb ? "jsonb" : "json");
+					$$->location = @1;
+				}
+			| JSON TEXT_P
+				{
+					$$ = SystemTypeName("json");
+					$$->location = @1;
 				}
 		;
 
@@ -13623,6 +13642,12 @@ c_expr:		columnref								{ $$ = $1; }
 				  g->location = @1;
 				  $$ = (Node *)g;
 			  }
+			| JSON '(' a_expr ')'
+				{
+					List	   *typname = list_make1(makeString(json_as_jsonb ? "jsonb" : "json"));
+
+					$$ = (Node *) makeFuncCall(typname, list_make1($3), COERCE_EXPLICIT_CALL, @1);
+				}
 		;
 
 func_application: func_name '(' ')'
@@ -15468,6 +15493,7 @@ col_name_keyword:
 			| INT_P
 			| INTEGER
 			| INTERVAL
+			| JSON
 			| LEAST
 			| NATIONAL
 			| NCHAR
@@ -15813,6 +15839,7 @@ bare_label_keyword:
 			| IS
 			| ISOLATION
 			| JOIN
+			| JSON
 			| KEY
 			| LABEL
 			| LANGUAGE

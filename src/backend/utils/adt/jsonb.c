@@ -100,6 +100,8 @@ static char *JsonbToCStringWorker(StringInfo out, JsonbContainer *in,
 								  int estimated_len, JsonFormat format);
 static void add_indent(StringInfo out, bool indent, int level);
 
+bool json_as_jsonb;		/* GUC for mapping jsonb to SQL/JSON JSON */
+
 /*
  * jsonb type input function
  */

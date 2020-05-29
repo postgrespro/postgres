@@ -402,5 +402,6 @@ extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 extern int reserveFromBuffer(StringInfo buffer, int len);
 extern void appendToBuffer(StringInfo buffer, const void *data, int len);
 
+extern bool json_as_jsonb;	/* GUC */
 
 #endif							/* __JSONB_H__ */

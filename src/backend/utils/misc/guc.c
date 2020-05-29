@@ -90,6 +90,7 @@
 #include "utils/bytea.h"
 #include "utils/float.h"
 #include "utils/guc_tables.h"
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/pg_lsn.h"
@@ -2032,6 +2033,17 @@ static struct config_bool ConfigureNamesBool[] =
 			gettext_noop("Sets whether a WAL receiver should create a temporary replication slot if no permanent slot is configured."),
 		},
 		&wal_receiver_create_temp_slot,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"json_as_jsonb", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Use jsonb type as default implementation of SQL JSON type."),
+			gettext_noop("When turned on, jsonb type is mapped to SQL JSON type, "
+						 "json type is mapped to JSON TEXT type.")
+		},
+		&json_as_jsonb,
 		false,
 		NULL, NULL, NULL
 	},
