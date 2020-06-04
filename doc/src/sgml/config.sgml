@@ -9347,19 +9347,20 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-json-as-jsonb" xreflabel="json_as_jsonb">
-      <term><varname>json_as_jsonb</varname> (<type>boolean</type>)
+     <varlistentry id="guc-sql-json" xreflabel="sql_json">
+      <term><varname>sql_json</varname> (<type>enum</type>)
       <indexterm><primary>json</primary></indexterm>
       <indexterm><primary>jsonb</primary></indexterm>
       <indexterm>
-       <primary><varname>json_as_jsonb</varname> configuration parameter</primary>
+       <primary><varname>sql_json</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
        <para>
-         When on, SQL type <type>JSON</type> is mapped to
-         <productname>PostgreSQL</productname> type <type>jsonb</type>.
-         But SQL type <type>JSON TEXT</type> is always mapped to
+         Valid values are <literal>json</literal> and <literal>jsonb</literal>.
+         Specifies what <productname>PostgreSQL</productname> type is used
+         as an implementation of SQL type <type>JSON</type>.
+         SQL type <type>JSON TEXT</type> is always mapped to
          <productname>PostgreSQL</productname> type <type>json</type>.
        </para>
       </listitem>

@@ -504,6 +504,12 @@ static struct config_enum_entry shared_memory_options[] = {
 	{NULL, 0, false}
 };
 
+const struct config_enum_entry sql_json_type_info[] = {
+	{"json", SQLJSON_TYPE_JSON, false},
+	{"jsonb", SQLJSON_TYPE_JSONB, false},
+	{NULL, 0, false}
+};
+
 /*
  * Options for enum values stored in other modules
  */
@@ -2057,17 +2063,6 @@ static struct config_bool ConfigureNamesBool[] =
 			gettext_noop("Sets whether a WAL receiver should create a temporary replication slot if no permanent slot is configured."),
 		},
 		&wal_receiver_create_temp_slot,
-		false,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"json_as_jsonb", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
-			gettext_noop("Use jsonb type as default implementation of SQL JSON type."),
-			gettext_noop("When turned on, jsonb type is mapped to SQL JSON type, "
-						 "json type is mapped to JSON TEXT type.")
-		},
-		&json_as_jsonb,
 		false,
 		NULL, NULL, NULL
 	},
@@ -4785,6 +4780,17 @@ static struct config_enum ConfigureNamesEnum[] =
 		&ssl_max_protocol_version,
 		PG_TLS_ANY,
 		ssl_protocol_versions_info,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"sql_json", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Sets what PostgreSQL type to use as an implementaion of SQL JSON type."),
+			NULL
+		},
+		&sql_json_type,
+		SQLJSON_TYPE_JSON,
+		sql_json_type_info,
 		NULL, NULL, NULL
 	},
 

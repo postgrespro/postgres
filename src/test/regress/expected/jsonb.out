@@ -5041,7 +5041,7 @@ create table test_json_as_json (js json, jb jsonb);
  js     | json  |           |          | 
  jb     | jsonb |           |          | 
 
-set json_as_jsonb = on;
+set sql_json = jsonb;
 select json(' { "aa": 1, "b" : 2 }');
        jsonb       
 -------------------
@@ -5106,7 +5106,7 @@ select json_object_field(jt, 'a') from test_json_as_jsonb;
  1
 (1 row)
 
-set json_as_jsonb = off;
+set sql_json = json;
 \d test_json_as_jsonb
         Table "public.test_json_as_jsonb"
  Column | Type  | Collation | Nullable | Default 

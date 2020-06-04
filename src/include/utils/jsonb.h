@@ -407,6 +407,16 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonbContainer *in,
 extern bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res);
 extern const char *JsonbTypeName(JsonbValue *jb);
 
-extern bool json_as_jsonb;	/* GUC */
+typedef enum SqlJsonType
+{
+	SQLJSON_TYPE_JSON = 0,
+	SQLJSON_TYPE_JSONB = 1
+} SqlJsonType;
+
+#define SQLJSON_TYPE_IS_JSONB() (sql_json_type == SQLJSON_TYPE_JSONB)
+#define SQLJSON_TYPE_OID() (SQLJSON_TYPE_IS_JSONB() ? JSONBOID : JSONOID)
+#define SQLJSON_TYPE_NAME() (SQLJSON_TYPE_IS_JSONB() ? "jsonb" : "json")
+
+extern int sql_json_type;	/* GUC */
 
 #endif							/* __JSONB_H__ */

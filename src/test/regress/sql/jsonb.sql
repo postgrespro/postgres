@@ -1289,7 +1289,7 @@ select json text ' { "aa": 1, "b" : 2 }';
 create table test_json_as_json (js json, jb jsonb);
 \d test_json_as_json
 
-set json_as_jsonb = on;
+set sql_json = jsonb;
 
 select json(' { "aa": 1, "b" : 2 }');
 select json ' { "aa": 1, "b" : 2 }';
@@ -1309,7 +1309,7 @@ select jsonb_object_field(jb, 'a') from test_json_as_jsonb;
 select jsonb_object_field(jt, 'a') from test_json_as_jsonb;
 select json_object_field(jt, 'a') from test_json_as_jsonb;
 
-set json_as_jsonb = off;
+set sql_json = json;
 \d test_json_as_jsonb
 
 select * from test_json_as_jsonb;

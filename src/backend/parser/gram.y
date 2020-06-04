@@ -13144,7 +13144,7 @@ interval_second:
 JsonType:
 			JSON
 				{
-					$$ = SystemTypeName(json_as_jsonb ? "jsonb" : "json");
+					$$ = SystemTypeName(SQLJSON_TYPE_NAME());
 					$$->location = @1;
 				}
 			| JSON TEXT_P
@@ -13844,7 +13844,7 @@ c_expr:		columnref								{ $$ = $1; }
 			  }
 			| JSON '(' a_expr ')'
 				{
-					List	   *typname = list_make1(makeString(json_as_jsonb ? "jsonb" : "json"));
+					List	   *typname = list_make1(makeString(SQLJSON_TYPE_NAME()));
 
 					$$ = (Node *) makeFuncCall(typname, list_make1($3), @1);
 				}
