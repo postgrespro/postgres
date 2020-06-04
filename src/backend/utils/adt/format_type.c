@@ -297,11 +297,11 @@ format_type_extended(Oid type_oid, int32 typemod, bits16 flags)
 			break;
 
 		case JSONBOID:
-			buf = pstrdup(json_as_jsonb ? "json" : "jsonb");
+			buf = pstrdup(SQLJSON_TYPE_IS_JSONB() ? "json" : "jsonb");
 			break;
 
 		case JSONOID:
-			buf = pstrdup(json_as_jsonb ? "json text" : "json");
+			buf = pstrdup(SQLJSON_TYPE_IS_JSONB() ? "json text" : "json");
 			break;
 	}
 
