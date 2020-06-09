@@ -11,6 +11,7 @@
 
 #include "access/transam.h"
 #include "catalog/pg_class_d.h"
+#include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
 
 static void create_rel_filename_map(const char *old_data, const char *new_data,
@@ -23,6 +24,7 @@ static void free_db_and_rel_infos(DbInfoArr *db_arr);
 static void get_db_infos(ClusterInfo *cluster);
 static void get_rel_infos(ClusterInfo *cluster, DbInfo *dbinfo);
 static void free_rel_infos(RelInfoArr *rel_arr);
+static void free_acl_infos(AclInfoArr *acl_arr);
 static void print_db_infos(DbInfoArr *dbinfo);
 static void print_rel_infos(RelInfoArr *rel_arr);
 
@@ -329,6 +331,114 @@ get_db_and_rel_infos(ClusterInfo *cluster)
 
 
 /*
+ * get_non_default_acl_infos()
+ *
+ * Fill AclInfo array with information about system objects that
+ * have non-default ACL.
+ *
+ * Note: the resulting AclInfo array is assumed to be sorted by identity.
+ */
+void
+get_non_default_acl_infos(ClusterInfo *cluster)
+{
+	int			dbnum;
+
+	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	{
+		DbInfo	   *dbinfo = &cluster->dbarr.dbs[dbnum];
+		PGconn	   *conn = connectToServer(cluster, dbinfo->db_name);
+		PGresult   *res;
+		AclInfo	   *aclinfos;
+		AclInfo	   *curr;
+		int			nacls = 0,
+					size_acls = 8;
+		int			aclnum = 0;
+		int			i_obj_type,
+					i_obj_ident,
+					i_rolname,
+					i_is_relation;
+
+		res = executeQueryOrDie(conn,
+			/*
+			 * Get relations, attributes, functions and procedures.  Some system
+			 * objects like views are not pinned, but these type of objects are
+			 * created in pg_catalog schema.
+			 */
+			"SELECT obj.type, obj.identity, shd.refobjid::regrole rolename, "
+			"    CASE WHEN shd.classid = 'pg_class'::regclass THEN true "
+			"        ELSE false "
+			"    END is_relation "
+			"FROM pg_catalog.pg_shdepend shd, "
+			"LATERAL pg_catalog.pg_identify_object("
+			"    shd.classid, shd.objid, shd.objsubid) obj "
+			/* 'a' is for SHARED_DEPENDENCY_ACL */
+			"WHERE shd.deptype = 'a' AND shd.dbid = %d "
+			"    AND shd.classid IN ('pg_proc'::regclass, 'pg_class'::regclass) "
+			/* get only system objects */
+			"    AND obj.schema = 'pg_catalog' "
+			/*
+			 * Sort only by identity.  It should be enough to uniquely compare
+			 * objects later in check_for_changed_signatures().
+			 * Don't rely on database collation, since we use strcmp
+			 * comparison below.
+			 */
+			"ORDER BY obj.identity COLLATE \"C\";", dbinfo->db_oid);
+
+		i_obj_type = PQfnumber(res, "type");
+		i_obj_ident = PQfnumber(res, "identity");
+		i_rolname = PQfnumber(res, "rolename");
+		i_is_relation = PQfnumber(res, "is_relation");
+
+		aclinfos = (AclInfo *) pg_malloc(sizeof(AclInfo) * size_acls);
+
+		while (aclnum < PQntuples(res))
+		{
+			PQExpBuffer roles_buf;
+
+			if (nacls == size_acls)
+			{
+				size_acls *= 2;
+				aclinfos = (AclInfo *) pg_realloc(aclinfos,
+												  sizeof(AclInfo) * size_acls);
+			}
+			curr = &aclinfos[nacls++];
+
+			curr->obj_type = pg_strdup(PQgetvalue(res, aclnum, i_obj_type));
+			curr->obj_ident = pg_strdup(PQgetvalue(res, aclnum, i_obj_ident));
+			curr->is_relation = PQgetvalue(res, aclnum, i_is_relation)[0] == 't';
+
+			roles_buf = createPQExpBuffer();
+			initPQExpBuffer(roles_buf);
+
+			/*
+			 * For each object gather string of role names mentioned in ACL
+			 * in a format convenient for further use in REVOKE statement.
+			 */
+			while (aclnum < PQntuples(res) &&
+				   strcmp(curr->obj_ident, PQgetvalue(res, aclnum, i_obj_ident)) == 0)
+			{
+				if (roles_buf->len != 0)
+					appendPQExpBufferChar(roles_buf, ',');
+
+				appendPQExpBufferStr(roles_buf,
+					quote_identifier(PQgetvalue(res, aclnum, i_rolname)));
+				aclnum++;
+			}
+
+			curr->role_names = pg_strdup(roles_buf->data);
+			destroyPQExpBuffer(roles_buf);
+		}
+
+		PQclear(res);
+		PQfinish(conn);
+
+		dbinfo->non_def_acl_arr.aclinfos = aclinfos;
+		dbinfo->non_def_acl_arr.nacls = nacls;
+	}
+}
+
+
+/*
  * get_db_infos()
  *
  * Scans pg_database system catalog and populates all user
@@ -384,6 +494,9 @@ get_db_infos(ClusterInfo *cluster)
 		dbinfos[tupnum].db_ctype = pg_strdup(PQgetvalue(res, tupnum, i_datctype));
 		snprintf(dbinfos[tupnum].db_tablespace, sizeof(dbinfos[tupnum].db_tablespace), "%s",
 				 PQgetvalue(res, tupnum, i_spclocation));
+
+		/* initialize clean array */
+		dbinfos[tupnum].non_def_acl_arr.nacls = 0;
 	}
 	PQclear(res);
 
@@ -595,6 +708,8 @@ free_db_and_rel_infos(DbInfoArr *db_arr)
 	for (dbnum = 0; dbnum < db_arr->ndbs; dbnum++)
 	{
 		free_rel_infos(&db_arr->dbs[dbnum].rel_arr);
+		if (&db_arr->dbs[dbnum].non_def_acl_arr.nacls > 0)
+			free_acl_infos(&db_arr->dbs[dbnum].non_def_acl_arr);
 		pg_free(db_arr->dbs[dbnum].db_name);
 	}
 	pg_free(db_arr->dbs);
@@ -618,6 +733,21 @@ free_rel_infos(RelInfoArr *rel_arr)
 	}
 	pg_free(rel_arr->rels);
 	rel_arr->nrels = 0;
+}
+
+static void
+free_acl_infos(AclInfoArr *acl_arr)
+{
+	int			aclnum;
+
+	for (aclnum = 0; aclnum < acl_arr->nacls; aclnum++)
+	{
+		pg_free(acl_arr->aclinfos[aclnum].obj_type);
+		pg_free(acl_arr->aclinfos[aclnum].obj_ident);
+		pg_free(acl_arr->aclinfos[aclnum].role_names);
+	}
+	pg_free(acl_arr->aclinfos);
+	acl_arr->nacls = 0;
 }
 
 
