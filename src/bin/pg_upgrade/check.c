@@ -16,6 +16,7 @@
 
 static void check_new_cluster_is_empty(void);
 static void check_databases_are_compatible(void);
+static void check_for_changed_signatures(void);
 static void check_locale_and_encoding(DbInfo *olddb, DbInfo *newdb);
 static bool equivalent_locale(int category, const char *loca, const char *locb);
 static void check_is_install_user(ClusterInfo *cluster);
@@ -142,6 +143,8 @@ check_and_dump_old_cluster(bool live_check)
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 804)
 		new_9_0_populate_pg_largeobject_metadata(&old_cluster, true);
 
+	get_non_default_acl_infos(&old_cluster);
+
 	/*
 	 * While not a check option, we do this now because this is the only time
 	 * the old server is running.
@@ -161,6 +164,7 @@ check_new_cluster(void)
 
 	check_new_cluster_is_empty();
 	check_databases_are_compatible();
+	check_for_changed_signatures();
 
 	check_loadable_libraries();
 
@@ -441,6 +445,223 @@ check_databases_are_compatible(void)
 			}
 		}
 	}
+}
+
+/*
+ * Find the location of the last dot, return NULL if not found.
+ */
+static char *
+last_dot_location(const char *identity)
+{
+	const char *p,
+			   *ret = NULL;
+
+	for (p = identity; *p; p++)
+		if (*p == '.')
+			ret = p;
+	return unconstify(char *, ret);
+}
+
+/*
+ * check_for_changed_signatures()
+ *
+ * Check that the old cluster doesn't have non-default ACL's for system objects
+ * (relations, attributes, functions and procedures) which have different
+ * signatures in the new cluster. Otherwise generate revoke_objects.sql.
+ */
+static void
+check_for_changed_signatures(void)
+{
+	PGconn	   *conn;
+	char		subquery[QUERY_ALLOC];
+	PGresult   *res;
+	int			ntups;
+	int			i_obj_ident;
+	int			dbnum;
+	bool		need_check = false;
+	FILE	   *script = NULL;
+	bool		found_changed = false;
+	char		output_path[MAXPGPATH];
+
+	prep_status("Checking for system objects with non-default ACL");
+
+	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+		if (old_cluster.dbarr.dbs[dbnum].non_def_acl_arr.nacls > 0)
+		{
+			need_check = true;
+			break;
+		}
+	/*
+	 * The old cluster doesn't have system objects with non-default ACL so
+	 * quickly exit.
+	 */
+	if (!need_check)
+	{
+		check_ok();
+		return;
+	}
+
+	snprintf(output_path, sizeof(output_path), "revoke_objects.sql");
+
+	snprintf(subquery, sizeof(subquery),
+		/* Get system relations which created in pg_catalog */
+		"SELECT 'pg_class'::regclass classid, oid objid, 0 objsubid "
+		"FROM pg_catalog.pg_class "
+		"WHERE relnamespace = 'pg_catalog'::regnamespace "
+		"UNION ALL "
+		/* Get system relations attributes which created in pg_catalog */
+		"SELECT 'pg_class'::regclass, att.attrelid, att.attnum "
+		"FROM pg_catalog.pg_class rel "
+		"INNER JOIN pg_catalog.pg_attribute att ON  rel.oid = att.attrelid "
+		"WHERE rel.relnamespace = 'pg_catalog'::regnamespace "
+		"UNION ALL "
+		/* Get system functions and procedure which created in pg_catalog */
+		"SELECT 'pg_proc'::regclass, oid, 0 "
+		"FROM pg_catalog.pg_proc "
+		"WHERE pronamespace = 'pg_catalog'::regnamespace ");
+
+	conn = connectToServer(&new_cluster, "template1");
+	res = executeQueryOrDie(conn,
+		"SELECT ident.type, ident.identity "
+		"FROM (%s) obj, "
+		"LATERAL pg_catalog.pg_identify_object("
+		"    obj.classid, obj.objid, obj.objsubid) ident "
+		/*
+		 * Don't rely on database collation, since we use strcmp
+		 * comparison to find non-default ACLs.
+		 */
+		"ORDER BY ident.identity COLLATE \"C\";", subquery);
+	ntups = PQntuples(res);
+
+	i_obj_ident = PQfnumber(res, "identity");
+
+	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+	{
+		DbInfo	   *dbinfo = &old_cluster.dbarr.dbs[dbnum];
+		bool		db_used = false;
+		int			aclnum = 0,
+					objnum = 0;
+
+		/*
+		 * For every database check system objects with non-default ACL.
+		 *
+		 * AclInfo array is sorted by obj_ident. This allows us to compare
+		 * AclInfo entries with the query result above efficiently.
+		 */
+		for (aclnum = 0; aclnum < dbinfo->non_def_acl_arr.nacls; aclnum++)
+		{
+			AclInfo	   *aclinfo = &dbinfo->non_def_acl_arr.aclinfos[aclnum];
+			bool		report = false;
+
+			while (objnum < ntups)
+			{
+				int			ret;
+
+				ret = strcmp(aclinfo->obj_ident,
+							 PQgetvalue(res, objnum, i_obj_ident));
+
+				/*
+				 * The new cluster doesn't have an object with same identity,
+				 * exit the loop, report below and check next object.
+				 */
+				if (ret < 0)
+				{
+					report = true;
+					break;
+				}
+				/*
+				 * The new cluster has an object with same identity, just exit
+				 * the loop.
+				 */
+				else if (ret == 0)
+				{
+					objnum++;
+					break;
+				}
+				else
+					objnum++;
+			}
+
+			if (report)
+			{
+				found_changed = true;
+				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
+					pg_fatal("could not open file \"%s\": %s\n",
+							 output_path, strerror(errno));
+				if (!db_used)
+				{
+					PQExpBufferData conn_buf;
+
+					initPQExpBuffer(&conn_buf);
+					appendPsqlMetaConnect(&conn_buf, dbinfo->db_name);
+					fputs(conn_buf.data, script);
+					termPQExpBuffer(&conn_buf);
+
+					db_used = true;
+				}
+
+				/* Handle columns separately */
+				if (strstr(aclinfo->obj_type, "column") != NULL)
+				{
+					char	   *pdot = last_dot_location(aclinfo->obj_ident);
+					PQExpBufferData ident_buf;
+
+					if (pdot == NULL || *(pdot + 1) == '\0')
+						pg_fatal("invalid column identity \"%s\"",
+								 aclinfo->obj_ident);
+
+					initPQExpBuffer(&ident_buf);
+					appendBinaryPQExpBuffer(&ident_buf, aclinfo->obj_ident,
+											pdot - aclinfo->obj_ident);
+
+					fprintf(script, "REVOKE ALL (%s) ON %s FROM %s;\n",
+							/* pg_identify_object() quotes identity if necessary */
+							pdot + 1, ident_buf.data,
+							/* role_names is already quoted */
+							aclinfo->role_names);
+					termPQExpBuffer(&ident_buf);
+				}
+				/*
+				 * For relations except sequences we don't need to specify
+				 * the object type.
+				 */
+				else if (aclinfo->is_relation &&
+					strcmp(aclinfo->obj_type, "sequence") != 0)
+					fprintf(script, "REVOKE ALL ON %s FROM %s;\n",
+							/* pg_identify_object() quotes identity if necessary */
+							aclinfo->obj_ident,
+							/* role_names is already quoted */
+							aclinfo->role_names);
+				/* Other object types */
+				else
+					fprintf(script, "REVOKE ALL ON %s %s FROM %s;\n",
+							aclinfo->obj_type,
+							/* pg_identify_object() quotes identity if necessary */
+							aclinfo->obj_ident,
+							/* role_names is already quoted */
+							aclinfo->role_names);
+			}
+		}
+	}
+
+	PQclear(res);
+	PQfinish(conn);
+
+	if (script)
+		fclose(script);
+
+	if (found_changed)
+	{
+		pg_log(PG_REPORT, "fatal\n");
+		pg_fatal("Your installation contains non-default privileges for system objects\n"
+				 "for which the API has changed.  To perform the upgrade, reset these\n"
+				 "privileges to default.  The file\n"
+				 "    %s\n"
+				 "when executed by psql will revoke non-default privileges for those objects.\n\n",
+				 output_path);
+	}
+	else
+		check_ok();
 }
 
 
