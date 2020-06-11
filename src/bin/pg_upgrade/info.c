@@ -348,8 +348,8 @@ get_non_default_acl_infos(ClusterInfo *cluster)
 		DbInfo	   *dbinfo = &cluster->dbarr.dbs[dbnum];
 		PGconn	   *conn = connectToServer(cluster, dbinfo->db_name);
 		PGresult   *res;
-		AclInfo	   *aclinfos;
-		AclInfo	   *curr;
+		AclInfo	   *aclinfos = NULL;
+		AclInfo	   *curr = NULL;
 		int			nacls = 0,
 					size_acls = 8;
 		int			aclnum = 0;
@@ -500,6 +500,7 @@ get_db_infos(ClusterInfo *cluster)
 
 		/* initialize clean array */
 		dbinfos[tupnum].non_def_acl_arr.nacls = 0;
+		dbinfos[tupnum].non_def_acl_arr.aclinfos = NULL;
 	}
 	PQclear(res);
 
@@ -711,6 +712,7 @@ free_db_and_rel_infos(DbInfoArr *db_arr)
 	for (dbnum = 0; dbnum < db_arr->ndbs; dbnum++)
 	{
 		free_rel_infos(&db_arr->dbs[dbnum].rel_arr);
+
 		if (&db_arr->dbs[dbnum].non_def_acl_arr.nacls > 0)
 			free_acl_infos(&db_arr->dbs[dbnum].non_def_acl_arr);
 		pg_free(db_arr->dbs[dbnum].db_name);
@@ -750,7 +752,9 @@ free_acl_infos(AclInfoArr *acl_arr)
 		pg_free(acl_arr->aclinfos[aclnum].obj_ident);
 		pg_free(acl_arr->aclinfos[aclnum].role_names);
 	}
+
 	pg_free(acl_arr->aclinfos);
+	acl_arr->aclinfos = NULL;
 	acl_arr->nacls = 0;
 	pg_log(PG_REPORT, "free_acl_infos 2 %d\n", acl_arr->nacls);
 }
