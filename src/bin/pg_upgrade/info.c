@@ -435,7 +435,7 @@ get_non_default_acl_infos(ClusterInfo *cluster)
 		dbinfo->non_def_acl_arr.aclinfos = aclinfos;
 		dbinfo->non_def_acl_arr.nacls = nacls;
 
-		pg_log(PG_WARNING, "get_non_default_acl_infos nacls %d\n", dbinfo->non_def_acl_arr.nacls);
+		pg_log(PG_REPORT, "get_non_default_acl_infos nacls %d\n", dbinfo->non_def_acl_arr.nacls);
 
 	}
 }
@@ -743,7 +743,7 @@ free_acl_infos(AclInfoArr *acl_arr)
 {
 	int			aclnum;
 
-	pg_log(PG_WARNING, "free_acl_infos 1 %d\n", acl_arr->nacls);
+	pg_log(PG_REPORT, "free_acl_infos 1 %d\n", acl_arr->nacls);
 	for (aclnum = 0; aclnum < acl_arr->nacls; aclnum++)
 	{
 		pg_free(acl_arr->aclinfos[aclnum].obj_type);
@@ -752,7 +752,7 @@ free_acl_infos(AclInfoArr *acl_arr)
 	}
 	pg_free(acl_arr->aclinfos);
 	acl_arr->nacls = 0;
-	pg_log(PG_WARNING, "free_acl_infos 2 %d\n", acl_arr->nacls);
+	pg_log(PG_REPORT, "free_acl_infos 2 %d\n", acl_arr->nacls);
 }
 
 
