@@ -5030,7 +5030,7 @@ select json ' { "aa": 1, "b" : 2 }';
   { "aa": 1, "b" : 2 }
 (1 row)
 
-select json text ' { "aa": 1, "b" : 2 }';
+select pg_catalog.json ' { "aa": 1, "b" : 2 }';
          json          
 -----------------------
   { "aa": 1, "b" : 2 }
@@ -5057,27 +5057,27 @@ select json ' { "aa": 1, "b" : 2 }';
  {"b": 2, "aa": 1}
 (1 row)
 
-select json text ' { "aa": 1, "b" : 2 }';
+select pg_catalog.json ' { "aa": 1, "b" : 2 }';
          json          
 -----------------------
   { "aa": 1, "b" : 2 }
 (1 row)
 
 \d test_json_as_json
-          Table "public.test_json_as_json"
- Column |   Type    | Collation | Nullable | Default 
---------+-----------+-----------+----------+---------
- js     | json text |           |          | 
- jb     | json      |           |          | 
+             Table "public.test_json_as_json"
+ Column |      Type       | Collation | Nullable | Default 
+--------+-----------------+-----------+----------+---------
+ js     | pg_catalog.json |           |          | 
+ jb     | json            |           |          | 
 
-create table test_json_as_jsonb (js json, jb jsonb, jt json text);
+create table test_json_as_jsonb (js json, jb jsonb, jt pg_catalog.json);
 \d test_json_as_jsonb
-          Table "public.test_json_as_jsonb"
- Column |   Type    | Collation | Nullable | Default 
---------+-----------+-----------+----------+---------
- js     | json      |           |          | 
- jb     | json      |           |          | 
- jt     | json text |           |          | 
+             Table "public.test_json_as_jsonb"
+ Column |      Type       | Collation | Nullable | Default 
+--------+-----------------+-----------+----------+---------
+ js     | json            |           |          | 
+ jb     | json            |           |          | 
+ jt     | pg_catalog.json |           |          | 
 
 insert into test_json_as_jsonb values ('{ "a" : 1 }', '{ "a" : 1 }', '{ "a" : 1 }');
 select * from test_json_as_jsonb;
@@ -5099,7 +5099,7 @@ select jsonb_object_field(jb, 'a') from test_json_as_jsonb;
 (1 row)
 
 select jsonb_object_field(jt, 'a') from test_json_as_jsonb;
-ERROR:  function jsonb_object_field(json text, unknown) does not exist
+ERROR:  function jsonb_object_field(pg_catalog.json, unknown) does not exist
 LINE 1: select jsonb_object_field(jt, 'a') from test_json_as_jsonb;
                ^
 HINT:  No function matches the given name and argument types. You might need to add explicit type casts.

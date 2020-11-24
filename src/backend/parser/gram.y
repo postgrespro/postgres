@@ -776,8 +776,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %left		'*' '/' '%'
 %left		'^'
 /* Unary Operators */
-%nonassoc	JSON
-%left		TEXT_P			/* sets precedence for JSON TEXT */
 %left		AT				/* sets precedence for AT TIME ZONE */
 %left		COLLATE
 %right		UMINUS
@@ -12941,11 +12939,6 @@ JsonType:
 			JSON
 				{
 					$$ = SystemTypeName(SQLJSON_TYPE_NAME());
-					$$->location = @1;
-				}
-			| JSON TEXT_P
-				{
-					$$ = SystemTypeName("json");
 					$$->location = @1;
 				}
 		;

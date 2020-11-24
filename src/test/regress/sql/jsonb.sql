@@ -1284,7 +1284,7 @@ select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
 -- test mapping of jsonb to SQL/JSON JSON type
 select json(' { "aa": 1, "b" : 2 }');
 select json ' { "aa": 1, "b" : 2 }';
-select json text ' { "aa": 1, "b" : 2 }';
+select pg_catalog.json ' { "aa": 1, "b" : 2 }';
 
 create table test_json_as_json (js json, jb jsonb);
 \d test_json_as_json
@@ -1293,11 +1293,11 @@ set sql_json = jsonb;
 
 select json(' { "aa": 1, "b" : 2 }');
 select json ' { "aa": 1, "b" : 2 }';
-select json text ' { "aa": 1, "b" : 2 }';
+select pg_catalog.json ' { "aa": 1, "b" : 2 }';
 
 \d test_json_as_json
 
-create table test_json_as_jsonb (js json, jb jsonb, jt json text);
+create table test_json_as_jsonb (js json, jb jsonb, jt pg_catalog.json);
 \d test_json_as_jsonb
 
 insert into test_json_as_jsonb values ('{ "a" : 1 }', '{ "a" : 1 }', '{ "a" : 1 }');

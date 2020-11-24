@@ -301,7 +301,7 @@ format_type_extended(Oid type_oid, int32 typemod, bits16 flags)
 			break;
 
 		case JSONOID:
-			buf = pstrdup(SQLJSON_TYPE_IS_JSONB() ? "json text" : "json");
+			buf = pstrdup(SQLJSON_TYPE_IS_JSONB() ? "pg_catalog.json" : "json");
 			break;
 	}
 
