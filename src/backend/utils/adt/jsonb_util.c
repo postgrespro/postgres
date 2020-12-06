@@ -30,6 +30,8 @@
 #include "utils/memutils.h"
 #include "utils/varlena.h"
 
+#define JSONB_SORTED_VALUES 1
+
 /*
  * Maximum number of elements in an array (or key/value pairs in an object).
  * This is limited by two things: the size of the JEntry array must fit
@@ -84,6 +86,7 @@ typedef struct jsonbIterator
 	const JEntry *children;		/* JEntrys for child nodes */
 	/* Data proper.  This points to the beginning of the variable-length data */
 	char	   *dataProper;
+	uint32	   *kvMap;
 
 	/* Current item in buffer (up to nElems) */
 	int			curIndex;
@@ -559,6 +562,8 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 	const JEntry *children = container->children;
 	int			count = JsonContainerSize(jsc);
 	char	   *baseAddr;
+	bool		sorted_values = (container->header & JBC_TMASK) == JBC_TOBJECT_SORTED;
+	const uint32 *kvmap;
 	uint32		stopLow,
 				stopHigh;
 
@@ -572,7 +577,16 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 	 * Binary search the container. Since we know this is an object, account
 	 * for *Pairs* of Jentrys
 	 */
-	baseAddr = (char *) (children + count * 2);
+	if (sorted_values)
+	{
+		kvmap = &children[count * 2];
+		baseAddr = (char *) &kvmap[count];
+	}
+	else
+	{
+		kvmap = NULL;
+		baseAddr = (char *) (children + count * 2);
+	}
 	stopLow = 0;
 	stopHigh = count;
 	while (stopLow < stopHigh)
@@ -593,7 +607,7 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 		if (difference == 0)
 		{
 			/* Found our key, return corresponding value */
-			int			index = stopMiddle + count;
+			int			index = (sorted_values ? kvmap[stopMiddle] : stopMiddle) + count;
 
 			if (!res)
 				res = palloc(sizeof(JsonbValue));
@@ -1201,14 +1215,18 @@ recurse:
 			(*it)->state = JBI_OBJECT_KEY;
 
 			fillCompressedJsonbValue((*it)->compressed, (*it)->container,
-									 (*it)->curIndex + (*it)->nElems,
-									 (*it)->dataProper, (*it)->curValueOffset,
+									 ((*it)->kvMap ? (*it)->kvMap[(*it)->curIndex] : (*it)->curIndex) + (*it)->nElems,
+									 (*it)->dataProper,
+									 (*it)->kvMap ?
+									 getJsonbOffset((*it)->container, (*it)->kvMap[(*it)->curIndex] + (*it)->nElems) :
+									 (*it)->curValueOffset,
 									 val);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
-			JBE_ADVANCE_OFFSET((*it)->curValueOffset,
-							   (*it)->children[(*it)->curIndex + (*it)->nElems]);
+			if (!(*it)->kvMap)
+				JBE_ADVANCE_OFFSET((*it)->curValueOffset,
+								   (*it)->children[(*it)->curIndex + (*it)->nElems]);
 			(*it)->curIndex++;
 
 			/*
@@ -1261,21 +1279,31 @@ jsonbIteratorInitExt(JsonContainer *cont,
 	/* Array starts just after header */
 	it->children = container->children;
 
-	switch (container->header & (JBC_FARRAY | JBC_FOBJECT))
+	switch (container->header & JBC_TMASK)
 	{
-		case JBC_FARRAY:
+		case JBC_TSCALAR:
+			it->isScalar = true;
+			/* FALLTHROUGH */
+		case JBC_TARRAY:
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry);
-			it->isScalar = (container->header & JBC_FSCALAR) != 0;
 			/* This is either a "raw scalar", or an array */
 			Assert(!it->isScalar || it->nElems == 1);
 
 			it->state = JBI_ARRAY_START;
 			break;
 
-		case JBC_FOBJECT:
+		case JBC_TOBJECT:
+			it->kvMap = NULL;
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry) * 2;
+			it->state = JBI_OBJECT_START;
+			break;
+
+		case JBC_TOBJECT_SORTED:
+			it->kvMap = (uint32 *)
+				((char *) it->children + it->nElems * sizeof(JEntry) * 2);
+			it->dataProper = (char *) &it->kvMap[it->nElems];
 			it->state = JBI_OBJECT_START;
 			break;
 
@@ -1897,13 +1925,14 @@ convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 	 * Construct the header Jentry and store it in the beginning of the
 	 * variable-length payload.
 	 */
-	containerhead = nElems | JBC_FARRAY;
 	if (val->val.array.rawScalar)
 	{
 		Assert(nElems == 1);
 		Assert(level == 0);
-		containerhead |= JBC_FSCALAR;
+		containerhead = nElems | JBC_TSCALAR;
 	}
+	else
+		containerhead = nElems | JBC_TARRAY;
 
 	appendToBuffer(buffer, (char *) &containerhead, sizeof(uint32));
 
@@ -1964,6 +1993,48 @@ convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 	return true;
 }
 
+static int
+int_cmp(const void *a, const void *b)
+{
+	int			x = *(const int *) a;
+	int			y = *(const int *) b;
+
+	return x == y ? 0 : x > y ? 1 : -1;
+}
+
+static int
+estimateJsonbValueSize(const JsonbValue *jbv)
+{
+	int			size;
+
+	switch (jbv->type)
+	{
+		case jbvNull:
+		case jbvBool:
+			return 0;
+		case jbvString:
+			return jbv->val.string.len;
+		case jbvNumeric:
+			return VARSIZE_ANY(jbv->val.numeric);
+		case jbvArray:
+			size = offsetof(JsonbContainerHeader, children[jbv->val.array.nElems]);
+			for (int i = 0; i < jbv->val.array.nElems; i++)
+				size += estimateJsonbValueSize(&jbv->val.array.elems[i]);
+			return size;
+		case jbvObject:
+			size = offsetof(JsonbContainerHeader, children[jbv->val.object.nPairs * 2]);
+			for (int i = 0; i < jbv->val.object.nPairs; i++)
+			{
+				size += estimateJsonbValueSize(&jbv->val.object.pairs[i].key);
+				size += estimateJsonbValueSize(&jbv->val.object.pairs[i].value);
+			}
+			return size;
+		default:
+			elog(ERROR, "invalid jsonb value type: %d", jbv->type);
+			return 0;
+	}
+}
+
 static bool
 convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext)
 {
@@ -1973,8 +2044,38 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 	int			totallen;
 	uint32		containerheader;
 	int			nPairs = val->val.object.nPairs;
+	int			reserved_size;
+	bool		sorted_values = JSONB_SORTED_VALUES && nPairs > 1;
+	struct
+	{
+		int			size;
+		int32		index;
+	}		   *values = sorted_values ? palloc(sizeof(*values) * nPairs) : NULL;
 
 	Assert(nPairs >= 0);
+
+	if (sorted_values)
+	{
+		for (i = 0; i < nPairs; i++)
+		{
+			values[i].index = i;
+			values[i].size = estimateJsonbValueSize(&val->val.object.pairs[i].value);
+		}
+
+		qsort(values, nPairs, sizeof(*values), int_cmp);
+
+		/* check if keys were really moved */
+		sorted_values = false;
+
+		for (i = 0; i < nPairs; i++)
+		{
+			if (values[i].index != i)
+			{
+				sorted_values = true;
+				break;
+			}
+		}
+	}
 
 	/* Remember where in the buffer this object starts. */
 	base_offset = buffer->len;
@@ -1986,17 +2087,30 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 	 * Construct the header Jentry and store it in the beginning of the
 	 * variable-length payload.
 	 */
-	containerheader = nPairs | JBC_FOBJECT;
+	containerheader = nPairs | (sorted_values ? JBC_TOBJECT_SORTED : JBC_TOBJECT);
 	appendToBuffer(buffer, (char *) &containerheader, sizeof(uint32));
 
 	/* Reserve space for the JEntries of the keys and values. */
-	jentry_offset = reserveFromBuffer(buffer, sizeof(JEntry) * nPairs * 2);
+	reserved_size = sizeof(JEntry) * nPairs * 2;
+	if (sorted_values)
+		reserved_size += sizeof(int32) * nPairs;
+
+	jentry_offset = reserveFromBuffer(buffer, reserved_size);
+
+	/* Write key-value map */
+	if (sorted_values)
+	{
+		for (i = 0; i < nPairs; i++)
+			copyToBuffer(buffer, jentry_offset + sizeof(JEntry) * nPairs * 2 + values[i].index * sizeof(int32),
+						 (void *) &i, sizeof(int32));
+	}
 
 	/*
 	 * Iterate over the keys, then over the values, since that is the ordering
 	 * we want in the on-disk representation.
 	 */
 	totallen = 0;
+
 	for (i = 0; i < nPairs; i++)
 	{
 		JsonbPair  *pair = &val->val.object.pairs[i];
@@ -2033,9 +2147,11 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		copyToBuffer(buffer, jentry_offset, (char *) &meta, sizeof(JEntry));
 		jentry_offset += sizeof(JEntry);
 	}
+
 	for (i = 0; i < nPairs; i++)
 	{
-		JsonbPair  *pair = &val->val.object.pairs[i];
+		int			val_index = sorted_values ? values[i].index : i;
+		JsonbPair  *pair = &val->val.object.pairs[val_index];
 		int			len;
 		JEntry		meta;
 
@@ -2069,6 +2185,9 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		copyToBuffer(buffer, jentry_offset, (char *) &meta, sizeof(JEntry));
 		jentry_offset += sizeof(JEntry);
 	}
+
+	if (values)
+		pfree(values);
 
 	/* Total data size is everything we've appended to buffer */
 	totallen = buffer->len - base_offset;
@@ -2285,16 +2404,35 @@ uniqueifyJsonbObject(JsonbValue *object)
 }
 
 static void
+jsonbInitContainerFromHeader(JsonContainerData *jc, JsonbContainerHeader *jbc)
+{
+	jc->size = jbc->header & JBC_CMASK;
+	switch (jbc->header & JBC_TMASK)
+	{
+		case JBC_TOBJECT:
+		case JBC_TOBJECT_SORTED:
+			jc->type = jbvObject;
+			break;
+		case JBC_TARRAY:
+			jc->type = jbvArray;
+			break;
+		case JBC_TSCALAR:
+			jc->type = jbvArray | jbvScalar;
+			break;
+		default:
+			elog(ERROR, "invalid jsonb container type: %d",
+				 jbc->header & JBC_TMASK);
+	}
+}
+
+static void
 jsonbInitContainer(JsonContainerData *jc, JsonbContainerHeader *jbc, int len)
 {
 	jc->ops = &jsonbContainerOps;
 	JsonContainerDataPtr(jc) = jbc;
 	jc->len = len;
 	jc->toasterid = InvalidOid;
-	jc->size = jbc->header & JBC_CMASK;
-	jc->type = jbc->header & JBC_FOBJECT ? jbvObject :
-			   jbc->header & JBC_FSCALAR ? jbvArray | jbvScalar :
-										   jbvArray;
+	jsonbInitContainerFromHeader(jc, jbc);
 }
 
 static void
@@ -2410,10 +2548,7 @@ jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb, int len)
 
 	jc->ops = &jsonbzContainerOps;
 	jc->len = len;
-	jc->size = jbc->header & JBC_CMASK;
-	jc->type = jbc->header & JBC_FOBJECT ? jbvObject :
-			   jbc->header & JBC_FSCALAR ? jbvArray | jbvScalar :
-										   jbvArray;
+	jsonbInitContainerFromHeader(jc, jbc);
 }
 
 static JsonbContainer *
@@ -2483,12 +2618,15 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int k
 	JEntry	   *children = container->children;
 	int			count = container->header & JBC_CMASK;
 	/* Since this is an object, account for *Pairs* of Jentrys */
-	char	   *base_addr = (char *) (children + count * 2);
+	bool		sorted_values = (container->header & JBC_TMASK) == JBC_TOBJECT_SORTED;
+	char	   *base_addr = (char *) (children + count * 2) + (sorted_values ? sizeof(uint32) * count : 0);
+	uint32	   *kvmap = sorted_values ? &container->children[count * 2] : NULL;
 	Size		base_offset = base_addr - (char *) jb;
 	uint32		stopLow = 0,
 				stopHigh = count;
 
-	Assert(jb->root.header & JB_FOBJECT);
+	Assert((jb->root.header & JBC_TMASK) == JBC_TOBJECT ||
+		   (jb->root.header & JBC_TMASK) == JBC_TOBJECT_SORTED);
 
 	/* Quick out if object/array is empty */
 	if (count <= 0)
@@ -2525,7 +2663,7 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int k
 		if (difference == 0)
 		{
 			/* Found our key, return corresponding value */
-			int			index = stopMiddle + count;
+			int			index = (sorted_values ? kvmap[stopMiddle] : stopMiddle) + count;
 
 			if (!res)
 				res = palloc(sizeof(*res));

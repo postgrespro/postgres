@@ -144,9 +144,15 @@ typedef struct JsonbContainerHeader
 
 /* flags for the header-field in JsonbContainer */
 #define JBC_CMASK				0x0FFFFFFF	/* mask for count field */
-#define JBC_FSCALAR				0x10000000	/* flag bits */
-#define JBC_FOBJECT				0x20000000
-#define JBC_FARRAY				0x40000000
+#define JBC_TMASK				0x70000000	/* mask for container type */
+/* container types */
+#define JBC_TOBJECT				0x20000000	/* object with key-value pairs
+											 * sorted by key length-alpha */
+#define JBC_TOBJECT_SORTED		0x30000000	/* object with keys sorted by
+											 * length-alpha; values sorted by
+											 * length */
+#define JBC_TARRAY				0x40000000	/* array */
+#define JBC_TSCALAR				0x50000000	/* scalar pseudo-array */
 
 /* The top-level on-disk format for a jsonb datum. */
 typedef struct
