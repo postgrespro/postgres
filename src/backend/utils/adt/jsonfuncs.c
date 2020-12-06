@@ -981,8 +981,7 @@ JsonbValueAsText(JsonbValue *v)
 				StringInfoData jtext;
 
 				initStringInfo(&jtext);
-				(void) JsonbToCString(&jtext, v->val.binary.data,
-									  v->val.binary.data->len);
+				(void) JsonToCString(v->val.binary.data, &jtext);
 
 				return cstring_to_text_with_len(jtext.data, jtext.len);
 			}
@@ -1681,7 +1680,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			 */
 			Jsonb	   *jsonb = JsonbValueToJsonb(jbv);
 
-			str = JsonToCString(&jsonb->root);
+			str = JsonToCString(&jsonb->root, NULL);
 		}
 		else if (jbv->type == jbvString)	/* quotes are stripped */
 			str = pnstrdup(jbv->val.string.val, jbv->val.string.len);
@@ -1691,10 +1690,9 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			str = DatumGetCString(DirectFunctionCall1(numeric_out,
 													  PointerGetDatum(jbv->val.numeric)));
 		else if (jbv->type == jbvObject || jbv->type == jbvArray)
-			str = JsonbToCString(NULL, JsonValueToContainer(jbv), 0);
+			str = JsonToCString(JsonValueToContainer(jbv), NULL);
 		else if (jbv->type == jbvBinary)
-			str = JsonbToCString(NULL, jbv->val.binary.data,
-								 jbv->val.binary.data->len);
+			str = JsonToCString(jbv->val.binary.data, NULL);
 		else
 			elog(ERROR, "unrecognized jsonb type: %d", (int) jbv->type);
 	}
@@ -2500,14 +2498,15 @@ Datum
 json_strip_nulls(PG_FUNCTION_ARGS)
 {
 	Json	   *json = PG_GETARG_JSONT_P(0);
+	JsonContainer *jsc = JsonRoot(json);
 	StripnullState *state;
 	JsonLexContext *lex;
 	JsonSemAction *sem;
 
-	if (json->root.ops != &jsontContainerOps)
+	if (jsc->ops != &jsontContainerOps)
 		return jsonb_strip_nulls_internal(json);
 
-	lex = makeJsonLexContextCstringLen(json->root.data, json->root.len,
+	lex = makeJsonLexContextCstringLen(JsonContainerDataPtr(jsc), jsc->len,
 									   GetDatabaseEncoding(), true);
 
 	state = palloc0(sizeof(StripnullState));

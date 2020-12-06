@@ -128,7 +128,7 @@ JsonValueUnwrap(const JsonValue *val, JsonValue *valbuf)
 
 		if (jc->ops == &jsonvContainerOps)
 		{
-			val = (JsonbValue *) jc->data;
+			val = (JsonbValue *) JsonContainerDataPtr(jc);
 			Assert(val->type != jbvBinary);
 		}
 		else if (JsonContainerIsScalar(jc))
@@ -304,7 +304,7 @@ static void
 jsonvInitContainer(JsonContainerData *jc, const JsonValue *val)
 {
 	jc->ops = &jsonvContainerOps;
-	jc->data = (void *) val;
+	JsonContainerDataPtr(jc) = (void *) val;
 	jc->len = 0;
 	jc->size = val->type == jbvBinary ? val->val.binary.data->size :
 			   val->type == jbvObject ? val->val.object.nPairs :
@@ -322,7 +322,7 @@ JsonValueToContainer(const JsonValue *val)
 		return val->val.binary.data;
 	else
 	{
-		JsonContainerData *jc = JsonContainerAlloc();
+		JsonContainerData *jc = JsonContainerAlloc(&jsonvContainerOps);
 		jsonvInitContainer(jc, val);
 		return jc;
 	}
@@ -354,7 +354,7 @@ static JsonIteratorToken
 jsonvScalarIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 {
 	JsonvScalarIterator	*sit = (JsonvScalarIterator *) *it;
-	JsonValue			*val = (*it)->container->data;
+	JsonValue			*val = JsonContainerDataPtr((*it)->container);
 
 	Assert(IsAJsonbScalar(val));
 
@@ -384,7 +384,7 @@ static JsonIteratorToken
 jsonvArrayIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 {
 	JsonvArrayIterator	*ait = (JsonvArrayIterator *) *it;
-	JsonValue			*arr = (*it)->container->data;
+	JsonValue			*arr = JsonContainerDataPtr((*it)->container);
 	JsonValue			*val;
 
 	Assert(arr->type == jbvArray);
@@ -428,7 +428,7 @@ static JsonIteratorToken
 jsonvObjectIteratorNext(JsonIterator **it, JsonValue *res, bool skipNested)
 {
 	JsonvObjectIterator	*oit = (JsonvObjectIterator *) *it;
-	JsonValue			*obj = (*it)->container->data;
+	JsonValue			*obj = JsonContainerDataPtr((*it)->container);
 	JsonPair			*pair;
 
 	Assert(obj->type == jbvObject);
@@ -553,13 +553,13 @@ jsonvIteratorInitFromValue(JsonValue *val, JsonContainer *jsc)
 static JsonIterator *
 jsonvIteratorInit(JsonContainer *jsc)
 {
-	return jsonvIteratorInitFromValue(jsc->data, jsc);
+	return jsonvIteratorInitFromValue(JsonContainerDataPtr(jsc), jsc);
 }
 
 static JsonValue *
 jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len)
 {
-	JsonValue  *obj = (JsonValue *) objc->data;
+	JsonValue  *obj = JsonContainerDataPtr(objc);
 	JsonValue  *res;
 	JsonValue  *jv;
 	int			i;
@@ -605,7 +605,7 @@ jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len)
 static JsonValue *
 jsonvFindValueInArray(JsonContainer *arrc, const JsonValue *val)
 {
-	JsonValue  *arr = (JsonValue *) arrc->data;
+	JsonValue  *arr = JsonContainerDataPtr(arrc);
 
 	Assert(JsonContainerIsArray(arrc));
 	Assert(IsAJsonbScalar(val));
@@ -640,7 +640,7 @@ jsonvFindValueInArray(JsonContainer *arrc, const JsonValue *val)
 static JsonValue *
 jsonvGetArrayElement(JsonContainer *arrc, uint32 index)
 {
-	JsonValue  *arr = (JsonValue *) arrc->data;
+	JsonValue  *arr = JsonContainerDataPtr(arrc);
 
 	Assert(JsonContainerIsArray(arrc));
 
@@ -668,7 +668,7 @@ jsonvGetArrayElement(JsonContainer *arrc, uint32 index)
 static uint32
 jsonvGetArraySize(JsonContainer *arrc)
 {
-	JsonValue  *arr = (JsonValue *) arrc->data;
+	JsonValue  *arr = JsonContainerDataPtr(arrc);
 
 	Assert(JsonContainerIsArray(arrc));
 
@@ -692,10 +692,10 @@ jsonvGetArraySize(JsonContainer *arrc)
 static JsonContainer *
 jsonvCopy(JsonContainer *jc)
 {
-	JsonContainerData *res = JsonContainerAlloc();
+	JsonContainerData *res = JsonContainerAlloc(&jsonvContainerOps);
 
 	*res = *jc;
-	res->data = JsonValueCopy(NULL, (JsonValue *) jc->data);
+	JsonContainerDataPtr(res) = JsonValueCopy(NULL, JsonContainerDataPtr(jc));
 
 	return res;
 }
@@ -703,6 +703,7 @@ jsonvCopy(JsonContainer *jc)
 JsonContainerOps
 jsonvContainerOps =
 {
+	sizeof(JsonValue *),
 	NULL,
 	jsonvIteratorInit,
 	jsonvFindKeyInObject,
@@ -717,7 +718,7 @@ JsonValue *
 JsonToJsonValue(Json *json, JsonValue *jv)
 {
 	if (JsonRoot(json)->ops == &jsonvContainerOps)
-		return (JsonValue *) JsonRoot(json)->data;
+		return JsonContainerDataPtr(JsonRoot(json));
 
 	if (!jv)
 		jv = palloc(sizeof(JsonValue));
@@ -731,9 +732,9 @@ JsonInit(Json *json)
 	const void *data = DatumGetPointer(json->obj.value);
 	const void *detoasted_data;
 
-	Assert(json->root.data || data);
+	Assert(JsonContainerDataPtr(&json->root) || data);
 
-	if (json->root.data || !data)
+	if (JsonContainerDataPtr(&json->root) || !data) /* FIXME */
 		return;
 
 	detoasted_data = PG_DETOAST_DATUM(json->obj.value);
@@ -750,13 +751,16 @@ JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 
 	if (tmp)
 	{
+		Assert(0);
 		json = tmp;
 		json->obj.isTemporary = true;
 	}
 	else
 	{
+		Size		size = JsonAllocSize(ops->data_size);
+
 #ifndef JSON_EXPANDED_OBJECT_MCXT
-		json = (Json *) palloc(sizeof(Json));
+		json = (Json *) palloc(size);
 #else
 		/*
 		 * Allocate private context for expanded object.  We start by assuming
@@ -770,19 +774,20 @@ JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 								  ALLOCSET_SMALL_INITSIZE,
 								  ALLOCSET_DEFAULT_MAXSIZE);
 
-		json = (Json *) MemoryContextAlloc(objcxt, sizeof(Json));
+		json = (Json *) MemoryContextAlloc(objcxt, size);
 #endif
 		json->obj.isTemporary = false;
 	}
 
 	json->obj.value = value;
 	json->obj.freeValue = freeValue;
-	json->root.data = NULL;
 	json->root.len = 0;
 	json->root.ops = ops;
 	json->root.size = -1;
 	json->root.type = jbvBinary;
 	json->is_json = false;
+
+	memset(json->root._data, 0, ops->data_size);
 
 	return json;
 }
@@ -819,9 +824,10 @@ JsonFree(Json *json)
 Json *
 JsonCopyTemporary(Json *tmp)
 {
-	Json *json = (Json *) palloc(sizeof(Json));
+	Size		size = JsonAllocSize(tmp->root.ops->data_size);
+	Json	   *json = (Json *) palloc(size);
 
-	memcpy(json, tmp, sizeof(Json));
+	memcpy(json, tmp, size);
 	tmp->obj.freeValue = false;
 	tmp->obj.isTemporary = false;
 
@@ -838,6 +844,7 @@ JsonValueToJson(JsonValue *val)
 									  jc->ops);
 
 		json->root = *jc;
+		memcpy(json->root._data, jc->_data, jc->ops->data_size);
 
 		return json;
 	}
@@ -855,11 +862,11 @@ JsonValueToJson(JsonValue *val)
 JsonContainer *
 JsonCopyFlat(JsonContainer *jc)
 {
-	JsonContainerData *res = JsonContainerAlloc();
+	JsonContainerData *res = JsonContainerAlloc(jc->ops);
 
 	*res = *jc;
-	res->data = palloc(jc->len);
-	memcpy(res->data, jc->data, jc->len);
+	JsonContainerDataPtr(res) = palloc(jc->len);
+	memcpy(JsonContainerDataPtr(res), JsonContainerDataPtr(jc), jc->len);
 
 	return res;
 }

@@ -144,7 +144,7 @@ jsonb_out(PG_FUNCTION_ARGS)
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	char	   *out;
 
-	out = JsonToCString(JsonbRoot(jb));
+	out = JsonToCString(JsonbRoot(jb), NULL);
 
 	PG_RETURN_CSTRING(out);
 }
@@ -162,7 +162,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 	StringInfo	jtext = makeStringInfo();
 	int			version = 1;
 
-	(void) JsonbToCString(jtext, JsonbRoot(jb), JsonbGetSize(jb));
+	(void) JsonToCString(JsonbRoot(jb), jtext);
 
 	pq_begintypsend(&buf);
 	pq_sendint8(&buf, version);
@@ -600,8 +600,7 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len,
 				{
 					first = false;
 					if (v.type == jbvBinary)
-						JsonbToCString(out, v.val.binary.data,
-									   v.val.binary.data->len);
+						JsonToCString(v.val.binary.data, out);
 					else
 						jsonb_put_escaped_value(out, &v);
 				}
@@ -627,8 +626,7 @@ JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len,
 					add_indent(out, use_indent, level);
 
 				if (v.type == jbvBinary)
-					JsonbToCString(out, v.val.binary.data,
-								   v.val.binary.data->len);
+					JsonToCString(v.val.binary.data, out);
 				else
 					jsonb_put_escaped_value(out, &v);
 				break;

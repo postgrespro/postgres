@@ -28,10 +28,10 @@ typedef struct JsonContainerOps JsonContainerOps;
 typedef struct JsonContainerData
 {
 	JsonContainerOps   *ops;
-	void			   *data;
 	int					len;
 	int					size;
 	JsonValueType		type;
+	void			   *_data[FLEXIBLE_ARRAY_MEMBER];
 } JsonContainerData;
 
 typedef const JsonContainerData JsonContainer;
@@ -51,6 +51,7 @@ struct JsonIteratorData
 
 struct JsonContainerOps
 {
+	int				data_size;
 	void			(*init)(JsonContainerData *jc, Datum value);
 	JsonIterator   *(*iteratorInit)(JsonContainer *jc);
 	JsonValue	   *(*findKeyInObject)(JsonContainer *object,
@@ -74,9 +75,11 @@ typedef struct CompressedObject
 typedef struct Json
 {
 	CompressedObject obj;
-	JsonContainerData root;
 	bool		is_json;		/* json or jsonb */
+	JsonContainerData root;
 } Json;
+
+#define JsonContainerDataPtr(jc)	((jc)->_data[0])
 
 #define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
@@ -92,7 +95,7 @@ typedef struct Json
 
 #undef JsonbPGetDatum
 #define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(JsonGetUniquified(json))
-#define JsontPGetDatum(json)		PointerGetDatum(cstring_to_text(JsonToCString(JsonRoot(json))))
+#define JsontPGetDatum(json)		CStringGetTextDatum(JsonToCString(JsonRoot(json), NULL))
 
 #ifdef JsonxPGetDatum
 # define JsonGetDatum(json)			JsonxPGetDatum(json)
@@ -107,7 +110,7 @@ typedef struct Json
 #define DatumGetJsonxTmp(datum,tmp)	DatumGetJson(datum, JsonxContainerOps, tmp)
 
 #undef DatumGetJsonbPCopy
-#define DatumGetJsonbPCopy(datum)	DatumGetJsonbP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
+#define DatumGetJsonbPCopy(datum)	DatumGetJsonbPC(datum, NULL, true)
 #define DatumGetJsontPCopy(datum)	DatumGetJsontP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
 #define DatumGetJsonxPCopy(datum)	DatumGetJsonxP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
 
@@ -123,11 +126,11 @@ typedef struct Json
 #else
 #define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #endif
-#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), alloca(sizeof(Json))) /* FIXME conditional alloca() */
+#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), NULL /*alloca(sizeof(Json))*/, false) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #undef	PG_GETARG_JSONB_P_COPY
-#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
+#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
 #define PG_GETARG_JSONT_P_COPY(x)	DatumGetJsontPCopy(PG_GETARG_DATUM(x))
 
 #define JsonFreeIfCopy(json, datum) JsonFree(json)
@@ -151,7 +154,7 @@ typedef struct Json
 #define JsonContainerIsUniquified(jc) \
 		((jc)->ops != &jsontContainerOps && \
 		 ((jc)->ops != &jsonvContainerOps || \
-		  JsonValueIsUniquified((JsonValue *) jc->data)))
+		  JsonValueIsUniquified((JsonValue *) JsonContainerDataPtr(jc))))
 
 #define JsonIsUniquified(json)		JsonContainerIsUniquified(JsonRoot(json))
 
@@ -207,6 +210,8 @@ typedef struct Json
 #define JsonCopy(jscontainer) \
 		JsonOp0(copy, jscontainer)
 
+#define JsonToCString(jc, buf)	((jc)->ops->toString(buf, jc, (jc)->len))
+
 static inline JsonIteratorToken
 JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
 {
@@ -241,8 +246,14 @@ extern void JsonFree(Json *json);
 extern Json *JsonCopyTemporary(Json *tmp);
 extern Json *JsonUniquify(Json *json);
 
-#define JsonContainerAlloc() \
-	((JsonContainerData *) palloc(sizeof(JsonContainerData)))
+#define JsonAllocSize(data_size) \
+	(offsetof(Json, root._data) + (data_size))
+
+#define JsonContainerAllocSize(data_size) \
+	(offsetof(JsonContainerData, _data) + (data_size))
+
+#define JsonContainerAlloc(ops) \
+	((JsonContainerData *) palloc(JsonContainerAllocSize((ops)->data_size)))
 
 extern JsonValue *JsonFindValueInContainer(JsonContainer *json, uint32 flags,
 										   JsonValue *key);
@@ -476,14 +487,6 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 					 int estimated_len);
 extern char *JsonbToCStringCanonical(StringInfo out, JsonContainer *in,
 					 int estimated_len);
-
-#define JsonToCString(jc)	JsonToCStringExt(NULL, jc, (jc)->len)
-
-#define JsonToCStringExt(out, in, estimated_len) \
-	((*(in)->ops->toString)(out, in, estimated_len))
-
-#define JsonbToCString(out, in, estimated_len) \
-		JsonToCStringExt(out, in, estimated_len)
 
 extern JsonValue   *jsonFindKeyInObject(JsonContainer *obj, const char *key, int len);
 extern JsonValue   *jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len);
