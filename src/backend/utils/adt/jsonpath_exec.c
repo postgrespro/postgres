@@ -1979,7 +1979,8 @@ executeKeyValueMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 	/* construct object id from its base object and offset inside that */
 	id = jb->type != jbvBinary ? 0 :
-		(int64) ((char *) jbc->data - (char *) cxt->baseObject.jbc->data);	/* FIXME */
+		(int64) ((char *) JsonContainerDataPtr(jbc) -
+				 (char *) JsonContainerDataPtr(cxt->baseObject.jbc));	/* FIXME */
 	id += (int64) cxt->baseObject.id * INT64CONST(10000000000);
 
 	idval.type = jbvNumeric;
