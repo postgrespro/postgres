@@ -1181,7 +1181,7 @@ jsontInitContainer(JsonContainerData *jc, char *json, int len,
 				   JsonValueType type, int size)
 {
 	jc->ops = &jsontContainerOps;
-	jc->data = json;
+	JsonContainerDataPtr(jc) = json;
 	jc->len = len;
 	jc->type = type;
 	jc->size = size;
@@ -1246,14 +1246,14 @@ jsontToString(StringInfo out, JsonContainer *jc, int estimated_len)
 {
 	if (out)
 	{
-		appendBinaryStringInfo(out, jc->data, jc->len);
+		appendBinaryStringInfo(out, JsonContainerDataPtr(jc), jc->len);
 		return out->data;
 	}
 	else
 	{
 		char *str = palloc(jc->len + 1);
 
-		memcpy(str, jc->data, jc->len);
+		memcpy(str, JsonContainerDataPtr(jc), jc->len);
 		str[jc->len] = 0;
 
 		return str;
@@ -1331,7 +1331,7 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 		case JSON_TOKEN_OBJECT_START:
 		case JSON_TOKEN_ARRAY_START:
 		{
-			JsonContainerData *cont = JsonContainerAlloc();
+			JsonContainerData *cont = JsonContainerAlloc(&jsontContainerOps);
 			char   *token_start = lex->token_start;
 			int		len;
 
@@ -1348,10 +1348,10 @@ jsontFillValue(JsonIterator **pit, JsonValue *res, bool skipNested,
 				len = lex->input_length - (lex->token_start - lex->input);
 
 			jsontInitContainer(cont,
-								token_start, len,
-								tok == JSON_TOKEN_OBJECT_START ? jbvObject
-															   : jbvArray,
-							   -1);
+							   token_start, len,
+							   tok == JSON_TOKEN_OBJECT_START ? jbvObject
+															  : jbvArray,
+							  -1);
 
 			JsonValueInitBinary(res, cont);
 
@@ -1538,7 +1538,8 @@ JsontIteratorInitFromLex(JsonContainer *jc, JsonLexContext *lex,
 static JsonIterator *
 JsontIteratorInit(JsonContainer *jc)
 {
-	JsonLexContext *lex = makeJsonLexContextCstringLen(jc->data, jc->len,
+	JsonLexContext *lex = makeJsonLexContextCstringLen(JsonContainerDataPtr(jc),
+													   jc->len,
 													   GetDatabaseEncoding(),
 													   true);
 	json_lex(lex);
@@ -1574,7 +1575,8 @@ jsontGetArraySize_array_element_start(void *state, bool isnull)
 static uint32
 jsontGetArraySize(JsonContainer *jc)
 {
-	JsonLexContext *lex = makeJsonLexContextCstringLen(jc->data, jc->len,
+	JsonLexContext *lex = makeJsonLexContextCstringLen(JsonContainerDataPtr(jc),
+													   jc->len,
 													   GetDatabaseEncoding(),
 													   false);
 	JsonSemAction	sem;
@@ -1598,6 +1600,7 @@ jsontGetArraySize(JsonContainer *jc)
 JsonContainerOps
 jsontContainerOps =
 {
+	sizeof(char *),
 	jsontInit,
 	JsontIteratorInit,
 	jsonFindLastKeyInObject,

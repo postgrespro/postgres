@@ -155,10 +155,12 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 
 	if (jc->ops == ops)
 	{
-		int		size = jc->len;
-		void   *out = palloc(VARHDRSZ + size);
+		int			size = jc->len;
+		void       *out = palloc(VARHDRSZ + size);
+
 		SET_VARSIZE(out, VARHDRSZ + size);
-		memcpy(VARDATA(out), jc->data, size);
+		memcpy(VARDATA(out), JsonContainerDataPtr(jc), size);
+
 		return out;
 	}
 
@@ -492,7 +494,7 @@ jsonbFindValueInArrayContainer(const JsonbContainer *container,
 static JsonbValue *
 jsonbFindValueInArray(JsonContainer *jsc, const JsonbValue *key)
 {
-	return jsonbFindValueInArrayContainer(jsc->data, key);
+	return jsonbFindValueInArrayContainer(JsonContainerDataPtr(jsc), key);
 }
 
 /*
@@ -555,7 +557,7 @@ JsonbValue *
 getKeyJsonValueFromContainer(JsonContainer *jsc,
 							 const char *keyVal, int keyLen, JsonbValue *res)
 {
-	const JsonbContainer *container = jsc->data;
+	const JsonbContainer *container = JsonContainerDataPtr(jsc);
 	const JEntry *children = container->children;
 	int			count = JsonContainerSize(jsc);
 	char	   *baseAddr;
@@ -630,7 +632,7 @@ jsonbGetArrayElement(JsonContainer *jsc, uint32 i)
 	if (!JsonContainerIsArray(jsc))
 		elog(ERROR, "not a jsonb array");
 
-	JsonbArrayIteratorInit(&it, jsc->data);
+	JsonbArrayIteratorInit(&it, JsonContainerDataPtr(jsc));
 
 	return JsonbArrayIteratorGetIth(&it, i);
 }
@@ -682,7 +684,7 @@ fillJsonbValue(const JsonbContainer *container, int index,
 	}
 	else
 	{
-		JsonContainerData *cont = JsonContainerAlloc();
+		JsonContainerData *cont = JsonContainerAlloc(&jsonbContainerOps);
 
 		Assert(JBE_ISCONTAINER(entry));
 
@@ -1286,7 +1288,7 @@ jsonbIteratorInit(JsonContainer *cont, const JsonbContainer *container,
 static JsonIterator *
 JsonbIteratorInit(JsonContainer *cont)
 {
-	return jsonbIteratorInit(cont, (const JsonbContainer *) cont->data, NULL);
+	return jsonbIteratorInit(cont, (const JsonbContainer *) JsonContainerDataPtr(cont), NULL);
 }
 
 /*
@@ -2299,7 +2301,7 @@ JsonValueUniquify(JsonValue *res, const JsonValue *val)
 		JsonContainer *jc = val->val.binary.data;
 
 		if (jc->ops == &jsonvContainerOps)
-			JsonValueUniquify(res, jc->data);
+			JsonValueUniquify(res, JsonContainerDataPtr(jc));
 		else
 		{
 			Assert(jc->ops == &jsontContainerOps);
@@ -2324,7 +2326,7 @@ JsonUniquify(Json *json)
 	}
 	else if (JsonRoot(json)->ops == &jsonvContainerOps)
 	{
-		const JsonValue *val = (const JsonValue *) JsonRoot(json)->data;
+		const JsonValue *val = (const JsonValue *) JsonContainerDataPtr(JsonRoot(json));
 
 		if (!JsonValueIsUniquified(val))
 		{
@@ -2341,7 +2343,7 @@ static void
 jsonbInitContainer(JsonContainerData *jc, JsonbContainer *jbc, int len)
 {
 	jc->ops = &jsonbContainerOps;
-	jc->data = jbc;
+	JsonContainerDataPtr(jc) = jbc;
 	jc->len = len;
 	jc->size = jbc->header & JB_CMASK;
 	jc->type = jbc->header & JB_FOBJECT ? jbvObject :
@@ -2360,6 +2362,7 @@ jsonbInit(JsonContainerData *jc, Datum value)
 JsonContainerOps
 jsonbContainerOps =
 {
+	sizeof(JsonbContainer *),
 	jsonbInit,
 	JsonbIteratorInit,
 	jsonbFindKeyInObject,

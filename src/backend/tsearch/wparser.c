@@ -484,7 +484,7 @@ ts_headline_json_byid_opt(PG_FUNCTION_ARGS)
 
 	{
 		Jsonb	   *jsonb = transform_jsonb_string_values(json, state, action, true);
-		char	   *str = JsonToCString(&jsonb->root);
+		char	   *str = JsonToCString(&jsonb->root, NULL);
 
 		out = cstring_to_text(str);
 
