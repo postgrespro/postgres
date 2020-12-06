@@ -77,9 +77,9 @@ JsonInit(Json *json)
 	const void *data = DatumGetPointer(json->obj.value);
 	struct varlena *detoasted_data;
 
-	Assert(json->root.data || data);
+	Assert(JsonContainerDataPtr(&json->root) || data);
 
-	if (json->root.data || !data)
+	if (JsonContainerDataPtr(&json->root) || !data) /* FIXME */
 		return;
 
 	detoasted_data = PG_DETOAST_DATUM(json->obj.value);
@@ -92,17 +92,18 @@ JsonInit(Json *json)
 static Json *
 JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 {
-	Json		   *json = tmp ? tmp : (Json *) palloc(sizeof(Json));
+	Json		   *json = tmp ? tmp : (Json *) palloc(JsonAllocSize(ops->data_size));
 
 	json->obj.value = value;
 	json->obj.freeValue = freeValue;
 	json->obj.isTemporary = tmp != NULL;
-	json->root.data = NULL;
 	json->root.len = 0;
 	json->root.ops = ops;
 	json->root.size = -1;
 	json->root.type = jbvBinary;
 	json->is_json = false;
+
+	memset(json->root._data, 0, ops->data_size);
 
 	return json;
 }
@@ -148,6 +149,8 @@ JsonValueToJson(JsonValue *val)
 									  jc->ops);
 
 		json->root = *jc;
+		memcpy(json->root._data, jc->_data, jc->ops->data_size);
+
 		return json;
 	}
 	else
@@ -161,11 +164,11 @@ JsonValueToJson(JsonValue *val)
 JsonContainer *
 JsonCopyFlat(JsonContainer *jc)
 {
-	JsonContainerData *res = JsonContainerAlloc();
+	JsonContainerData *res = JsonContainerAlloc(jc->ops);
 
 	*res = *jc;
-	res->data = palloc(jc->len);
-	memcpy(res->data, jc->data, jc->len);
+	JsonContainerDataPtr(res) = palloc(jc->len);
+	memcpy(JsonContainerDataPtr(res), JsonContainerDataPtr(jc), jc->len);
 
 	return res;
 }
