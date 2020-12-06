@@ -324,10 +324,10 @@ json_hash_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 		{
 				/* Rotation is left to JsonbHashScalarValue() */
 			case WJB_BEGIN_ARRAY:
-				hash ^= JB_FARRAY;
+				hash ^= JB_TARRAY;
 				break;
 			case WJB_BEGIN_OBJECT:
-				hash ^= JB_FOBJECT;
+				hash ^= JB_TOBJECT;
 				break;
 			case WJB_KEY:
 			case WJB_VALUE:
@@ -382,10 +382,10 @@ json_hash_extended_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 		{
 				/* Rotation is left to JsonbHashScalarValueExtended() */
 			case WJB_BEGIN_ARRAY:
-				hash ^= ((uint64) JB_FARRAY) << 32 | JB_FARRAY;
+				hash ^= ((uint64) JB_TARRAY) << 32 | JB_TARRAY;
 				break;
 			case WJB_BEGIN_OBJECT:
-				hash ^= ((uint64) JB_FOBJECT) << 32 | JB_FOBJECT;
+				hash ^= ((uint64) JB_TOBJECT) << 32 | JB_TOBJECT;
 				break;
 			case WJB_KEY:
 			case WJB_VALUE:
