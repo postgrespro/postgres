@@ -90,6 +90,7 @@
 #include "utils/bytea.h"
 #include "utils/float.h"
 #include "utils/guc_tables.h"
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/pg_lsn.h"
@@ -2033,6 +2034,15 @@ static struct config_bool ConfigureNamesBool[] =
 		},
 		&wal_receiver_create_temp_slot,
 		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jsonb_sort_field_values", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Use special binary jsonb format for objects when their field values sorted by length."),
+		},
+		&jsonb_sort_field_values,
+		true,
 		NULL, NULL, NULL
 	},
 
