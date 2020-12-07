@@ -682,8 +682,6 @@ json_object_field_text(PG_FUNCTION_ARGS)
 static JsonValue *
 json_array_element_internal(Json *jb, int element)
 {
-	JsonbValue *v;
-
 	if (!JB_ROOT_IS_ARRAY(jb))
 		return NULL;
 

@@ -2574,6 +2574,7 @@ CompressedDatumDecompress(CompressedDatum *cd, Size offset)
 	cd->decompressed_len = offset;
 }
 
+#if 0 /* unused */
 static void
 CompressedDatumDecompressAll(CompressedDatum *cd)
 {
@@ -2588,6 +2589,7 @@ CompressedDatumDecompressAll(CompressedDatum *cd)
 		cd->decompressed_len = cd->total_len;
 	}
 }
+#endif
 
 static void
 jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb, int len)
