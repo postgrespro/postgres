@@ -48,9 +48,9 @@ SELECT '"\uaBcD"'::json;		-- OK, uppercase and lower case both OK
 
 -- handling of unicode surrogate pairs
 select json '{ "a":  "\ud83d\ude04\ud83d\udc36" }' -> 'a' as correct_in_utf8;
-      correct_in_utf8       
-----------------------------
- "\ud83d\ude04\ud83d\udc36"
+ correct_in_utf8 
+-----------------
+ "😄🐶"
 (1 row)
 
 select json '{ "a":  "\ud83d\ud83d" }' -> 'a'; -- 2 high surrogates in a row

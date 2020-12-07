@@ -1150,7 +1150,7 @@ select '{"c": 1}'::json || '["a", "b"]';
 select '{}'::json || '{"cq":"l", "b":"g", "fg":false}';
 
 select pg_column_size('{}'::json || '{}'::json) = pg_column_size('{}'::json);
-select pg_column_size('{"aa":1}'::json || '{"b":2}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
+select pg_column_size('{"aa":1}'::json || '{"b":2}'::json) = pg_column_size('{"aa": 1, "b": 2}'::json);
 select pg_column_size('{"aa":1, "b":2}'::json || '{}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
 select pg_column_size('{}'::json || '{"aa":1, "b":2}'::json) = pg_column_size('{"aa":1, "b":2}'::json);
 
@@ -1164,7 +1164,7 @@ select '{"a":null , "b":2, "c":3}'::json - 'a';
 select '{"a":1 , "b":2, "c":3}'::json - 'b';
 select '{"a":1 , "b":2, "c":3}'::json - 'c';
 select '{"a":1 , "b":2, "c":3}'::json - 'd';
-select pg_column_size('{"a":1 , "b":2, "c":3}'::json - 'b') = pg_column_size('{"a":1, "b":2}'::json);
+select pg_column_size('{"a":1 , "b":2, "c":3}'::json - 'b') = pg_column_size('{"a": 1, "b": 2}'::json);
 
 select '["a","b","c"]'::json - 3;
 select '["a","b","c"]'::json - 2;
