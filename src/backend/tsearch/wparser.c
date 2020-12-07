@@ -379,7 +379,6 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 	text	   *opt = (PG_NARGS() > 3 && PG_GETARG_POINTER(3)) ? PG_GETARG_TEXT_P(3) : NULL;
 	Jsonb	   *out;
 	JsonTransformStringValuesAction action = (JsonTransformStringValuesAction) headline_json_value;
-	JsonValue	jv;
 	HeadlineParsedText prs;
 	HeadlineJsonState *state = palloc0(sizeof(HeadlineJsonState));
 	Datum		res;
