@@ -1974,6 +1974,15 @@ struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
+		{"jsonb_sort_field_values", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Use special binary jsonb format for objects when their field values sorted by length."),
+		},
+		&jsonb_sort_field_values,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"jsonb_partial_decompression", PGC_USERSET, DEVELOPER_OPTIONS,
 			gettext_noop("Use partial pglz decompression for jsonb."),
 		},
