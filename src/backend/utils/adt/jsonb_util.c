@@ -31,8 +31,6 @@
 #include "utils/memutils.h"
 #include "utils/varlena.h"
 
-#define JSONB_SORTED_VALUES 1
-
 /*
  * Maximum number of elements in an array (or key/value pairs in an object).
  * This is limited by two things: the size of the JEntry array must fit
@@ -140,6 +138,7 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
 											uint32 offset, JsonValue *result);
 static JsonbContainer *jsonbzDecompress(JsonContainer *jc);
 
+bool jsonb_sort_field_values = true;	/* GUC */
 
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
@@ -2022,7 +2021,7 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, in
 	uint32		header;
 	int			nPairs = val->val.object.nPairs;
 	int			reserved_size;
-	bool		sorted_values = JSONB_SORTED_VALUES && nPairs > 1;
+	bool		sorted_values = jsonb_sort_field_values && nPairs > 1;
 	struct
 	{
 		int			size;
