@@ -69,6 +69,27 @@ typedef struct CompressedJsonb
 	int			offset;
 } CompressedJsonb;
 
+typedef struct JsonbKVMap
+{
+	union
+	{
+		const uint8 *entries1;
+		const uint16 *entries2;
+		const int32 *entries4;
+		const void *entries;
+	}			map;
+	int			entry_size;
+} JsonbKVMap;
+
+#define JSONB_KVMAP_ENTRY_SIZE(nPairs) \
+	((nPairs) < 256 ? 1 : (nPairs) < 65536 ? 2 : 4)
+
+#define JSONB_KVMAP_ENTRY(kvmap, index) \
+	(!(kvmap)->entry_size ? (index) : \
+	 (kvmap)->entry_size == 1 ? (int32) (kvmap)->map.entries1[index] : \
+	 (kvmap)->entry_size == 2 ? (int32) (kvmap)->map.entries2[index] : \
+	 (kvmap)->map.entries4[index])
+
 typedef struct jsonbIterator
 {
 	JsonIterator	ji;
@@ -84,7 +105,7 @@ typedef struct jsonbIterator
 	const JEntry *children;		/* JEntrys for child nodes */
 	/* Data proper.  This points to the beginning of the variable-length data */
 	char	   *dataProper;
-	uint32	   *kvMap;
+	JsonbKVMap	kvmap;
 
 	/* Current item in buffer (up to nElems) */
 	int			curIndex;
@@ -547,6 +568,24 @@ JsonFindValueInContainer(JsonContainer *json, uint32 flags, JsonValue *key)
 	return NULL;
 }
 
+static void *
+initKVMap(JsonbKVMap *kvmap, void *pentries, int field_count, bool sorted)
+{
+	if (sorted)
+	{
+		kvmap->map.entries = pentries;
+		kvmap->entry_size = JSONB_KVMAP_ENTRY_SIZE(field_count);
+
+		return (char *) pentries + INTALIGN(field_count * kvmap->entry_size);
+	}
+	else
+	{
+		kvmap->entry_size = 0;
+
+		return pentries;
+	}
+}
+
 /*
  * Find value by key in Jsonb object and fetch it into 'res', which is also
  * returned.
@@ -560,9 +599,9 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 	const JsonbContainerHeader *container = JsonContainerDataPtr(jsc);
 	const JEntry *children = container->children;
 	int			count = JsonContainerSize(jsc);
-	char	   *baseAddr;
+	char	   *baseAddr = (char *) (children + count * 2);
 	bool		sorted_values = (container->header & JBC_TMASK) == JBC_TOBJECT_SORTED;
-	const uint32 *kvmap;
+	JsonbKVMap	kvmap;
 	uint32		stopLow,
 				stopHigh;
 
@@ -576,16 +615,8 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 	 * Binary search the container. Since we know this is an object, account
 	 * for *Pairs* of Jentrys
 	 */
-	if (sorted_values)
-	{
-		kvmap = &children[count * 2];
-		baseAddr = (char *) &kvmap[count];
-	}
-	else
-	{
-		kvmap = NULL;
-		baseAddr = (char *) (children + count * 2);
-	}
+	baseAddr = initKVMap(&kvmap, baseAddr, count, sorted_values);
+
 	stopLow = 0;
 	stopHigh = count;
 	while (stopLow < stopHigh)
@@ -606,7 +637,7 @@ jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 		if (difference == 0)
 		{
 			/* Found our key, return corresponding value */
-			int			index = (sorted_values ? kvmap[stopMiddle] : stopMiddle) + count;
+			int			index = JSONB_KVMAP_ENTRY(&kvmap, stopMiddle) + count;
 
 			if (!res)
 				res = palloc(sizeof(JsonbValue));
@@ -1097,6 +1128,7 @@ static JsonbIteratorToken
 jsonbIteratorNext(JsonIterator **jsit, JsonbValue *val, bool skipNested)
 {
 	jsonbIterator **it = (jsonbIterator **) jsit;
+	int			entry_index;
 
 	if (*it == NULL)
 		return WJB_DONE;
@@ -1213,17 +1245,19 @@ recurse:
 			/* Set state for next call */
 			(*it)->state = JBI_OBJECT_KEY;
 
+			entry_index = JSONB_KVMAP_ENTRY(&(*it)->kvmap, (*it)->curIndex) + (*it)->nElems;
+
 			fillCompressedJsonbValue((*it)->compressed, (*it)->container,
-									 ((*it)->kvMap ? (*it)->kvMap[(*it)->curIndex] : (*it)->curIndex) + (*it)->nElems,
+									 entry_index,
 									 (*it)->dataProper,
-									 (*it)->kvMap ?
-									 getJsonbOffset((*it)->container, (*it)->kvMap[(*it)->curIndex] + (*it)->nElems) :
+									 (*it)->kvmap.entry_size ?
+									 getJsonbOffset((*it)->container, entry_index) :
 									 (*it)->curValueOffset,
 									 val);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
-			if (!(*it)->kvMap)
+			if (!(*it)->kvmap.entry_size)
 				JBE_ADVANCE_OFFSET((*it)->curValueOffset,
 								   (*it)->children[(*it)->curIndex + (*it)->nElems]);
 			(*it)->curIndex++;
@@ -1266,6 +1300,7 @@ jsonbIteratorInitExt(JsonContainer *cont,
 					 struct CompressedJsonb *cjb)
 {
 	jsonbIterator *it;
+	int			type = container->header & JBC_TMASK;
 
 	it = palloc0(sizeof(jsonbIterator));
 	it->ji.container = cont;
@@ -1278,7 +1313,7 @@ jsonbIteratorInitExt(JsonContainer *cont,
 	/* Array starts just after header */
 	it->children = container->children;
 
-	switch (container->header & JBC_TMASK)
+	switch (type)
 	{
 		case JBC_TSCALAR:
 			it->isScalar = true;
@@ -1293,16 +1328,12 @@ jsonbIteratorInitExt(JsonContainer *cont,
 			break;
 
 		case JBC_TOBJECT:
-			it->kvMap = NULL;
+		case JBC_TOBJECT_SORTED:
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry) * 2;
-			it->state = JBI_OBJECT_START;
-			break;
+			it->dataProper = initKVMap(&it->kvmap, it->dataProper, it->nElems,
+									   type == JBC_TOBJECT_SORTED);
 
-		case JBC_TOBJECT_SORTED:
-			it->kvMap = (uint32 *)
-				((char *) it->children + it->nElems * sizeof(JEntry) * 2);
-			it->dataProper = (char *) &it->kvMap[it->nElems];
 			it->state = JBI_OBJECT_START;
 			break;
 
@@ -2044,6 +2075,7 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 	uint32		containerheader;
 	int			nPairs = val->val.object.nPairs;
 	int			reserved_size;
+	int			kvmap_entry_size;
 	bool		sorted_values = jsonb_sort_field_values && nPairs > 1;
 	struct
 	{
@@ -2070,6 +2102,7 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		{
 			if (values[i].index != i)
 			{
+				kvmap_entry_size = JSONB_KVMAP_ENTRY_SIZE(nPairs);
 				sorted_values = true;
 				break;
 			}
@@ -2092,16 +2125,45 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 	/* Reserve space for the JEntries of the keys and values. */
 	reserved_size = sizeof(JEntry) * nPairs * 2;
 	if (sorted_values)
-		reserved_size += sizeof(int32) * nPairs;
+		reserved_size += INTALIGN(kvmap_entry_size * nPairs);
 
 	jentry_offset = reserveFromBuffer(buffer, reserved_size);
 
 	/* Write key-value map */
 	if (sorted_values)
 	{
+		int			kvmap_offset = jentry_offset + sizeof(JEntry) * nPairs * 2;
+
 		for (i = 0; i < nPairs; i++)
-			copyToBuffer(buffer, jentry_offset + sizeof(JEntry) * nPairs * 2 + values[i].index * sizeof(int32),
-						 (void *) &i, sizeof(int32));
+		{
+			uint8		entry1;
+			uint16		entry2;
+			uint32		entry4;
+			void	   *pentry;
+
+			if (kvmap_entry_size == 1)
+			{
+				entry1 = (uint8) i;
+				pentry = &entry1;
+			}
+			else if (kvmap_entry_size == 2)
+			{
+				entry2 = (uint16) i;
+				pentry = &entry2;
+			}
+			else
+			{
+				entry4 = (int32) i;
+				pentry = &entry4;
+			}
+
+			copyToBuffer(buffer, kvmap_offset + values[i].index * kvmap_entry_size,
+						 pentry, kvmap_entry_size);
+		}
+
+		if ((kvmap_entry_size * nPairs) % ALIGNOF_INT)
+			memset(buffer->data + kvmap_offset + kvmap_entry_size * nPairs, 0,
+				   ALIGNOF_INT - (kvmap_entry_size * nPairs) % ALIGNOF_INT);
 	}
 
 	/*
@@ -2618,9 +2680,9 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int k
 	int			count = container->header & JBC_CMASK;
 	/* Since this is an object, account for *Pairs* of Jentrys */
 	bool		sorted_values = (container->header & JBC_TMASK) == JBC_TOBJECT_SORTED;
-	char	   *base_addr = (char *) (children + count * 2) + (sorted_values ? sizeof(uint32) * count : 0);
-	uint32	   *kvmap = sorted_values ? &container->children[count * 2] : NULL;
-	Size		base_offset = base_addr - (char *) jb;
+	char	   *base_addr = (char *) (children + count * 2);
+	JsonbKVMap	kvmap;
+	Size		base_offset;
 	uint32		stopLow = 0,
 				stopHigh = count;
 
@@ -2630,6 +2692,9 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int k
 	/* Quick out if object/array is empty */
 	if (count <= 0)
 		return NULL;
+
+	base_addr = initKVMap(&kvmap, base_addr, count, sorted_values);
+	base_offset = base_addr - (char *) jb;
 
 	key.type = jbvString;
 	key.val.string.val = keystr;
@@ -2662,7 +2727,7 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb, const char *keystr, int k
 		if (difference == 0)
 		{
 			/* Found our key, return corresponding value */
-			int			index = (sorted_values ? kvmap[stopMiddle] : stopMiddle) + count;
+			int			index = JSONB_KVMAP_ENTRY(&kvmap, stopMiddle) + count;
 
 			if (!res)
 				res = palloc(sizeof(*res));
