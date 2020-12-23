@@ -221,4 +221,6 @@ extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 extern int reserveFromBuffer(StringInfo buffer, int len);
 extern void appendToBuffer(StringInfo buffer, const char *data, int len);
 
+extern bool jsonb_partial_decompression;	/* GUC */
+
 #endif							/* __JSONB_H__ */
