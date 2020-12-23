@@ -159,7 +159,8 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
 											uint32 offset, JsonValue *result);
 static JsonbContainer *jsonbzDecompress(JsonContainer *jc);
 
-bool jsonb_sort_field_values = true;	/* GUC */
+bool jsonb_sort_field_values = true;		/* GUC */
+bool jsonb_partial_decompression = true;	/*GUC */
 
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
@@ -2573,7 +2574,6 @@ CompressedDatumDecompress(CompressedDatum *cd, Size offset)
 	cd->decompressed_len = offset;
 }
 
-#if 0 /* unused */
 static void
 CompressedDatumDecompressAll(CompressedDatum *cd)
 {
@@ -2588,7 +2588,6 @@ CompressedDatumDecompressAll(CompressedDatum *cd)
 		cd->decompressed_len = cd->total_len;
 	}
 }
-#endif
 
 static void
 jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb, int len)
@@ -2844,7 +2843,8 @@ jsonbzIteratorInit(JsonContainer *jc)
 	Jsonb	   *jb = (Jsonb *) cjb->datum->data;
 	JsonbContainer *jbc = (JsonbContainer *)((char *) jb + cjb->offset);
 
-	//CompressedDatumDecompressAll(cjb->datum);
+	if (!jsonb_partial_decompression)
+		CompressedDatumDecompressAll(cjb->datum);
 
 	return jsonbIteratorInit(jc, jbc, cjb);
 }
@@ -2859,7 +2859,10 @@ jsonbzInit(JsonContainerData *jc, Datum value)
 	cjb->offset = offsetof(Jsonb, root);
 
 	CompressedDatumInit(cd, value);
-	CompressedDatumDecompress(cd, 256);
+	if (!jsonb_partial_decompression)
+		CompressedDatumDecompressAll(cd);
+	else
+		CompressedDatumDecompress(cd, 256);
 
 	jsonbzInitContainer(jc, cjb, VARSIZE_ANY_EXHDR(cd->data)); // cd->total_len - VARHDRSZ
 }
