@@ -252,5 +252,6 @@ extern Datum jsonb_build_array_worker(int nargs, Datum *args, bool *nulls,
 
 extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
+extern bool jsonb_partial_detoast;			/* GUC */
 
 #endif							/* __JSONB_H__ */

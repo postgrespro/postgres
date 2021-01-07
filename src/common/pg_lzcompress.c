@@ -811,12 +811,9 @@ ctrl_loop:
 
 				/*
 				 * Now we copy the bytes specified by the tag from OUTPUT to
-				 * OUTPUT (copy len bytes from dp - off to dp).  The copied
-				 * areas could overlap, so to avoid undefined behavior in
-				 * memcpy(), be careful to copy only non-overlapping regions.
-				 *
-				 * Note that we cannot use memmove() instead, since while its
-				 * behavior is well-defined, it's also not what we want.
+				 * OUTPUT (copy len bytes from dp - off to dp). The copied
+				 * areas could overlap; to prevent possible uncertainty, we
+				 * copy only non-overlapping regions.
 				 */
 				while (off < copylen)
 				{
