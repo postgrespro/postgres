@@ -1991,6 +1991,15 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jsonb_partial_detoast", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Use partial deTOASTing for jsonb."),
+		},
+		&jsonb_partial_detoast,
+		true,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL

@@ -12,6 +12,7 @@
 #ifndef TOASTERAPI_H
 #define TOASTERAPI_H
 
+#include "access/detoast.h"
 #include "access/genam.h"
 #include "catalog/pg_toaster.h"
 
