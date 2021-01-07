@@ -814,6 +814,8 @@ DatumGetJson(Datum value, JsonContainerOps *ops, Json *tmp)
 void
 JsonFree(Json *json)
 {
+	JsonContainerFree(&json->root);
+
 	if (json->obj.freeValue)
 		pfree(DatumGetPointer(json->obj.value));
 

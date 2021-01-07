@@ -63,6 +63,7 @@ struct JsonContainerOps
 	char		   *(*toString)(StringInfo out, JsonContainer *jc,
 								int estimated_len);
 	JsonContainer  *(*copy)(JsonContainer *jc);
+	void		   *(*free)(JsonContainer *jc);
 };
 
 typedef struct CompressedObject
@@ -214,6 +215,12 @@ typedef struct Json
 		JsonOp0(copy, jscontainer)
 
 #define JsonToCString(jc, buf)	((jc)->ops->toString(buf, jc, (jc)->len))
+
+#define	JsonContainerFree(jc) do { \
+		if ((jc)->ops->free) \
+			(jc)->ops->free(jc); \
+	} while (0)
+
 
 static inline JsonIteratorToken
 JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
