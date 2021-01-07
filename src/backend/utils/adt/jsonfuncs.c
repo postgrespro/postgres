@@ -634,13 +634,24 @@ json_object_field_internal(Json *jb, text *key)
 Datum
 jsonb_object_field(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_PC(0),
+	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	JsonValue  *res = json_object_field_internal(jb,
 												 PG_GETARG_TEXT_PP(1));
 
 	if (res)
-		PG_RETURN_JSONB_VALUE(res);
+	{
+		Datum		r = JsonValueGetJsonbDatum(res);
+
+		//if (res && res->type == jbvBinary)
+		//	JsonContainerFree(res->val.binary.data);
+		PG_FREE_IF_COPY_JSONB(jb, 0);
+		PG_RETURN_DATUM(r);
+	}
 	else
+	{
+		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_NULL();
+	}
 }
 
 Datum
@@ -658,13 +669,23 @@ json_object_field(PG_FUNCTION_ARGS)
 Datum
 jsonb_object_field_text(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_object_field_internal(PG_GETARG_JSONB_PC(0),
-												 PG_GETARG_TEXT_PP(1));
+	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
+	JsonValue  *res = json_object_field_internal(jb, PG_GETARG_TEXT_PP(1));
 
 	if (res && res->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	{
+		text	   *r = JsonbValueAsText(res);
+
+		//if (res && res->type == jbvBinary)
+		//	JsonContainerFree(res->val.binary.data);
+		PG_FREE_IF_COPY_JSONB(jb, 0);
+		PG_RETURN_TEXT_P(r);
+	}
 	else
+	{
+		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_NULL();
+	}
 }
 
 Datum
