@@ -56,6 +56,8 @@ create_detoast_iterator(struct varlena *attr)
 			/* initialize state for pglz_decompress_iterate() */
 			iter->ctrl = 0;
 			iter->ctrlc = INVALID_CTRLC;
+			iter->len = 0;
+			iter->off = 0;
 		}
 		else
 		{
@@ -81,7 +83,7 @@ create_detoast_iterator(struct varlena *attr)
 		return create_detoast_iterator(attr);
 
 	}
-	else if (VARATT_IS_COMPRESSED(attr))
+	else if (1 && VARATT_IS_COMPRESSED(attr))
 	{
 		ToastBuffer *buf;
 
