@@ -700,7 +700,8 @@ typedef struct pglz_state
  */
 int32
 pglz_decompress_state(const char *source, int32 slen, char *dest,
-					  int32 rawsize, bool check_complete, void **pstate)
+					  int32 dlen, bool check_complete, bool last_cource_chunk,
+					  void **pstate)
 {
 	pglz_state *state = pstate ? *pstate : NULL;
 	const unsigned char *sp;
@@ -800,7 +801,7 @@ ctrl_loop:
 				 * must check this, else we risk an infinite loop below in the
 				 * face of corrupt data.)
 				 */
-				if (unlikely(sp > srcend || off == 0))
+				if (unlikely((sp > srcend && last_cource_chunk) || off == 0))
 					return -1;
 
 				/*
@@ -947,5 +948,5 @@ int32
 pglz_decompress(const char *source, int32 slen, char *dest, int32 rawsize,
 				bool check_complete)
 {
-	return pglz_decompress_state(source, slen, dest, rawsize, check_complete, NULL);
+	return pglz_decompress_state(source, slen, dest, rawsize, check_complete, true, NULL);
 }

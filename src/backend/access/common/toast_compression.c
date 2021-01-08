@@ -246,6 +246,82 @@ lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 #endif
 }
 
+void
+toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
+						 DetoastIterator iter, const char *destend)
+{
+	const char *sp;
+	const char *srcend;
+	char	   *dp;
+	int32		dlen;
+	int32		slen;
+	bool		last_source_chunk;
+
+	/*
+	 * In the while loop, sp may be incremented such that it points beyond
+	 * srcend. To guard against reading beyond the end of the current chunk,
+	 * we set srcend such that we exit the loop when we are within four bytes
+	 * of the end of the current chunk. When source->limit reaches
+	 * source->capacity, we are decompressing the last chunk, so we can (and
+	 * need to) read every byte.
+	 */
+	last_source_chunk = source->limit == source->capacity;
+	srcend = last_source_chunk ? source->limit : source->limit - 4;
+	sp = source->position;
+	dp = dest->limit;
+	if (destend > dest->capacity)
+		destend = dest->capacity;
+
+	slen = srcend - source->position;
+
+	/*
+	 * Decompress the data using the appropriate decompression routine.
+	 */
+	switch (iter->compression_method)
+	{
+		case TOAST_PGLZ_COMPRESSION_ID:
+			dlen = pglz_decompress_state(sp, &slen, dp, destend - dp,
+										 last_source_chunk && destend == dest->capacity,
+										 last_source_chunk,
+										 &iter->decompression_state);
+			break;
+		case TOAST_LZ4_COMPRESSION_ID:
+			if (source->limit < source->capacity)
+				dlen = 0;	/* LZ4 needs need full data to decompress */
+			else
+			{
+				/* decompress the data */
+#ifndef USE_LZ4
+				NO_LZ4_SUPPORT();
+				dlen = 0;
+#else
+				dlen = LZ4_decompress_safe(source->buf + VARHDRSZ_COMPRESSED,
+										   VARDATA(dest->buf),
+										   VARSIZE(source->buf) - VARHDRSZ_COMPRESSED,
+										   VARDATA_COMPRESSED_GET_EXTSIZE(source->buf));
+
+				if (dlen < 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							 errmsg_internal("compressed lz4 data is corrupt")));
+#endif
+				slen = 0;
+			}
+			break;
+		default:
+			elog(ERROR, "invalid compression method id %d", iter->compression_method);
+			return;		/* keep compiler quiet */
+	}
+
+	if (dlen < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("compressed data is corrupt")));
+
+	source->position += slen;
+	dest->limit += dlen;
+}
+
 /*
  * Extract compression ID from a varlena.
  *
