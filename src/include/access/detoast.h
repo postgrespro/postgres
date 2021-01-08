@@ -133,6 +133,8 @@ typedef struct DetoastIteratorData
 	unsigned char		ctrl;
 	int					ctrlc;
 	int					nrefs;
+	int32				len;
+	int32				off;
 	bool				compressed;		/* toast value is compressed? */
 	bool				done;
 }			DetoastIteratorData;
@@ -184,16 +186,16 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 	if (!detoast_iter->compressed)
 		destend = NULL;
 
-	if (destend)
+	if (1 && destend)
 	{
 		const char *srcend = (const char *)
 			(fetch_iter->buf->limit == fetch_iter->buf->capacity ?
 			fetch_iter->buf->limit : fetch_iter->buf->limit - 4);
 
-		if (fetch_iter->buf->position >= srcend)
+		if (fetch_iter->buf->position >= srcend && !fetch_iter->done)
 			fetch_datum_iterate(fetch_iter);
 	}
-	else
+	else if (!fetch_iter->done)
 		fetch_datum_iterate(fetch_iter);
 
 	if (detoast_iter->compressed)
