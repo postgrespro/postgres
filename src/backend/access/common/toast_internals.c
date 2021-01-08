@@ -1410,8 +1410,32 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 		(source->limit == source->capacity ? source->limit : (source->limit - 4));
 	sp = (const unsigned char *) source->position;
 	dp = (unsigned char *) dest->limit;
-	if (destend < (unsigned char *) dest->capacity)
+	if (destend > (unsigned char *) dest->capacity)
 		destend = (unsigned char *) dest->capacity;
+
+	if (iter->len)
+	{
+		int32		len = iter->len;
+		int32		off = iter->off;
+		int32		copylen = Min(len, destend - dp);
+		int32		remlen = len - copylen;
+
+		while (copylen--)
+		{
+			*dp = dp[-off];
+			dp++;
+		}
+
+		iter->len = remlen;
+
+		if (dp >= destend)
+		{
+			dest->limit = (char *) dp;
+			return;
+		}
+
+		Assert(remlen == 0);
+	}
 
 	while (sp < srcend && dp < destend)
 	{
@@ -1433,7 +1457,6 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 			ctrlc = 0;
 		}
 
-
 		for (; ctrlc < INVALID_CTRLC && sp < srcend && dp < destend; ctrlc++)
 		{
 
@@ -1450,6 +1473,7 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 				 */
 				int32		len;
 				int32		off;
+				int32		copylen;
 
 				len = (sp[0] & 0x0f) + 3;
 				off = ((sp[0] & 0xf0) << 4) | sp[1];
@@ -1463,17 +1487,21 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 				 * areas could overlap; to prevent possible uncertainty, we
 				 * copy only non-overlapping regions.
 				 */
-				len = Min(len, destend - dp);
-				while (off < len)
+				copylen = Min(len, destend - dp);
+				iter->len = len - copylen;
+
+				while (off < copylen)
 				{
 					/* see comments in common/pg_lzcompress.c */
 					memcpy(dp, dp - off, off);
-					len -= off;
+					copylen -= off;
 					dp += off;
 					off += off;
 				}
-				memcpy(dp, dp - off, len);
-				dp += len;
+				memcpy(dp, dp - off, copylen);
+				dp += copylen;
+
+				iter->off = off;
 			}
 			else
 			{
