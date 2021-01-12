@@ -39,6 +39,7 @@ do { \
 
 /* Size of an EXTERNAL datum that contains a standard TOAST pointer */
 #define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
+#define TOAST_INLINE_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_inline))
 
 /* Size of an EXTERNAL datum that contains an indirection pointer */
 #define INDIRECT_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_indirect))
@@ -106,10 +107,11 @@ typedef struct FetchDatumIteratorData
 	ToastBuffer	*buf;
 	Relation	toastrel;
 	Relation	*toastidxs;
+	MemoryContext mcxt;
 	SysScanDesc	toastscan;
 	ScanKeyData	toastkey;
 	SnapshotData			snapshot;
-	struct varatt_external	toast_pointer;
+	struct varatt_external toast_pointer;
 	int32		ressize;
 	int32		nextidx;
 	int32		numchunks;

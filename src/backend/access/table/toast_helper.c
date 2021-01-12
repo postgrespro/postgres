@@ -203,8 +203,10 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 			continue;
 		if (check_main && att->attstorage != TYPSTORAGE_MAIN)
 			continue;
-		if (!check_main && att->attstorage != TYPSTORAGE_EXTENDED &&
-			att->attstorage != TYPSTORAGE_EXTERNAL)
+		if (!check_main &&
+			att->attstorage != TYPSTORAGE_EXTENDED &&
+			att->attstorage != TYPSTORAGE_EXTERNAL &&
+			att->attstorage != TYPSTORAGE_TAPAS)
 			continue;
 
 		if (ttc->ttc_attr[i].tai_size > biggest_size)
@@ -226,6 +228,7 @@ void
 toast_tuple_try_compression(ToastTupleContext *ttc, int attribute)
 {
 	Datum	   *value = &ttc->ttc_values[attribute];
+	/* FIXME add flag for checking wether compressed size < max tuple size */
 	Datum		new_value = toast_compress_datum(*value);
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
@@ -259,6 +262,27 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	attr->tai_colflags |= TOASTCOL_IGNORE;
 	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
 							  options);
+	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
+		pfree(DatumGetPointer(old_value));
+	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
+	ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+}
+
+/*
+ * Move an attribute to external storage chunked.
+ */
+void
+toast_tuple_externalize_chunked(ToastTupleContext *ttc, int attribute,
+								int options, Size maxInlineSize)
+{
+	Datum	   *value = &ttc->ttc_values[attribute];
+	Datum		old_value = *value;
+	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
+
+	attr->tai_colflags |= TOASTCOL_IGNORE;
+	*value = toast_save_datum_chunked(ttc->ttc_rel, old_value,
+									  attr->tai_oldexternal, options,
+									  maxInlineSize);
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;

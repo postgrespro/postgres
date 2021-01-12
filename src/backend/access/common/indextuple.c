@@ -101,6 +101,7 @@ index_form_tuple(TupleDesc tupleDescriptor,
 		if (!VARATT_IS_EXTENDED(DatumGetPointer(untoasted_values[i])) &&
 			VARSIZE(DatumGetPointer(untoasted_values[i])) > TOAST_INDEX_TARGET &&
 			(att->attstorage == TYPSTORAGE_EXTENDED ||
+			 att->attstorage == TYPSTORAGE_TAPAS ||
 			 att->attstorage == TYPSTORAGE_MAIN))
 		{
 			Datum		cvalue = toast_compress_datum(untoasted_values[i]);

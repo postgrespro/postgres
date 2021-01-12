@@ -2059,6 +2059,8 @@ storage_name(char c)
 			return "EXTENDED";
 		case TYPSTORAGE_MAIN:
 			return "MAIN";
+		case TYPSTORAGE_TAPAS:
+			return "TAPAS";
 		default:
 			return "???";
 	}
@@ -7634,6 +7636,8 @@ ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 		newstorage = TYPSTORAGE_EXTENDED;
 	else if (pg_strcasecmp(storagemode, "main") == 0)
 		newstorage = TYPSTORAGE_MAIN;
+	else if (pg_strcasecmp(storagemode, "tapas") == 0)
+		newstorage = TYPSTORAGE_TAPAS;
 	else
 	{
 		ereport(ERROR,

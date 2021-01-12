@@ -858,7 +858,7 @@ XLogCompressBackupBlock(char *page, uint16 hole_offset, uint16 hole_length,
 	 * see if the number of bytes saved by compression is larger than the
 	 * length of extra data needed for the compressed version of block image.
 	 */
-	len = pglz_compress(source, orig_len, dest, PGLZ_strategy_default);
+	len = pglz_compress(source, orig_len, dest, PGLZ_strategy_default, NULL);
 	if (len >= 0 &&
 		len + extra_bytes < orig_len)
 	{

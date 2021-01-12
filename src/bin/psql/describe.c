@@ -2093,7 +2093,8 @@ describeOneTableDetails(const char *schemaname,
 									  (storage[0] == 'm' ? "main" :
 									   (storage[0] == 'x' ? "extended" :
 										(storage[0] == 'e' ? "external" :
-										 "???")))),
+										 (storage[0] == 't' ? "tapas" :
+										 "???"))))),
 							  false, false);
 		}
 

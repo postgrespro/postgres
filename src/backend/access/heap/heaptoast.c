@@ -185,6 +185,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 								  toast_values, toast_isnull) > maxDataLen)
 	{
 		int			biggest_attno;
+		int			needs_free = 0;
 
 		biggest_attno = toast_tuple_find_biggest_attribute(&ttc, true, false);
 		if (biggest_attno < 0)
@@ -193,28 +194,113 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		/*
 		 * Attempt to compress it inline, if it has attstorage EXTENDED
 		 */
-		if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_EXTENDED)
+		if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_TAPAS)
+		{
+			ToastAttrInfo *attr = &ttc.ttc_attr[biggest_attno];
+			Datum	   *p_value = &ttc.ttc_values[biggest_attno];
+			Datum		old_value = *p_value;
+			Datum		compressed_value = (Datum) 0;
+			bool		externalize = false;
+
+			Size		size;
+
+			needs_free = attr->tai_colflags & TOASTCOL_NEEDS_FREE;
+
+			attr->tai_colflags &= ~TOASTCOL_NEEDS_FREE;
+
+			/* FIXME pass flag to check compressedSize < maxDataLen */
 			toast_tuple_try_compression(&ttc, biggest_attno);
+
+			{
+				struct varlena tmp;
+
+				old_value = *p_value;
+				*p_value = PointerGetDatum(&tmp);
+				SET_VARSIZE(DatumGetPointer(*p_value), sizeof(struct varlena));	/* FIXME */
+				size = heap_compute_data_size(tupleDesc, toast_values, toast_isnull);
+				*p_value = old_value;
+			}
+
+			if (attr->tai_colflags & TOASTCOL_INCOMPRESSIBLE)
+			{
+				attr->tai_colflags |= needs_free;
+
+				if (toast_attr[biggest_attno].tai_size > maxDataLen - size &&
+					rel->rd_rel->reltoastrelid != InvalidOid)
+				{
+					externalize = true;
+				}
+			}
+			else
+			{
+				if (toast_attr[biggest_attno].tai_size > maxDataLen - size &&
+					rel->rd_rel->reltoastrelid != InvalidOid)
+				{
+#if 1
+					if (needs_free)
+						pfree(DatumGetPointer(old_value));
+#else
+					compressed_value = *p_value;
+
+					*p_value = old_value;
+					attr->tai_colflags = (attr->tai_colflags & ~TOASTCOL_NEEDS_FREE) | needs_free;
+					attr->tai_size = VARSIZE(old_value);
+#endif
+					externalize = true;
+				}
+				else
+				{
+					if (needs_free)
+						pfree(DatumGetPointer(old_value));
+					/* TODO */
+				}
+			}
+
+			if (externalize)
+			{
+				if (size < maxDataLen)
+					toast_tuple_externalize_chunked(&ttc, biggest_attno, options, maxDataLen - size);
+				else
+				{
+					if (compressed_value)
+					{
+						if (needs_free)
+							pfree(DatumGetPointer(*p_value));
+
+						*p_value = compressed_value;
+						attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
+						attr->tai_size = VARSIZE(compressed_value);
+					}
+
+					toast_tuple_externalize(&ttc, biggest_attno, options);
+				}
+			}
+		}
 		else
 		{
-			/*
-			 * has attstorage EXTERNAL, ignore on subsequent compression
-			 * passes
-			 */
-			toast_attr[biggest_attno].tai_colflags |= TOASTCOL_INCOMPRESSIBLE;
-		}
+			if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_EXTENDED)
+				toast_tuple_try_compression(&ttc, biggest_attno);
+			else
+			{
+				/*
+				 * has attstorage EXTERNAL, ignore on subsequent compression
+				 * passes
+				 */
+				toast_attr[biggest_attno].tai_colflags |= TOASTCOL_INCOMPRESSIBLE;
+			}
 
-		/*
-		 * If this value is by itself more than maxDataLen (after compression
-		 * if any), push it out to the toast table immediately, if possible.
-		 * This avoids uselessly compressing other fields in the common case
-		 * where we have one long field and several short ones.
-		 *
-		 * XXX maybe the threshold should be less than maxDataLen?
-		 */
-		if (toast_attr[biggest_attno].tai_size > maxDataLen &&
-			rel->rd_rel->reltoastrelid != InvalidOid)
-			toast_tuple_externalize(&ttc, biggest_attno, options);
+			/*
+			 * If this value is by itself more than maxDataLen (after compression
+			 * if any), push it out to the toast table immediately, if possible.
+			 * This avoids uselessly compressing other fields in the common case
+			 * where we have one long field and several short ones.
+			 *
+			 * XXX maybe the threshold should be less than maxDataLen?
+			 */
+			if (toast_attr[biggest_attno].tai_size > maxDataLen &&
+				rel->rd_rel->reltoastrelid != InvalidOid)
+				toast_tuple_externalize(&ttc, biggest_attno, options);
+		}
 	}
 
 	/*
@@ -751,6 +837,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 									 RelationGetRelationName(toastrel))));
 		expected_size = curchunk < totalchunks - 1 ? TOAST_MAX_CHUNK_SIZE
 			: attrsize - ((totalchunks - 1) * TOAST_MAX_CHUNK_SIZE);
+		Assert(chunksize == expected_size);
 		if (chunksize != expected_size)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),

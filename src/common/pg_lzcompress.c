@@ -507,9 +507,10 @@ pglz_find_match(int16 *hstart, const char *input, const char *end,
  */
 int32
 pglz_compress(const char *source, int32 slen, char *dest,
-			  const PGLZ_Strategy *strategy)
+			  const PGLZ_Strategy *strategy, int32 *dlen)
 {
 	unsigned char *bp = (unsigned char *) dest;
+	unsigned char *bend;
 	unsigned char *bstart = bp;
 	int			hist_next = 1;
 	bool		hist_recycle = false;
@@ -544,6 +545,16 @@ pglz_compress(const char *source, int32 slen, char *dest,
 		slen < strategy->min_input_size ||
 		slen > strategy->max_input_size)
 		return -1;
+
+	if (dlen)
+	{
+		if (*dlen < 4)
+			return -1;
+
+		bend = bstart + *dlen - 4;
+	}
+	else
+		bend = bstart + PGLZ_MAX_OUTPUT(slen);
 
 	/*
 	 * Limit the match parameters to the supported range.
@@ -627,6 +638,9 @@ pglz_compress(const char *source, int32 slen, char *dest,
 		if (!found_match && bp - bstart >= strategy->first_success_by)
 			return -1;
 
+		if (bp > bend)
+			break;
+
 		/*
 		 * Try to find a match in the history
 		 */
@@ -670,6 +684,9 @@ pglz_compress(const char *source, int32 slen, char *dest,
 	result_size = bp - bstart;
 	if (result_size >= result_max)
 		return -1;
+
+	if (dlen)
+		*dlen = dp - source;
 
 	/* success */
 	return result_size;

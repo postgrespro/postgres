@@ -432,6 +432,8 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 			storage = TYPSTORAGE_EXTENDED;
 		else if (pg_strcasecmp(a, "main") == 0)
 			storage = TYPSTORAGE_MAIN;
+		else if (pg_strcasecmp(a, "tapas") == 0)
+			storage = TYPSTORAGE_TAPAS;
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3712,6 +3714,8 @@ AlterType(AlterTypeStmt *stmt)
 				atparams.storage = TYPSTORAGE_EXTENDED;
 			else if (pg_strcasecmp(a, "main") == 0)
 				atparams.storage = TYPSTORAGE_MAIN;
+			else if (pg_strcasecmp(a, "tapas") == 0)
+				atparams.storage = TYPSTORAGE_TAPAS;
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
