@@ -75,6 +75,13 @@ typedef struct varatt_external
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
 }			varatt_external;
 
+typedef struct varatt_external_inline
+{
+	varatt_external	va_external;
+	int32		va_inline_size;
+	char		va_data[FLEXIBLE_ARRAY_MEMBER];
+}			varatt_external_inline;
+
 /*
  * These macros define the "saved size" portion of va_extinfo.  Its remaining
  * two high-order bits identify the compression method.
@@ -123,17 +130,19 @@ typedef enum vartag_external
 	VARTAG_INDIRECT = 1,
 	VARTAG_EXPANDED_RO = 2,
 	VARTAG_EXPANDED_RW = 3,
-	VARTAG_ONDISK = 18
+	VARTAG_ONDISK = 18,
+	VARTAG_ONDISK_INLINE = 19	/* FIXME */
 } vartag_external;
 
 /* this test relies on the specific tag values above */
 #define VARTAG_IS_EXPANDED(tag) \
 	(((tag) & ~1) == VARTAG_EXPANDED_RO)
 
-#define VARTAG_SIZE(tag) \
+#define VARTAG_SIZE(ptr, tag) \
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (tag) == VARTAG_ONDISK_INLINE ? offsetof(varatt_external_inline, va_data) + VARSIZE_EXTERNAL_INLINE(ptr) : \
 	 TrapMacro(true, "unrecognized TOAST vartag"))
 
 /*
@@ -319,13 +328,17 @@ typedef struct
 #define VARDATA_SHORT(PTR)					VARDATA_1B(PTR)
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
-#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR)))
+#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(PTR, VARTAG_EXTERNAL(PTR)))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
+#define VARDATA_EXTERNAL_INLINE(PTR)		(VARDATA_EXTERNAL(PTR) + offsetof(varatt_external_inline, va_data))
+#define VARSIZE_EXTERNAL_INLINE(PTR)		(((varatt_external_inline *) VARDATA_EXTERNAL(PTR))->va_inline_size)	/* FIXME alignment */
 
 #define VARATT_IS_COMPRESSED(PTR)			VARATT_IS_4B_C(PTR)
 #define VARATT_IS_EXTERNAL(PTR)				VARATT_IS_1B_E(PTR)
 #define VARATT_IS_EXTERNAL_ONDISK(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK)
+#define VARATT_IS_EXTERNAL_ONDISK_INLINE(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE)
 #define VARATT_IS_EXTERNAL_INDIRECT(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_INDIRECT)
 #define VARATT_IS_EXTERNAL_EXPANDED_RO(PTR) \

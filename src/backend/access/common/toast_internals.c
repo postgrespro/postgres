@@ -63,11 +63,11 @@ toast_compress_datum(Datum value, char cmethod)
 	switch (cmethod)
 	{
 		case TOAST_PGLZ_COMPRESSION:
-			tmp = pglz_compress_datum((const struct varlena *) value);
+			tmp = pglz_compress_datum((const struct varlena *) value, NULL);
 			cmid = TOAST_PGLZ_COMPRESSION_ID;
 			break;
 		case TOAST_LZ4_COMPRESSION:
-			tmp = lz4_compress_datum((const struct varlena *) value);
+			tmp = lz4_compress_datum((const struct varlena *) value, NULL);
 			cmid = TOAST_LZ4_COMPRESSION_ID;
 			break;
 		default:
@@ -114,9 +114,9 @@ toast_compress_datum(Datum value, char cmethod)
  * options: options to be passed to heap_insert() for toast rows
  * ----------
  */
-Datum
-toast_save_datum(Relation rel, Datum value,
-				 struct varlena *oldexternal, int options)
+static Datum
+toast_save_datum_internal(Relation rel, Datum value,
+						  struct varlena *oldexternal, int options, Size maxInlineSize)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -138,10 +138,12 @@ toast_save_datum(Relation rel, Datum value,
 	int32		chunk_size;
 	int32		chunk_seq = 0;
 	char	   *data_p;
+	char	   *data_start = NULL;
 	int32		data_todo;
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
+	bool		compress_chunks = false;
 
 	Assert(!VARATT_IS_EXTERNAL(value));
 
@@ -197,6 +199,20 @@ toast_save_datum(Relation rel, Datum value,
 		toast_pointer.va_extinfo = data_todo;
 	}
 
+	if (maxInlineSize > 0 && maxInlineSize > TOAST_INLINE_POINTER_SIZE)
+	{
+		Assert(maxInlineSize < data_todo);
+
+		maxInlineSize -= TOAST_INLINE_POINTER_SIZE;
+
+		data_start = data_p;
+		data_todo -= maxInlineSize;
+		data_p += maxInlineSize;
+
+		if (!VARATT_IS_COMPRESSED(dval))
+			compress_chunks = true;
+	}
+
 	/*
 	 * Insert the correct table OID into the result TOAST pointer.
 	 *
@@ -238,9 +254,12 @@ toast_save_datum(Relation rel, Datum value,
 		{
 			struct varatt_external old_toast_pointer;
 
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
+			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
+				   VARATT_IS_EXTERNAL_ONDISK_INLINE(oldexternal));
+
 			/* Must copy to access aligned fields */
-			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
+			VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_pointer, oldexternal);
+
 			if (old_toast_pointer.va_toastrelid == rel->rd_toastoid)
 			{
 				/* This value came from the old toast table; reuse its OID */
@@ -309,14 +328,39 @@ toast_save_datum(Relation rel, Datum value,
 		/*
 		 * Calculate the size of this chunk
 		 */
-		chunk_size = Min(TOAST_MAX_CHUNK_SIZE, data_todo);
+		chunk_size = -1;
+
+		if (0 && compress_chunks)
+		{
+			int32		compressed_chunk_size;
+
+			chunk_size = TOAST_MAX_CHUNK_SIZE;
+			compressed_chunk_size = pglz_compress(data_p, data_todo,
+												  TOAST_COMPRESS_RAWDATA(&chunk_data),
+												  PGLZ_strategy_default,
+												  &chunk_size);
+
+			if (compressed_chunk_size >= 0 &&
+				compressed_chunk_size + TOAST_COMPRESS_HDRSZ < chunk_size - 2)
+			{
+				TOAST_COMPRESS_SET_SIZE_AND_COMPRESS_METHOD(&chunk_data, chunk_size, TOAST_PGLZ_COMPRESSION_ID);
+				SET_VARSIZE_COMPRESSED(&chunk_data, compressed_chunk_size + TOAST_COMPRESS_HDRSZ);
+			}
+			else
+				chunk_size = -1;
+		}
+
+		if (chunk_size < 0)
+		{
+			chunk_size = Min(TOAST_MAX_CHUNK_SIZE, data_todo);
+			SET_VARSIZE(&chunk_data, chunk_size + VARHDRSZ);
+			memcpy(VARDATA(&chunk_data), data_p, chunk_size);
+		}
 
 		/*
 		 * Build a tuple and store it
 		 */
 		t_values[1] = Int32GetDatum(chunk_seq++);
-		SET_VARSIZE(&chunk_data, chunk_size + VARHDRSZ);
-		memcpy(VARDATA(&chunk_data), data_p, chunk_size);
 		toasttup = heap_form_tuple(toasttupDesc, t_values, t_isnull);
 
 		heap_insert(toastrel, toasttup, mycid, options, NULL);
@@ -365,11 +409,40 @@ toast_save_datum(Relation rel, Datum value,
 	/*
 	 * Create the TOAST pointer value that we'll return
 	 */
-	result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
-	SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK);
-	memcpy(VARDATA_EXTERNAL(result), &toast_pointer, sizeof(toast_pointer));
+	if (maxInlineSize)
+	{
+		varatt_external_inline toast_pointer_inline;
+
+		result = (struct varlena *) palloc(TOAST_INLINE_POINTER_SIZE + maxInlineSize);
+		SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK_INLINE);
+		toast_pointer_inline.va_external = toast_pointer;
+		toast_pointer_inline.va_inline_size = maxInlineSize;
+		memcpy(VARDATA_EXTERNAL(result), &toast_pointer_inline, sizeof(toast_pointer_inline));
+		memcpy(VARDATA_EXTERNAL_INLINE(result), data_start, maxInlineSize);
+	}
+	else
+	{
+		result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
+		SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK);
+		memcpy(VARDATA_EXTERNAL(result), &toast_pointer, sizeof(toast_pointer));
+	}
 
 	return PointerGetDatum(result);
+}
+
+Datum
+toast_save_datum(Relation rel, Datum value,
+				 struct varlena *oldexternal, int options)
+{
+	return toast_save_datum_internal(rel, value, oldexternal, options, 0);
+}
+
+Datum
+toast_save_datum_chunked(Relation rel, Datum value,
+						 struct varlena *oldexternal, int options,
+						 Size maxInlineSize)
+{
+	return toast_save_datum_internal(rel, value, oldexternal, options, maxInlineSize);
 }
 
 /* ----------
@@ -392,11 +465,12 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	int			validIndex;
 	SnapshotData SnapshotToast;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
+		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 		return;
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
 	/*
 	 * Open the toast relation and its indexes
@@ -644,28 +718,11 @@ init_toast_snapshot(Snapshot toast_snapshot)
 	InitToastSnapshot(*toast_snapshot, snapshot->lsn, snapshot->whenTaken);
 }
 
-/* ----------
- * create_fetch_datum_iterator -
- *
- * Initialize fetch datum iterator.
- * ----------
- */
-FetchDatumIterator
-create_fetch_datum_iterator(struct varlena *attr)
+static void
+create_fetch_datum_iterator_scan(FetchDatumIterator iter)
 {
 	int			validIndex;
-	FetchDatumIterator iter;
-
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
-		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
-
-	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
-
-	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
-
-	iter->ressize = iter->toast_pointer.va_extsize;
-	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+	MemoryContext oldcxt = MemoryContextSwitchTo(iter->mcxt);
 
 	/*
 	 * Open the toast relation and its indexes
@@ -698,7 +755,48 @@ create_fetch_datum_iterator(struct varlena *attr)
 	iter->toastscan = systable_beginscan_ordered(iter->toastrel, iter->toastidxs[validIndex],
 												 &iter->snapshot, 1, &iter->toastkey);
 
-	iter->buf = create_toast_buffer(iter->ressize + VARHDRSZ,
+	MemoryContextSwitchTo(oldcxt);
+}
+
+/* ----------
+ * create_fetch_datum_iterator -
+ *
+ * Initialize fetch datum iterator.
+ * ----------
+ */
+FetchDatumIterator
+create_fetch_datum_iterator(struct varlena *attr)
+{
+	FetchDatumIterator iter;
+	int32		inlineSize;
+
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
+
+	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
+
+	iter->mcxt = CurrentMemoryContext;
+
+	/* Must copy to access aligned fields */
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	{
+		//VARATT_EXTERNAL_GET_POINTER(toast_pointer_inline, attr);
+		struct varatt_external_inline toast_pointer_inline;
+
+		memcpy(&toast_pointer_inline, VARDATA_EXTERNAL(attr), sizeof(toast_pointer_inline));
+		iter->toast_pointer = toast_pointer_inline.va_external;
+		inlineSize = toast_pointer_inline.va_inline_size;
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
+		inlineSize = 0;
+	}
+
+	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer) - inlineSize;
+	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+
+	iter->buf = create_toast_buffer(iter->ressize + inlineSize + VARHDRSZ,
 									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer));
 
 	iter->nextidx = 0;
@@ -713,7 +811,7 @@ free_fetch_datum_iterator(FetchDatumIterator iter)
 	if (iter == NULL)
 		return;
 
-	if (!iter->done)
+	if (!iter->done && iter->toastscan)
 	{
 		systable_endscan_ordered(iter->toastscan);
 		toast_close_indexes(iter->toastidxs, iter->num_indexes, AccessShareLock);
@@ -744,6 +842,9 @@ fetch_datum_iterate(FetchDatumIterator iter)
 	int32		chunksize;
 
 	Assert(iter != NULL && !iter->done);
+
+	if (!iter->toastscan)
+		create_fetch_datum_iterator_scan(iter);
 
 	ttup = systable_getnext_ordered(iter->toastscan, ForwardScanDirection);
 	if (ttup == NULL)
@@ -853,8 +954,9 @@ ToastBuffer *
 create_toast_buffer(int32 size, bool compressed)
 {
 	ToastBuffer *buf = (ToastBuffer *) palloc0(sizeof(ToastBuffer));
-	buf->buf = (const char *) palloc0(size);
-	if (compressed) {
+	buf->buf = (const char *) palloc(size);
+	if (compressed)
+	{
 		SET_VARSIZE_COMPRESSED(buf->buf, size);
 		/*
 		 * Note the constraint buf->position <= buf->limit may be broken
@@ -884,6 +986,7 @@ free_toast_buffer(ToastBuffer *buf)
 	pfree(buf);
 }
 
+#if 0
 /* ----------
  * pglz_decompress_iterate -
  *
@@ -901,7 +1004,7 @@ free_toast_buffer(ToastBuffer *buf)
  */
 void
 pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
-						DetoastIterator iter, unsigned char *destend)
+						DetoastIterator iter, const char *destend)
 {
 	const unsigned char *sp;
 	const unsigned char *srcend;
@@ -1034,3 +1137,4 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 	source->position = (char *) sp;
 	dest->limit = (char *) dp;
 }
+#endif
