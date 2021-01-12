@@ -507,9 +507,10 @@ pglz_find_match(int16 *hstart, const char *input, const char *end,
  */
 int32
 pglz_compress(const char *source, int32 slen, char *dest,
-			  const PGLZ_Strategy *strategy)
+			  const PGLZ_Strategy *strategy, int32 *dlen)
 {
 	unsigned char *bp = (unsigned char *) dest;
+	unsigned char *bend;
 	unsigned char *bstart = bp;
 	int			hist_next = 1;
 	bool		hist_recycle = false;
@@ -544,6 +545,16 @@ pglz_compress(const char *source, int32 slen, char *dest,
 		slen < strategy->min_input_size ||
 		slen > strategy->max_input_size)
 		return -1;
+
+	if (dlen)
+	{
+		if (*dlen < 4)
+			return -1;
+
+		bend = bstart + *dlen - 4;
+	}
+	else
+		bend = bstart + PGLZ_MAX_OUTPUT(slen);
 
 	/*
 	 * Limit the match parameters to the supported range.
@@ -627,6 +638,9 @@ pglz_compress(const char *source, int32 slen, char *dest,
 		if (!found_match && bp - bstart >= strategy->first_success_by)
 			return -1;
 
+		if (bp > bend)
+			break;
+
 		/*
 		 * Try to find a match in the history
 		 */
@@ -671,6 +685,9 @@ pglz_compress(const char *source, int32 slen, char *dest,
 	if (result_size >= result_max)
 		return -1;
 
+	if (dlen)
+		*dlen = dp - source;
+
 	/* success */
 	return result_size;
 }
@@ -678,8 +695,6 @@ pglz_compress(const char *source, int32 slen, char *dest,
 /* Opaque pglz decompression state */
 typedef struct pglz_state
 {
-	const unsigned char *sp;
-	unsigned char *dp;
 	int32		len;
 	int32		off;
 	int			ctrlc;
@@ -699,28 +714,23 @@ typedef struct pglz_state
  * ----------
  */
 int32
-pglz_decompress_state(const char *source, int32 slen, char *dest,
+pglz_decompress_state(const char *source, int32 *slen, char *dest,
 					  int32 dlen, bool check_complete, bool last_cource_chunk,
 					  void **pstate)
 {
 	pglz_state *state = pstate ? *pstate : NULL;
-	const unsigned char *sp;
-	const unsigned char *srcend;
-	unsigned char *dp;
-	unsigned char *destend;
+	const unsigned char *sp = (const unsigned char *) source;
+	const unsigned char *srcend = sp + *slen;
+	unsigned char *dp = (unsigned char *) dest;
+	unsigned char *destend = dp + dlen;
 	unsigned char ctrl;
 	int			ctrlc;
 	int32		len;
 	int32		remlen;
 	int32		off;
 
-	srcend = ((const unsigned char *) source) + slen;
-	destend = ((unsigned char *) dest) + rawsize;
-
 	if (state)
 	{
-		sp = state->sp;
-		dp = state->dp;
 		ctrl = state->ctrl;
 		ctrlc = state->ctrlc;
 
@@ -742,7 +752,7 @@ pglz_decompress_state(const char *source, int32 slen, char *dest,
 			if (dp >= destend)
 			{
 				state->len = remlen;
-				state->dp = dp;
+				*slen = 0;
 				return (char *) dp - dest;
 			}
 
@@ -757,8 +767,6 @@ pglz_decompress_state(const char *source, int32 slen, char *dest,
 	}
 	else
 	{
-		sp = (const unsigned char *) source;
-		dp = (unsigned char *) dest;
 		ctrl = 0;
 		ctrlc = 8;
 		remlen = 0;
@@ -884,10 +892,10 @@ ctrl_loop:
 
 		state->ctrl = ctrl;
 		state->ctrlc = ctrlc;
-		state->sp = sp;
-		state->dp = dp;
 		state->len = remlen;
 		state->off = off;
+
+		*slen = (const char *) sp - source;
 	}
 
 	/*
@@ -948,5 +956,5 @@ int32
 pglz_decompress(const char *source, int32 slen, char *dest, int32 rawsize,
 				bool check_complete)
 {
-	return pglz_decompress_state(source, slen, dest, rawsize, check_complete, true, NULL);
+	return pglz_decompress_state(source, &slen, dest, rawsize, check_complete, true, NULL);
 }

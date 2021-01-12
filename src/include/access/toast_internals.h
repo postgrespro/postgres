@@ -36,6 +36,9 @@ typedef struct toast_compress_header
 #define TOAST_COMPRESS_METHOD(ptr) \
 	(((toast_compress_header *) (ptr))->tcinfo >> VARLENA_EXTSIZE_BITS)
 
+#define TOAST_COMPRESS_HDRSZ			VARHDRSZ_COMPRESSED
+#define TOAST_COMPRESS_RAWDATA(attr)	((char *)(attr) + TOAST_COMPRESS_HDRSZ)
+
 #define TOAST_COMPRESS_SET_SIZE_AND_COMPRESS_METHOD(ptr, len, cm_method) \
 	do { \
 		Assert((len) > 0 && (len) <= VARLENA_EXTSIZE_MASK); \
@@ -51,6 +54,9 @@ extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 extern void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
 extern Datum toast_save_datum(Relation rel, Datum value,
 							  struct varlena *oldexternal, int options);
+extern Datum toast_save_datum_chunked(Relation rel, Datum value,
+									  struct varlena *oldexternal, int options,
+									  Size maxInlineSize);
 
 extern int	toast_open_indexes(Relation toastrel,
 							   LOCKMODE lock,

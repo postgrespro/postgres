@@ -12,6 +12,8 @@
 #ifndef DETOAST_H
 #define DETOAST_H
 
+#include "access/toast_compression.h"
+
 /*
  * Macro to fetch the possibly-unaligned contents of an EXTERNAL datum
  * into a local "struct varatt_external" toast pointer.  This should be
@@ -27,8 +29,34 @@ do { \
 	memcpy(&(toast_pointer), VARDATA_EXTERNAL(attre), sizeof(toast_pointer)); \
 } while (0)
 
+static inline Size
+varatt_external_inline_get_pointer(struct varlena *attr, /* FIXME */
+								   struct varatt_external *toast_pointer)
+{
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	{
+		struct varatt_external_inline toast_pointer_inline;
+
+		memcpy(&toast_pointer_inline, VARDATA_EXTERNAL(attr),
+			   sizeof(toast_pointer_inline));
+		*toast_pointer = toast_pointer_inline.va_external;
+
+		return toast_pointer_inline.va_inline_size;
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(*toast_pointer, attr);
+		return 0;
+	}
+}
+
+#define VARATT_EXTERNAL_INLINE_GET_POINTER(toast_ptr, attr) \
+	varatt_external_inline_get_pointer(attr, &(toast_ptr))
+
+
 /* Size of an EXTERNAL datum that contains a standard TOAST pointer */
 #define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
+#define TOAST_INLINE_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_inline))
 
 /* Size of an EXTERNAL datum that contains an indirection pointer */
 #define INDIRECT_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_indirect))
@@ -96,10 +124,11 @@ typedef struct FetchDatumIteratorData
 	ToastBuffer	*buf;
 	Relation	toastrel;
 	Relation	*toastidxs;
+	MemoryContext mcxt;
 	SysScanDesc	toastscan;
 	ScanKeyData	toastkey;
 	SnapshotData			snapshot;
-	struct varatt_external	toast_pointer;
+	struct varatt_external toast_pointer;
 	int32		ressize;
 	int32		nextidx;
 	int32		numchunks;
@@ -109,22 +138,13 @@ typedef struct FetchDatumIteratorData
 
 typedef struct FetchDatumIteratorData *FetchDatumIterator;
 
-/*
- * If "ctrlc" field in iterator is equal to INVALID_CTRLC, it means that
- * the field is invalid and need to read the control byte from the
- * source buffer in the next iteration, see pglz_decompress_iterate().
- */
-#define INVALID_CTRLC 8
-
 typedef struct DetoastIteratorData
 {
 	ToastBuffer 		*buf;
 	FetchDatumIterator	fetch_datum_iterator;
-	unsigned char		ctrl;
-	int					ctrlc;
 	int					nrefs;
-	int32				len;
-	int32				off;
+	void			   *decompression_state;
+	ToastCompressionId	compression_method;
 	bool				compressed;		/* toast value is compressed? */
 	bool				done;
 }			DetoastIteratorData;
@@ -136,8 +156,10 @@ extern void free_fetch_datum_iterator(FetchDatumIterator iter);
 extern void fetch_datum_iterate(FetchDatumIterator iter);
 extern ToastBuffer *create_toast_buffer(int32 size, bool compressed);
 extern void free_toast_buffer(ToastBuffer *buf);
+extern void toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
+									 DetoastIterator iter, const char *destend);
 extern void pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
-									DetoastIterator iter, unsigned char *destend);
+									DetoastIterator iter, char *destend);
 
 /* ----------
  * create_detoast_iterator -
@@ -189,7 +211,7 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 		fetch_datum_iterate(fetch_iter);
 
 	if (detoast_iter->compressed)
-		pglz_decompress_iterate(fetch_iter->buf, detoast_iter->buf, detoast_iter, (unsigned char *) destend);
+		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf, detoast_iter, destend);
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
 		detoast_iter->done = true;
