@@ -2868,21 +2868,29 @@ jsonbzIteratorInit(JsonContainer *jc)
 }
 
 static void
-jsonbzInit(JsonContainerData *jc, Datum value)
+jsonbzInitFromCompresedDatum(JsonContainerData *jc, CompressedDatum *cd)
 {
 	CompressedJsonb *cjb = palloc(sizeof(*cjb));
-	CompressedDatum *cd = palloc(sizeof(*cd));
 
 	cjb->datum = cd;
 	cjb->offset = offsetof(Jsonb, root);
 
-	CompressedDatumInit(cd, value);
 	if (!jsonb_partial_decompression)
 		CompressedDatumDecompressAll(cd);
 	else
 		CompressedDatumDecompress(cd, 256);
 
 	jsonbzInitContainer(jc, cjb, VARSIZE_ANY_EXHDR(cd->data)); // cd->total_len - VARHDRSZ
+}
+
+static void
+jsonbzInit(JsonContainerData *jc, Datum value)
+{
+	CompressedDatum *cd = palloc(sizeof(*cd));
+
+	CompressedDatumInit(cd, value);
+
+	jsonbzInitFromCompresedDatum(jc, cd);
 }
 
 JsonContainerOps
@@ -2931,7 +2939,8 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 
 	js = JsonExpand(tmp, (Datum) 0, false, &jsonbzContainerOps);
 
-	jsonbzInit(&js->root, datum);
+	jsonbzInitFromCompresedDatum(&js->root,
+								 memcpy(palloc(sizeof(cd)), &cd, sizeof(cd)));
 
 	return js;
 }
