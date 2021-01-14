@@ -97,6 +97,8 @@ typedef struct Json
 #define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(JsonGetUniquified(json))
 #define JsontPGetDatum(json)		CStringGetTextDatum(JsonToCString(JsonRoot(json), NULL))
 
+#define JsonValueGetJsonbDatum(json)		PointerGetDatum(JsonValueFlatten(json, JsonbEncode, &jsonbContainerOps))
+
 #ifdef JsonxPGetDatum
 # define JsonGetDatum(json)			JsonxPGetDatum(json)
 #else
@@ -117,6 +119,7 @@ typedef struct Json
 #undef PG_RETURN_JSONB_P
 #define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonGetDatum(x))
 #define PG_RETURN_JSONT_P(x)		PG_RETURN_DATUM(JsontPGetDatum(x))
+#define PG_RETURN_JSONB_VALUE(x)	PG_RETURN_DATUM(JsonValueGetJsonbDatum(x))
 
 #define PG_GETARG_JSONX_TMP(n, tmp)	DatumGetJsonxTmp(PG_GETARG_DATUM(n), tmp)
 
@@ -126,7 +129,7 @@ typedef struct Json
 #else
 #define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #endif
-#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), NULL /*alloca(sizeof(Json))*/, false) /* FIXME conditional alloca() */
+#define PG_GETARG_JSONB_PC(n)		DatumGetJsonbPC(PG_GETARG_DATUM(n), alloca(JsonAllocSize(16)) /* FIXME sizeof CompressedJsonb */, false)
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #undef	PG_GETARG_JSONB_P_COPY
