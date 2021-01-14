@@ -2719,6 +2719,9 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 			datum = PointerGetDatum(pg_detoast_datum_copy(src));
 	}
 
+	if (!jsonb_partial_decompression)
+		return DatumGetJson(datum, &jsonbContainerOps, tmp);
+
 	CompressedDatumInit(&cd, datum);
 
 	if (!cd.compressed)
