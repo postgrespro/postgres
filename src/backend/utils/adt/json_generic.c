@@ -751,7 +751,7 @@ JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 
 	if (tmp)
 	{
-		Assert(0);
+		//Assert(0);
 		json = tmp;
 		json->obj.isTemporary = true;
 	}
