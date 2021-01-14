@@ -2547,7 +2547,7 @@ CompressedDatumDecompress(CompressedDatum *cd, Size offset)
 {
 	int			res;
 
-	if (!cd->compressed || offset < cd->decompressed_len)
+	if (!cd->compressed || offset <= cd->decompressed_len)
 		return;
 
 #if 0
