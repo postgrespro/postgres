@@ -638,7 +638,7 @@ jsonb_object_field(PG_FUNCTION_ARGS)
 												 PG_GETARG_TEXT_PP(1));
 
 	if (res)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+		PG_RETURN_JSONB_VALUE(res);
 	else
 		PG_RETURN_NULL();
 }
