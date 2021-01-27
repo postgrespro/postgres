@@ -108,6 +108,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	Datum		toast_values[MaxHeapAttributeNumber];
 	Datum		toast_oldvalues[MaxHeapAttributeNumber];
 	ToastAttrInfo toast_attr[MaxHeapAttributeNumber];
+	AttrToaster toasters[MaxHeapAttributeNumber];
 	ToastTupleContext ttc;
 
 	/*
@@ -154,6 +155,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		ttc.ttc_oldisnull = toast_oldisnull;
 	}
 	ttc.ttc_attr = toast_attr;
+	ttc.ttc_toaster = toasters;
 	toast_tuple_init(&ttc);
 
 	/* ----------
@@ -198,6 +200,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		{
 			ToastAttrInfo *attr = &ttc.ttc_attr[biggest_attno];
 			Datum	   *p_value = &ttc.ttc_values[biggest_attno];
+			AttrToaster toaster = ttc.ttc_toaster[biggest_attno];
 			Datum		old_value = *p_value;
 			Datum		compressed_value = (Datum) 0;
 			bool		externalize = false;
@@ -208,9 +211,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 
 			attr->tai_colflags &= ~TOASTCOL_NEEDS_FREE;
 
-			/* FIXME pass flag to check compressedSize < maxDataLen */
-			toast_tuple_try_compression(&ttc, biggest_attno);
-
+			/* calculate size of other attributes */
 			{
 				struct varlena tmp;
 
@@ -220,6 +221,26 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 				size = heap_compute_data_size(tupleDesc, toast_values, toast_isnull);
 				*p_value = old_value;
 			}
+
+			if (toaster != NULL)
+			{
+				Datum		new_value = toaster(ttc.ttc_rel, *p_value,
+												(Datum) 0, maxDataLen - size,
+												attr->tai_compression);
+
+				if (new_value != *p_value)
+				{
+					*p_value = new_value;
+					attr->tai_size = VARSIZE(new_value);
+					attr->tai_colflags = TOASTCOL_NEEDS_FREE;
+					ttc.ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+					continue;
+				}
+			}
+
+			/* FIXME pass flag to check compressedSize < maxDataLen */
+			toast_tuple_try_compression(&ttc, biggest_attno);
+
 
 			if (attr->tai_colflags & TOASTCOL_INCOMPRESSIBLE)
 			{

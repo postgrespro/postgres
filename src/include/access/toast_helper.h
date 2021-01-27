@@ -35,6 +35,8 @@ typedef struct
 	char		tai_compression;
 } ToastAttrInfo;
 
+typedef Datum (*AttrToaster)(Relation rel, Datum new_val, Datum old_val, int max_size, char cmethod);
+
 /*
  * Information about one tuple being toasted.
  */
@@ -51,6 +53,7 @@ typedef struct
 	bool	   *ttc_isnull;		/* null flags for the tuple columns */
 	Datum	   *ttc_oldvalues;	/* values from previous tuple */
 	bool	   *ttc_oldisnull;	/* null flags from previous tuple */
+	AttrToaster*ttc_toaster;	/* toaster for attribute, if any */
 
 	/*
 	 * Before calling toast_tuple_init, the caller should set tts_attr to
@@ -100,6 +103,7 @@ typedef struct
 #define TOASTCOL_NEEDS_FREE					TOAST_NEEDS_FREE
 #define TOASTCOL_IGNORE						0x0010
 #define TOASTCOL_INCOMPRESSIBLE				0x0020
+#define TOASTCOL_NEEDS_COMPARE_OLD			0x0040
 
 extern void toast_tuple_init(ToastTupleContext *ttc);
 extern int	toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
