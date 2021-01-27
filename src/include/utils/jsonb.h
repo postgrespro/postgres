@@ -163,6 +163,7 @@ typedef uint32 JEntry;
 #define JENTRY_ISBOOL_TRUE		0x30000000
 #define JENTRY_ISNULL			0x40000000
 #define JENTRY_ISCONTAINER		0x50000000	/* array or object */
+#define JENTRY_ISCONTAINER_PTR	0x60000000	/* pointer to toasted array or object */
 
 /* Access macros.  Note possible multiple evaluations */
 #define JBE_OFFLENFLD(je_)		((je_) & JENTRY_OFFLENMASK)
@@ -170,6 +171,7 @@ typedef uint32 JEntry;
 #define JBE_ISSTRING(je_)		(((je_) & JENTRY_TYPEMASK) == JENTRY_ISSTRING)
 #define JBE_ISNUMERIC(je_)		(((je_) & JENTRY_TYPEMASK) == JENTRY_ISNUMERIC)
 #define JBE_ISCONTAINER(je_)	(((je_) & JENTRY_TYPEMASK) == JENTRY_ISCONTAINER)
+#define JBE_ISCONTAINER_PTR(je_)(((je_) & JENTRY_TYPEMASK) == JENTRY_ISCONTAINER_PTR)
 #define JBE_ISNULL(je_)			(((je_) & JENTRY_TYPEMASK) == JENTRY_ISNULL)
 #define JBE_ISBOOL_TRUE(je_)	(((je_) & JENTRY_TYPEMASK) == JENTRY_ISBOOL_TRUE)
 #define JBE_ISBOOL_FALSE(je_)	(((je_) & JENTRY_TYPEMASK) == JENTRY_ISBOOL_FALSE)
@@ -195,6 +197,8 @@ typedef uint32 JEntry;
 #define JB_OFFSET_STRIDE		32
 #endif
 
+typedef uint32 JsonbContainerHeader;
+
 /*
  * A jsonb array or object node, within a Jsonb Datum.
  *
@@ -207,8 +211,8 @@ typedef uint32 JEntry;
  */
 typedef struct JsonbContainer
 {
-	uint32		header;			/* number of elements or key/value pairs, and
-								 * flags */
+	JsonbContainerHeader header;	/* number of elements or key/value pairs,
+									 * and flags */
 	JEntry		children[FLEXIBLE_ARRAY_MEMBER];
 
 	/* the data for each child node follows. */
@@ -223,6 +227,7 @@ typedef struct JsonbContainer
 #define JB_TOBJECT_SORTED		0x30000000	/* object with keys sorted by
 											 * length-alpha; values sorted by
 											 * length */
+#define JB_TOBJECT_TOASTED		0x10000000	/* object with toasted keys */
 #define JB_TARRAY				0x40000000	/* array */
 #define JB_TSCALAR				0x50000000	/* scalar pseudo-array */
 
@@ -242,7 +247,9 @@ typedef struct
 #define JB_HEADER(jbp_)			(((JsonbContainer *) VARDATA(jbp_))->header)
 #define JB_ROOT_COUNT(jbp_)		(JB_HEADER(jbp_) & JB_CMASK)
 #define JB_ROOT_IS_SCALAR(jbp_) ((JB_HEADER(jbp_) & JB_TMASK) == JB_TSCALAR)
-#define JB_ROOT_IS_OBJECT(jbp_) ((JB_HEADER(jbp_) & JB_TMASK) == JB_TOBJECT)
+#define JB_ROOT_IS_OBJECT(jbp_) ((JB_HEADER(jbp_) & JB_TMASK) == JB_TOBJECT || \
+								 (JB_HEADER(jbp_) & JB_TMASK) == JB_TOBJECT_SORTED || \
+								 (JB_HEADER(jbp_) & JB_TMASK) == JB_TOBJECT_TOASTED)
 #define JB_ROOT_IS_ARRAY(jbp_)	((JB_HEADER(jbp_) & JB_TMASK) == JB_TSCALAR || \
 								 (JB_HEADER(jbp_) & JB_TMASK) == JB_TARRAY)
 #endif
@@ -270,6 +277,14 @@ typedef enum jbvType
 	jbvDatetime = 0x20,
 	jbvScalar = 0x100
 } JsonbValueType;
+
+typedef struct varatt_external JsonbToastPointer;
+
+typedef struct JsonbToastedContainerPointer
+{
+	JsonbContainerHeader header;
+	JsonbToastPointer ptr;
+} JsonbToastedContainerPointer;
 
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
@@ -415,5 +430,11 @@ extern void appendToBuffer(StringInfo buffer, const void *data, int len);
 
 extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
+extern bool jsonb_toast_fields;				/* GUC */
+
+typedef struct RelationData *Relation;
+extern Datum jsonb_toaster(Relation rel, Datum new_val, Datum old_val,
+						   int max_size, char cmethod);	/* FIXME */
+extern bool JsonbHasExternal(Datum jb);
 
 #endif							/* __JSONB_H__ */

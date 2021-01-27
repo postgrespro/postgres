@@ -193,7 +193,7 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 {
 	FetchDatumIterator fetch_iter = detoast_iter->fetch_datum_iterator;
 
-	Assert(detoast_iter != NULL && !detoast_iter->done);
+	Assert(detoast_iter != NULL && !detoast_iter->done && fetch_iter);
 
 	if (!detoast_iter->compressed)
 		destend = NULL;
@@ -214,7 +214,11 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf, detoast_iter, destend);
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
+	{
 		detoast_iter->done = true;
+		free_fetch_datum_iterator(fetch_iter);
+		detoast_iter->fetch_datum_iterator = NULL;
+	}
 }
 
 

@@ -62,6 +62,7 @@
 #include "access/tupdesc_details.h"
 #include "executor/tuptable.h"
 #include "utils/expandeddatum.h"
+#include "utils/jsonb.h"	/* FIXME */
 
 
 /* Does att's datatype allow packing into the 1-byte-header varlena format? */
@@ -268,6 +269,13 @@ fill_val(Form_pg_attribute att,
 											  att->attalign);
 			data_length = VARSIZE(val);
 			memcpy(data, val, data_length);
+		}
+
+		if (!(*infomask & HEAP_HASEXTERNAL) &&
+			att->atttypid == JSONBOID)	/* FIXME */
+		{
+			if (JsonbHasExternal(datum))
+				*infomask |= HEAP_HASEXTERNAL;
 		}
 	}
 	else if (att->attlen == -2)

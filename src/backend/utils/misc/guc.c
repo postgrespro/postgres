@@ -2103,6 +2103,14 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jsonb_toast_fields", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("TOAST jsonb fields."),
+		},
+		&jsonb_toast_fields,
+		true,
+		NULL, NULL, NULL
+	},
 
 	/* End-of-list marker */
 	{

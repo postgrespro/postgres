@@ -20,6 +20,8 @@
 #include "access/toast_internals.h"
 #include "catalog/pg_type_d.h"
 
+/* FIXME */ extern Datum jsonb_toaster(Relation rel, Datum new_val,
+									   Datum old_val, int max_size, char cmethod);
 
 /*
  * Prepare to TOAST a tuple.
@@ -55,6 +57,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
+		ttc->ttc_toaster[i] = att->atttypid == JSONBOID ? jsonb_toaster : NULL;
 
 		if (ttc->ttc_oldvalues != NULL)
 		{
@@ -70,30 +73,79 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * If the old value is stored on disk, check if it has changed so
 			 * we have to delete it later.
 			 */
-			if (att->attlen == -1 && !ttc->ttc_oldisnull[i] &&
-				VARATT_IS_EXTERNAL_ONDISK(old_value))
+			if (att->attlen == -1 && !ttc->ttc_oldisnull[i])
 			{
-				if (ttc->ttc_isnull[i] ||
-					!VARATT_IS_EXTERNAL_ONDISK(new_value) ||
-					memcmp((char *) old_value, (char *) new_value,
-						   VARSIZE_EXTERNAL(old_value)) != 0)
+				if (VARATT_IS_EXTERNAL_ONDISK(old_value) ||
+					VARATT_IS_EXTERNAL_ONDISK_INLINE(old_value))
 				{
-					/*
-					 * The old external stored value isn't needed any more
-					 * after the update
-					 */
-					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+					if (ttc->ttc_isnull[i] ||
+						(!VARATT_IS_EXTERNAL_ONDISK(new_value) &&
+						 !VARATT_IS_EXTERNAL_ONDISK_INLINE(new_value)))
+					{
+						/*
+						 * The old external stored value isn't needed
+						 * any more after the update
+						 */
+						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+						ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
+					}
+					else
+					{
+						struct varatt_external old_toast_ptr;
+						struct varatt_external new_toast_ptr;
+
+						VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_ptr, old_value);
+						VARATT_EXTERNAL_INLINE_GET_POINTER(new_toast_ptr, new_value);
+
+						if (memcmp(&old_toast_ptr, &new_toast_ptr,
+								   sizeof(old_toast_ptr)) != 0)
+						{
+							/*
+							 * The old external stored value isn't
+							 * needed any more after the update
+							 */
+							ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+							ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
+						}
+						else
+						{
+							/*
+							 * This attribute isn't changed by this
+							 * update so we reuse the original reference
+							 * to the old value in the new tuple.
+							 */
+							ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+							continue;
+						}
+					}
+				}
+				else if (ttc->ttc_toaster[i] &&
+						 (ttc->ttc_isnull[i] ||
+						  VARATT_IS_EXTERNAL_ONDISK(new_value) ||
+						  memcmp((char *) old_value, (char *) new_value,
+								 VARSIZE_ANY(old_value)) != 0))
+				{
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_COMPARE_OLD;
 					ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 				}
-				else
+			}
+
+			if (ttc->ttc_toaster[i] &&
+				(ttc->ttc_attr[i].tai_colflags & (TOASTCOL_NEEDS_DELETE_OLD |
+									   TOASTCOL_NEEDS_COMPARE_OLD)) != 0)
+			{
+				Datum		new_val =
+					ttc->ttc_toaster[i](ttc->ttc_rel,
+										ttc->ttc_isnull[i] ? (Datum) 0 : ttc->ttc_values[i],
+										ttc->ttc_oldvalues[i],  -1);
+
+				if (new_val != (Datum) 0)
 				{
-					/*
-					 * This attribute isn't changed by this update so we reuse
-					 * the original reference to the old value in the new
-					 * tuple.
-					 */
-					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
-					continue;
+					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+						pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+					ttc->ttc_values[i] = new_val;
 				}
 			}
 		}
@@ -102,6 +154,22 @@ toast_tuple_init(ToastTupleContext *ttc)
 			/*
 			 * For INSERT simply get the new value
 			 */
+
+			if (ttc->ttc_toaster[i] && !ttc->ttc_isnull[i])
+			{
+				Datum       new_val =
+					ttc->ttc_toaster[i](ttc->ttc_rel, ttc->ttc_values[i], (Datum) 0,  -1);
+
+				if (new_val != (Datum) 0)
+				{
+					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+						pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+					ttc->ttc_values[i] = new_val;
+				}
+			}
+
 			new_value = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
 		}
 
