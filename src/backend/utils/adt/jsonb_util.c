@@ -2859,10 +2859,23 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
 #endif
 	const JsonbContainerHeader *jbc = (const JsonbContainerHeader *)((char *) jb + cjb->offset);
 
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children - (char *) jbc));
+#else
+	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children);
+#endif
+
+	it->count = (jbc->header & JBC_CMASK);
+
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
+#else
+	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children[it->count]);
+#endif
+
 	it->cjb = cjb;
 	it->container = jbc;
 	it->index = 0;
-	it->count = (jbc->header & JBC_CMASK);
 	it->offset = 0;
 	it->base_addr = (char *) &jbc->children[it->count];
 }
@@ -2976,7 +2989,7 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 	if (!jsonb_partial_decompression)
 		PG_DETOAST_ITERATE(iter, iter->buf->capacity);
 	else
-		PG_DETOAST_ITERATE(iter, Min(iter->buf->buf + offsetof(Jsonb, root.children), iter->buf->capacity));
+		PG_DETOAST_ITERATE(iter, Min(iter->buf->buf + offsetof(JsonbDatum, root.children), iter->buf->capacity));
 
 	jsonbzInitContainer(jc, cjb, VARSIZE_ANY_EXHDR(iter->buf->buf)); // cd->total_len - VARHDRSZ
 #endif
