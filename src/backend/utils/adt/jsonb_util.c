@@ -2894,10 +2894,23 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
 #endif
 	const JsonbContainer *jbc = (const JsonbContainer *)((char *) jb + cjb->offset);
 
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children - (char *) jbc));
+#else
+	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children);
+#endif
+
+	it->count = (jbc->header & JB_CMASK);
+
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
+#else
+	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children[it->count]);
+#endif
+
 	it->cjb = cjb;
 	it->container = jbc;
 	it->index = 0;
-	it->count = (jbc->header & JB_CMASK);
 	it->offset = 0;
 	it->base_addr = (char *) &jbc->children[it->count];
 }
