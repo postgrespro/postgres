@@ -130,11 +130,14 @@ jsonb_recv(PG_FUNCTION_ARGS)
 Datum
 jsonb_out(PG_FUNCTION_ARGS)
 {
+	jsonbInitIterators();
+
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	char	   *out;
 
 	out = JsonToCString(JsonbRoot(jb), NULL);
 
+	jsonbFreeIterators();
 	PG_FREE_IF_COPY_JSONB(jb, 0);
 
 	PG_RETURN_CSTRING(out);
@@ -148,12 +151,16 @@ jsonb_out(PG_FUNCTION_ARGS)
 Datum
 jsonb_send(PG_FUNCTION_ARGS)
 {
+	jsonbInitIterators();
+
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	StringInfoData buf;
 	StringInfo	jtext = makeStringInfo();
 	int			version = 1;
 
 	(void) JsonToCString(JsonbRoot(jb), jtext);
+
+	jsonbFreeIterators();
 
 	pq_begintypsend(&buf);
 	pq_sendint8(&buf, version);

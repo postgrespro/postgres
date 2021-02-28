@@ -411,6 +411,8 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
+		jsonbInitIterators();
+
 		jb = PG_GETARG_JSONB_P_COPY(0);
 		jp = PG_GETARG_JSONPATH_P_COPY(1);
 		vars = PG_GETARG_JSONB_P_COPY(2);
@@ -429,7 +431,10 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
 	c = list_head(found);
 
 	if (c == NULL)
+	{
+		jsonbFreeIterators();
 		SRF_RETURN_DONE(funcctx);
+	}
 
 	v = lfirst(c);
 	funcctx->user_fctx = list_delete_first(found);

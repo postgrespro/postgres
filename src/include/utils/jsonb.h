@@ -225,4 +225,7 @@ extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
 extern bool jsonb_partial_detoast;			/* GUC */
 
+extern void jsonbInitIterators(void);
+extern void jsonbFreeIterators(void);
+
 #endif							/* __JSONB_H__ */

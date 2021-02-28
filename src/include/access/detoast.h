@@ -174,7 +174,15 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 								 destend);
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
+	{
 		detoast_iter->done = true;
+#if 0
+		if (detoast_iter->buf == fetch_iter->buf)
+			fetch_iter->buf = NULL;
+		free_fetch_datum_iterator(fetch_iter);
+		detoast_iter->fetch_datum_iterator = NULL;
+#endif
+	}
 }
 
 #endif							/* FRONTEND */

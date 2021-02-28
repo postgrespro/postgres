@@ -2965,6 +2965,8 @@ jsonbzIteratorInit(JsonContainer *jc)
 	return jsonbIteratorInitExt(jc, jbc, cjb);
 }
 
+List **jsonb_detoast_iterators;
+
 static void
 #ifndef JSONB_DETOAST_ITERATOR
 jsonbzInitFromCompresedDatum(JsonContainerData *jc, CompressedDatum *cd)
@@ -2989,6 +2991,12 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 	cjb->iter = iter;
 	cjb->offset = offsetof(JsonbDatum, root);
 
+#define JSONB_FREE_ITERATORS
+#ifdef JSONB_FREE_ITERATORS
+	if (jsonb_detoast_iterators)
+		*jsonb_detoast_iterators = lappend(*jsonb_detoast_iterators, iter);
+#endif
+
 	if (!jsonb_partial_decompression)
 		PG_DETOAST_ITERATE(iter, iter->buf->capacity);
 	else
@@ -2998,14 +3006,36 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 #endif
 }
 
+void
+jsonbInitIterators(void)
+{
+#ifdef JSONB_FREE_ITERATORS
+	jsonb_detoast_iterators = palloc0(sizeof(*jsonb_detoast_iterators));
+#endif
+}
+
+void
+jsonbFreeIterators(void)
+{
+#ifdef JSONB_FREE_ITERATORS
+	ListCell *lc;
+
+	if (jsonb_detoast_iterators)
+		foreach(lc, *jsonb_detoast_iterators)
+			free_detoast_iterator(lfirst(lc));
+
+	jsonb_detoast_iterators = NULL;
+#endif
+}
+
 static void
 jsonbzFree(JsonContainer *jc)
 {
 	CompressedJsonb *cjb = (CompressedJsonb *) &jc->_data;
 
 #ifdef JSONB_DETOAST_ITERATOR
-	if (cjb->iter)
-		free_detoast_iterator(cjb->iter);
+//	if (cjb->iter)
+//		free_detoast_iterator(cjb->iter);
 #endif
 }
 

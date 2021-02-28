@@ -853,17 +853,24 @@ jsonb_object_field(PG_FUNCTION_ARGS)
 	text	   *key = PG_GETARG_TEXT_PP(1);
 	JsonbValue *v;
 	JsonbValue	vbuf;
+	Datum		res;
 
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
+
+	jsonbInitIterators();
 
 	v = getKeyJsonValueFromContainer(&jb->root,
 									 VARDATA_ANY(key),
 									 VARSIZE_ANY_EXHDR(key),
 									 &vbuf);
 
-	if (v != NULL)
-		PG_RETURN_JSONB_VALUE_P(v);
+	res = v ? JsonValueToJsonbDatum(v) : (Datum) 0;
+
+	jsonbFreeIterators();
+
+	if (res != (Datum) 0)
+		PG_RETURN_DATUM(res);
 
 	PG_RETURN_NULL();
 }
@@ -891,17 +898,24 @@ jsonb_object_field_text(PG_FUNCTION_ARGS)
 	text	   *key = PG_GETARG_TEXT_PP(1);
 	JsonbValue *v;
 	JsonbValue	vbuf;
+	text	   *res;
 
 	if (!JB_ROOT_IS_OBJECT(jb))
 		PG_RETURN_NULL();
+
+	jsonbInitIterators();
 
 	v = getKeyJsonValueFromContainer(&jb->root,
 									 VARDATA_ANY(key),
 									 VARSIZE_ANY_EXHDR(key),
 									 &vbuf);
 
-	if (v != NULL && v->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(v));
+	res = v != NULL && v->type != jbvNull ? JsonbValueAsText(v) : NULL;
+
+	jsonbFreeIterators();
+
+	if (res)
+		PG_RETURN_TEXT_P(res);
 
 	PG_RETURN_NULL();
 }
@@ -927,6 +941,7 @@ jsonb_array_element(PG_FUNCTION_ARGS)
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	int			element = PG_GETARG_INT32(1);
 	JsonbValue *v;
+	Datum		res;
 
 	if (!JB_ROOT_IS_ARRAY(jb))
 		PG_RETURN_NULL();
@@ -942,9 +957,15 @@ jsonb_array_element(PG_FUNCTION_ARGS)
 			element += nelements;
 	}
 
+	jsonbInitIterators();
+
 	v = getIthJsonbValueFromContainer(JsonbRoot(jb), element);
-	if (v != NULL)
-		PG_RETURN_JSONB_VALUE_P(v);
+	res = v != NULL ? JsonValueToJsonbDatum(v) : (Datum) 0;
+
+	jsonbFreeIterators();
+
+	if (res != (Datum) 0)
+		PG_RETURN_DATUM(res);
 
 	PG_RETURN_NULL();
 }
@@ -970,6 +991,7 @@ jsonb_array_element_text(PG_FUNCTION_ARGS)
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	int			element = PG_GETARG_INT32(1);
 	JsonbValue *v;
+	text	   *res;
 
 	if (!JB_ROOT_IS_ARRAY(jb))
 		PG_RETURN_NULL();
@@ -985,10 +1007,15 @@ jsonb_array_element_text(PG_FUNCTION_ARGS)
 			element += nelements;
 	}
 
-	v = getIthJsonbValueFromContainer(JsonbRoot(jb), element);
+	jsonbInitIterators();
 
-	if (v != NULL && v->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(v));
+	v = getIthJsonbValueFromContainer(JsonbRoot(jb), element);
+	res = v != NULL && v->type != jbvNull ? JsonbValueAsText(v) : NULL;
+
+	jsonbFreeIterators();
+
+	if (res)
+		PG_RETURN_TEXT_P(res);
 
 	PG_RETURN_NULL();
 }
@@ -1506,7 +1533,11 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 
 	deconstruct_array_builtin(path, TEXTOID, &pathtext, &pathnulls, &npath);
 
+	jsonbInitIterators();
+
 	res = jsonb_get_element(jb, pathtext, npath, &isnull, as_text);
+
+	jsonbFreeIterators();
 
 	if (isnull)
 		PG_RETURN_NULL();
@@ -1943,7 +1974,13 @@ json_each(PG_FUNCTION_ARGS)
 Datum
 jsonb_each(PG_FUNCTION_ARGS)
 {
-	return each_worker_jsonb(fcinfo, "jsonb_each", false);
+	Datum		res;
+
+	jsonbInitIterators();
+	res = each_worker_jsonb(fcinfo, "jsonb_each", false);
+	jsonbFreeIterators();
+
+	PG_RETURN_DATUM(res);
 }
 
 Datum
@@ -2193,13 +2230,25 @@ each_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 jsonb_array_elements(PG_FUNCTION_ARGS)
 {
-	return elements_worker_jsonb(fcinfo, "jsonb_array_elements", false);
+	Datum res;
+
+	jsonbInitIterators();
+	res = elements_worker_jsonb(fcinfo, "jsonb_array_elements", false);
+	jsonbFreeIterators();
+
+	PG_RETURN_DATUM(res);
 }
 
 Datum
 jsonb_array_elements_text(PG_FUNCTION_ARGS)
 {
-	return elements_worker_jsonb(fcinfo, "jsonb_array_elements_text", true);
+	Datum res;
+
+	jsonbInitIterators();
+	res = elements_worker_jsonb(fcinfo, "jsonb_array_elements_text", true);
+	jsonbFreeIterators();
+
+	PG_RETURN_DATUM(res);
 }
 
 static Datum
