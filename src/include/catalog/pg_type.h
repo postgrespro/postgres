@@ -306,6 +306,7 @@ DECLARE_UNIQUE_INDEX(pg_type_typname_nsp_index, 2704, on pg_type using btree(typ
 #define  TYPSTORAGE_EXTERNAL	'e' /* toastable, don't try to compress */
 #define  TYPSTORAGE_EXTENDED	'x' /* fully toastable */
 #define  TYPSTORAGE_MAIN		'm' /* like 'x' but try to store inline */
+#define  TYPSTORAGE_TAPAS		't' /* store compressed chunks, first chunk inlined */
 
 /* Is a type OID a polymorphic pseudotype?	(Beware of multiple evaluation) */
 #define IsPolymorphicType(typid)  \
