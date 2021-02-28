@@ -634,6 +634,8 @@ json_object_field_internal(Json *jb, text *key)
 Datum
 jsonb_object_field(PG_FUNCTION_ARGS)
 {
+	jsonbInitIterators();
+
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	JsonValue  *res = json_object_field_internal(jb,
 												 PG_GETARG_TEXT_PP(1));
@@ -644,11 +646,13 @@ jsonb_object_field(PG_FUNCTION_ARGS)
 
 		//if (res && res->type == jbvBinary)
 		//	JsonContainerFree(res->val.binary.data);
+		jsonbFreeIterators();
 		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_DATUM(r);
 	}
 	else
 	{
+		jsonbFreeIterators();
 		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_NULL();
 	}
@@ -669,6 +673,8 @@ json_object_field(PG_FUNCTION_ARGS)
 Datum
 jsonb_object_field_text(PG_FUNCTION_ARGS)
 {
+	jsonbInitIterators();
+
 	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	JsonValue  *res = json_object_field_internal(jb, PG_GETARG_TEXT_PP(1));
 
@@ -678,11 +684,13 @@ jsonb_object_field_text(PG_FUNCTION_ARGS)
 
 		//if (res && res->type == jbvBinary)
 		//	JsonContainerFree(res->val.binary.data);
+		jsonbFreeIterators();
 		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_TEXT_P(r);
 	}
 	else
 	{
+		jsonbFreeIterators();
 		PG_FREE_IF_COPY_JSONB(jb, 0);
 		PG_RETURN_NULL();
 	}
@@ -726,11 +734,17 @@ json_array_element_internal(Json *jb, int element)
 Datum
 jsonb_array_element(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_P(0),
+	jsonbInitIterators();
+
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_PC(0),
 												  PG_GETARG_INT32(1));
 
+	Datum		r = res ? JsonValueGetJsonbDatum(res) : (Datum) 0;
+
+	jsonbFreeIterators();
+
 	if (res)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+		PG_RETURN_DATUM(r);
 	else
 		PG_RETURN_NULL();
 }
@@ -750,11 +764,15 @@ json_array_element(PG_FUNCTION_ARGS)
 Datum
 jsonb_array_element_text(PG_FUNCTION_ARGS)
 {
-	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_P(0),
+	jsonbInitIterators();
+	JsonValue  *res = json_array_element_internal(PG_GETARG_JSONB_PC(0),
 												  PG_GETARG_INT32(1));
+	text	   *r = res && res->type ? JsonbValueAsText(res) : NULL;
 
-	if (res && res->type != jbvNull)
-		PG_RETURN_TEXT_P(JsonbValueAsText(res));
+	jsonbFreeIterators();
+
+	if (r)
+		PG_RETURN_TEXT_P(r);
 	else
 		PG_RETURN_NULL();
 }
@@ -1168,7 +1186,13 @@ jsonb_each(PG_FUNCTION_ARGS)
 Datum
 jsonb_each_text(PG_FUNCTION_ARGS)
 {
-	return each_worker_json(fcinfo, "jsonb_each_text", true, true);
+	Datum		res;
+
+	jsonbInitIterators();
+	res = each_worker_json(fcinfo, "jsonb_each_text", true, true);
+	jsonbFreeIterators();
+
+	return res;
 }
 
 Datum
@@ -1318,7 +1342,13 @@ jsonb_array_elements(PG_FUNCTION_ARGS)
 Datum
 jsonb_array_elements_text(PG_FUNCTION_ARGS)
 {
-	return elements_worker_json(fcinfo, "jsonb_array_elements_text", true, true);
+	Datum res;
+
+	jsonbInitIterators();
+	res = elements_worker_json(fcinfo, "jsonb_array_elements_text", true, true);
+	jsonbFreeIterators();
+
+	PG_RETURN_DATUM(res);
 }
 
 Datum
@@ -2810,7 +2840,7 @@ json_concat_internal(Json *jb1, Json *jb2, bool is_jsonb)
 
 	Assert(res != NULL);
 
-	return JsonbValueToJsonb(res);
+	return JsonValueToJson(res);
 }
 
 /*
@@ -2821,17 +2851,35 @@ json_concat_internal(Json *jb1, Json *jb2, bool is_jsonb)
 Datum
 jsonb_concat(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB_P(json_concat_internal(PG_GETARG_JSONB_P(0),
-										   PG_GETARG_JSONB_P(1),
-										   true));
+	jsonbInitIterators();
+
+	Json	   *js1 = PG_GETARG_JSONB_P(0);
+	Json	   *js2 = PG_GETARG_JSONB_P(1);
+	Json	   *js = json_concat_internal(js1, js2, true);
+	Datum		res = JsonbPGetDatum(js); //JsonValueGetJsonbDatum(res);
+
+	jsonbFreeIterators();
+	PG_FREE_IF_COPY_JSONB(js1, 0);
+	PG_FREE_IF_COPY_JSONB(js2, 0);
+
+	PG_RETURN_DATUM(res);
 }
 
 Datum
 json_concat(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONT_P(json_concat_internal(PG_GETARG_JSONT_P(0),
-										   PG_GETARG_JSONT_P(1),
-										   false));
+	jsonbInitIterators();
+
+	Json	   *js1 = PG_GETARG_JSONT_P(0);
+	Json	   *js2 = PG_GETARG_JSONT_P(1);
+	Json	   *js = json_concat_internal(js1, js2, false);
+	Datum		res = JsontPGetDatum(js);
+
+	jsonbFreeIterators();
+	PG_FREE_IF_COPY_JSONB(js1, 0);
+	PG_FREE_IF_COPY_JSONB(js2, 0);
+
+	PG_RETURN_DATUM(res);
 }
 
 static Json *
@@ -3139,10 +3187,21 @@ json_set_internal(Json *in, ArrayType *path, Json *newjsonb, bool create)
 Datum
 jsonb_set(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB_P(json_set_internal(PG_GETARG_JSONB_P(0),
+	jsonbInitIterators();
+
+	Json	   *jb1 = PG_GETARG_JSONB_P(0);
+	Json	   *jb2 = PG_GETARG_JSONB_P(2);
+	Json	   *res = json_set_internal(jb1,
 										PG_GETARG_ARRAYTYPE_P(1),
-										PG_GETARG_JSONB_P(2),
-										PG_GETARG_BOOL(3)));
+										jb2,
+										PG_GETARG_BOOL(3));
+	Datum		r = JsonbPGetDatum(res);
+
+	jsonbFreeIterators();
+	PG_FREE_IF_COPY_JSONB(jb1, 0);
+	PG_FREE_IF_COPY_JSONB(jb2, 2);
+
+	PG_RETURN_DATUM(r);
 }
 
 Datum

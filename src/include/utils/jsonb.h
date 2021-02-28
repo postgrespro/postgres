@@ -437,4 +437,7 @@ extern Datum jsonb_toaster(Relation rel, Datum new_val, Datum old_val,
 						   int max_size, char cmethod);	/* FIXME */
 extern bool JsonbHasExternal(Datum jb);
 
+extern void jsonbInitIterators(void);
+extern void jsonbFreeIterators(void);
+
 #endif							/* __JSONB_H__ */

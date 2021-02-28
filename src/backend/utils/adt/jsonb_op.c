@@ -149,10 +149,18 @@ json_exists_all(PG_FUNCTION_ARGS)
 static bool
 json_contains_internal(Json *val, Json *tmpl)
 {
-	if (JB_ROOT_IS_OBJECT(val) != JB_ROOT_IS_OBJECT(tmpl))
-		return false;
+	bool		res;
 
-	return JsonbDeepContains(JsonRoot(val), JsonRoot(tmpl));
+	jsonbInitIterators();
+
+	if (JB_ROOT_IS_OBJECT(val) != JB_ROOT_IS_OBJECT(tmpl))
+		res = false;
+	else
+		res = JsonbDeepContains(JsonRoot(val), JsonRoot(tmpl));
+
+	jsonbFreeIterators();
+
+	return res;
 }
 
 Datum

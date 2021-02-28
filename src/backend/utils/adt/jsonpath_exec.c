@@ -459,6 +459,8 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
+		jsonbInitIterators();
+
 		jb = is_jsonb ? PG_GETARG_JSONB_P_COPY(0) : PG_GETARG_JSONT_P_COPY(0);
 		jp = PG_GETARG_JSONPATH_P_COPY(1);
 		vars = is_jsonb ? PG_GETARG_JSONB_P_COPY(2) : PG_GETARG_JSONT_P_COPY(2);
@@ -477,7 +479,10 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 	c = list_head(found);
 
 	if (c == NULL)
+	{
+		jsonbFreeIterators();
 		SRF_RETURN_DONE(funcctx);
+	}
 
 	v = lfirst(c);
 	funcctx->user_fctx = list_delete_first(found);
@@ -490,7 +495,11 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz, bool is_jsonb)
 Datum
 jsonb_path_query(PG_FUNCTION_ARGS)
 {
-	return jsonb_path_query_internal(fcinfo, false, true);
+	Datum res;
+
+	res = jsonb_path_query_internal(fcinfo, false, true);
+
+	return res;
 }
 
 Datum
