@@ -2976,7 +2976,7 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 	if (!jsonb_partial_decompression)
 		PG_DETOAST_ITERATE(iter, iter->buf->capacity);
 	else
-		PG_DETOAST_ITERATE(iter, Min(iter->buf->buf + 256, iter->buf->capacity));
+		PG_DETOAST_ITERATE(iter, Min(iter->buf->buf + offsetof(Jsonb, root.children), iter->buf->capacity));
 
 	jsonbzInitContainer(jc, cjb, VARSIZE_ANY_EXHDR(iter->buf->buf)); // cd->total_len - VARHDRSZ
 #endif
