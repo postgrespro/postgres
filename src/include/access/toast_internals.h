@@ -52,6 +52,8 @@ extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 
 extern void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
+extern void toast_delete_datum_ext(Relation rel, Datum value,
+								   bool is_speculative, int first_chunk);
 extern Datum toast_save_datum(Relation rel, Datum value,
 							  struct varlena *oldexternal, int options);
 extern Datum toast_save_datum_chunked(Relation rel, Datum value,

@@ -131,7 +131,8 @@ typedef enum vartag_external
 	VARTAG_EXPANDED_RO = 2,
 	VARTAG_EXPANDED_RW = 3,
 	VARTAG_ONDISK = 18,
-	VARTAG_ONDISK_INLINE = 19	/* FIXME */
+	VARTAG_ONDISK_INLINE_HEAD = 19,	/* FIXME */
+	VARTAG_ONDISK_INLINE_TAIL = 20,
 } vartag_external;
 
 /* this test relies on the specific tag values above */
@@ -142,7 +143,9 @@ typedef enum vartag_external
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
-	 (tag) == VARTAG_ONDISK_INLINE ? offsetof(varatt_external_inline, va_data) + VARSIZE_EXTERNAL_INLINE(ptr) : \
+	 (tag) == VARTAG_ONDISK_INLINE_HEAD || \
+	 (tag) == VARTAG_ONDISK_INLINE_TAIL ? \
+	 offsetof(varatt_external_inline, va_data) + VARSIZE_EXTERNAL_INLINE(ptr) : \
 	 TrapMacro(true, "unrecognized TOAST vartag"))
 
 /*
@@ -338,7 +341,12 @@ typedef struct
 #define VARATT_IS_EXTERNAL_ONDISK(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK)
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE(PTR) \
-	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE)
+	(VARATT_IS_EXTERNAL(PTR) && \
+	(VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD || VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL))
+#define VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD)
+#define VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL)
 #define VARATT_IS_EXTERNAL_INDIRECT(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_INDIRECT)
 #define VARATT_IS_EXTERNAL_EXPANDED_RO(PTR) \

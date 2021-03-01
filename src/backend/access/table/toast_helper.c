@@ -100,12 +100,20 @@ toast_tuple_init(ToastTupleContext *ttc)
 						if (memcmp(&old_toast_ptr, &new_toast_ptr,
 								   sizeof(old_toast_ptr)) != 0)
 						{
-							/*
-							 * The old external stored value isn't
-							 * needed any more after the update
-							 */
-							ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
-							ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
+							if (old_toast_ptr.va_valueid == new_toast_ptr.va_valueid &&
+								old_toast_ptr.va_toastrelid == new_toast_ptr.va_toastrelid)
+							{
+								/* FIXME */
+							}
+							else
+							{
+								/*
+								 * The old external stored value isn't
+								 * needed any more after the update
+								 */
+								ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+								ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
+							}
 						}
 						else
 						{
@@ -137,7 +145,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 				Datum		new_val =
 					ttc->ttc_toaster[i](ttc->ttc_rel,
 										ttc->ttc_isnull[i] ? (Datum) 0 : ttc->ttc_values[i],
-										ttc->ttc_oldvalues[i],  -1);
+										ttc->ttc_oldvalues[i],  -1,
+										ttc->ttc_attr[i].tai_compression);
 
 				if (new_val != (Datum) 0)
 				{
@@ -158,7 +167,9 @@ toast_tuple_init(ToastTupleContext *ttc)
 			if (ttc->ttc_toaster[i] && !ttc->ttc_isnull[i])
 			{
 				Datum       new_val =
-					ttc->ttc_toaster[i](ttc->ttc_rel, ttc->ttc_values[i], (Datum) 0,  -1);
+					ttc->ttc_toaster[i](ttc->ttc_rel, ttc->ttc_values[i],
+										(Datum) 0,  -1,
+										ttc->ttc_attr[i].tai_compression);
 
 				if (new_val != (Datum) 0)
 				{
@@ -204,14 +215,22 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			if (VARATT_IS_EXTERNAL(new_value))
 			{
-				ttc->ttc_attr[i].tai_oldexternal = new_value;
-				if (att->attstorage == TYPSTORAGE_PLAIN)
-					new_value = detoast_attr(new_value);
-				else
-					new_value = detoast_external_attr(new_value);
-				ttc->ttc_values[i] = PointerGetDatum(new_value);
-				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
-				ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+				if (!(VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(new_value) &&
+					  !(ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_DELETE_OLD)))
+				{
+					ttc->ttc_attr[i].tai_oldexternal = new_value;
+
+					if (att->attstorage == TYPSTORAGE_PLAIN)
+						new_value = detoast_attr(new_value);
+					else
+						new_value = detoast_external_attr(new_value);
+					ttc->ttc_values[i] = PointerGetDatum(new_value);
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+				}
+				else if (!ttc->ttc_oldisnull[i] &&
+						 VARATT_IS_EXTERNAL(ttc->ttc_oldvalues[i]))
+					ttc->ttc_attr[i].tai_oldexternal = (struct varlena *) ttc->ttc_oldvalues[i];
 			}
 
 			/*
@@ -265,7 +284,8 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 
 		if ((ttc->ttc_attr[i].tai_colflags & skip_colflags) != 0)
 			continue;
-		if (VARATT_IS_EXTERNAL(DatumGetPointer(ttc->ttc_values[i])))
+		if (VARATT_IS_EXTERNAL(DatumGetPointer(ttc->ttc_values[i])) &&
+			!VARATT_IS_EXTERNAL_ONDISK_INLINE(DatumGetPointer(ttc->ttc_values[i])))
 			continue;			/* can't happen, toast_action would be PLAIN */
 		if (for_compression &&
 			VARATT_IS_COMPRESSED(DatumGetPointer(ttc->ttc_values[i])))

@@ -133,6 +133,7 @@ typedef struct FetchDatumIteratorData
 	int32		nextidx;
 	int32		numchunks;
 	int			num_indexes;
+	int			tail_size;
 	bool		done;
 }				FetchDatumIteratorData;
 
