@@ -223,14 +223,15 @@ detoast_attr_slice(struct varlena *attr,
 	else if (pg_add_s32_overflow(sliceoffset, slicelength, &slicelimit))
 		slicelength = slicelimit = -1;
 
-	if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
-		elog(ERROR, "slicing of chunked attributes is not yet supported"); /* FIXME */
+	//if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	//	elog(ERROR, "slicing of chunked attributes is not yet supported"); /* FIXME */
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK(attr) ||
+		VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 	{
 		struct varatt_external toast_pointer;
 
-		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
 		/* fast path for non-compressed external datums */
 		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
@@ -381,9 +382,18 @@ create_detoast_iterator(struct varlena *attr)
 
 		if (inlineSize > 0)
 		{
-			memcpy((void *) fetch_iter->buf->limit,
-				   VARDATA_EXTERNAL_INLINE(attr), inlineSize);
-			fetch_iter =->buf->limit += inlineSize;
+			if (VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(attr))
+			{
+				memcpy((void *) fetch_iter->buf->limit,
+					   VARDATA_EXTERNAL_INLINE(attr), inlineSize);
+				fetch_iter->buf->limit += inlineSize;
+			}
+			else
+			{
+				memcpy(fetch_iter->buf->limit + fetch_iter->ressize,
+					   VARDATA_EXTERNAL_INLINE(attr), inlineSize);
+				fetch_iter->tail_size = inlineSize;
+			}
 		}
 
 		return iter;
@@ -464,13 +474,14 @@ toast_fetch_datum(struct varlena *attr)
 	struct varlena *result;
 	struct varatt_external toast_pointer;
 	int32		attrsize;
-	int32		inlineSize;
+	int32		inline_size;
+	char	   *detoast_ptr;
 
 	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 		elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
 
 	/* Must copy to access aligned fields */
-	inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
+	inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
 
 	result = (struct varlena *) palloc(attrsize + VARHDRSZ);
@@ -484,8 +495,18 @@ toast_fetch_datum(struct varlena *attr)
 		return result;			/* Probably shouldn't happen, but just in
 								 * case. */
 
-	if (inlineSize)
-		memcpy(VARDATA(result), VARDATA_EXTERNAL_INLINE(attr), inlineSize);
+	detoast_ptr = (char *) result;
+
+	if (inline_size)
+	{
+		if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(attr))
+			memcpy(VARDATA(result) + attrsize - inline_size, VARDATA_EXTERNAL_INLINE(attr), inline_size);
+		else
+		{
+			memcpy(VARDATA(result), VARDATA_EXTERNAL_INLINE(attr), inline_size);
+			detoast_ptr += inline_size;
+		}
+	}
 
 	/*
 	 * Open the toast relation and its indexes
@@ -494,8 +515,8 @@ toast_fetch_datum(struct varlena *attr)
 
 	/* Fetch all chunks */
 	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
-									 attrsize - inlineSize, 0, attrsize - inlineSize,
-									 (struct varlena *)((char *) result + inlineSize));
+									 attrsize - inline_size, 0, attrsize - inline_size,
+									 (struct varlena *) detoast_ptr);
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
@@ -522,12 +543,14 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	struct varlena *result;
 	struct varatt_external toast_pointer;
 	int32		attrsize;
+	int32		inline_size;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))	/* FIXME */
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
+		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk datums");
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
 	/*
 	 * It's nonsense to fetch slices of a compressed datum unless when it's a
@@ -567,7 +590,32 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	else
 		SET_VARSIZE(result, slicelength + VARHDRSZ);
 
-	if (slicelength == 0)
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(attr))
+	{
+		int32		size = Min(slicelength, inline_size - sliceoffset);
+
+		if (size > 0)
+			memcpy(VARDATA(result), VARDATA_EXTERNAL_INLINE(attr) + sliceoffset, size);
+		slicelength -= size;
+		sliceoffset = size;
+	}
+	else if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(attr))
+	{
+		if (sliceoffset + slicelength > attrsize - inline_size)
+		{
+			int32		size = Min(sliceoffset + slicelength - (attrsize - inline_size), inline_size);
+			int32		inline_offset = Max(0, sliceoffset - (attrsize - inline_size));
+
+			size = Min(size, slicelength);
+
+			memcpy(VARDATA(result) + slicelength - size,
+				   VARDATA_EXTERNAL_INLINE(attr) + inline_offset, size);
+
+			slicelength -= size;
+		}
+	}
+
+	if (slicelength <= 0)
 		return result;			/* Can save a lot of work at this point! */
 
 	/* Open the toast relation */
@@ -575,7 +623,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	/* Fetch all chunks */
 	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
-									 attrsize, sliceoffset, slicelength,
+									 attrsize - inline_size, sliceoffset, slicelength,
 									 result);
 
 	/* Close toast table */
@@ -673,10 +721,9 @@ toast_raw_datum_size(Datum value)
 	{
 		/* va_rawsize is the size of the original datum -- including header */
 		struct varatt_external toast_pointer;
-		Size		inlineSize;
 
-		inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
-		result = toast_pointer.va_rawsize + inlineSize;
+		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
+		result = toast_pointer.va_rawsize;
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{

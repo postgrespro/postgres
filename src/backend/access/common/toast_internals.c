@@ -63,11 +63,11 @@ toast_compress_datum(Datum value, char cmethod)
 	switch (cmethod)
 	{
 		case TOAST_PGLZ_COMPRESSION:
-			tmp = pglz_compress_datum((const struct varlena *) value, NULL);
+			tmp = pglz_compress_datum((const struct varlena *) value);
 			cmid = TOAST_PGLZ_COMPRESSION_ID;
 			break;
 		case TOAST_LZ4_COMPRESSION:
-			tmp = lz4_compress_datum((const struct varlena *) value, NULL);
+			tmp = lz4_compress_datum((const struct varlena *) value);
 			cmid = TOAST_LZ4_COMPRESSION_ID;
 			break;
 		default:
@@ -137,15 +137,17 @@ toast_save_datum_internal(Relation rel, Datum value,
 	}			chunk_data;
 	int32		chunk_size;
 	int32		chunk_seq = 0;
-	char	   *data_p;
-	char	   *data_start = NULL;
+	char	   *data_p = NULL;
+	char	   *data_inline = NULL;
 	int32		data_todo;
+	int32		inline_size = 0;
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
 	bool		compress_chunks = false;
+	bool		inline_tail = false;
 
-	Assert(!VARATT_IS_EXTERNAL(value));
+	Assert(!VARATT_IS_EXTERNAL(value) || VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(value));
 
 	/*
 	 * Open the toast relation and its indexes.  We can use the index to check
@@ -161,6 +163,8 @@ toast_save_datum_internal(Relation rel, Datum value,
 									&toastidxs,
 									&num_indexes);
 
+	toast_pointer.va_valueid = InvalidOid;
+
 	/*
 	 * Get the data pointer and length, and compute va_rawsize and va_extinfo.
 	 *
@@ -171,7 +175,76 @@ toast_save_datum_internal(Relation rel, Datum value,
 	 * records and the compression method in first 2 bits if data is
 	 * compressed.
 	 */
-	if (VARATT_IS_SHORT(dval))
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(dval))
+	{
+		if (oldexternal != NULL)
+		{
+			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
+				   VARATT_IS_EXTERNAL_ONDISK_INLINE(oldexternal));
+
+			if (VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
+				VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(oldexternal))
+			{
+				struct varatt_external old_toast_pointer;
+				struct varatt_external new_toast_pointer;
+				Size		old_inline_size =
+					VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_pointer, oldexternal);
+				Size		new_inline_size =
+					VARATT_EXTERNAL_INLINE_GET_POINTER(new_toast_pointer, (struct varlena *) dval);
+
+				if (new_toast_pointer.va_valueid == old_toast_pointer.va_valueid &&
+					new_toast_pointer.va_toastrelid == old_toast_pointer.va_toastrelid &&
+					new_inline_size > old_inline_size)
+				{
+					Size		toasted_size = VARATT_EXTERNAL_GET_EXTSIZE(old_toast_pointer) - old_inline_size;
+					Size		last_chunk_size = toasted_size % TOAST_MAX_CHUNK_SIZE;
+
+					memcpy(&toast_pointer, &new_toast_pointer, sizeof(toast_pointer));
+
+					data_p = NULL;
+					data_todo = 0;
+
+					chunk_seq = toasted_size / TOAST_MAX_CHUNK_SIZE;
+
+					if (last_chunk_size)
+					{
+						struct varlena *slice;
+						int			chunk_to_delete = toasted_size / TOAST_MAX_CHUNK_SIZE;
+
+						toasted_size -= last_chunk_size;
+						data_todo = VARATT_EXTERNAL_GET_EXTSIZE(new_toast_pointer) - toasted_size;
+						slice = detoast_attr_slice((struct varlena *) dval, toasted_size, data_todo);
+						data_p = VARDATA(slice);
+
+						toast_delete_datum_ext(rel, PointerGetDatum(oldexternal), false, chunk_to_delete);
+					}
+					else
+					{
+						data_p = VARDATA_EXTERNAL_INLINE(dval);
+						data_todo = new_inline_size;
+					}
+
+					if (maxInlineSize > TOAST_INLINE_POINTER_SIZE)
+					{
+						last_chunk_size = data_todo % TOAST_MAX_CHUNK_SIZE;
+						inline_size = maxInlineSize - TOAST_INLINE_POINTER_SIZE;
+						inline_size = Min(inline_size, last_chunk_size);
+
+						data_todo -= inline_size;
+						data_inline = data_p + data_todo;
+
+						inline_tail = true;
+					}
+					else
+						maxInlineSize = 0;
+				}
+			}
+		}
+
+		if (!data_p)
+			dval = (Pointer) detoast_attr((struct varlena *) dval);
+	}
+	else if (VARATT_IS_SHORT(dval))
 	{
 		data_p = VARDATA_SHORT(dval);
 		data_todo = VARSIZE_SHORT(dval) - VARHDRSZ_SHORT;
@@ -191,7 +264,8 @@ toast_save_datum_internal(Relation rel, Datum value,
 		/* Assert that the numbers look like it's compressed */
 		Assert(VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer));
 	}
-	else
+
+	if (!data_p)
 	{
 		data_p = VARDATA(dval);
 		data_todo = VARSIZE(dval) - VARHDRSZ;
@@ -199,18 +273,21 @@ toast_save_datum_internal(Relation rel, Datum value,
 		toast_pointer.va_extinfo = data_todo;
 	}
 
-	if (maxInlineSize > 0 && maxInlineSize > TOAST_INLINE_POINTER_SIZE)
+	if (!inline_tail)
 	{
-		Assert(maxInlineSize < data_todo);
+		if (maxInlineSize > TOAST_INLINE_POINTER_SIZE)
+		{
+			Assert(maxInlineSize < data_todo);
 
-		maxInlineSize -= TOAST_INLINE_POINTER_SIZE;
+			inline_size = maxInlineSize - TOAST_INLINE_POINTER_SIZE;
 
-		data_start = data_p;
-		data_todo -= maxInlineSize;
-		data_p += maxInlineSize;
+			data_inline = data_p;
+			data_todo -= inline_size;
+			data_p += inline_size;
 
-		if (!VARATT_IS_COMPRESSED(dval))
-			compress_chunks = true;
+			if (!VARATT_IS_COMPRESSED(dval))
+				compress_chunks = true;
+		}
 	}
 
 	/*
@@ -226,6 +303,12 @@ toast_save_datum_internal(Relation rel, Datum value,
 	else
 		toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
 
+	if (OidIsValid(toast_pointer.va_valueid))
+	{
+
+	}
+	else
+	{
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
 	 *
@@ -249,7 +332,6 @@ toast_save_datum_internal(Relation rel, Datum value,
 	else
 	{
 		/* rewrite case: check to see if value was in old toast table */
-		toast_pointer.va_valueid = InvalidOid;
 		if (oldexternal != NULL)
 		{
 			struct varatt_external old_toast_pointer;
@@ -305,6 +387,7 @@ toast_save_datum_internal(Relation rel, Datum value,
 			} while (toastid_valueid_exists(rel->rd_toastoid,
 											toast_pointer.va_valueid));
 		}
+	}
 	}
 
 	/*
@@ -409,16 +492,16 @@ toast_save_datum_internal(Relation rel, Datum value,
 	/*
 	 * Create the TOAST pointer value that we'll return
 	 */
-	if (maxInlineSize)
+	if (inline_size > 0)
 	{
 		varatt_external_inline toast_pointer_inline;
 
-		result = (struct varlena *) palloc(TOAST_INLINE_POINTER_SIZE + maxInlineSize);
-		SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK_INLINE);
+		result = (struct varlena *) palloc(TOAST_INLINE_POINTER_SIZE + inline_size);
+		SET_VARTAG_EXTERNAL(result, inline_tail ? VARTAG_ONDISK_INLINE_TAIL : VARTAG_ONDISK_INLINE_HEAD);
 		toast_pointer_inline.va_external = toast_pointer;
-		toast_pointer_inline.va_inline_size = maxInlineSize;
+		toast_pointer_inline.va_inline_size = inline_size;
 		memcpy(VARDATA_EXTERNAL(result), &toast_pointer_inline, sizeof(toast_pointer_inline));
-		memcpy(VARDATA_EXTERNAL_INLINE(result), data_start, maxInlineSize);
+		memcpy(VARDATA_EXTERNAL_INLINE(result), data_inline, inline_size);
 	}
 	else
 	{
@@ -452,13 +535,13 @@ toast_save_datum_chunked(Relation rel, Datum value,
  * ----------
  */
 void
-toast_delete_datum(Relation rel, Datum value, bool is_speculative)
+toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first_chunk)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	struct varatt_external toast_pointer;
 	Relation	toastrel;
 	Relation   *toastidxs;
-	ScanKeyData toastkey;
+	ScanKeyData toastkey[2];
 	SysScanDesc toastscan;
 	HeapTuple	toasttup;
 	int			num_indexes;
@@ -486,10 +569,16 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	/*
 	 * Setup a scan key to find chunks with matching va_valueid
 	 */
-	ScanKeyInit(&toastkey,
+	ScanKeyInit(&toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(toast_pointer.va_valueid));
+
+	if (first_chunk)
+		ScanKeyInit(&toastkey[1],
+					(AttrNumber) 2,
+					BTEqualStrategyNumber, F_INT4EQ,
+					Int32GetDatum(first_chunk));
 
 	/*
 	 * Find all the chunks.  (We don't actually care whether we see them in
@@ -498,7 +587,7 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	 */
 	init_toast_snapshot(&SnapshotToast);
 	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
-										   &SnapshotToast, 1, &toastkey);
+										   &SnapshotToast, first_chunk ? 2 : 1, &toastkey[0]);
 	while ((toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
 	{
 		/*
@@ -516,6 +605,12 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, RowExclusiveLock);
 	table_close(toastrel, RowExclusiveLock);
+}
+
+void
+toast_delete_datum(Relation rel, Datum value, bool is_speculative)
+{
+	return toast_delete_datum_ext(rel, value, is_speculative, 0);
 }
 
 /* ----------
@@ -770,7 +865,8 @@ create_fetch_datum_iterator(struct varlena *attr)
 	FetchDatumIterator iter;
 	int32		inlineSize;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
+		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
 
 	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
@@ -778,21 +874,7 @@ create_fetch_datum_iterator(struct varlena *attr)
 	iter->mcxt = CurrentMemoryContext;
 
 	/* Must copy to access aligned fields */
-	if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
-	{
-		//VARATT_EXTERNAL_GET_POINTER(toast_pointer_inline, attr);
-		struct varatt_external_inline toast_pointer_inline;
-
-		memcpy(&toast_pointer_inline, VARDATA_EXTERNAL(attr), sizeof(toast_pointer_inline));
-		iter->toast_pointer = toast_pointer_inline.va_external;
-		inlineSize = toast_pointer_inline.va_inline_size;
-	}
-	else
-	{
-		VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
-		inlineSize = 0;
-	}
-
+	inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(iter->toast_pointer, attr);
 	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer) - inlineSize;
 	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
 
@@ -801,6 +883,7 @@ create_fetch_datum_iterator(struct varlena *attr)
 
 	iter->nextidx = 0;
 	iter->done = false;
+	iter->tail_size = 0;
 
 	return iter;
 }
@@ -866,6 +949,7 @@ fetch_datum_iterate(FetchDatumIterator iter)
 		table_close(iter->toastrel, AccessShareLock);
 
 		iter->done = true;
+		iter->buf->limit += iter->tail_size;
 		return;
 	}
 
