@@ -1447,7 +1447,7 @@ json_build_array_internal(FunctionCallInfo fcinfo, bool is_jsonb)
 	nargs = extract_variadic_args(fcinfo, 0, true, &args, &types, &nulls);
 
 	if (nargs < 0)
-		PG_RETURN_NULL();
+		return NULL;
 
 	memset(&result, 0, sizeof(JsonbInState));
 
