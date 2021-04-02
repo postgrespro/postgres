@@ -75,9 +75,19 @@ typedef struct varatt_external
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
 }			varatt_external;
 
+typedef uint64 varatt_external_version;
+
+#define VARATT_EXTERNAL_INVALID_VERSION UINT64CONST(0xFFFFFFFFFFFFFFFF)
+
+typedef struct varatt_external_versioned
+{
+	varatt_external va_external;
+	varatt_external_version va_version;
+}			varatt_external_versioned;
+
 typedef struct varatt_external_inline
 {
-	varatt_external	va_external;
+	varatt_external_versioned va_external;
 	int32		va_inline_size;
 	char		va_data[FLEXIBLE_ARRAY_MEMBER];
 }			varatt_external_inline;
@@ -131,8 +141,9 @@ typedef enum vartag_external
 	VARTAG_EXPANDED_RO = 2,
 	VARTAG_EXPANDED_RW = 3,
 	VARTAG_ONDISK = 18,
-	VARTAG_ONDISK_INLINE_HEAD = 19,	/* FIXME */
-	VARTAG_ONDISK_INLINE_TAIL = 20,
+	VARTAG_ONDISK_VERSIONED = 19,
+	VARTAG_ONDISK_INLINE_HEAD = 20,	/* FIXME */
+	VARTAG_ONDISK_INLINE_TAIL = 21,
 } vartag_external;
 
 /* this test relies on the specific tag values above */
@@ -143,6 +154,7 @@ typedef enum vartag_external
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (tag) == VARTAG_ONDISK_VERSIONED ? sizeof(varatt_external_versioned) : \
 	 (tag) == VARTAG_ONDISK_INLINE_HEAD || \
 	 (tag) == VARTAG_ONDISK_INLINE_TAIL ? \
 	 offsetof(varatt_external_inline, va_data) + VARSIZE_EXTERNAL_INLINE(ptr) : \
@@ -340,13 +352,20 @@ typedef struct
 #define VARATT_IS_EXTERNAL(PTR)				VARATT_IS_1B_E(PTR)
 #define VARATT_IS_EXTERNAL_ONDISK(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK)
+#define VARATT_IS_EXTERNAL_ONDISK_VERSIONED(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_VERSIONED)
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && \
-	(VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD || VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL))
+	 (VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD || \
+	  VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL))
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD)
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL)
+#define VARATT_IS_EXTERNAL_ONDISK_ANY(PTR) \
+	(VARATT_IS_EXTERNAL_ONDISK(PTR) || \
+	 VARATT_IS_EXTERNAL_ONDISK_VERSIONED(PTR) || \
+	 VARATT_IS_EXTERNAL_ONDISK_INLINE(PTR))
 #define VARATT_IS_EXTERNAL_INDIRECT(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_INDIRECT)
 #define VARATT_IS_EXTERNAL_EXPANDED_RO(PTR) \

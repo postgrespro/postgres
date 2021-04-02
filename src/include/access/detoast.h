@@ -31,7 +31,7 @@ do { \
 
 static inline Size
 varatt_external_inline_get_pointer(struct varlena *attr, /* FIXME */
-								   struct varatt_external *toast_pointer)
+								   struct varatt_external_versioned *toast_pointer)
 {
 	if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 	{
@@ -43,9 +43,21 @@ varatt_external_inline_get_pointer(struct varlena *attr, /* FIXME */
 
 		return toast_pointer_inline.va_inline_size;
 	}
+	else if (VARATT_IS_EXTERNAL_ONDISK_VERSIONED(attr))
+	{
+		struct varatt_external_versioned toast_pointer_versioned;
+
+		memcpy(&toast_pointer_versioned, VARDATA_EXTERNAL(attr),
+			   sizeof(toast_pointer_versioned));
+		*toast_pointer = toast_pointer_versioned;
+
+		return 0;
+	}
 	else
 	{
-		VARATT_EXTERNAL_GET_POINTER(*toast_pointer, attr);
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer->va_external, attr);
+		toast_pointer->va_version = VARATT_EXTERNAL_INVALID_VERSION;
+
 		return 0;
 	}
 }
@@ -56,6 +68,7 @@ varatt_external_inline_get_pointer(struct varlena *attr, /* FIXME */
 
 /* Size of an EXTERNAL datum that contains a standard TOAST pointer */
 #define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
+#define TOAST_VERSIONED_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_versioned))
 #define TOAST_INLINE_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_inline))
 
 /* Size of an EXTERNAL datum that contains an indirection pointer */
@@ -127,10 +140,11 @@ typedef struct FetchDatumIteratorData
 	MemoryContext mcxt;
 	SysScanDesc	toastscan;
 	ScanKeyData	toastkey;
-	SnapshotData			snapshot;
-	struct varatt_external toast_pointer;
+	SnapshotData snapshot;
+	struct varatt_external_versioned toast_pointer;
 	int32		ressize;
 	int32		nextidx;
+	int32		chunksize;
 	int32		numchunks;
 	int			num_indexes;
 	int			tail_size;

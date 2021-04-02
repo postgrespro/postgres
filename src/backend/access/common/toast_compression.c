@@ -339,14 +339,14 @@ toast_get_compression_id(struct varlena *attr)
 	 * external toast pointer.  If compressed inline, fetch it from the toast
 	 * compression header.
 	 */
-	if (VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
-		struct varatt_external toast_pointer;
+		struct varatt_external_versioned toast_pointer;
 
-		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
-		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
-			cmid = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
+		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external))
+			cmid = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer.va_external);
 	}
 	else if (VARATT_IS_COMPRESSED(attr))
 		cmid = VARDATA_COMPRESSED_GET_COMPRESS_METHOD(attr);

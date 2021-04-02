@@ -75,12 +75,10 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			if (att->attlen == -1 && !ttc->ttc_oldisnull[i])
 			{
-				if (VARATT_IS_EXTERNAL_ONDISK(old_value) ||
-					VARATT_IS_EXTERNAL_ONDISK_INLINE(old_value))
+				if (VARATT_IS_EXTERNAL_ONDISK_ANY(old_value))
 				{
 					if (ttc->ttc_isnull[i] ||
-						(!VARATT_IS_EXTERNAL_ONDISK(new_value) &&
-						 !VARATT_IS_EXTERNAL_ONDISK_INLINE(new_value)))
+						!VARATT_IS_EXTERNAL_ONDISK_ANY(new_value))
 					{
 						/*
 						 * The old external stored value isn't needed
@@ -91,17 +89,19 @@ toast_tuple_init(ToastTupleContext *ttc)
 					}
 					else
 					{
-						struct varatt_external old_toast_ptr;
-						struct varatt_external new_toast_ptr;
-
-						VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_ptr, old_value);
-						VARATT_EXTERNAL_INLINE_GET_POINTER(new_toast_ptr, new_value);
+						struct varatt_external_versioned old_toast_ptr;
+						struct varatt_external_versioned new_toast_ptr;
+						Size		old_inline_size =
+							VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_ptr, old_value);
+						Size		new_inline_size =
+							VARATT_EXTERNAL_INLINE_GET_POINTER(new_toast_ptr, new_value);
 
 						if (memcmp(&old_toast_ptr, &new_toast_ptr,
 								   sizeof(old_toast_ptr)) != 0)
 						{
-							if (old_toast_ptr.va_valueid == new_toast_ptr.va_valueid &&
-								old_toast_ptr.va_toastrelid == new_toast_ptr.va_toastrelid)
+							if (old_toast_ptr.va_external.va_valueid == new_toast_ptr.va_external.va_valueid &&
+								old_toast_ptr.va_external.va_toastrelid == new_toast_ptr.va_external.va_toastrelid &&
+								old_toast_ptr.va_version == new_toast_ptr.va_version)
 							{
 								/* FIXME */
 							}
@@ -115,7 +115,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 								ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 							}
 						}
-						else
+						else if (new_inline_size <= 0)
 						{
 							/*
 							 * This attribute isn't changed by this
@@ -124,6 +124,10 @@ toast_tuple_init(ToastTupleContext *ttc)
 							 */
 							ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 							continue;
+						}
+						else
+						{
+							/* FIXME */
 						}
 					}
 				}

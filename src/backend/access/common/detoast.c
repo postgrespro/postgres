@@ -46,7 +46,7 @@ detoast_external_attr(struct varlena *attr)
 {
 	struct varlena *result;
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
 		/*
 		 * This is an external stored plain value
@@ -115,7 +115,7 @@ detoast_external_attr(struct varlena *attr)
 struct varlena *
 detoast_attr(struct varlena *attr)
 {
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
 		/*
 		 * This is an externally stored datum --- fetch it back from there
@@ -226,15 +226,14 @@ detoast_attr_slice(struct varlena *attr,
 	//if (VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
 	//	elog(ERROR, "slicing of chunked attributes is not yet supported"); /* FIXME */
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) ||
-		VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
-		struct varatt_external toast_pointer;
+		struct varatt_external_versioned toast_pointer;
 
 		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
 		/* fast path for non-compressed external datums */
-		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external))
 			return toast_fetch_datum_slice(attr, sliceoffset, slicelength);
 
 		/*
@@ -244,7 +243,7 @@ detoast_attr_slice(struct varlena *attr,
 		 */
 		if (slicelimit >= 0)
 		{
-			int32		max_size = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+			int32		max_size = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
 
 			/*
 			 * Determine maximum amount of compressed data needed for a prefix
@@ -255,7 +254,7 @@ detoast_attr_slice(struct varlena *attr,
 			 * determine how much compressed data we need to be sure of being
 			 * able to decompress the required slice.
 			 */
-			if (VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer) ==
+			if (VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer.va_external) ==
 				TOAST_PGLZ_COMPRESSION_ID)
 				max_size = pglz_maximum_compressed_size(slicelimit, max_size);
 
@@ -346,9 +345,9 @@ detoast_attr_slice(struct varlena *attr,
 DetoastIterator
 create_detoast_iterator(struct varlena *attr)
 {
-	struct varatt_external toast_pointer;
+	struct varatt_external_versioned toast_pointer;
 	DetoastIterator iter;
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
 		FetchDatumIterator fetch_iter;
 		int32		inlineSize;
@@ -363,13 +362,13 @@ create_detoast_iterator(struct varlena *attr)
 		/* Must copy to access aligned fields */
 		inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 
-		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external))
 		{
 			iter->compressed = true;
-			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
+			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer.va_external);
 
 			/* prepare buffer to received decompressed data */
-			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
+			iter->buf = create_toast_buffer(toast_pointer.va_external.va_rawsize, false);
 		}
 		else
 		{
@@ -472,21 +471,21 @@ toast_fetch_datum(struct varlena *attr)
 {
 	Relation	toastrel;
 	struct varlena *result;
-	struct varatt_external toast_pointer;
+	struct varatt_external_versioned toast_pointer;
 	int32		attrsize;
 	int32		inline_size;
 	char	   *detoast_ptr;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 		elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
 
 	/* Must copy to access aligned fields */
 	inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
-	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
 
 	result = (struct varlena *) palloc(attrsize + VARHDRSZ);
 
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external))
 		SET_VARSIZE_COMPRESSED(result, attrsize + VARHDRSZ);
 	else
 		SET_VARSIZE(result, attrsize + VARHDRSZ);
@@ -511,10 +510,12 @@ toast_fetch_datum(struct varlena *attr)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(toast_pointer.va_external.va_toastrelid, AccessShareLock);
 
 	/* Fetch all chunks */
-	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+	table_relation_fetch_toast_slice(toastrel,
+									 toast_pointer.va_external.va_valueid,
+									 toast_pointer.va_version,
 									 attrsize - inline_size, 0, attrsize - inline_size,
 									 (struct varlena *) detoast_ptr);
 
@@ -541,12 +542,11 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 {
 	Relation	toastrel;
 	struct varlena *result;
-	struct varatt_external toast_pointer;
+	struct varatt_external_versioned toast_pointer;
 	int32		attrsize;
 	int32		inline_size;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
-		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk datums");
 
 	/* Must copy to access aligned fields */
@@ -557,9 +557,9 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	 * prefix -- this isn't lo_* we can't return a compressed datum which is
 	 * meaningful to toast later.
 	 */
-	Assert(!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) || 0 == sliceoffset);
+	Assert(!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external) || 0 == sliceoffset);
 
-	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
 
 	if (sliceoffset >= attrsize)
 	{
@@ -572,7 +572,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	 * space required by va_tcinfo, which is stored at the beginning as an
 	 * int32 value.
 	 */
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) && slicelength > 0)
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external) && slicelength > 0)
 		slicelength = slicelength + sizeof(int32);
 
 	/*
@@ -585,7 +585,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
 
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer.va_external))
 		SET_VARSIZE_COMPRESSED(result, slicelength + VARHDRSZ);
 	else
 		SET_VARSIZE(result, slicelength + VARHDRSZ);
@@ -619,10 +619,12 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 		return result;			/* Can save a lot of work at this point! */
 
 	/* Open the toast relation */
-	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(toast_pointer.va_external.va_toastrelid, AccessShareLock);
 
 	/* Fetch all chunks */
-	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+	table_relation_fetch_toast_slice(toastrel,
+									 toast_pointer.va_external.va_valueid,
+									 toast_pointer.va_version,
 									 attrsize - inline_size, sliceoffset, slicelength,
 									 result);
 
@@ -717,13 +719,13 @@ toast_raw_datum_size(Datum value)
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	Size		result;
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
 		/* va_rawsize is the size of the original datum -- including header */
-		struct varatt_external toast_pointer;
+		struct varatt_external_versioned toast_pointer;
 
 		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
-		result = toast_pointer.va_rawsize;
+		result = toast_pointer.va_external.va_rawsize;
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -773,18 +775,17 @@ toast_datum_size(Datum value)
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	Size		result;
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr) ||
-		VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
 		/*
 		 * Attribute is stored externally - return the extsize whether
 		 * compressed or not.  We do not count the size of the toast pointer
 		 * ... should we?
 		 */
-		struct varatt_external toast_pointer;
+		struct varatt_external_versioned toast_pointer;
 
 		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
-		result = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);	/* FIXME inlineSize */
+		result = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);	/* FIXME inlineSize */
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{

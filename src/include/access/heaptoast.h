@@ -88,6 +88,8 @@
 	 sizeof(int32) -									\
 	 VARHDRSZ)
 
+#define TOAST_CHUNK_VERSION_SIZE sizeof(varatt_external_version)
+
 /* ----------
  * heap_toast_insert_or_update -
  *
@@ -143,6 +145,7 @@ extern HeapTuple toast_build_flattened_tuple(TupleDesc tupleDesc,
  * ----------
  */
 extern void heap_fetch_toast_slice(Relation toastrel, Oid valueid,
+								   varatt_external_version attrversion,
 								   int32 attrsize, int32 sliceoffset,
 								   int32 slicelength, struct varlena *result);
 

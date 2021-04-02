@@ -127,6 +127,7 @@ toast_save_datum_internal(Relation rel, Datum value,
 	CommandId	mycid = GetCurrentCommandId(true);
 	struct varlena *result;
 	struct varatt_external toast_pointer;
+	varatt_external_version attr_version;
 	union
 	{
 		struct varlena hdr;
@@ -164,6 +165,7 @@ toast_save_datum_internal(Relation rel, Datum value,
 									&num_indexes);
 
 	toast_pointer.va_valueid = InvalidOid;
+	attr_version = UINT64CONST(0);
 
 	/*
 	 * Get the data pointer and length, and compute va_rawsize and va_extinfo.
@@ -179,44 +181,47 @@ toast_save_datum_internal(Relation rel, Datum value,
 	{
 		if (oldexternal != NULL)
 		{
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
-				   VARATT_IS_EXTERNAL_ONDISK_INLINE(oldexternal));
+			Assert(VARATT_IS_EXTERNAL_ONDISK_ANY(oldexternal));
 
-			if (VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
+			if (VARATT_IS_EXTERNAL_ONDISK_VERSIONED(oldexternal) ||
 				VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(oldexternal))
 			{
-				struct varatt_external old_toast_pointer;
-				struct varatt_external new_toast_pointer;
+				struct varatt_external_versioned old_toast_pointer;
+				struct varatt_external_versioned new_toast_pointer;
 				Size		old_inline_size =
 					VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_pointer, oldexternal);
 				Size		new_inline_size =
 					VARATT_EXTERNAL_INLINE_GET_POINTER(new_toast_pointer, (struct varlena *) dval);
 
-				if (new_toast_pointer.va_valueid == old_toast_pointer.va_valueid &&
-					new_toast_pointer.va_toastrelid == old_toast_pointer.va_toastrelid &&
+				if (new_toast_pointer.va_external.va_valueid == old_toast_pointer.va_external.va_valueid &&
+					new_toast_pointer.va_external.va_toastrelid == old_toast_pointer.va_external.va_toastrelid &&
+					new_toast_pointer.va_version != VARATT_EXTERNAL_INVALID_VERSION &&
+					new_toast_pointer.va_version == old_toast_pointer.va_version &&
 					new_inline_size > old_inline_size)
 				{
-					Size		toasted_size = VARATT_EXTERNAL_GET_EXTSIZE(old_toast_pointer) - old_inline_size;
-					Size		last_chunk_size = toasted_size % TOAST_MAX_CHUNK_SIZE;
+					Size		max_chunk_size = TOAST_MAX_CHUNK_SIZE - TOAST_CHUNK_VERSION_SIZE;
+					Size		toasted_size = VARATT_EXTERNAL_GET_EXTSIZE(old_toast_pointer.va_external) - old_inline_size;
+					Size		last_chunk_size = toasted_size % max_chunk_size;
 
-					memcpy(&toast_pointer, &new_toast_pointer, sizeof(toast_pointer));
+					memcpy(&toast_pointer, &new_toast_pointer.va_external, sizeof(toast_pointer));
+					attr_version = new_toast_pointer.va_version + 1;
 
 					data_p = NULL;
 					data_todo = 0;
 
-					chunk_seq = toasted_size / TOAST_MAX_CHUNK_SIZE;
+					chunk_seq = toasted_size / max_chunk_size;
 
 					if (last_chunk_size)
 					{
 						struct varlena *slice;
-						int			chunk_to_delete = toasted_size / TOAST_MAX_CHUNK_SIZE;
+						int			chunk_to_delete = toasted_size / max_chunk_size;
 
 						toasted_size -= last_chunk_size;
-						data_todo = VARATT_EXTERNAL_GET_EXTSIZE(new_toast_pointer) - toasted_size;
+						data_todo = VARATT_EXTERNAL_GET_EXTSIZE(new_toast_pointer.va_external) - toasted_size;
 						slice = detoast_attr_slice((struct varlena *) dval, toasted_size, data_todo);
 						data_p = VARDATA(slice);
 
-						toast_delete_datum_ext(rel, PointerGetDatum(oldexternal), false, chunk_to_delete);
+						toast_delete_datum_ext(rel, PointerGetDatum(oldexternal), false, chunk_to_delete);	/* FIXME pass version */
 					}
 					else
 					{
@@ -226,7 +231,7 @@ toast_save_datum_internal(Relation rel, Datum value,
 
 					if (maxInlineSize > TOAST_INLINE_POINTER_SIZE)
 					{
-						last_chunk_size = data_todo % TOAST_MAX_CHUNK_SIZE;
+						last_chunk_size = data_todo % max_chunk_size;
 						inline_size = maxInlineSize - TOAST_INLINE_POINTER_SIZE;
 						inline_size = Min(inline_size, last_chunk_size);
 
@@ -305,10 +310,8 @@ toast_save_datum_internal(Relation rel, Datum value,
 
 	if (OidIsValid(toast_pointer.va_valueid))
 	{
-
+		/* */
 	}
-	else
-	{
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
 	 *
@@ -321,7 +324,7 @@ toast_save_datum_internal(Relation rel, Datum value,
 	 * options have been changed), we have to pick a value ID that doesn't
 	 * conflict with either new or existing toast value OIDs.
 	 */
-	if (!OidIsValid(rel->rd_toastoid))
+	else if (!OidIsValid(rel->rd_toastoid))
 	{
 		/* normal case: just choose an unused OID */
 		toast_pointer.va_valueid =
@@ -334,18 +337,17 @@ toast_save_datum_internal(Relation rel, Datum value,
 		/* rewrite case: check to see if value was in old toast table */
 		if (oldexternal != NULL)
 		{
-			struct varatt_external old_toast_pointer;
+			struct varatt_external_versioned old_toast_pointer;
 
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) ||
-				   VARATT_IS_EXTERNAL_ONDISK_INLINE(oldexternal));
+			Assert(VARATT_IS_EXTERNAL_ONDISK_ANY(oldexternal));
 
 			/* Must copy to access aligned fields */
 			VARATT_EXTERNAL_INLINE_GET_POINTER(old_toast_pointer, oldexternal);
 
-			if (old_toast_pointer.va_toastrelid == rel->rd_toastoid)
+			if (old_toast_pointer.va_external.va_toastrelid == rel->rd_toastoid)
 			{
 				/* This value came from the old toast table; reuse its OID */
-				toast_pointer.va_valueid = old_toast_pointer.va_valueid;
+				toast_pointer.va_valueid = old_toast_pointer.va_external.va_valueid;
 
 				/*
 				 * There is a corner case here: the table rewrite might have
@@ -387,7 +389,6 @@ toast_save_datum_internal(Relation rel, Datum value,
 			} while (toastid_valueid_exists(rel->rd_toastoid,
 											toast_pointer.va_valueid));
 		}
-	}
 	}
 
 	/*
@@ -435,9 +436,10 @@ toast_save_datum_internal(Relation rel, Datum value,
 
 		if (chunk_size < 0)
 		{
-			chunk_size = Min(TOAST_MAX_CHUNK_SIZE, data_todo);
-			SET_VARSIZE(&chunk_data, chunk_size + VARHDRSZ);
-			memcpy(VARDATA(&chunk_data), data_p, chunk_size);
+			chunk_size = Min(TOAST_MAX_CHUNK_SIZE - TOAST_CHUNK_VERSION_SIZE, data_todo);
+			SET_VARSIZE(&chunk_data, chunk_size + TOAST_CHUNK_VERSION_SIZE + VARHDRSZ);
+			memcpy(VARDATA(&chunk_data), &attr_version, TOAST_CHUNK_VERSION_SIZE);
+			memcpy(VARDATA(&chunk_data) + TOAST_CHUNK_VERSION_SIZE, data_p, chunk_size);
 		}
 
 		/*
@@ -498,16 +500,22 @@ toast_save_datum_internal(Relation rel, Datum value,
 
 		result = (struct varlena *) palloc(TOAST_INLINE_POINTER_SIZE + inline_size);
 		SET_VARTAG_EXTERNAL(result, inline_tail ? VARTAG_ONDISK_INLINE_TAIL : VARTAG_ONDISK_INLINE_HEAD);
-		toast_pointer_inline.va_external = toast_pointer;
+		toast_pointer_inline.va_external.va_external = toast_pointer;
+		toast_pointer_inline.va_external.va_version = attr_version;
 		toast_pointer_inline.va_inline_size = inline_size;
 		memcpy(VARDATA_EXTERNAL(result), &toast_pointer_inline, sizeof(toast_pointer_inline));
 		memcpy(VARDATA_EXTERNAL_INLINE(result), data_inline, inline_size);
 	}
 	else
 	{
-		result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
-		SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK);
-		memcpy(VARDATA_EXTERNAL(result), &toast_pointer, sizeof(toast_pointer));
+		struct varatt_external_versioned toast_pointer_versioned;
+
+		toast_pointer_versioned.va_external = toast_pointer;
+		toast_pointer_versioned.va_version = attr_version;
+
+		result = (struct varlena *) palloc(TOAST_VERSIONED_POINTER_SIZE);
+		SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK_VERSIONED);
+		memcpy(VARDATA_EXTERNAL(result), &toast_pointer_versioned, sizeof(toast_pointer_versioned));
 	}
 
 	return PointerGetDatum(result);
@@ -538,7 +546,7 @@ void
 toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first_chunk)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
-	struct varatt_external toast_pointer;
+	struct varatt_external_versioned toast_pointer;
 	Relation	toastrel;
 	Relation   *toastidxs;
 	ScanKeyData toastkey[2];
@@ -548,8 +556,7 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first
 	int			validIndex;
 	SnapshotData SnapshotToast;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
-		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 		return;
 
 	/* Must copy to access aligned fields */
@@ -558,7 +565,7 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+	toastrel = table_open(toast_pointer.va_external.va_toastrelid, RowExclusiveLock);
 
 	/* Fetch valid relation used for process */
 	validIndex = toast_open_indexes(toastrel,
@@ -572,7 +579,7 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first
 	ScanKeyInit(&toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(toast_pointer.va_valueid));
+				ObjectIdGetDatum(toast_pointer.va_external.va_valueid));
 
 	if (first_chunk)
 		ScanKeyInit(&toastkey[1],
@@ -590,6 +597,44 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first
 										   &SnapshotToast, first_chunk ? 2 : 1, &toastkey[0]);
 	while ((toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
 	{
+		if (toast_pointer.va_version != VARATT_EXTERNAL_INVALID_VERSION)
+		{
+			bool		isnull;
+			Datum		chunk = fastgetattr(toasttup, 3, toastrel->rd_att, &isnull);
+			char	   *chunkdata;
+			Size		chunksize;
+			varatt_external_version chunkversion;
+
+			Assert(!isnull);
+			if (!VARATT_IS_EXTENDED(chunk))
+			{
+				chunksize = VARSIZE(chunk) - VARHDRSZ;
+				chunkdata = VARDATA(chunk);
+			}
+			else if (VARATT_IS_SHORT(chunk))
+			{
+				/* could happen due to heap_form_tuple doing its thing */
+				chunksize = VARSIZE_SHORT(chunk) - VARHDRSZ_SHORT;
+				chunkdata = VARDATA_SHORT(chunk);
+			}
+			else
+			{
+				/* should never happen */
+				elog(ERROR, "found toasted toast chunk for toast value %u in %s",
+					 toast_pointer.va_external.va_valueid,
+					 RelationGetRelationName(toastrel));
+				chunksize = 0;		/* keep compiler quiet */
+				chunkdata = NULL;
+			}
+
+			memcpy(&chunkversion, chunkdata, TOAST_CHUNK_VERSION_SIZE);
+			chunksize -= TOAST_CHUNK_VERSION_SIZE;
+			chunkdata += TOAST_CHUNK_VERSION_SIZE;
+
+			if (chunkversion != toast_pointer.va_version)
+				continue;
+		}
+
 		/*
 		 * Have a chunk, delete it
 		 */
@@ -822,7 +867,7 @@ create_fetch_datum_iterator_scan(FetchDatumIterator iter)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	iter->toastrel = table_open(iter->toast_pointer.va_toastrelid, AccessShareLock);
+	iter->toastrel = table_open(iter->toast_pointer.va_external.va_toastrelid, AccessShareLock);
 
 	/* Look for the valid index of the toast relation */
 	validIndex = toast_open_indexes(iter->toastrel,
@@ -836,7 +881,7 @@ create_fetch_datum_iterator_scan(FetchDatumIterator iter)
 	ScanKeyInit(&iter->toastkey,
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(iter->toast_pointer.va_valueid));
+				ObjectIdGetDatum(iter->toast_pointer.va_external.va_valueid));
 
 	/*
 	 * Read the chunks by index
@@ -865,8 +910,7 @@ create_fetch_datum_iterator(struct varlena *attr)
 	FetchDatumIterator iter;
 	int32		inlineSize;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr) &&
-		!VARATT_IS_EXTERNAL_ONDISK_INLINE(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
 
 	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
@@ -875,11 +919,12 @@ create_fetch_datum_iterator(struct varlena *attr)
 
 	/* Must copy to access aligned fields */
 	inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(iter->toast_pointer, attr);
-	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer) - inlineSize;
-	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer.va_external) - inlineSize;
+	iter->chunksize = TOAST_MAX_CHUNK_SIZE - (iter->toast_pointer.va_version != VARATT_EXTERNAL_INVALID_VERSION ? TOAST_CHUNK_VERSION_SIZE : 0);
+	iter->numchunks = ((iter->ressize - 1) / iter->chunksize) + 1;
 
 	iter->buf = create_toast_buffer(iter->ressize + inlineSize + VARHDRSZ,
-									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer));
+									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer.va_external));
 
 	iter->nextidx = 0;
 	iter->done = false;
@@ -923,6 +968,7 @@ fetch_datum_iterate(FetchDatumIterator iter)
 	bool		isnull;
 	char		*chunkdata;
 	int32		chunksize;
+	varatt_external_version chunkversion;
 
 	Assert(iter != NULL && !iter->done);
 
@@ -938,7 +984,7 @@ fetch_datum_iterate(FetchDatumIterator iter)
 		if (iter->nextidx != iter->numchunks)
 			elog(ERROR, "missing chunk number %d for toast value %u in %s",
 				 iter->nextidx,
-				 iter->toast_pointer.va_valueid,
+				 iter->toast_pointer.va_external.va_valueid,
 				 RelationGetRelationName(iter->toastrel));
 
 		/*
@@ -976,10 +1022,17 @@ fetch_datum_iterate(FetchDatumIterator iter)
 	{
 		/* should never happen */
 		elog(ERROR, "found toasted toast chunk for toast value %u in %s",
-			 iter->toast_pointer.va_valueid,
+			 iter->toast_pointer.va_external.va_valueid,
 			 RelationGetRelationName(iter->toastrel));
 		chunksize = 0;		/* keep compiler quiet */
 		chunkdata = NULL;
+	}
+
+	if (iter->toast_pointer.va_version != VARATT_EXTERNAL_INVALID_VERSION)
+	{
+		memcpy(&chunkversion, chunkdata, TOAST_CHUNK_VERSION_SIZE);
+		chunksize -= TOAST_CHUNK_VERSION_SIZE;
+		chunkdata += TOAST_CHUNK_VERSION_SIZE;
 	}
 
 	/*
@@ -988,32 +1041,32 @@ fetch_datum_iterate(FetchDatumIterator iter)
 	if (residx != iter->nextidx)
 		elog(ERROR, "unexpected chunk number %d (expected %d) for toast value %u in %s",
 			 residx, iter->nextidx,
-			 iter->toast_pointer.va_valueid,
+			 iter->toast_pointer.va_external.va_valueid,
 			 RelationGetRelationName(iter->toastrel));
 	if (residx < iter->numchunks - 1)
 	{
-		if (chunksize != TOAST_MAX_CHUNK_SIZE)
+		if (chunksize != iter->chunksize)
 			elog(ERROR, "unexpected chunk size %d (expected %d) in chunk %d of %d for toast value %u in %s",
-				 chunksize, (int) TOAST_MAX_CHUNK_SIZE,
+				 chunksize, (int) iter->chunksize,
 				 residx, iter->numchunks,
-				 iter->toast_pointer.va_valueid,
+				 iter->toast_pointer.va_external.va_valueid,
 				 RelationGetRelationName(iter->toastrel));
 	}
 	else if (residx == iter->numchunks - 1)
 	{
-		if ((residx * TOAST_MAX_CHUNK_SIZE + chunksize) != iter->ressize)
+		if ((residx * iter->chunksize + chunksize) != iter->ressize)
 			elog(ERROR, "unexpected chunk size %d (expected %d) in final chunk %d for toast value %u in %s",
 				 chunksize,
-				 (int) (iter->ressize - residx * TOAST_MAX_CHUNK_SIZE),
+				 (int) (iter->ressize - residx * iter->chunksize),
 				 residx,
-				 iter->toast_pointer.va_valueid,
+				 iter->toast_pointer.va_external.va_valueid,
 				 RelationGetRelationName(iter->toastrel));
 	}
 	else
 		elog(ERROR, "unexpected chunk number %d (out of range %d..%d) for toast value %u in %s",
 			 residx,
 			 0, iter->numchunks - 1,
-			 iter->toast_pointer.va_valueid,
+			 iter->toast_pointer.va_external.va_valueid,
 			 RelationGetRelationName(iter->toastrel));
 
 	/*

@@ -278,7 +278,7 @@ typedef enum jbvType
 	jbvScalar = 0x100
 } JsonbValueType;
 
-typedef struct varatt_external JsonbToastPointer;
+typedef struct varatt_external_versioned JsonbToastPointer;
 
 typedef struct JsonbToastedContainerPointer
 {
