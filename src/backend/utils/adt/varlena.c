@@ -3260,25 +3260,30 @@ byteacat(PG_FUNCTION_ARGS)
 
 #if 1
 	if (VARATT_IS_EXTERNAL_ONDISK(d1) ||
+		VARATT_IS_EXTERNAL_ONDISK_VERSIONED(d1) ||
 		VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(d1))
 	{
 		varatt_external_inline toast_pointer_inline;
-		Size			t1_inline_size =
+		Size		t1_inline_size =
 			VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer_inline.va_external, d1);
 
 		/* Simply append inline TOAST data if not compressed */
-		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer_inline.va_external))
+		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer_inline.va_external.va_external))
 		{
 			struct varlena *result = palloc(TOAST_INLINE_POINTER_SIZE + t1_inline_size + t2_size);
 
 			SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK_INLINE_TAIL);
 
 			toast_pointer_inline.va_inline_size = t1_inline_size + t2_size;
-			toast_pointer_inline.va_external.va_rawsize += t2_size;
+			toast_pointer_inline.va_external.va_external.va_rawsize += t2_size;
+#if 1
+			toast_pointer_inline.va_external.va_external.va_extinfo += t2_size;
+#else
 			VARATT_EXTERNAL_SET_SIZE_AND_COMPRESS_METHOD(
-				toast_pointer_inline.va_external,
-				VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer_inline.va_external) + t2_size,
+				toast_pointer_inline.va_external.va_external,
+				VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer_inline.va_external.va_external) + t2_size,
 				TOAST_INVALID_COMPRESSION_ID);
+#endif
 
 			memcpy(VARDATA_EXTERNAL(result), &toast_pointer_inline, sizeof(toast_pointer_inline));
 

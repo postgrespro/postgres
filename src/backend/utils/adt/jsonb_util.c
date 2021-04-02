@@ -187,11 +187,11 @@ JsonValueUnpackBinary(const JsonValue *jbv)
 }
 
 static struct varlena *
-jsonbMakeToastPointer(struct varatt_external *ptr)
+jsonbMakeToastPointer(struct varatt_external_versioned *ptr)
 {
 	struct varlena *toast_ptr = palloc(TOAST_POINTER_SIZE);
 
-	SET_VARTAG_EXTERNAL(toast_ptr, VARTAG_ONDISK);
+	SET_VARTAG_EXTERNAL(toast_ptr, VARTAG_ONDISK_VERSIONED);
 	memcpy(VARDATA_EXTERNAL(toast_ptr), ptr, sizeof(*ptr));
 
 	return toast_ptr;
@@ -2114,7 +2114,7 @@ estimateJsonbValueSize(const JsonbValue *jbv)
 static void
 jsonbInitToastedContainerPointer(JsonbToastedContainerPointer *jbcptr,
 								 JsonContainer *jc,
-								 struct varatt_external *toast_ptr)
+								 struct varatt_external_versioned *toast_ptr)
 {
 	jbcptr->header =
 		(JsonContainerIsArray(jc) ? JB_TARRAY : JB_TOBJECT) |
@@ -2131,7 +2131,7 @@ JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointer *jbcptr)
 		CompressedJsonb *cjb = jsonbzGetCompressedJsonb(jc);
 		FetchDatumIterator fetch_iter = cjb->iter->fetch_datum_iterator;
 
-		if (fetch_iter->toast_pointer.va_rawsize > 0 &&
+		if (fetch_iter->toast_pointer.va_external.va_rawsize > 0 &&
 			cjb->offset == offsetof(Jsonb, root))
 		{
 			if (jbcptr)

@@ -759,3 +759,17 @@ SELECT unistr('wrong: \udb99\u0061');
 SELECT unistr('wrong: \U0000db99\U00000061');
 SELECT unistr('wrong: \U002FFFFF');
 SELECT unistr('wrong: \xyz');
+
+-- appendable bytea TOAST
+
+CREATE TABLE t (id int, a bytea);
+ALTER TABLE t ALTER a SET STORAGE EXTERNAL;
+
+INSERT INTO t SELECT i, repeat('a', 10000)::bytea FROM generate_series(1, 10);
+
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SAVEPOINT p1;
+UPDATE t SET a = a || repeat('b', 3000)::bytea;
+ROLLBACK TO SAVEPOINT p1;
+UPDATE t SET a = a || repeat('c', 4000)::bytea;
+COMMIT;

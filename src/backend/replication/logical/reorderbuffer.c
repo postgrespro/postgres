@@ -4598,7 +4598,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		if (!VARATT_IS_EXTERNAL(varlena))
 			continue;
 
-		VARATT_EXTERNAL_GET_POINTER(toast_pointer, varlena);
+		VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, varlena);
 
 		/*
 		 * Check whether the toast tuple changed, replace if so.
