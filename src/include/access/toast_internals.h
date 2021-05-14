@@ -66,6 +66,7 @@ extern int	toast_open_indexes(Relation toastrel,
 							   int *num_indexes);
 extern void toast_close_indexes(Relation *toastidxs, int num_indexes,
 								LOCKMODE lock);
-extern void init_toast_snapshot(Snapshot toast_snapshot);
+extern void init_toast_snapshot(Snapshot toast_snapshot,
+								varatt_external_version version);
 
 #endif							/* TOAST_INTERNALS_H */

@@ -857,7 +857,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid,
 	}
 
 	/* Prepare for scan */
-	init_toast_snapshot(&SnapshotToast);
+	init_toast_snapshot(&SnapshotToast, attrversion);
 	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
 										   &SnapshotToast, nscankeys, toastkey);
 

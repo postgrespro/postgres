@@ -592,7 +592,7 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative, int first
 	 * sequence or not, but since we've already locked the index we might as
 	 * well use systable_beginscan_ordered.)
 	 */
-	init_toast_snapshot(&SnapshotToast);
+	init_toast_snapshot(&SnapshotToast, toast_pointer.va_version);
 	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
 										   &SnapshotToast, first_chunk ? 2 : 1, &toastkey[0]);
 	while ((toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
@@ -848,14 +848,15 @@ toast_close_indexes(Relation *toastidxs, int num_indexes, LOCKMODE lock)
  *	too old" error that might have been avoided otherwise.
  */
 void
-init_toast_snapshot(Snapshot toast_snapshot)
+init_toast_snapshot(Snapshot toast_snapshot, varatt_external_version version)
 {
 	Snapshot	snapshot = GetOldestSnapshot();
 
 	if (snapshot == NULL)
 		elog(ERROR, "no known snapshots");
 
-	InitToastSnapshot(*toast_snapshot, snapshot->lsn, snapshot->whenTaken);
+	InitToastSnapshot(*toast_snapshot, snapshot->lsn,
+					  snapshot->whenTaken, version);
 }
 
 static void
@@ -891,7 +892,7 @@ create_fetch_datum_iterator_scan(FetchDatumIterator iter)
 	 * for it.
 	 */
 
-	init_toast_snapshot(&iter->snapshot);
+	init_toast_snapshot(&iter->snapshot, iter->toast_pointer.va_version);
 	iter->toastscan = systable_beginscan_ordered(iter->toastrel, iter->toastidxs[validIndex],
 												 &iter->snapshot, 1, &iter->toastkey);
 

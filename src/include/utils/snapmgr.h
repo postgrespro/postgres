@@ -87,10 +87,11 @@ extern PGDLLIMPORT SnapshotData CatalogSnapshotData;
  * Similarly, some initialization is required for SnapshotToast.  We need
  * to set lsn and whenTaken correctly to support snapshot_too_old.
  */
-#define InitToastSnapshot(snapshotdata, l, w)  \
+#define InitToastSnapshot(snapshotdata, l, w, version)  \
 	((snapshotdata).snapshot_type = SNAPSHOT_TOAST, \
 	 (snapshotdata).lsn = (l),					\
-	 (snapshotdata).whenTaken = (w))
+	 (snapshotdata).whenTaken = (w), \
+	 (snapshotdata).xmax = (TransactionId)(version))
 
 /* This macro encodes the knowledge of which snapshots are MVCC-safe */
 #define IsMVCCSnapshot(snapshot)  \

@@ -418,6 +418,9 @@ HeapTupleSatisfiesToast(HeapTuple htup, Snapshot snapshot,
 		 */
 		else if (!TransactionIdIsValid(HeapTupleHeaderGetXmin(tuple)))
 			return false;
+		else if ((varatt_external_version) snapshot->xmax != VARATT_EXTERNAL_INVALID_VERSION &&
+				 TransactionIdDidAbort(HeapTupleHeaderGetXmin(tuple)))
+			return false;
 	}
 
 	/* otherwise assume the tuple is valid for TOAST. */
