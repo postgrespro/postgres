@@ -193,13 +193,13 @@ jsonFindKeyInObjectInternal(JsonContainer *obj, const char *key, int len,
 }
 
 JsonValue *
-jsonFindKeyInObject(JsonContainer *obj, const char *key, int len)
+jsonFindKeyInObject(JsonContainer *obj, const char *key, int len, JsonFieldPtr *ptr)
 {
 	return jsonFindKeyInObjectInternal(obj, key, len, false);
 }
 
 JsonValue *
-jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len)
+jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len, JsonFieldPtr *ptr)
 {
 	return jsonFindKeyInObjectInternal(obj, key, len, true);
 }
@@ -557,7 +557,7 @@ jsonvIteratorInit(JsonContainer *jsc)
 }
 
 static JsonValue *
-jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len)
+jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len, JsonFieldPtr *ptr)
 {
 	JsonValue  *obj = JsonContainerDataPtr(objc);
 	JsonValue  *res;
@@ -571,7 +571,7 @@ jsonvFindKeyInObject(JsonContainer *objc, const char *key, int len)
 	{
 		JsonContainer *jsc = obj->val.binary.data;
 		Assert(jsc->type == jbvObject);
-		return (*jsc->ops->findKeyInObject)(jsc, key, len);
+		return (*jsc->ops->findKeyInObject)(jsc, key, len, NULL);
 	}
 
 	Assert(obj->type == jbvObject);
@@ -638,7 +638,7 @@ jsonvFindValueInArray(JsonContainer *arrc, const JsonValue *val)
 }
 
 static JsonValue *
-jsonvGetArrayElement(JsonContainer *arrc, uint32 index)
+jsonvGetArrayElement(JsonContainer *arrc, uint32 index, JsonFieldPtr *ptr)
 {
 	JsonValue  *arr = JsonContainerDataPtr(arrc);
 
@@ -648,7 +648,7 @@ jsonvGetArrayElement(JsonContainer *arrc, uint32 index)
 	{
 		JsonContainer *jsc = arr->val.binary.data;
 		Assert(jsc->type == jbvArray);
-		return (*jsc->ops->getArrayElement)(jsc, index);
+		return (*jsc->ops->getArrayElement)(jsc, index, ptr);
 	}
 	else if (arr->type == jbvArray)
 	{

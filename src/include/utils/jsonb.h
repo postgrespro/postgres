@@ -278,13 +278,21 @@ typedef enum jbvType
 	jbvScalar = 0x100
 } JsonbValueType;
 
-typedef struct varatt_external_versioned JsonbToastPointer;
+typedef struct varatt_external_inline JsonbToastPointer;
 
 typedef struct JsonbToastedContainerPointer
 {
 	JsonbContainerHeader header;
 	JsonbToastPointer ptr;
 } JsonbToastedContainerPointer;
+
+typedef struct JsonbToastedContainerPointerData
+{
+	struct varatt_external_versioned ptr;
+	uint32		container_offset;
+	uint32		tail_size;
+	const void *tail_data;
+} JsonbToastedContainerPointerData;
 
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
@@ -402,9 +410,9 @@ extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
 extern JsonbValue *findJsonbValueFromContainer(const JsonbContainer *sheader,
 											   uint32 flags,
 											   JsonbValue *key);
-extern JsonbValue *getKeyJsonValueFromContainer(const struct JsonContainerData *container,
-												const char *keyVal, int keyLen,
-												JsonbValue *res);
+//extern JsonbValue *getKeyJsonValueFromContainer(const struct JsonContainerData *container,
+												//const char *keyVal, int keyLen,
+												//JsonbValue *res, JsonFieldPtr *ptr);
 extern JsonbValue *pushJsonbValueExt(JsonbParseState **pstate,
 									 JsonbIteratorToken seq,
 									 const JsonbValue *jbVal,
@@ -439,5 +447,10 @@ extern bool JsonbHasExternal(Datum jb);
 
 extern void jsonbInitIterators(void);
 extern void jsonbFreeIterators(void);
+
+extern Datum jsonbMakeDiffToastPointer(varatt_external_versioned *ptr,
+									   int32 diff_offset,
+									   int32 diff_len,
+									   const void *diff_data);
 
 #endif							/* __JSONB_H__ */

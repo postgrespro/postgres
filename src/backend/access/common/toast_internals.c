@@ -910,6 +910,7 @@ create_fetch_datum_iterator(struct varlena *attr)
 {
 	FetchDatumIterator iter;
 	int32		inlineSize;
+	int32		extSize;
 
 	if (!VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
@@ -920,11 +921,13 @@ create_fetch_datum_iterator(struct varlena *attr)
 
 	/* Must copy to access aligned fields */
 	inlineSize = VARATT_EXTERNAL_INLINE_GET_POINTER(iter->toast_pointer, attr);
-	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer.va_external) - inlineSize;
+	iter->ressize = extSize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer.va_external);
+	if (!VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
+		iter->ressize -= inlineSize;
 	iter->chunksize = TOAST_MAX_CHUNK_SIZE - (iter->toast_pointer.va_version != VARATT_EXTERNAL_INVALID_VERSION ? TOAST_CHUNK_VERSION_SIZE : 0);
 	iter->numchunks = ((iter->ressize - 1) / iter->chunksize) + 1;
 
-	iter->buf = create_toast_buffer(iter->ressize + inlineSize + VARHDRSZ,
+	iter->buf = create_toast_buffer(extSize + VARHDRSZ,
 									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer.va_external));
 
 	iter->nextidx = 0;

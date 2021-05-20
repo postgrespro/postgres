@@ -1487,8 +1487,10 @@ select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
 -- test partial decompression
 create table test_jsonbz_obj as
 select
-  jsonb_build_object('a',
-    jsonb_object_agg(i, repeat('a', pow(2, 10 + i)::int))) js
+  jsonb_build_object(
+    'a', jsonb_object_agg(i, repeat('a', pow(2, 10 + i)::int)),
+    'b', 'foo'
+  ) js
 from
   generate_series(0, 9) i,
   generate_series(0, 9) j

@@ -49,16 +49,24 @@ struct JsonIteratorData
 	JsonIteratorNextFunc	next;
 };
 
+typedef struct JsonFieldPtr
+{
+	 uint32		offset;
+	 uint32		length;
+} JsonFieldPtr;
+
 struct JsonContainerOps
 {
 	int				data_size;
 	void			(*init)(JsonContainerData *jc, Datum value);
 	JsonIterator   *(*iteratorInit)(JsonContainer *jc);
 	JsonValue	   *(*findKeyInObject)(JsonContainer *object,
-									   const char *key, int len);
+									   const char *key, int len, 
+									   JsonFieldPtr *ptr);
 	JsonValue	   *(*findValueInArray)(JsonContainer *array,
 										const JsonValue *value);
-	JsonValue	   *(*getArrayElement)(JsonContainer *array, uint32 index);
+	JsonValue	   *(*getArrayElement)(JsonContainer *array, uint32 index, 
+									   JsonFieldPtr *ptr);
 	uint32			(*getArraySize)(JsonContainer *array);
 	char		   *(*toString)(StringInfo out, JsonContainer *jc,
 								int estimated_len);
@@ -196,6 +204,9 @@ typedef struct Json
 #define JsonOp2(op, jscontainer, arg1, arg2) \
 		JsonOp(op, jscontainer)(jscontainer, arg1, arg2)
 
+#define JsonOp3(op, jscontainer, arg1, arg2, arg3) \
+		JsonOp(op, jscontainer)(jscontainer, arg1, arg2, arg3)
+
 #define JsonIteratorInit(jscontainer) \
 		JsonOp0(iteratorInit, jscontainer)
 
@@ -203,10 +214,16 @@ typedef struct Json
 		JsonOp1(findValueInArray, jscontainer, key)
 
 #define JsonFindKeyInObject(jscontainer, key, len) \
-		JsonOp2(findKeyInObject, jscontainer, key, len)
+		JsonOp3(findKeyInObject, jscontainer, key, len, NULL)
+
+#define JsonFindKeyPtrInObject(jscontainer, key, len, ptr) \
+		JsonOp3(findKeyInObject, jscontainer, key, len, ptr)
 
 #define JsonGetArrayElement(jscontainer, index) \
-		JsonOp1(getArrayElement, jscontainer, index)
+		JsonOp2(getArrayElement, jscontainer, index, NULL)
+
+#define JsonGetArrayElementPtr(jscontainer, index, ptr) \
+		JsonOp2(getArrayElement, jscontainer, index, ptr)
 
 #define JsonGetArraySize(json) \
 		JsonOp0(getArraySize, json)
@@ -498,8 +515,8 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 extern char *JsonbToCStringCanonical(StringInfo out, JsonContainer *in,
 					 int estimated_len);
 
-extern JsonValue   *jsonFindKeyInObject(JsonContainer *obj, const char *key, int len);
-extern JsonValue   *jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len);
+extern JsonValue   *jsonFindKeyInObject(JsonContainer *obj, const char *key, int len, JsonFieldPtr *ptr);
+extern JsonValue   *jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len, JsonFieldPtr *ptr);
 extern JsonValue   *jsonFindValueInArray(JsonContainer *array, const JsonValue *elem);
 extern uint32		jsonGetArraySize(JsonContainer *array);
 extern JsonValue   *jsonGetArrayElement(JsonContainer *array, uint32 index);
@@ -532,5 +549,33 @@ extern int lengthCompareJsonbString(const char *val1, int len1,
 									const char *val2, int len2);
 
 extern Json *DatumGetJsonbPC(Datum datum, Json *tmp, bool copy);
+
+extern bool JsonContainerIsToasted(JsonContainer *jc, 
+								   JsonbToastedContainerPointerData *jbcptr);
+
+static inline bool
+JsonValueIsToasted(JsonValue *jv, uint32 *inline_size)
+{
+	bool		res;
+
+	if (jv->type != jbvBinary)
+		return false;
+	
+	if (inline_size)
+	{
+		JsonbToastedContainerPointerData data;
+
+		res = JsonContainerIsToasted(jv->val.binary.data, &data);
+		
+		*inline_size = data.tail_size;
+	}
+	else
+		res = JsonContainerIsToasted(jv->val.binary.data, NULL);
+		
+	return res;
+}
+
+extern JsonContainer *jsonbzInitContainerFromDatum(JsonContainer *jc,
+												   Datum toasted_val);
 
 #endif /* UTILS_JSON_GENERIC_H */

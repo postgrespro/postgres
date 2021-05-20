@@ -92,6 +92,12 @@ typedef struct varatt_external_inline
 	char		va_data[FLEXIBLE_ARRAY_MEMBER];
 }			varatt_external_inline;
 
+typedef struct varatt_external_diff
+{
+	int32		va_diff_offset;
+	char		va_diff_data[FLEXIBLE_ARRAY_MEMBER];
+} varatt_external_diff;
+
 /*
  * These macros define the "saved size" portion of va_extinfo.  Its remaining
  * two high-order bits identify the compression method.
@@ -144,6 +150,7 @@ typedef enum vartag_external
 	VARTAG_ONDISK_VERSIONED = 19,
 	VARTAG_ONDISK_INLINE_HEAD = 20,	/* FIXME */
 	VARTAG_ONDISK_INLINE_TAIL = 21,
+	VARTAG_ONDISK_INLINE_DIFF = 22,
 } vartag_external;
 
 /* this test relies on the specific tag values above */
@@ -156,7 +163,8 @@ typedef enum vartag_external
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
 	 (tag) == VARTAG_ONDISK_VERSIONED ? sizeof(varatt_external_versioned) : \
 	 (tag) == VARTAG_ONDISK_INLINE_HEAD || \
-	 (tag) == VARTAG_ONDISK_INLINE_TAIL ? \
+	 (tag) == VARTAG_ONDISK_INLINE_TAIL || \
+	 (tag) == VARTAG_ONDISK_INLINE_DIFF ? \
 	 offsetof(varatt_external_inline, va_data) + VARSIZE_EXTERNAL_INLINE(ptr) : \
 	 TrapMacro(true, "unrecognized TOAST vartag"))
 
@@ -357,11 +365,14 @@ typedef struct
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && \
 	 (VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD || \
-	  VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL))
+	  VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL || \
+	  VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_DIFF))
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_HEAD)
 #define VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_TAIL)
+#define VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK_INLINE_DIFF)
 #define VARATT_IS_EXTERNAL_ONDISK_ANY(PTR) \
 	(VARATT_IS_EXTERNAL_ONDISK(PTR) || \
 	 VARATT_IS_EXTERNAL_ONDISK_VERSIONED(PTR) || \

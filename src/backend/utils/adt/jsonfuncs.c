@@ -383,6 +383,8 @@ static void setPathArray(JsonbIterator **it, Datum *path_elems,
 						 bool *path_nulls, int path_len, JsonbParseState **st,
 						 int level,
 						 JsonbValue *newval, uint32 nelems, int op_type);
+static int getPathArrayIndex(Datum *path_elems, bool *path_nulls, int path_len, 
+							 int level,  uint32 nelems, int op_type);
 
 static Datum jsonb_strip_nulls_internal(Jsonb *jb);
 
@@ -3513,6 +3515,46 @@ IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 	return res;
 }
 
+static bool
+isValueReplacable(JsonValue *oldval, JsonValue *newval)
+{
+	if (oldval->type != newval->type)
+		return false;
+
+	switch (oldval->type)
+	{
+		case jbvString:
+			return oldval->val.string.len == newval->val.string.len;
+
+		case jbvBinary:
+			if (JsonContainerIsObject(oldval->val.binary.data) &&
+			   !JsonContainerIsObject(newval->val.binary.data))
+			   return false;
+
+			if (JsonContainerIsArray(oldval->val.binary.data) &&
+			   !JsonContainerIsArray(newval->val.binary.data))
+				return false;
+			
+			if (oldval->val.binary.data->ops != &jsonbContainerOps ||
+				newval->val.binary.data->ops != &jsonbContainerOps)
+				return false;
+			
+			if (oldval->val.binary.data->len != 
+				newval->val.binary.data->len)
+				return false;
+			
+			return true;
+			
+		case jbvNumeric:
+			return VARSIZE_ANY(oldval->val.numeric) ==
+				   VARSIZE_ANY(newval->val.numeric);
+			break;
+
+		default:	/* FIXME null, bool */
+			return true;
+	}
+}
+
 /*
  * Do most of the heavy work for jsonb_set/jsonb_insert
  *
@@ -3550,6 +3592,7 @@ setPath(JsonbIterator **it, Datum *path_elems,
 	JsonbValue	v;
 	JsonbIteratorToken r;
 	JsonbValue *res;
+	bool		try_inplace_update;
 
 	check_stack_depth();
 
@@ -3558,8 +3601,102 @@ setPath(JsonbIterator **it, Datum *path_elems,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("path element at position %d is null",
 						level + 1)));
+	try_inplace_update =
+		level == path_len - 1 &&	/* FIXME */
+		!(op_type & (JB_PATH_INSERT_AFTER | JB_PATH_INSERT_BEFORE));
 
-	r = JsonbIteratorNext(it, &v, false);
+	r = JsonbIteratorNext(it, &v, try_inplace_update);
+
+	if ((r == WJB_ELEM || r == WJB_VALUE) &&
+		v.type == jbvBinary)
+	{
+		JsonContainer *jc = v.val.binary.data;
+		JsonIterator *it2;
+		JsonbToastedContainerPointerData jbcptr;
+
+		if (JsonContainerIsToasted(jc, &jbcptr))
+		{
+			JsonFieldPtr ptr = {0};
+			JsonValue *old_val;
+
+			if (JsonContainerIsObject(jc))
+			{
+				old_val = JsonFindKeyPtrInObject(jc,
+												 VARDATA_ANY(path_elems[level]),
+												 VARSIZE_ANY_EXHDR(path_elems[level]), 
+												 &ptr);
+			}
+			else
+			{
+				int			nelems = JsonContainerSize(jc);
+				int			idx = getPathArrayIndex(path_elems, path_nulls, 
+													path_len, level, nelems, op_type);
+
+				old_val = JsonGetArrayElementPtr(jc, idx, &ptr);
+			}
+
+			if (old_val && ptr.offset)
+			{
+				varatt_external_diff diff;
+				JsonValue  *new_val = newval;
+				JsonValue	new_val_buf;
+
+				ptr.offset += jbcptr.container_offset;
+
+				if (newval->type == jbvBinary &&
+					JsonContainerIsScalar(newval->val.binary.data))
+					new_val = JsonExtractScalar(newval->val.binary.data,
+												&new_val_buf);
+
+				if (jbcptr.tail_size > 0)
+					memcpy(&diff, jbcptr.tail_data, offsetof(varatt_external_diff, va_diff_data));
+				else
+					diff.va_diff_offset = ptr.offset;
+
+				if (ptr.offset == diff.va_diff_offset &&
+					isValueReplacable(old_val, new_val))
+				{
+					const void *val;
+					int			len;
+
+					switch (new_val->type)
+					{
+						case jbvString:
+							val = new_val->val.string.val;
+							len = new_val->val.string.len;
+							break;
+
+						case jbvNumeric:
+							val = new_val->val.numeric;
+							len = VARSIZE_ANY(new_val->val.numeric);
+							break;
+
+						case jbvBinary:
+							Assert(new_val->val.binary.data->ops == &jsonbContainerOps);
+							val = JsonContainerDataPtr(new_val->val.binary.data);
+							len = new_val->val.binary.data->len;
+							break;
+
+						default:
+							break;
+					}
+
+					Datum toast_diff = jsonbMakeDiffToastPointer(&jbcptr.ptr, diff.va_diff_offset, len, val);
+					JsonValue toast_diff_jv;
+					
+					JsonValueInitBinary(&toast_diff_jv, jsonbzInitContainerFromDatum(jc, toast_diff));
+
+					return pushJsonbValueExt(st, r, &toast_diff_jv, false);
+				}
+			}
+		}
+
+		it2 = JsonIteratorInit(jc);
+		it2->parent = *it;
+		*it = it2;
+
+		r = JsonIteratorNext(it, &v, false);
+	}
 
 	switch (r)
 	{
@@ -3721,20 +3858,12 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 	return r;
 }
 
-/*
- * Array walker for setPath
- */
-static void
-setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
-			 int path_len, JsonbParseState **st, int level,
-			 JsonbValue *newval, uint32 nelems, int op_type)
+static int
+getPathArrayIndex(Datum *path_elems, bool *path_nulls, int path_len, 
+				  int level,  uint32 nelems, int op_type)
 {
-	JsonbValue	v;
-	int			idx,
-				i;
-	bool		done = false;
+	int		idx;
 
-	/* pick correct index */
 	if (level < path_len && !path_nulls[level])
 	{
 		char	   *c = TextDatumGetCString(path_elems[level]);
@@ -3780,6 +3909,26 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 		if (idx > 0 && idx > nelems)
 			idx = nelems;
 	}
+
+	return idx;
+}
+
+/*
+ * Array walker for setPath
+ */
+static void
+setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
+			 int path_len, JsonbParseState **st, int level,
+			 JsonbValue *newval, uint32 nelems, int op_type)
+{
+	JsonbValue	v;
+	int			idx,
+				i;
+	bool		done = false;
+
+	/* pick correct index */
+	idx = getPathArrayIndex(path_elems, path_nulls, path_len, level, 
+							nelems, op_type);
 
 	/*
 	 * if we're creating, and idx == INT_MIN, we prepend the new value to the

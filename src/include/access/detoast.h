@@ -149,14 +149,23 @@ typedef struct FetchDatumIteratorData
 	int			num_indexes;
 	int			tail_size;
 	bool		done;
-}				FetchDatumIteratorData;
+}			FetchDatumIteratorData;
 
 typedef struct FetchDatumIteratorData *FetchDatumIterator;
 
 typedef struct DetoastIteratorData
 {
 	ToastBuffer 		*buf;
+	ToastBuffer			*orig_buf;
 	FetchDatumIterator	fetch_datum_iterator;
+	struct
+	{
+		const char *data;
+		const char *inline_data;
+		int32		inline_size;
+		int32		size;
+		int32		offset;
+	}					diff;
 	int					nrefs;
 	void			   *decompression_state;
 	ToastCompressionId	compression_method;
@@ -194,6 +203,11 @@ extern DetoastIterator create_detoast_iterator(struct varlena *attr);
  */
 extern void free_detoast_iterator(DetoastIterator iter);
 
+extern void toast_apply_diff_internal(struct varlena *result, 
+									  const char *diff_data, 
+									  int32 diff_offset, int32 diff_size, 
+									  int32 sliceoffset, int32 slicelength);
+
 /* ----------
  * detoast_iterate -
  *
@@ -207,6 +221,7 @@ static inline void
 detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 {
 	FetchDatumIterator fetch_iter = detoast_iter->fetch_datum_iterator;
+	const char *old_limit = detoast_iter->buf->limit;
 
 	Assert(detoast_iter != NULL && !detoast_iter->done && fetch_iter);
 
@@ -226,7 +241,39 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 		fetch_datum_iterate(fetch_iter);
 
 	if (detoast_iter->compressed)
-		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf, detoast_iter, destend);
+		toast_decompress_iterate(fetch_iter->buf, detoast_iter->orig_buf, 
+								 detoast_iter, 
+								 detoast_iter->orig_buf->buf + (destend - detoast_iter->buf->buf));
+
+	if (detoast_iter->diff.data)
+	{
+		int32		slice_offset;
+		int32		slice_length;
+
+		/* copy original data to output buffer */
+		if (detoast_iter->compressed)
+		{
+			int		dst_limit = detoast_iter->buf->limit - detoast_iter->buf->buf;
+			int		src_limit = detoast_iter->orig_buf->limit - detoast_iter->orig_buf->buf;
+
+			if (dst_limit < src_limit)
+			{
+				memcpy(detoast_iter->buf->limit, 
+					   detoast_iter->orig_buf->buf + dst_limit, 
+					   src_limit - dst_limit);
+				detoast_iter->buf->limit += src_limit - dst_limit;
+			}
+		}
+
+		slice_offset = old_limit - detoast_iter->buf->buf;
+		slice_length = detoast_iter->buf->limit - old_limit;
+
+		toast_apply_diff_internal((struct varlena *) detoast_iter->buf->buf,
+								  detoast_iter->diff.data,
+								  detoast_iter->diff.offset,
+								  detoast_iter->diff.size,
+								  slice_offset, slice_length);
+	}
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
 	{

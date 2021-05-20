@@ -369,6 +369,11 @@ create_detoast_iterator(struct varlena *attr)
 
 			/* prepare buffer to received decompressed data */
 			iter->buf = create_toast_buffer(toast_pointer.va_external.va_rawsize, false);
+			
+			if (VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
+				iter->orig_buf = create_toast_buffer(toast_pointer.va_external.va_rawsize, false);
+			else
+				iter->orig_buf = iter->buf;
 		}
 		else
 		{
@@ -376,22 +381,36 @@ create_detoast_iterator(struct varlena *attr)
 			iter->compression_method = TOAST_INVALID_COMPRESSION_ID;
 
 			/* point the buffer directly at the raw data */
-			iter->buf = fetch_iter->buf;
+			iter->buf = iter->orig_buf = fetch_iter->buf;
 		}
 
 		if (inlineSize > 0)
 		{
+			void	   *inlineData = VARDATA_EXTERNAL_INLINE(attr);
+
 			if (VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(attr))
 			{
 				memcpy((void *) fetch_iter->buf->limit,
-					   VARDATA_EXTERNAL_INLINE(attr), inlineSize);
+					   inlineData, inlineSize);
 				fetch_iter->buf->limit += inlineSize;
 			}
-			else
+			else if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(attr))
 			{
 				memcpy(fetch_iter->buf->limit + fetch_iter->ressize,
-					   VARDATA_EXTERNAL_INLINE(attr), inlineSize);
+					   inlineData, inlineSize);
 				fetch_iter->tail_size = inlineSize;
+			}
+			else
+			{	
+				struct varatt_external_diff *diff = inlineData;
+
+				Assert(VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr));
+
+				iter->diff.inline_data = inlineData;
+				iter->diff.inline_size = inlineSize;
+				iter->diff.size = inlineSize - offsetof(varatt_external_diff, va_diff_data);
+				iter->diff.offset = diff->va_diff_offset;
+				iter->diff.data = diff->va_diff_data;	/* FIXME MemoryContext */
 			}
 		}
 
@@ -430,7 +449,7 @@ create_detoast_iterator(struct varlena *attr)
 		buf->limit = (char *) buf->capacity;
 
 		/* prepare buffer to received decompressed data */
-		iter->buf = create_toast_buffer(TOAST_COMPRESS_EXTSIZE(attr) + VARHDRSZ, false);
+		iter->buf = iter->orig_buf = create_toast_buffer(TOAST_COMPRESS_EXTSIZE(attr) + VARHDRSZ, false);
 
 		return iter;
 	}
@@ -453,10 +472,53 @@ free_detoast_iterator(DetoastIterator iter)
 		return;
 	if (--iter->nrefs > 0)
 		return;
+	if (iter->orig_buf != iter->buf)
+		free_toast_buffer(iter->orig_buf);
 	if (iter->compressed)
 		free_toast_buffer(iter->buf);
 	free_fetch_datum_iterator(iter->fetch_datum_iterator);
 	pfree(iter);
+}
+
+void
+toast_apply_diff_internal(struct varlena *result, const char *diff_data, 
+						  int32 diff_offset, int32 diff_size, 
+						  int32 sliceoffset, int32 slicelength)
+{
+	if (diff_offset >= sliceoffset)
+	{
+		if (diff_offset < sliceoffset + slicelength)
+			memcpy((char *) result /*VARDATA(result)*/ + diff_offset,
+				   diff_data, 
+				   Min(diff_size, sliceoffset + slicelength - diff_offset));
+	}
+	else
+	{
+		if (diff_offset + diff_size > sliceoffset)
+			memcpy(result /*VARDATA(result)*/,
+				   diff_data + sliceoffset - diff_offset,
+				   Min(slicelength, diff_offset + diff_size - sliceoffset));
+	}
+}
+
+static void
+toast_apply_diff(struct varlena *attr, struct varlena *result, 
+				 int32 inline_size, int32 sliceoffset, int32 slicelength)
+{
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
+	{
+		struct varatt_external_diff diff;
+		const char *inline_data = VARDATA_EXTERNAL_INLINE(attr);
+		Size		data_offset = offsetof(varatt_external_diff, va_diff_data);
+		Size		diff_size = inline_size - data_offset;
+		const char *diff_data = inline_data + data_offset;
+
+		memcpy(&diff, inline_data, data_offset);
+
+		toast_apply_diff_internal(result, diff_data, 
+								  diff.va_diff_offset, diff_size, 
+								  sliceoffset, slicelength); 
+	}
 }
 
 /* ----------
@@ -499,11 +561,15 @@ toast_fetch_datum(struct varlena *attr)
 	if (inline_size)
 	{
 		if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(attr))
+		{
 			memcpy(VARDATA(result) + attrsize - inline_size, VARDATA_EXTERNAL_INLINE(attr), inline_size);
-		else
+			attrsize -= inline_size;
+		}
+		else if (VARATT_IS_EXTERNAL_ONDISK_INLINE_HEAD(attr))
 		{
 			memcpy(VARDATA(result), VARDATA_EXTERNAL_INLINE(attr), inline_size);
 			detoast_ptr += inline_size;
+			attrsize -= inline_size;
 		}
 	}
 
@@ -516,11 +582,13 @@ toast_fetch_datum(struct varlena *attr)
 	table_relation_fetch_toast_slice(toastrel,
 									 toast_pointer.va_external.va_valueid,
 									 toast_pointer.va_version,
-									 attrsize - inline_size, 0, attrsize - inline_size,
+									 attrsize, 0, attrsize,
 									 (struct varlena *) detoast_ptr);
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
+
+	toast_apply_diff(attr, result, inline_size, 0, attrsize);
 
 	return result;
 }
@@ -630,6 +698,8 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
+
+	toast_apply_diff(attr, result, inline_size, sliceoffset, slicelength);
 
 	return result;
 }
