@@ -177,7 +177,7 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
 											uint32 offset, JsonValue *result);
 static JsonbContainerHeader *jsonxzDecompress(JsonContainer *jc);
 static bool JsonContainerIsToasted(JsonContainer *jc,
-								   JsonbToastedContainerPointer *jbcptr);
+								   JsonbToastedContainerPointerData *jbcptr);
 static bool JsonValueContainsToasted(const JsonValue *jv);
 
 static bool jsonb_toast_fields = true;				/* GUC */
@@ -187,12 +187,12 @@ static JsonContainerOps jsonxContainerOps;
 static JsonContainerOps jsonxzContainerOps;
 
 static struct varlena *
-jsonxMakeToastPointer(struct varatt_external *ptr)
+jsonxMakeToastPointer(JsonbToastedContainerPointerData *ptr)
 {
 	struct varlena *toast_ptr = palloc(TOAST_POINTER_SIZE);
 
 	SET_VARTAG_EXTERNAL(toast_ptr, VARTAG_ONDISK);
-	memcpy(VARDATA_EXTERNAL(toast_ptr), ptr, sizeof(*ptr));
+	memcpy(VARDATA_EXTERNAL(toast_ptr), &ptr->ptr, sizeof(ptr->ptr));
 
 	return toast_ptr;
 }
@@ -501,11 +501,14 @@ jsonxFillValue(const JsonbContainerHeader *container, int index,
 	else if (JBE_ISCONTAINER_PTR(entry))
 	{
 		JsonbToastedContainerPointer *jbcptr = (JsonbToastedContainerPointer *)(base_addr + INTALIGN(offset));
-		struct varlena *toast_ptr = jsonxMakeToastPointer(&jbcptr->ptr);
+		JsonbToastedContainerPointerData jbcptr_data;
+		struct varlena *toast_ptr;
 		bool			is_jsonx = (jbcptr->header & JBC_TOBJECT_TOASTED) != 0;
 		JsonContainerData *cont =
 			JsonContainerAlloc(is_jsonx ? &jsonxzContainerOps : &jsonbzContainerOps);
 
+		jbcptr_data.ptr = jbcptr->ptr;
+		toast_ptr = jsonxMakeToastPointer(&jbcptr_data);
 		jsonxzInitWithHeader(cont, PointerGetDatum(toast_ptr), &jbcptr->header);
 		JsonValueInitBinary(result, cont);
 
@@ -1010,19 +1013,21 @@ estimateJsonbValueSize(const JsonbValue *jbv)
 }
 
 static void
-jsonxInitToastedContainerPointer(JsonbToastedContainerPointer *jbcptr,
-								 JsonContainer *jc,
-								 struct varatt_external *toast_ptr)
+jsonxInitToastedContainerPointer(JsonbToastedContainerPointerData *jbcptr,
+								 varatt_external *toast_ptr,
+								 uint32 container_offset)
 {
+	/*
 	jbcptr->header =
 		(JsonContainerIsArray(jc) ? JBC_TARRAY : JBC_TOBJECT) |
 		(jc->ops == &jsonxzContainerOps ? JBC_TOBJECT_TOASTED : 0) |
-		JsonContainerSize(jc);
+		JsonContainerSize(jc);*/
 	jbcptr->ptr = *toast_ptr;
+	jbcptr->container_offset = container_offset;
 }
 
 static bool
-JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointer *jbcptr)
+JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcptr)
 {
 	if (jc->ops == &jsonbzContainerOps ||
 		jc->ops == &jsonxzContainerOps)
@@ -1034,8 +1039,9 @@ JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointer *jbcptr)
 			cjb->offset == offsetof(JsonbDatum, root))
 		{
 			if (jbcptr)
-				jsonxInitToastedContainerPointer(jbcptr, jc, &fetch_iter->toast_pointer);
-
+				jsonxInitToastedContainerPointer(jbcptr,
+												 &fetch_iter->toast_pointer,
+												 cjb->offset);
 			return true;
 		}
 	}
@@ -1397,12 +1403,12 @@ convertJsonbBinary(StringInfo buffer, JEntry *pheader, const JsonbValue *val,
 
 		if (jsonb_toast_fields)
 		{
-			JsonbToastedContainerPointer jbcptr;
+			JsonbToastedContainerPointerData jbcptr;
 
 			if (JsonContainerIsToasted(jc, &jbcptr))
 			{
 				padBufferToInt(buffer);
-				appendToBuffer(buffer, (void *) &jbcptr, sizeof(jbcptr));
+				appendToBuffer(buffer, (void *) &jbcptr.ptr, sizeof(jbcptr.ptr));
 				*pheader = JENTRY_ISCONTAINER_PTR | (buffer->len - base_offset);
 				return;
 			}
@@ -1851,6 +1857,28 @@ jsonxContainerOps =
 	jsonxEncode
 };
 
+static JsonContainer *
+jsonxzInitContainerFromDatum(JsonContainer *jc, Datum toasted_val)
+{
+	JsonContainerData *tjc;
+	JsonbContainerHeader header;
+	bool		is_jsonx;
+
+	Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_val));
+
+	is_jsonx = jc->ops == &jsonxContainerOps || jc->ops == &jsonxzContainerOps;
+
+	header =
+		(JsonContainerIsArray(jc) ? JBC_TARRAY : JBC_TOBJECT) |
+		(is_jsonx ? JBC_TOBJECT_TOASTED : 0) |
+		JsonContainerSize(jc);
+
+	tjc = JsonContainerAlloc(is_jsonx ? &jsonxzContainerOps : &jsonbzContainerOps);	/* FIXME optimize */
+	jsonxzInitWithHeader(tjc, toasted_val, &header);
+
+	return tjc;
+}
+
 static bool
 jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 						  /* XXX bool uniquified, */ Size max_size, char cmethod,
@@ -1959,10 +1987,7 @@ jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 		Datum		compressed_val;
 		Datum		toasted_val;
 		JsonContainer *jc;
-		JsonContainerData *tjc;
 		JsonbContainerHeader *jbc;
-		JsonbContainerHdr header;
-		bool		is_jsonx;
 
 		for (i = 0; i < nkeys; i++)
 		{
@@ -2011,20 +2036,7 @@ jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 		if (DatumGetPointer(compressed_val))
 			pfree(DatumGetPointer(compressed_val));
 
-		Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_val));
-
-		is_jsonx = jc->ops == &jsonxContainerOps || jc->ops == &jsonxzContainerOps;
-
-		header =
-			(JsonContainerIsArray(jc) ? JBC_TARRAY : JBC_TOBJECT) |
-			(is_jsonx ? JBC_TOBJECT_TOASTED : 0) |
-			JsonContainerSize(jc);
-
-		tjc = JsonContainerAlloc(is_jsonx ? &jsonxzContainerOps : &jsonbzContainerOps);	/* FIXME optimize */
-		jsonxzInitWithHeader(tjc, toasted_val, &header);
-
-		pairs[max_key_idx].value.val.binary.data = tjc;
-
+		pairs[max_key_idx].value.val.binary.data = jsonxzInitContainerFromDatum(jc, toasted_val);
 		sizes[max_key_idx] = sizeof(JsonbToastedContainerPointer);
 		total_size += INTALIGN(sizes[max_key_idx] + 3);
 	}
@@ -2220,11 +2232,11 @@ jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod)
 static void
 jsonb_toaster_delete_container(Relation rel, JsonContainer *jc)
 {
-	JsonbToastedContainerPointer jbcptr;
+	JsonbToastedContainerPointerData jbcptr;
 
 	if (JsonContainerIsToasted(jc, &jbcptr))
 	{
-		struct varlena *ptr = jsonxMakeToastPointer(&jbcptr.ptr);
+		struct varlena *ptr = jsonxMakeToastPointer(&jbcptr);
 
 		toast_delete_datum(PointerGetDatum(ptr), false);
 		pfree(ptr);
@@ -2265,8 +2277,8 @@ jsonb_toaster_delete_recursive(Relation rel, JsonContainer *jc, bool delete_self
 static bool
 jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *new_jc, char cmethod)
 {
-	JsonbToastedContainerPointer new_jbcptr;
-	JsonbToastedContainerPointer old_jbcptr;
+	JsonbToastedContainerPointerData new_jbcptr;
+	JsonbToastedContainerPointerData old_jbcptr;
 	JsonIterator *old_it;
 	JsonIterator *new_it;
 	JsonValue	old_jbv;
@@ -2312,7 +2324,7 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 					if (JsonContainerIsToasted(newjc, &new_jbcptr))
 					{
 						if (!JsonContainerIsToasted(oldjc, &old_jbcptr) ||
-							memcmp(&new_jbcptr, &old_jbcptr, sizeof(new_jbcptr)))
+							memcmp(&new_jbcptr.ptr, &old_jbcptr.ptr, sizeof(new_jbcptr.ptr)))
 						{
 							changed |= jsonb_toaster_replace_toasted(rel, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
 							jsonb_toaster_delete_recursive(rel, oldjc, true);
@@ -2379,8 +2391,8 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 static Datum
 jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, char cmethod)
 {
-	JsonbToastedContainerPointer new_jbcptr;
-	JsonbToastedContainerPointer old_jbcptr;
+	JsonbToastedContainerPointerData new_jbcptr;
+	JsonbToastedContainerPointerData old_jbcptr;
 	Datum		res;
 	void	   *jb;
 	JsonbContainerHeader *new_jbc;
@@ -2389,7 +2401,7 @@ jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, ch
 	if (JsonContainerIsToasted(new_jc, &new_jbcptr))
 	{
 		if (JsonContainerIsToasted(old_jc, &old_jbcptr) &&
-			!memcmp(&new_jbcptr, &old_jbcptr, sizeof(new_jbcptr)))
+			!memcmp(&new_jbcptr.ptr, &old_jbcptr.ptr, sizeof(new_jbcptr.ptr)))
 			return (Datum) 0;
 
 		res = jsonb_toaster_copy(rel, new_jc, cmethod);
