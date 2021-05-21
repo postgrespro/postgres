@@ -1487,13 +1487,14 @@ select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
 -- test partial decompression
 create table test_jsonbz_obj as
 select
+  j id,
   jsonb_build_object(
-    'a', jsonb_object_agg(i, repeat('a', pow(2, 10 + i)::int)),
+    'a', jsonb_object_agg(i, repeat('a', pow(2, 6 + i)::int)),
     'b', 'foo'
   ) js
 from
-  generate_series(0, 9) i,
-  generate_series(0, 9) j
+  generate_series(0, 19) j,
+  generate_series(0, j) i
 group by j
 order by j;
 
@@ -1585,3 +1586,23 @@ select
 from
   (select js from test_jsonbz_arr limit 1) t,
   jsonb_path_query(js, '$.**{2}') with ordinality as elems(elem, index);
+
+
+drop table test_jsonbz_arr;
+create table test_jsonbz_arr (id int, js jsonb);
+alter table test_jsonbz_arr alter column js set storage tapas;
+
+insert into test_jsonbz_arr
+select
+  j id,
+  jsonb_build_object(
+    'a', jsonb_object_agg(i, repeat('a', pow(2, 6 + i)::int)),
+    'b', 'foo'
+  ) js
+from
+  generate_series(0, 19) j,
+  generate_series(0, j) i
+group by j
+order by j;
+
+
