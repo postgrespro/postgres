@@ -292,6 +292,7 @@ typedef struct JsonbToastedContainerPointerData
 	uint32		container_offset;
 	uint32		tail_size;
 	const void *tail_data;
+	bool		has_inline_data;
 } JsonbToastedContainerPointerData;
 
 /*

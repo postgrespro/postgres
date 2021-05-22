@@ -219,7 +219,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			if (VARATT_IS_EXTERNAL(new_value))
 			{
-				if (!(VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(new_value) &&
+				if (!((VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(new_value) ||
+					   VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(new_value)) &&
 					  !(ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_DELETE_OLD)))
 				{
 					ttc->ttc_attr[i].tai_oldexternal = new_value;

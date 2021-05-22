@@ -2196,6 +2196,7 @@ jsonbInitToastedContainerPointer(JsonbToastedContainerPointerData *jbcptr,
 								 //JsonContainer *jc, 
 								 varatt_external_versioned *toast_ptr,
 								 uint32 tail_size, const void *tail_data,
+								 bool has_inline_data,
 								 uint32 container_offset)
 {
 	/*
@@ -2205,6 +2206,7 @@ jsonbInitToastedContainerPointer(JsonbToastedContainerPointerData *jbcptr,
 	jbcptr->ptr = *toast_ptr;
 	jbcptr->tail_size = tail_size;
 	jbcptr->tail_data = tail_data;
+	jbcptr->has_inline_data = has_inline_data;
 	jbcptr->container_offset = container_offset;
 }
 
@@ -2226,6 +2228,8 @@ JsonContainerIsToasted(JsonContainer *jc,
 												 &fetch_iter->toast_pointer,
 												 cjb->iter->diff.inline_size,
 												 cjb->iter->diff.inline_data,
+												 cjb->iter->fetch_datum_iterator->inline_head_size ||
+												 cjb->iter->fetch_datum_iterator->inline_tail_size,
 												 cjb->offset);
 			return true;
 		}

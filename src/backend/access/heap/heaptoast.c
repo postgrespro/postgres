@@ -299,6 +299,16 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		}
 		else
 		{
+			if (VARATT_IS_EXTERNAL_ONDISK_INLINE(ttc.ttc_values[biggest_attno]))
+			{
+				Datum		detoasted = PointerGetDatum(detoast_attr((struct varlena *) DatumGetPointer(ttc.ttc_values[biggest_attno])));
+
+				if (ttc.ttc_attr[biggest_attno].tai_colflags & TOASTCOL_NEEDS_FREE)
+					pfree(DatumGetPointer(ttc.ttc_values[biggest_attno]));
+
+				ttc.ttc_values[biggest_attno] = detoasted;
+			}
+
 			if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_EXTENDED)
 				toast_tuple_try_compression(&ttc, biggest_attno);
 			else

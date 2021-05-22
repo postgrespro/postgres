@@ -1596,7 +1596,7 @@ insert into test_jsonbz_arr
 select
   j id,
   jsonb_build_object(
-    'a', jsonb_object_agg(i, repeat('a', pow(2, 6 + i)::int)),
+    'a', jsonb_agg(repeat('a', pow(2, 6 + i)::int)),
     'b', 'foo'
   ) js
 from

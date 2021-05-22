@@ -3141,8 +3141,129 @@ json_delete_idx(PG_FUNCTION_ARGS)
 											   PG_GETARG_INT32(1)));
 }
 
+static bool
+isValueReplacable(JsonValue *oldval, JsonValue *newval)
+{
+	if (oldval->type != newval->type)
+		return false;
+
+	switch (oldval->type)
+	{
+		case jbvString:
+			return oldval->val.string.len == newval->val.string.len;
+
+		case jbvBinary:
+			if (JsonContainerIsObject(oldval->val.binary.data) &&
+			   !JsonContainerIsObject(newval->val.binary.data))
+			   return false;
+
+			if (JsonContainerIsArray(oldval->val.binary.data) &&
+			   !JsonContainerIsArray(newval->val.binary.data))
+				return false;
+
+			if (oldval->val.binary.data->ops != &jsonbContainerOps ||
+				newval->val.binary.data->ops != &jsonbContainerOps)
+				return false;
+
+			if (oldval->val.binary.data->len !=
+				newval->val.binary.data->len)
+				return false;
+
+			return true;
+
+		case jbvNumeric:
+			return VARSIZE_ANY(oldval->val.numeric) ==
+				   VARSIZE_ANY(newval->val.numeric);
+			break;
+
+		default:	/* FIXME null, bool */
+			return true;
+	}
+}
+
+static Datum
+setPathInplace(JsonContainer *jc, Datum *path_elems, bool *path_nulls,
+			   int path_len, int level, JsonbValue *newval, int op_type)
+{
+	JsonbToastedContainerPointerData jbcptr;
+
+	if (JsonContainerIsToasted(jc, &jbcptr) && !jbcptr.has_inline_data)
+	{
+		JsonFieldPtr ptr = {0};
+		JsonValue *old_val;
+
+		if (JsonContainerIsObject(jc))
+		{
+			old_val = JsonFindKeyPtrInObject(jc,
+											 VARDATA_ANY(path_elems[level]),
+											 VARSIZE_ANY_EXHDR(path_elems[level]), 
+											 &ptr);
+		}
+		else
+		{
+			int			nelems = JsonContainerSize(jc);
+			int			idx = getPathArrayIndex(path_elems, path_nulls, 
+												path_len, level, nelems, op_type);
+
+			old_val = JsonGetArrayElementPtr(jc, idx, &ptr);
+		}
+
+		if (old_val && ptr.offset)
+		{
+			varatt_external_diff diff;
+			JsonValue  *new_val = newval;
+			JsonValue	new_val_buf;
+
+			ptr.offset += jbcptr.container_offset;
+
+			if (newval->type == jbvBinary &&
+				JsonContainerIsScalar(newval->val.binary.data))
+				new_val = JsonExtractScalar(newval->val.binary.data,
+											&new_val_buf);
+
+			if (jbcptr.tail_size > 0)
+				memcpy(&diff, jbcptr.tail_data, offsetof(varatt_external_diff, va_diff_data));
+			else
+				diff.va_diff_offset = ptr.offset;
+
+			if (ptr.offset == diff.va_diff_offset &&
+				isValueReplacable(old_val, new_val))
+			{
+				const void *val;
+				int			len;
+
+				switch (new_val->type)
+				{
+					case jbvString:
+						val = new_val->val.string.val;
+						len = new_val->val.string.len;
+						break;
+
+					case jbvNumeric:
+						val = new_val->val.numeric;
+						len = VARSIZE_ANY(new_val->val.numeric);
+						break;
+
+					case jbvBinary:
+						Assert(new_val->val.binary.data->ops == &jsonbContainerOps);
+						val = JsonContainerDataPtr(new_val->val.binary.data);
+						len = new_val->val.binary.data->len;
+						break;
+
+					default:
+						break;
+				}
+
+				return jsonbMakeDiffToastPointer(&jbcptr.ptr, diff.va_diff_offset, len, val);
+			}
+		}
+	}
+
+	return (Datum) 0;
+}
+
 static Json *
-json_set_internal(Json *in, ArrayType *path, Json *newjsonb, bool create)
+json_set_internal(Json *in, ArrayType *path, Json *newjsonb, bool create, Datum *resp)
 {
 	JsonbValue	newval;
 	JsonbValue *res = NULL;
@@ -3173,6 +3294,15 @@ json_set_internal(Json *in, ArrayType *path, Json *newjsonb, bool create)
 	if (path_len == 0)
 		return in;
 
+	if (resp)
+	{
+		*resp = setPathInplace(JsonbRoot(in), path_elems, path_nulls,
+							   path_len, 0, &newval,
+							   create ? JB_PATH_CREATE : JB_PATH_REPLACE);
+		if (*resp != (Datum) 0)
+			return NULL;
+	}
+
 	it = JsonbIteratorInit(JsonbRoot(in));
 
 	res = setPath(&it, path_elems, path_nulls, path_len, &st,
@@ -3191,13 +3321,17 @@ jsonb_set(PG_FUNCTION_ARGS)
 {
 	jsonbInitIterators();
 
+	Datum		r = (Datum) 0;
 	Json	   *jb1 = PG_GETARG_JSONB_P(0);
 	Json	   *jb2 = PG_GETARG_JSONB_P(2);
 	Json	   *res = json_set_internal(jb1,
 										PG_GETARG_ARRAYTYPE_P(1),
 										jb2,
-										PG_GETARG_BOOL(3));
-	Datum		r = JsonbPGetDatum(res);
+										PG_GETARG_BOOL(3),
+										&r);
+
+	if (r == (Datum) 0)
+		r = JsonbPGetDatum(res);
 
 	jsonbFreeIterators();
 	PG_FREE_IF_COPY_JSONB(jb1, 0);
@@ -3212,7 +3346,8 @@ json_set(PG_FUNCTION_ARGS)
 	PG_RETURN_JSONT_P(json_set_internal(PG_GETARG_JSONT_P(0),
 										PG_GETARG_ARRAYTYPE_P(1),
 										PG_GETARG_JSONT_P(2),
-										PG_GETARG_BOOL(3)));
+										PG_GETARG_BOOL(3),
+										NULL));
 }
 
 static Datum
@@ -3515,46 +3650,6 @@ IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 	return res;
 }
 
-static bool
-isValueReplacable(JsonValue *oldval, JsonValue *newval)
-{
-	if (oldval->type != newval->type)
-		return false;
-
-	switch (oldval->type)
-	{
-		case jbvString:
-			return oldval->val.string.len == newval->val.string.len;
-
-		case jbvBinary:
-			if (JsonContainerIsObject(oldval->val.binary.data) &&
-			   !JsonContainerIsObject(newval->val.binary.data))
-			   return false;
-
-			if (JsonContainerIsArray(oldval->val.binary.data) &&
-			   !JsonContainerIsArray(newval->val.binary.data))
-				return false;
-			
-			if (oldval->val.binary.data->ops != &jsonbContainerOps ||
-				newval->val.binary.data->ops != &jsonbContainerOps)
-				return false;
-			
-			if (oldval->val.binary.data->len != 
-				newval->val.binary.data->len)
-				return false;
-			
-			return true;
-			
-		case jbvNumeric:
-			return VARSIZE_ANY(oldval->val.numeric) ==
-				   VARSIZE_ANY(newval->val.numeric);
-			break;
-
-		default:	/* FIXME null, bool */
-			return true;
-	}
-}
-
 /*
  * Do most of the heavy work for jsonb_set/jsonb_insert
  *
@@ -3610,85 +3705,18 @@ setPath(JsonbIterator **it, Datum *path_elems,
 	if ((r == WJB_ELEM || r == WJB_VALUE) &&
 		v.type == jbvBinary)
 	{
-		JsonContainer *jc = v.val.binary.data;
 		JsonIterator *it2;
-		JsonbToastedContainerPointerData jbcptr;
-
-		if (JsonContainerIsToasted(jc, &jbcptr))
+		JsonContainer *jc = v.val.binary.data;
+		Datum		toast_diff = setPathInplace(jc, path_elems,
+												path_nulls, path_len,
+												level, newval, op_type);
+		if (toast_diff != (Datum) 0)
 		{
-			JsonFieldPtr ptr = {0};
-			JsonValue *old_val;
+			JsonValue toast_diff_jv;
 
-			if (JsonContainerIsObject(jc))
-			{
-				old_val = JsonFindKeyPtrInObject(jc,
-												 VARDATA_ANY(path_elems[level]),
-												 VARSIZE_ANY_EXHDR(path_elems[level]), 
-												 &ptr);
-			}
-			else
-			{
-				int			nelems = JsonContainerSize(jc);
-				int			idx = getPathArrayIndex(path_elems, path_nulls, 
-													path_len, level, nelems, op_type);
+			JsonValueInitBinary(&toast_diff_jv, jsonbzInitContainerFromDatum(jc, toast_diff));
 
-				old_val = JsonGetArrayElementPtr(jc, idx, &ptr);
-			}
-
-			if (old_val && ptr.offset)
-			{
-				varatt_external_diff diff;
-				JsonValue  *new_val = newval;
-				JsonValue	new_val_buf;
-
-				ptr.offset += jbcptr.container_offset;
-
-				if (newval->type == jbvBinary &&
-					JsonContainerIsScalar(newval->val.binary.data))
-					new_val = JsonExtractScalar(newval->val.binary.data,
-												&new_val_buf);
-
-				if (jbcptr.tail_size > 0)
-					memcpy(&diff, jbcptr.tail_data, offsetof(varatt_external_diff, va_diff_data));
-				else
-					diff.va_diff_offset = ptr.offset;
-
-				if (ptr.offset == diff.va_diff_offset &&
-					isValueReplacable(old_val, new_val))
-				{
-					const void *val;
-					int			len;
-
-					switch (new_val->type)
-					{
-						case jbvString:
-							val = new_val->val.string.val;
-							len = new_val->val.string.len;
-							break;
-
-						case jbvNumeric:
-							val = new_val->val.numeric;
-							len = VARSIZE_ANY(new_val->val.numeric);
-							break;
-
-						case jbvBinary:
-							Assert(new_val->val.binary.data->ops == &jsonbContainerOps);
-							val = JsonContainerDataPtr(new_val->val.binary.data);
-							len = new_val->val.binary.data->len;
-							break;
-
-						default:
-							break;
-					}
-
-					Datum toast_diff = jsonbMakeDiffToastPointer(&jbcptr.ptr, diff.va_diff_offset, len, val);
-					JsonValue toast_diff_jv;
-					
-					JsonValueInitBinary(&toast_diff_jv, jsonbzInitContainerFromDatum(jc, toast_diff));
-
-					return pushJsonbValueExt(st, r, &toast_diff_jv, false);
-				}
-			}
+			return pushJsonbValueExt(st, r, &toast_diff_jv, false);
 		}
 
 		it2 = JsonIteratorInit(jc);

@@ -932,7 +932,8 @@ create_fetch_datum_iterator(struct varlena *attr)
 
 	iter->nextidx = 0;
 	iter->done = false;
-	iter->tail_size = 0;
+	iter->inline_head_size = 0;
+	iter->inline_tail_size = 0;
 
 	return iter;
 }
@@ -999,7 +1000,7 @@ fetch_datum_iterate(FetchDatumIterator iter)
 		table_close(iter->toastrel, AccessShareLock);
 
 		iter->done = true;
-		iter->buf->limit += iter->tail_size;
+		iter->buf->limit += iter->inline_tail_size;
 		return;
 	}
 

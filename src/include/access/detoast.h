@@ -147,7 +147,8 @@ typedef struct FetchDatumIteratorData
 	int32		chunksize;
 	int32		numchunks;
 	int			num_indexes;
-	int			tail_size;
+	int			inline_head_size;
+	int			inline_tail_size;
 	bool		done;
 }			FetchDatumIteratorData;
 

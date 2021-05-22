@@ -28,6 +28,8 @@ static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 slicelength);
 static struct varlena *toast_decompress_datum(struct varlena *attr);
 static struct varlena *toast_decompress_datum_slice(struct varlena *attr, int32 slicelength);
+static void toast_apply_diff(struct varlena *attr, struct varlena *result,
+							 int32 sliceoffset, int32 slicelength);
 
 /* ----------
  * detoast_external_attr -
@@ -117,6 +119,8 @@ detoast_attr(struct varlena *attr)
 {
 	if (VARATT_IS_EXTERNAL_ONDISK_ANY(attr))
 	{
+		struct varlena *orig_attr = attr;
+
 		/*
 		 * This is an externally stored datum --- fetch it back from there
 		 */
@@ -129,6 +133,8 @@ detoast_attr(struct varlena *attr)
 			attr = toast_decompress_datum(tmp);
 			pfree(tmp);
 		}
+
+		toast_apply_diff(orig_attr, attr, 0, -1);
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -329,6 +335,8 @@ detoast_attr_slice(struct varlena *attr,
 
 	memcpy(VARDATA(result), attrdata + sliceoffset, slicelength);
 
+	toast_apply_diff(attr, result, sliceoffset, slicelength);
+
 	if (preslice != attr)
 		pfree(preslice);
 
@@ -393,12 +401,13 @@ create_detoast_iterator(struct varlena *attr)
 				memcpy((void *) fetch_iter->buf->limit,
 					   inlineData, inlineSize);
 				fetch_iter->buf->limit += inlineSize;
+				fetch_iter->inline_head_size = inlineSize;
 			}
 			else if (VARATT_IS_EXTERNAL_ONDISK_INLINE_TAIL(attr))
 			{
 				memcpy(fetch_iter->buf->limit + fetch_iter->ressize,
 					   inlineData, inlineSize);
-				fetch_iter->tail_size = inlineSize;
+				fetch_iter->inline_tail_size = inlineSize;
 			}
 			else
 			{	
@@ -503,17 +512,24 @@ toast_apply_diff_internal(struct varlena *result, const char *diff_data,
 
 static void
 toast_apply_diff(struct varlena *attr, struct varlena *result, 
-				 int32 inline_size, int32 sliceoffset, int32 slicelength)
+				 int32 sliceoffset, int32 slicelength)
 {
 	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
 	{
+		struct varatt_external_versioned toast_pointer;
 		struct varatt_external_diff diff;
 		const char *inline_data = VARDATA_EXTERNAL_INLINE(attr);
+		/* Must copy to access aligned fields */
+		int32		inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
+		int32		attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
 		Size		data_offset = offsetof(varatt_external_diff, va_diff_data);
 		Size		diff_size = inline_size - data_offset;
 		const char *diff_data = inline_data + data_offset;
 
 		memcpy(&diff, inline_data, data_offset);
+
+		if (slicelength < 0)
+			slicelength = attrsize - sliceoffset;
 
 		toast_apply_diff_internal(result, diff_data, 
 								  diff.va_diff_offset, diff_size, 
@@ -587,8 +603,6 @@ toast_fetch_datum(struct varlena *attr)
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
-
-	toast_apply_diff(attr, result, inline_size, 0, attrsize);
 
 	return result;
 }
@@ -698,8 +712,6 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
-
-	toast_apply_diff(attr, result, inline_size, sliceoffset, slicelength);
 
 	return result;
 }
