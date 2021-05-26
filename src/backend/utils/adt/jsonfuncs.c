@@ -1170,7 +1170,13 @@ json_array_length_internal(Json *jb)
 Datum
 jsonb_array_length(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_INT32(json_array_length_internal(PG_GETARG_JSONB_P(0)));
+	int			length;
+
+	jsonbInitIterators();
+	length = json_array_length_internal(PG_GETARG_JSONB_P(0));
+	jsonbFreeIterators();
+
+	PG_RETURN_INT32(length);
 }
 
 Datum
