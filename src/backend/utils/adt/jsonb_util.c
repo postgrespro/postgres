@@ -2961,7 +2961,14 @@ jsonbzIteratorInit(JsonContainer *jc)
 	return jsonbIteratorInitExt(jc, jbc, cjb);
 }
 
-List **jsonb_detoast_iterators;
+#define JSONB_FREE_ITERATORS
+#ifdef JSONB_FREE_ITERATORS
+static struct
+{
+	List	   *iterators;
+	MemoryContext mcxt;
+} *jsonb_detoast_iterators;
+#endif
 
 static void
 #ifndef JSONB_DETOAST_ITERATOR
@@ -2987,12 +2994,6 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 	cjb->iter = iter;
 	cjb->offset = offsetof(JsonbDatum, root);
 
-#define JSONB_FREE_ITERATORS
-#ifdef JSONB_FREE_ITERATORS
-	if (jsonb_detoast_iterators)
-		*jsonb_detoast_iterators = lappend(*jsonb_detoast_iterators, iter);
-#endif
-
 	if (!jsonb_partial_decompression)
 		PG_DETOAST_ITERATE(iter, iter->buf->capacity);
 	else
@@ -3006,7 +3007,9 @@ void
 jsonbInitIterators(void)
 {
 #ifdef JSONB_FREE_ITERATORS
-	jsonb_detoast_iterators = palloc0(sizeof(*jsonb_detoast_iterators));
+	jsonb_detoast_iterators = palloc(sizeof(*jsonb_detoast_iterators));
+	jsonb_detoast_iterators->mcxt = CurrentMemoryContext;
+	jsonb_detoast_iterators->iterators = NIL;
 #endif
 }
 
@@ -3017,10 +3020,13 @@ jsonbFreeIterators(void)
 	ListCell *lc;
 
 	if (jsonb_detoast_iterators)
-		foreach(lc, *jsonb_detoast_iterators)
+	{
+		foreach(lc, jsonb_detoast_iterators->iterators)
 			free_detoast_iterator(lfirst(lc));
 
-	jsonb_detoast_iterators = NULL;
+		pfree(jsonb_detoast_iterators);
+		jsonb_detoast_iterators = NULL;
+	}
 #endif
 }
 
@@ -3045,7 +3051,18 @@ jsonbzInit(JsonContainerData *jc, Datum value)
 
 	jsonbzInitFromCompresedDatum(jc, cd);
 #else
+#ifdef JSONB_FREE_ITERATORS
+	MemoryContext oldcxt = jsonb_detoast_iterators ? MemoryContextSwitchTo(jsonb_detoast_iterators->mcxt) : NULL;
+#endif
 	DetoastIterator iter = create_detoast_iterator((struct varlena *) DatumGetPointer(value));
+
+#ifdef JSONB_FREE_ITERATORS
+	if (jsonb_detoast_iterators)
+	{
+		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
+		MemoryContextSwitchTo(oldcxt);
+	}
+#endif
 
 	jsonbzInitFromDetoastIterator(jc, iter);
 #endif
@@ -3105,13 +3122,23 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 	if (!cd.compressed)
 		return DatumGetJson(PointerGetDatum(cd.data), &jsonbContainerOps, tmp);
 #else
+# ifdef JSONB_FREE_ITERATORS
+	MemoryContext oldcxt = jsonb_detoast_iterators ? MemoryContextSwitchTo(jsonb_detoast_iterators->mcxt) : NULL;
+# endif
+
 	if (!jsonb_partial_detoast)
 		src = detoast_external_attr(src);
 
 	iter = create_detoast_iterator(src);
 
 	if (!iter)
+	{
+# ifdef JSONB_FREE_ITERATORS
+		if (jsonb_detoast_iterators)
+			MemoryContextSwitchTo(oldcxt);
+# endif
 		return DatumGetJson(PointerGetDatum(src), &jsonbContainerOps, tmp);
+	}
 #endif
 
 	js = JsonExpand(tmp, (Datum) 0, false, &jsonbzContainerOps);
@@ -3121,6 +3148,15 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 								 memcpy(palloc(sizeof(cd)), &cd, sizeof(cd)));
 #else
 	jsonbzInitFromDetoastIterator(&js->root, iter);
+
+# ifdef JSONB_FREE_ITERATORS
+	if (jsonb_detoast_iterators)
+	{
+		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
+		MemoryContextSwitchTo(oldcxt);
+	}
+# endif
 #endif
+
 	return js;
 }
