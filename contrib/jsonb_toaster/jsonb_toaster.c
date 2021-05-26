@@ -181,6 +181,7 @@ static bool JsonContainerIsToasted(JsonContainer *jc,
 static bool JsonValueContainsToasted(const JsonValue *jv);
 
 static bool jsonb_toast_fields = true;				/* GUC */
+static bool jsonb_toast_fields_recursively = true;	/* GUC */
 
 static JsonContainerOps jsonxContainerOps;
 static JsonContainerOps jsonxzContainerOps;
@@ -1850,10 +1851,11 @@ jsonxContainerOps =
 	jsonxEncode
 };
 
-static Datum
-jsonb_toaster_save(Relation rel, Oid toasterid, Json *js, int max_size, char cmethod)
+static bool
+jsonb_toaster_save_object(Relation rel, JsonContainer *root,
+						  /* XXX bool uniquified, */ Size max_size, char cmethod,
+						  JsonValue	*object)
 {
-	JsonContainer *root = JsonRoot(js);
 	JsonIterator *it;
 	JsonValue	jsv;
 	JsonIteratorToken tok;
@@ -1865,15 +1867,8 @@ jsonb_toaster_save(Relation rel, Oid toasterid, Json *js, int max_size, char cme
 	int			nkeys;
 	int		   *sizes;
 	int			i = 0;
-	JsonValue	object;
 	JsonbPair  *pairs;
-	Datum		jb = (Datum) 0;
-
-	if (!jsonb_toast_fields || max_size <= 0)
-		return (Datum) 0;
-
-	if (!JsonContainerIsObject(root))
-		return (Datum) 0;
+	bool		res = false;
 
 	nkeys = JsonContainerSize(root);
 
@@ -1881,14 +1876,14 @@ jsonb_toaster_save(Relation rel, Oid toasterid, Json *js, int max_size, char cme
 	total_size = header_size;
 
 	if (header_size > max_size)
-		return (Datum) 0;
+		return false;
 
 	sizes = palloc(sizeof(*sizes) * nkeys);
 	values = palloc(sizeof(*values) * nkeys);
 	pairs = palloc(sizeof(*pairs) * nkeys);
 
-	JsonValueInitObject(&object, nkeys, 0 /* XXX, JsonIsUniquified(js)*/);
-	object.val.object.pairs = pairs;
+	JsonValueInitObject(object, nkeys, 0 /* XXX, uniquified */);
+	object->val.object.pairs = pairs;
 
 	it = JsonIteratorInit(root);
 
@@ -1984,6 +1979,22 @@ jsonb_toaster_save(Relation rel, Oid toasterid, Json *js, int max_size, char cme
 			goto exit;	/* FIXME */
 
 		jc = values[max_key_idx];
+
+		total_size -= INTALIGN(max_key_size + 3);
+
+		if (jsonb_toast_fields_recursively &&
+			total_size < max_size)
+		{
+			JsonValue	jv;
+
+			if (JsonContainerIsObject(jc) &&
+				jsonb_toaster_save_object(rel, jc, /* XXX uniquified,*/ max_size - total_size, cmethod, &jv))
+			{
+				pairs[max_key_idx].value = jv;
+				break;
+			}
+		}
+
 		jbc = jc->ops == &jsonbzContainerOps || jc->ops == &jsonxzContainerOps ?
 			jsonxzDecompress(jc) : JsonContainerDataPtr(jc);
 
@@ -2014,19 +2025,44 @@ jsonb_toaster_save(Relation rel, Oid toasterid, Json *js, int max_size, char cme
 
 		pairs[max_key_idx].value.val.binary.data = tjc;
 
-		total_size -= INTALIGN(max_key_size + 3);
 		sizes[max_key_idx] = sizeof(JsonbToastedContainerPointer);
 		total_size += INTALIGN(sizes[max_key_idx] + 3);
 	}
 
-	jb = PointerGetDatum(JsonValueFlatten(&object, JsonxEncode,
-										  &jsonxContainerOps,
-										  (void *)(intptr_t)toasterid));
+	res = true;
 
 exit:
 	pfree(sizes);
 	pfree(values);
-	pfree(pairs);
+	if (!res)
+		pfree(pairs);
+
+	return res;
+}
+
+static Datum
+jsonb_toaster_save(Relation rel, Oid toasterid, Json *js,
+				   int max_size, char cmethod)
+{
+	JsonContainer *root = JsonRoot(js);
+	JsonValue	object;
+	Datum		jb = (Datum) 0;
+
+	if (!jsonb_toast_fields || max_size <= 0)
+		return (Datum) 0;
+
+	if (!JsonContainerIsObject(root))
+		return (Datum) 0;
+
+	if (!jsonb_toaster_save_object(rel, root, /* XXX JsonIsUniquified(js), */
+								   max_size, cmethod, &object))
+		return (Datum) 0;
+
+	jb = PointerGetDatum(JsonValueFlatten(&object, JsonxEncode,
+										  &jsonxContainerOps,
+										  (void *)(intptr_t) toasterid));
+
+	pfree(object.val.object.pairs);
 
 	return jb;
 }
@@ -2591,6 +2627,17 @@ _PG_init(void)
 							 "TOAST jsonb object fields.",
 							 NULL,
 							 &jsonb_toast_fields,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomBoolVariable("jsonb_toaster.toast_fields_recursively",
+							 "Recursively TOAST jsonb fields.",
+							 NULL,
+							 &jsonb_toast_fields_recursively,
 							 true,
 							 PGC_USERSET,
 							 0,
