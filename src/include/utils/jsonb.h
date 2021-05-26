@@ -440,6 +440,7 @@ extern void appendToBuffer(StringInfo buffer, const void *data, int len);
 extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
 extern bool jsonb_toast_fields;				/* GUC */
+extern bool jsonb_toast_fields_recursively;	/* GUC */
 
 typedef struct RelationData *Relation;
 extern Datum jsonb_toaster(Relation rel, Datum new_val, Datum old_val,

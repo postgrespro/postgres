@@ -2112,6 +2112,15 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jsonb_toast_fields_recursively", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Recursively TOAST jsonb fields."),
+		},
+		&jsonb_toast_fields_recursively,
+		true,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
