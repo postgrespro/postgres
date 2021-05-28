@@ -69,7 +69,7 @@ varatt_external_inline_get_pointer(struct varlena *attr, /* FIXME */
 /* Size of an EXTERNAL datum that contains a standard TOAST pointer */
 #define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
 #define TOAST_VERSIONED_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_versioned))
-#define TOAST_INLINE_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external_inline))
+#define TOAST_INLINE_POINTER_SIZE (VARHDRSZ_EXTERNAL + offsetof(varatt_external_inline, va_data))
 
 /* Size of an EXTERNAL datum that contains an indirection pointer */
 #define INDIRECT_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_indirect))
