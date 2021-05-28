@@ -1487,14 +1487,11 @@ select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
 -- test partial decompression
 create table test_jsonbz_obj as
 select
-  j id,
-  jsonb_build_object(
-    'a', jsonb_object_agg(i, repeat('a', pow(2, 6 + i)::int)),
-    'b', 'foo'
-  ) js
+  jsonb_build_object('a',
+    jsonb_object_agg(i, repeat('a', pow(2, 10 + i)::int))) js
 from
-  generate_series(0, 19) j,
-  generate_series(0, j) i
+  generate_series(0, 9) i,
+  generate_series(0, 9) j
 group by j
 order by j;
 
@@ -1605,4 +1602,14 @@ from
 group by j
 order by j;
 
+update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('b', 64)));
+select id, js->'a'->>0 from test_jsonbz_arr order by id;
 
+update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('c', 64)));
+select id, js->'a'->>0 from test_jsonbz_arr order by id;
+
+update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('d', 65)));
+select id, js->'a'->>0 from test_jsonbz_arr order by id;
+
+update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('e', 65)));
+select id, js->'a'->>0 from test_jsonbz_arr order by id;
