@@ -552,6 +552,9 @@ extern Json *DatumGetJsonbPC(Datum datum, Json *tmp, bool copy);
 
 extern bool JsonContainerIsToasted(JsonContainer *jc, 
 								   JsonbToastedContainerPointerData *jbcptr);
+extern bool JsonContainerIsCompressed(JsonContainer *jc,
+									  JsonbCompressedContainerData *jbcptr);
+
 
 static inline bool
 JsonValueIsToasted(JsonValue *jv, uint32 *inline_size)

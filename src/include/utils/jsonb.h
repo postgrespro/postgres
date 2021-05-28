@@ -283,18 +283,24 @@ typedef struct varatt_external_inline JsonbToastPointer;
 typedef struct JsonbToastedContainerPointer
 {
 	JsonbContainerHeader header;
-	JsonbToastPointer ptr;
+	struct varlena data;
 } JsonbToastedContainerPointer;
 
 typedef struct JsonbToastedContainerPointerData
 {
+	struct varlena *toast_ptr;
+	const void *tail_data;
 	struct varatt_external_versioned ptr;
 	uint32		container_offset;
 	uint32		tail_size;
-	const void *tail_data;
 	bool		has_inline_data;
 } JsonbToastedContainerPointerData;
 
+typedef struct JsonbCompressedContainerData
+{
+	struct varlena *compressed_data;
+	char		compression_method;
+} JsonbCompressedContainerData;
 /*
  * JsonbValue:	In-memory representation of Jsonb.  This is a convenient
  * deserialized representation, that can easily support using the "val"
