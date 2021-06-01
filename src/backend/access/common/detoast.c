@@ -491,22 +491,22 @@ free_detoast_iterator(DetoastIterator iter)
 
 void
 toast_apply_diff_internal(struct varlena *result, const char *diff_data, 
-						  int32 diff_offset, int32 diff_size, 
-						  int32 sliceoffset, int32 slicelength)
+						  int32 diff_offset, int32 diff_length,
+						  int32 slice_offset, int32 slice_length)
 {
-	if (diff_offset >= sliceoffset)
+	if (diff_offset >= slice_offset)
 	{
-		if (diff_offset < sliceoffset + slicelength)
+		if (diff_offset < slice_offset + slice_length)
 			memcpy((char *) result /*VARDATA(result)*/ + diff_offset,
 				   diff_data, 
-				   Min(diff_size, sliceoffset + slicelength - diff_offset));
+				   Min(diff_length, slice_offset + slice_length - diff_offset));
 	}
 	else
 	{
-		if (diff_offset + diff_size > sliceoffset)
-			memcpy(result /*VARDATA(result)*/,
-				   diff_data + sliceoffset - diff_offset,
-				   Min(slicelength, diff_offset + diff_size - sliceoffset));
+		if (slice_offset < diff_offset + diff_length)
+			memcpy((char *) result /*VARDATA(result)*/ + slice_offset,
+				   diff_data + slice_offset - diff_offset,
+				   Min(slice_length, diff_offset + diff_length - slice_offset));
 	}
 }
 
