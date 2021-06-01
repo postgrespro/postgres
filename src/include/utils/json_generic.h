@@ -51,8 +51,9 @@ struct JsonIteratorData
 
 typedef struct JsonFieldPtr
 {
-	 uint32		offset;
-	 uint32		length;
+	uint32		offset;
+	uint32		length;
+	JsonValueType type;
 } JsonFieldPtr;
 
 struct JsonContainerOps

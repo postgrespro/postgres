@@ -3148,37 +3148,37 @@ json_delete_idx(PG_FUNCTION_ARGS)
 }
 
 static bool
-isValueReplacable(JsonValue *oldval, JsonValue *newval)
+isValueReplacable(JsonFieldPtr *oldval, JsonValue *newval)
 {
 	if (oldval->type != newval->type)
 		return false;
 
-	switch (oldval->type)
+	switch (newval->type)
 	{
 		case jbvString:
-			return oldval->val.string.len == newval->val.string.len;
+			return oldval->length == newval->val.string.len;
 
 		case jbvBinary:
-			if (JsonContainerIsObject(oldval->val.binary.data) &&
+			if (oldval->type == jbvObject &&
 			   !JsonContainerIsObject(newval->val.binary.data))
 			   return false;
 
-			if (JsonContainerIsArray(oldval->val.binary.data) &&
+			if (oldval->type == jbvArray &&
 			   !JsonContainerIsArray(newval->val.binary.data))
 				return false;
 
-			if (oldval->val.binary.data->ops != &jsonbContainerOps ||
+			if (/*oldval->val.binary.data->ops != &jsonbContainerOps || FIXME */
 				newval->val.binary.data->ops != &jsonbContainerOps)
 				return false;
 
-			if (oldval->val.binary.data->len !=
+			if (oldval->length !=
 				newval->val.binary.data->len)
 				return false;
 
 			return true;
 
 		case jbvNumeric:
-			return VARSIZE_ANY(oldval->val.numeric) ==
+			return oldval->length ==
 				   VARSIZE_ANY(newval->val.numeric);
 			break;
 
@@ -3195,15 +3195,14 @@ setPathInplace(JsonContainer *jc, Datum *path_elems, bool *path_nulls,
 
 	if (JsonContainerIsToasted(jc, &jbcptr) && !jbcptr.has_inline_data)
 	{
-		JsonFieldPtr ptr = {0};
-		JsonValue *old_val;
+		JsonFieldPtr old_val = {0};
 
 		if (JsonContainerIsObject(jc))
 		{
-			old_val = JsonFindKeyPtrInObject(jc,
-											 VARDATA_ANY(path_elems[level]),
-											 VARSIZE_ANY_EXHDR(path_elems[level]), 
-											 &ptr);
+			JsonFindKeyPtrInObject(jc,
+								   VARDATA_ANY(path_elems[level]),
+								   VARSIZE_ANY_EXHDR(path_elems[level]),
+								   &old_val);
 		}
 		else
 		{
@@ -3211,16 +3210,16 @@ setPathInplace(JsonContainer *jc, Datum *path_elems, bool *path_nulls,
 			int			idx = getPathArrayIndex(path_elems, path_nulls, 
 												path_len, level, nelems, op_type);
 
-			old_val = JsonGetArrayElementPtr(jc, idx, &ptr);
+			JsonGetArrayElementPtr(jc, idx, &old_val);
 		}
 
-		if (old_val && ptr.offset)
+		if (old_val.offset)	/* FIXME */
 		{
 			varatt_external_diff diff;
 			JsonValue  *new_val = newval;
 			JsonValue	new_val_buf;
 
-			ptr.offset += jbcptr.container_offset;
+			old_val.offset += jbcptr.container_offset;
 
 			if (newval->type == jbvBinary &&
 				JsonContainerIsScalar(newval->val.binary.data))
@@ -3230,10 +3229,10 @@ setPathInplace(JsonContainer *jc, Datum *path_elems, bool *path_nulls,
 			if (jbcptr.tail_size > 0)
 				memcpy(&diff, jbcptr.tail_data, offsetof(varatt_external_diff, va_diff_data));
 			else
-				diff.va_diff_offset = ptr.offset;
+				diff.va_diff_offset = old_val.offset;
 
-			if (ptr.offset == diff.va_diff_offset &&
-				isValueReplacable(old_val, new_val))
+			if (old_val.offset == diff.va_diff_offset &&
+				isValueReplacable(&old_val, new_val))
 			{
 				const void *val;
 				int			len;

@@ -601,7 +601,7 @@ JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i, JsonFieldPtr *ptr)
 	if (i >= it->count)
 		return NULL;
 
-	result = palloc(sizeof(JsonbValue));
+	result = ptr ? NULL : palloc(sizeof(JsonbValue));
 
 	fillJsonbValue(it->container, i, it->base_addr,
 				   getJsonbOffset(it->container, i), result, ptr);
@@ -760,7 +760,7 @@ getKeyJsonValueFromContainer(JsonContainer *jsc,
 			/* Found our key, return corresponding value */
 			int			index = JSONB_KVMAP_ENTRY(&kvmap, stopMiddle) + count;
 
-			if (!res)
+			if (!res && !ptr)
 				res = palloc(sizeof(JsonbValue));
 
 			fillJsonbValue(container, index, baseAddr,
@@ -818,6 +818,63 @@ fillJsonbValue(const JsonbContainer *container, int index,
 {
 	JEntry		entry = container->children[index];
 	uint32		length;
+
+	if (ptr)
+	{
+		if (JBE_ISNULL(entry))
+		{
+			ptr->offset = 0;
+			ptr->type = jbvNull;
+			ptr->length = 0;
+		}
+		else if (JBE_ISSTRING(entry))
+		{
+			ptr->offset = offset;
+			ptr->length = getJsonbLength(container, index);
+			ptr->type = jbvString;
+		}
+		else if (JBE_ISNUMERIC(entry))
+		{
+			ptr->length = getJsonbLength(container, index);
+			ptr->length -= INTALIGN(offset) - offset; /* FIXME */
+			ptr->offset = INTALIGN(offset);
+			ptr->type = jbvNumeric;
+		}
+		else if (JBE_ISBOOL_TRUE(entry))
+		{
+			ptr->offset = 0;
+			ptr->length = 0;
+			ptr->type = jbvBool;
+		}
+		else if (JBE_ISBOOL_FALSE(entry))
+		{
+			ptr->offset = 0;
+			ptr->length = 0;
+			ptr->type = jbvBool;
+		}
+		else if (JBE_ISCONTAINER(entry))
+		{
+			ptr->length = getJsonbLength(container, index);
+
+			/* Remove alignment padding from data pointer and length */
+			ptr->length -= INTALIGN(offset) - offset;
+			ptr->offset = INTALIGN(offset);
+			ptr->type = jbvBinary;
+		}
+		else if (JBE_ISCONTAINER_PTR(entry))
+		{
+			ptr->offset = 0;
+			ptr->length = 0;
+			ptr->type = jbvBinary;
+		}
+		else
+		{
+			elog(ERROR, "invalid JEntry type: %x", entry);
+		}
+
+		ptr->offset = base_addr + ptr->offset - (const char *) container;
+		return;
+	}
 
 	if (JBE_ISNULL(entry))
 	{
@@ -890,12 +947,6 @@ fillJsonbValue(const JsonbContainer *container, int index,
 	{
 		elog(ERROR, "invalid JEntry type: %x", entry);
 		length = 0;
-	}
-
-	if (ptr)
-	{
-		ptr->offset = base_addr + offset - (const char *) container;
-		ptr->length = length;
 	}
 }
 
@@ -3083,6 +3134,13 @@ fillCompressedJsonbValue(CompressedJsonb *cjb, const JsonbContainer *container,
 		return result;
 	}
 
+	if (ptr)
+	{
+		Assert(!result);
+		fillJsonbValue(container, index, base_addr, offset, NULL, ptr);
+		return NULL;
+	}
+
 	length = getJsonbLength(container, index);
 
 #ifndef JSONB_DETOAST_ITERATOR
@@ -3197,7 +3255,7 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb,
 
 			return fillCompressedJsonbValue(cjb, container, index, base_addr,
 											getJsonbOffset(container, index),
-											palloc(sizeof(JsonbValue)),
+											ptr ? NULL : palloc(sizeof(JsonbValue)),
 											ptr);
 		}
 		else
@@ -3297,7 +3355,7 @@ JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index,
 	return fillCompressedJsonbValue(it->cjb, it->container, index,
 									it->base_addr,
 									getJsonbOffset(it->container, index),
-									palloc(sizeof(JsonValue)), ptr);
+									ptr ? NULL : palloc(sizeof(JsonValue)), ptr);
 
 	return res;
 }
