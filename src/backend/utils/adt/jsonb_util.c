@@ -3319,7 +3319,7 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
 
 	it->count = (jbc->header & JB_CMASK);
 
-	jsonbzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
+	//jsonbzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
 
 	it->cjb = cjb;
 	it->container = jbc;
@@ -3331,8 +3331,17 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
 static bool
 JsonbzArrayIteratorNext(JsonbzArrayIterator *it, JsonValue *result)
 {
+#ifndef JSONB_DETOAST_ITERATOR
+	Jsonb	   *jb = (Jsonb *) it->cjb->datum->data;
+#else
+	Jsonb	   *jb = (Jsonb *) it->cjb->iter->buf->buf;
+#endif
+	const JsonbContainer *jbc = (const JsonbContainer *)((char *) jb + it->cjb->offset);
+
 	if (it->index >= it->count)
 		return false;
+
+	jsonbzDecompressTo(it->cjb, (char *) &jbc->children[it->count] - (char *) jb);
 
 	fillCompressedJsonbValue(it->cjb, it->container, it->index, it->base_addr,
 							 it->offset, result, NULL);
@@ -3347,10 +3356,18 @@ static JsonValue *
 JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index, 
 						  JsonFieldPtr *ptr)
 {
+#ifndef JSONB_DETOAST_ITERATOR
+	Jsonb	   *jb = (Jsonb *) it->cjb->datum->data;
+#else
+	Jsonb	   *jb = (Jsonb *) it->cjb->iter->buf->buf;
+#endif
+	const JsonbContainer *jbc = (const JsonbContainer *)((char *) jb + it->cjb->offset);
 	JsonValue  *res;
 
 	if (index >= it->count)
 		return NULL;
+
+	jsonbzDecompressTo(it->cjb, (char *) &jbc->children[index + 1] - (char *) jb);
 
 	return fillCompressedJsonbValue(it->cjb, it->container, index,
 									it->base_addr,
