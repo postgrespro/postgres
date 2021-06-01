@@ -172,6 +172,7 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
 											JsonValue *result,
 											JsonFieldPtr *ptr);
 static JsonbContainer *jsonbzDecompress(JsonContainer *jc);
+static void jsonbzDecompressTo(CompressedJsonb *cjb, Size offset);
 static bool JsonValueContainsToasted(const JsonValue *jv);
 static JsonbValue *getKeyJsonValueFromContainer(JsonContainer *jsc,
 												const char *keyVal, int keyLen, 
@@ -1456,13 +1457,7 @@ jsonbIteratorInit(JsonContainer *cont, const JsonbContainer *container,
 
 	/* decompress container header */
 	if (cjb)
-	{
-#ifndef JSONB_DETOAST_ITERATOR
-		CompressedDatumDecompress(cjb->datum, cjb->offset + offsetof(JsonbContainer, children));
-#else
-		PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + cjb->offset + offsetof(JsonbContainer, children));
-#endif
-	}
+		jsonbzDecompressTo(cjb, cjb->offset + offsetof(JsonbContainer, children));
 
 	type = container->header & JB_TMASK;
 
@@ -1507,12 +1502,7 @@ jsonbIteratorInit(JsonContainer *cont, const JsonbContainer *container,
 	}
 
 	if (it->dataProper && cjb)
-#ifndef JSONB_DETOAST_ITERATOR
-		CompressedDatumDecompress(cjb->datum,
-								  it->dataProper - (char *) cjb->datum->data);
-#else
-		PG_DETOAST_ITERATE(cjb->iter, it->dataProper);
-#endif
+		jsonbzDecompressTo(cjb, cjb->offset + (it->dataProper - (char *) container));
 
 	return (JsonIterator *) it;
 }
@@ -3042,6 +3032,26 @@ jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb,
 	jsonbInitContainerFromHeader(jc, header);
 }
 
+static void
+jsonbzDecompressAll(CompressedJsonb *cjb)
+{
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompressAll(cjb->datum);
+#else
+	PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->capacity);
+#endif
+}
+
+static void
+jsonbzDecompressTo(CompressedJsonb *cjb, Size offset)
+{
+#ifndef JSONB_DETOAST_ITERATOR
+	CompressedDatumDecompress(cjb->datum, offset);
+#else
+	PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + offset);
+#endif
+}
+
 static JsonbContainer *
 jsonbzDecompress(JsonContainer *jc)
 {
@@ -3053,11 +3063,7 @@ jsonbzDecompress(JsonContainer *jc)
 #endif
 	JsonbContainer *container = (JsonbContainer *)((char *) jb + cjb->offset);
 
-#ifndef JSONB_DETOAST_ITERATOR
-	CompressedDatumDecompress(cjb->datum, cjb->offset + jc->len);
-#else
-	PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + cjb->offset + jc->len);
-#endif
+	jsonbzDecompressTo(cjb, cjb->offset + jc->len);
 
 	return container;
 }
@@ -3103,13 +3109,7 @@ fillCompressedJsonbValue(CompressedJsonb *cjb, const JsonbContainer *container,
 
 		cjb2.offset = base_offset + offset;
 
-#ifndef JSONB_DETOAST_ITERATOR
-		CompressedDatumDecompress(cjb->datum, cjb2.offset +
-								  offsetof(JsonbContainer, children));
-#else
-		PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + cjb2.offset +
-						   offsetof(JsonbContainer, children));
-#endif
+		jsonbzDecompressTo(cjb, cjb2.offset + offsetof(JsonbContainer, children));
 
 		jsonbzInitContainer(cont, &cjb2, NULL, length);
 		JsonValueInitBinary(result, cont);
@@ -3122,12 +3122,7 @@ fillCompressedJsonbValue(CompressedJsonb *cjb, const JsonbContainer *container,
 	}
 	else
 	{
-#ifndef JSONB_DETOAST_ITERATOR
-		//CompressedDatumDecompressAll(cjb->datum);
-		CompressedDatumDecompress(cjb->datum, base_offset + offset + length);
-#else
-		PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + base_offset + offset + length);
-#endif
+		jsonbzDecompressTo(cjb, base_offset + offset + length);
 		fillJsonbValue(container, index, base_addr, offset, result, ptr);
 	}
 
@@ -3172,11 +3167,9 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb,
 #ifndef JSONB_DETOAST_ITERATOR
 	Assert(cjb->datum->compressed);
 		//return findJsonbValueFromContainer(container, JB_FOBJECT, &key);
-
-	CompressedDatumDecompress(cjb->datum, base_offset);
-#else
-	PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + base_offset);
 #endif
+
+	jsonbzDecompressTo(cjb, base_offset);
 
 	/* Binary search on object/pair keys *only* */
 	while (stopLow < stopHigh)
@@ -3191,11 +3184,7 @@ findValueInCompressedJsonbObject(CompressedJsonb *cjb,
 		offset = getJsonbOffset(container, stopMiddle);
 		len = getJsonbLength(container, stopMiddle);
 
-#ifndef JSONB_DETOAST_ITERATOR
-		CompressedDatumDecompress(cjb->datum, base_offset + offset + len);
-#else
-		PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + base_offset + offset + len);
-#endif
+		jsonbzDecompressTo(cjb, base_offset + offset + len);
 
 		difference = lengthCompareJsonbString(base_addr + offset, len,
 											  key.val.string.val,
@@ -3241,11 +3230,9 @@ jsonbzFindKeyInObject(JsonContainer *jc, const char *key, int len,
 
 		return jsonbFindKeyInObject(&jcd, key, len, ptr);
 	}
-
-	CompressedDatumDecompress(cjb->datum, cjb->offset + offsetof(JsonbContainer, children));
-#else
-	PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->buf + cjb->offset + offsetof(JsonbContainer, children));
 #endif
+
+	jsonbzDecompressTo(cjb, cjb->offset + offsetof(JsonbContainer, children));
 
 	return findValueInCompressedJsonbObject(cjb, key, len, ptr);
 }
@@ -3270,19 +3257,11 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonb *cjb)
 #endif
 	const JsonbContainer *jbc = (const JsonbContainer *)((char *) jb + cjb->offset);
 
-#ifndef JSONB_DETOAST_ITERATOR
-	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children - (char *) jbc));
-#else
-	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children);
-#endif
+	jsonbzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children - (char *) jbc));
 
 	it->count = (jbc->header & JB_CMASK);
 
-#ifndef JSONB_DETOAST_ITERATOR
-	CompressedDatumDecompress(cjb->datum, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
-#else
-	PG_DETOAST_ITERATE(cjb->iter, (const char *) &jbc->children[it->count]);
-#endif
+	jsonbzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
 
 	it->cjb = cjb;
 	it->container = jbc;
@@ -3369,11 +3348,7 @@ jsonbzIteratorInit(JsonContainer *jc)
 	JsonbContainer *jbc = (JsonbContainer *)((char *) jb + cjb->offset);
 
 	if (!jsonb_partial_decompression)
-#ifndef JSONB_DETOAST_ITERATOR
-		CompressedDatumDecompressAll(cjb->datum);
-#else
-		PG_DETOAST_ITERATE(cjb->iter, cjb->iter->buf->capacity);
-#endif
+		jsonbzDecompressAll(cjb);
 
 	return jsonbIteratorInit(jc, jbc, cjb);
 }
@@ -3395,29 +3370,24 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter, Jsonb
 #endif
 {
 	CompressedJsonb *cjb = palloc(sizeof(*cjb));
+	int			len;
+
 #ifndef JSONB_DETOAST_ITERATOR
-	CompressedDatum *cd = palloc(sizeof(*cd));
-
 	cjb->datum = cd;
-	cjb->offset = offsetof(Jsonb, root);
-
-	if (!jsonb_partial_decompression)
-		CompressedDatumDecompressAll(cd);
-	else if (!header)
-		CompressedDatumDecompress(cd, 256);
-
-	jsonbzInitContainer(jc, cjb, header, VARSIZE_ANY_EXHDR(cd->data)); // cd->total_len - VARHDRSZ
+	len = VARSIZE_ANY_EXHDR(cd->data); // cd->total_len - VARHDRSZ
 #else
 	cjb->iter = iter;
+	len = VARSIZE_ANY_EXHDR(iter->buf->buf);
+#endif
+
 	cjb->offset = offsetof(Jsonb, root);
 
 	if (!jsonb_partial_decompression)
-		PG_DETOAST_ITERATE(iter, iter->buf->capacity);
-	else if (!header)
-		PG_DETOAST_ITERATE(iter, Min(iter->buf->buf + offsetof(Jsonb, root.children), iter->buf->capacity));
+		jsonbzDecompressAll(cjb);
+	else
+		jsonbzDecompressTo(cjb, Min(offsetof(Jsonb, root.children), iter->buf->capacity - iter->buf->buf));
 
-	jsonbzInitContainer(jc, cjb, header, VARSIZE_ANY_EXHDR(iter->buf->buf)); // cd->total_len - VARHDRSZ
-#endif
+	jsonbzInitContainer(jc, cjb, header, len);
 }
 
 void
