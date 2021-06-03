@@ -233,7 +233,7 @@ jsonbWriteToastPointer(StringInfo buffer, JsonbToastedContainerPointerData *ptr)
 		toast_ptr_inline.va_inline_size = ptr->tail_size;
 
 		SET_VARTAG_EXTERNAL(toast_ptr, VARTAG_ONDISK_INLINE_DIFF);
-		memcpy(VARDATA_EXTERNAL(toast_ptr), &toast_ptr_inline, sizeof(toast_ptr_inline));
+		memcpy(VARDATA_EXTERNAL(toast_ptr), &toast_ptr_inline, offsetof(varatt_external_inline, va_data));
 
 		appendToBuffer(buffer, toast_ptr, sizeof(toast_ptr));
 		appendToBuffer(buffer, ptr->tail_data, ptr->tail_size);
