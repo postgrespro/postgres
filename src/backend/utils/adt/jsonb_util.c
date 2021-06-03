@@ -3459,7 +3459,7 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter, Jsonb
 
 	if (!jsonb_partial_decompression)
 		jsonbzDecompressAll(cjb);
-	else
+	else if (!header)
 		jsonbzDecompressTo(cjb, Min(offsetof(Jsonb, root.children), iter->buf->capacity - iter->buf->buf));
 
 	jsonbzInitContainer(jc, cjb, header, len);
