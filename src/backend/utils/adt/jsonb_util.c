@@ -3798,6 +3798,7 @@ jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 		}
 
 		total_size -= INTALIGN(max_key_size + 3);
+		jc = fields[max_key_idx].value;
 
 		if (fields[max_key_idx].status == 'c')
 		{
@@ -3805,8 +3806,6 @@ jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 		}
 		else
 		{
-			jc = fields[max_key_idx].value;
-
 			if (jsonb_toast_fields_recursively &&
 				total_size < max_size)
 			{
