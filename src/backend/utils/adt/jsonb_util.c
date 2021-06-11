@@ -182,6 +182,8 @@ bool jsonb_sort_field_values = true;		/* GUC */
 bool jsonb_partial_decompression = true;	/* GUC */
 bool jsonb_toast_fields = true;				/* GUC */
 bool jsonb_toast_fields_recursively = true;	/* GUC */
+bool jsonb_compress_fields = true;			/* GUC */
+bool jsonb_inplace_updates = true;			/* GUC */
 
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
@@ -3830,7 +3832,8 @@ jsonb_toaster_save_object(Relation rel, JsonContainer *root,
 
 			if (compressed_val == (Datum) 0)
 				compressed_val = val;
-			else if (pass == 1 &&
+			else if (jsonb_compress_fields &&
+					 pass == 1 &&
 					 VARSIZE_ANY(compressed_val) + min_values_length < max_size)
 				//total_size + INTALIGN(offsetof(JsonbToastedContainerPointer, data) + VARSIZE_ANY(compressed_val) + 3) <= max_size)
 			{

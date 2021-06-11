@@ -2121,6 +2121,24 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jsonb_compress_fields", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Compress jsonb fields."),
+		},
+		&jsonb_compress_fields,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jsonb_inplace_updates", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Use in-place TOASTed jsonb updates."),
+		},
+		&jsonb_inplace_updates,
+		true,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL

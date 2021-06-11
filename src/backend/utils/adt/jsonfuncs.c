@@ -3702,6 +3702,7 @@ setPath(JsonbIterator **it, Datum *path_elems,
 				 errmsg("path element at position %d is null",
 						level + 1)));
 	try_inplace_update =
+		jsonb_inplace_updates &&
 		level == path_len - 1 &&	/* FIXME */
 		!(op_type & (JB_PATH_INSERT_AFTER | JB_PATH_INSERT_BEFORE));
 

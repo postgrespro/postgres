@@ -447,6 +447,8 @@ extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
 extern bool jsonb_toast_fields;				/* GUC */
 extern bool jsonb_toast_fields_recursively;	/* GUC */
+extern bool jsonb_compress_fields;			/* GUC */
+extern bool jsonb_inplace_updates;			/* GUC */
 
 typedef struct RelationData *Relation;
 extern Datum jsonb_toaster(Relation rel, Datum new_val, Datum old_val,
