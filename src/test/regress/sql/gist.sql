@@ -73,6 +73,14 @@ order by p <-> point(0.201, 0.201);
 select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
 order by p <-> point(0.201, 0.201);
 
+-- inverted knn-search
+explain (costs off)
+select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+order by p >-< point(0.201, 0.201);
+
+select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+order by p >-< point(0.201, 0.201);
+
 -- Check commuted case as well
 explain (costs off)
 select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))

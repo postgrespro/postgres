@@ -1967,6 +1967,15 @@ point_distance(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(point_dt(pt1, pt2));
 }
 
+Datum
+point_distance_inverted(PG_FUNCTION_ARGS)
+{
+	Point	   *pt1 = PG_GETARG_POINT_P(0);
+	Point	   *pt2 = PG_GETARG_POINT_P(1);
+
+	PG_RETURN_FLOAT8(-point_dt(pt1, pt2));
+}
+
 static inline float8
 point_dt(Point *pt1, Point *pt2)
 {

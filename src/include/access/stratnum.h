@@ -78,8 +78,9 @@ typedef uint16 StrategyNumber;
 #define RTPrefixStrategyNumber			28	/* for text ^@ */
 #define RTOldBelowStrategyNumber		29	/* for old spelling of <<| */
 #define RTOldAboveStrategyNumber		30	/* for old spelling of |>> */
+#define RTKFNSearchStrategyNumber		31	/* for >-< (inverted distance) */
 
-#define RTMaxStrategyNumber				30
+#define RTMaxStrategyNumber				31
 
 
 #endif							/* STRATNUM_H */

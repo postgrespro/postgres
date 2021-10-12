@@ -1219,7 +1219,7 @@ gist_point_fetch(PG_FUNCTION_ARGS)
 									   PointPGetDatum(p1), PointPGetDatum(p2)))
 
 static float8
-computeDistance(bool isLeaf, BOX *box, Point *point)
+computeDistance(bool isLeaf, bool inverted, BOX *box, Point *point)
 {
 	float8		result = 0.0;
 
@@ -1227,6 +1227,34 @@ computeDistance(bool isLeaf, BOX *box, Point *point)
 	{
 		/* simple point to point distance */
 		result = point_point_distance(point, &box->low);
+		if (inverted)
+			result = -result;
+	}
+	else if (inverted)
+	{
+		/* farthest point will be a vertex */
+		Point		p;
+		float8		subresult;
+
+		result = point_point_distance(point, &box->low);
+
+		subresult = point_point_distance(point, &box->high);
+		if (result < subresult)
+			result = subresult;
+
+		p.x = box->low.x;
+		p.y = box->high.y;
+		subresult = point_point_distance(point, &p);
+		if (result < subresult)
+			result = subresult;
+
+		p.x = box->high.x;
+		p.y = box->low.y;
+		subresult = point_point_distance(point, &p);
+		if (result < subresult)
+			result = subresult;
+
+		result = -result;
 	}
 	else if (point->x <= box->high.x && point->x >= box->low.x &&
 			 point->y <= box->high.y && point->y >= box->low.y)
@@ -1458,12 +1486,22 @@ gist_point_distance(PG_FUNCTION_ARGS)
 	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
 	StrategyNumber strategy = (StrategyNumber) PG_GETARG_UINT16(2);
 	float8		distance;
-	StrategyNumber strategyGroup = strategy / GeoStrategyNumberOffset;
+	StrategyNumber strategyGroup;
+	bool		inverted = false;
+
+	if (strategy == RTKFNSearchStrategyNumber)
+	{
+		strategy = RTKNNSearchStrategyNumber;
+		inverted = true;
+	}
+
+	strategyGroup = strategy / GeoStrategyNumberOffset;
 
 	switch (strategyGroup)
 	{
 		case PointStrategyNumberGroup:
 			distance = computeDistance(GIST_LEAF(entry),
+									   inverted,
 									   DatumGetBoxP(entry->key),
 									   PG_GETARG_POINT_P(1));
 			break;
@@ -1480,12 +1518,22 @@ static float8
 gist_bbox_distance(GISTENTRY *entry, Datum query, StrategyNumber strategy)
 {
 	float8		distance;
-	StrategyNumber strategyGroup = strategy / GeoStrategyNumberOffset;
+	StrategyNumber strategyGroup;
+	bool		inverted = false;
+
+	if (strategy == RTKFNSearchStrategyNumber)
+	{
+		strategy = RTKNNSearchStrategyNumber;
+		inverted = true;
+	}
+
+	strategyGroup = strategy / GeoStrategyNumberOffset;
 
 	switch (strategyGroup)
 	{
 		case PointStrategyNumberGroup:
 			distance = computeDistance(false,
+									   inverted,
 									   DatumGetBoxP(entry->key),
 									   DatumGetPointP(query));
 			break;

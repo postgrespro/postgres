@@ -1144,6 +1144,10 @@
 { amopfamily => 'gist/point_ops', amoplefttype => 'point',
   amoprighttype => 'circle', amopstrategy => '68',
   amopopr => '<@(point,circle)', amopmethod => 'gist' },
+{ amopfamily => 'gist/point_ops', amoplefttype => 'point',
+  amoprighttype => 'point', amopstrategy => '31', amoppurpose => 'o',
+  amopopr => '>-<(point,point)', amopmethod => 'gist',
+  amopsortfamily => 'btree/float_ops' },
 
 # gist poly_ops (supports polygons)
 { amopfamily => 'gist/poly_ops', amoplefttype => 'polygon',
