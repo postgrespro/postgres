@@ -15,6 +15,7 @@
 
 #include "access/detoast.h"
 #include "access/genam.h"
+#include "access/gin_private.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/table.h"
@@ -32,6 +33,134 @@
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/jsonb.h"
+
+static struct varlena *
+jsonx_toast_create_pointer_with_tids(struct varatt_external *toast_pointer,
+									 int data_size, Oid toasterid)
+{
+	uint32		nchunks =
+		(data_size + TOAST_MAX_CHUNK_SIZE - 1) / TOAST_MAX_CHUNK_SIZE;
+	int			inline_size = nchunks * sizeof(ItemPointerData) + sizeof(uint32);
+	struct varlena *ptr = (struct varlena *) palloc(VARATT_CUSTOM_SIZE(TOAST_POINTER_SIZE + inline_size));
+	char	   *data;
+
+	SET_VARTAG_EXTERNAL(ptr, VARTAG_CUSTOM);
+
+	VARATT_CUSTOM_SET_TOASTERID(ptr, toasterid);
+	VARATT_CUSTOM_SET_DATA_RAW_SIZE(ptr, data_size + VARHDRSZ);
+	VARATT_CUSTOM_SET_DATA_SIZE(ptr, TOAST_POINTER_SIZE + inline_size);
+
+	data = VARATT_CUSTOM_GET_DATA(ptr);
+	Assert((intptr_t) data == INTALIGN((intptr_t) data));
+
+	SET_VARTAG_EXTERNAL(data, VARTAG_ONDISK);
+	memcpy(VARDATA_EXTERNAL(data), toast_pointer, sizeof(*toast_pointer));
+	memset(data + TOAST_POINTER_SIZE, 0, inline_size);
+	memcpy(data + TOAST_POINTER_SIZE, &nchunks, sizeof(uint32));
+
+	return ptr;
+}
+
+typedef struct ToastTidList
+{
+	uint16		nitems;
+	GinPostingList list;
+} ToastTidList;
+
+struct varlena *
+jsonx_toast_compress_tids(struct varlena *chunk_tids, int max_size)
+{
+	ItemPointer items;
+	Pointer		ptr;
+	uint32		nitems;
+	int			nrootitems = 0;
+	int			rootsize = 0;
+	uint32		ntids;
+	int			inlineSize = VARATT_CUSTOM_GET_DATA_SIZE(chunk_tids);
+	struct varlena *compressed_tids;
+
+	Assert(VARATT_IS_CUSTOM(chunk_tids));
+
+	items = (ItemPointer)((char *) VARATT_CUSTOM_GET_DATA(chunk_tids) + TOAST_POINTER_SIZE + sizeof(uint32));
+	inlineSize -= TOAST_POINTER_SIZE;
+	nitems = (inlineSize - sizeof(uint32)) / sizeof(ItemPointerData);
+
+	if (max_size <= TOAST_POINTER_SIZE + sizeof(uint32))
+		return NULL;
+
+	compressed_tids = palloc(max_size);
+
+	SET_VARTAG_EXTERNAL(compressed_tids, VARTAG_CUSTOM);
+
+	max_size -= VARATT_CUSTOM_SIZE(TOAST_POINTER_SIZE);
+
+	ptr = (Pointer) VARATT_CUSTOM_GET_DATA(compressed_tids) + TOAST_POINTER_SIZE;
+	ntids = nitems | 0x80000000;
+	memcpy(ptr, &ntids, sizeof(uint32));
+	ptr += sizeof(uint32);
+	rootsize += sizeof(uint32);
+
+	while (nrootitems < nitems)
+	{
+		ToastTidList jlist;
+		GinPostingList *segment;
+		int			npacked;
+		int			segsize;
+
+		segment = ginCompressPostingList(&items[nrootitems],
+										 nitems - nrootitems,
+#define JsonbTidsSegmentMaxSize 256
+										 Min(max_size - rootsize - offsetof(ToastTidList, list), JsonbTidsSegmentMaxSize),
+										 &npacked);
+		segsize = SizeOfGinPostingList(segment);
+		if (npacked <= 0 || rootsize + segsize > max_size)
+		{
+			pfree(compressed_tids);
+			return NULL;
+		}
+
+		jlist.nitems = (uint16) npacked;
+		memcpy(ptr, &jlist, offsetof(ToastTidList, list));
+		ptr += offsetof(ToastTidList, list);
+		rootsize += offsetof(ToastTidList, list);
+
+		memcpy(ptr, segment, segsize);
+		ptr += segsize;
+		rootsize += segsize;
+
+		nrootitems += npacked;
+		pfree(segment);
+	}
+
+	VARATT_CUSTOM_SET_TOASTERID(compressed_tids, VARATT_CUSTOM_GET_TOASTERID(chunk_tids));
+	VARATT_CUSTOM_SET_DATA_RAW_SIZE(compressed_tids, VARATT_CUSTOM_GET_DATA_RAW_SIZE(chunk_tids));
+	VARATT_CUSTOM_SET_DATA_SIZE(compressed_tids, TOAST_POINTER_SIZE + rootsize);
+
+	memcpy(VARATT_CUSTOM_GET_DATA(compressed_tids),
+		   VARATT_CUSTOM_GET_DATA(chunk_tids),
+		   TOAST_POINTER_SIZE);
+
+	return compressed_tids;
+}
+
+static void
+jsonx_toast_decompress_tid(void *compressed_tids, ItemPointer tids, int chunkno)
+{
+	ToastTidList *list = compressed_tids;
+	int			base_chunkno = 0;
+
+	if (ItemPointerIsValid(&tids[chunkno]))
+		return;
+
+	while (chunkno >= base_chunkno + list->nitems)
+	{
+		base_chunkno += list->nitems;
+		list = (ToastTidList *)((char *) list + offsetof(ToastTidList, list) + SizeOfGinPostingList(&list->list));
+	}
+
+	ginPostingListDecodeOneSegment(&list->list, &tids[base_chunkno]);
+}
 
 static void
 jsonx_toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
@@ -42,7 +171,8 @@ static void
 jsonx_toast_write_slice(Relation toastrel, Relation *toastidxs,
 				  int num_indexes, int validIndex,
 				  Oid valueid, int32 value_size, int32 slice_offset,
-				  int32 slice_length, char *slice_data, int options)
+				  int32 slice_length, char *slice_data, int options,
+				  ItemPointerData *chunk_tids)
 {
 	CommandId	mycid = GetCurrentCommandId(true);
 	TupleDesc	toasttupDesc = toastrel->rd_att;
@@ -103,6 +233,10 @@ jsonx_toast_write_slice(Relation toastrel, Relation *toastidxs,
 
 		heap_insert(toastrel, toasttup, mycid, options, NULL);
 
+		if (chunk_tids)
+			memcpy(&chunk_tids[chunk_seq - 1], &toasttup->t_self,
+				   sizeof(ItemPointerData));
+
 		if (!HeapTupleIsHeapOnly(toasttup))
 		/*
 		 * Create the index entry.  We cheat a little here by not using
@@ -153,10 +287,10 @@ jsonx_toast_write_slice(Relation toastrel, Relation *toastidxs,
  * options: options to be passed to heap_insert() for toast rows
  * ----------
  */
-static Datum
-jsonx_toast_save_datum_ext(Relation rel, Datum value,
+Datum
+jsonx_toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 					 struct varlena *oldexternal, int options,
-					 void *chunk_header, int chunk_header_size)
+					 struct varlena **p_chunk_tids)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -167,6 +301,7 @@ jsonx_toast_save_datum_ext(Relation rel, Datum value,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
+	ItemPointer	chunk_tids;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
 
@@ -312,9 +447,17 @@ jsonx_toast_save_datum_ext(Relation rel, Datum value,
 		}
 	}
 
+	if (p_chunk_tids)
+	{
+		*p_chunk_tids = jsonx_toast_create_pointer_with_tids(&toast_pointer, data_todo, toasterid);
+		chunk_tids = (ItemPointer)(VARATT_CUSTOM_GET_DATA(*p_chunk_tids) + TOAST_POINTER_SIZE + sizeof(uint32));
+	}
+	else
+		chunk_tids = NULL;
+
 	jsonx_toast_write_slice(toastrel, toastidxs, num_indexes, validIndex,
 					  toast_pointer.va_valueid, 0, 0, data_todo, data_p,
-					  options);
+					  options, chunk_tids);
 
 	/*
 	 * Done - close toast relation and its indexes but keep the lock until
@@ -338,7 +481,7 @@ Datum
 jsonx_toast_save_datum(Relation rel, Datum value,
 				 struct varlena *oldexternal, int options)
 {
-	return jsonx_toast_save_datum_ext(rel, value, oldexternal, options, NULL, 0);
+	return jsonx_toast_save_datum_ext(rel, InvalidOid, value, oldexternal, options, NULL);
 }
 
 /* ----------
@@ -508,30 +651,39 @@ jsonx_toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
 }
 
 static void
-jsonx_create_fetch_datum_iterator_scan(JsonxFetchDatumIterator iter)
+jsonx_create_fetch_datum_iterator_scan(JsonxFetchDatumIterator iter, int32 first_chunkno)
 {
-	int			validIndex;
-
 	MemoryContext oldcxt = MemoryContextSwitchTo(iter->mcxt);
 
-	/*
-	 * Open the toast relation and its indexes
-	 */
-	iter->toastrel = table_open(iter->toast_pointer.va_toastrelid, AccessShareLock);
+	if (!iter->toastrel)
+	{
+		/*
+		 * Open the toast relation and its indexes
+		 */
+		iter->toastrel = table_open(iter->toast_pointer.va_toastrelid, AccessShareLock);
 
-	/* Look for the valid index of the toast relation */
-	validIndex = toast_open_indexes(iter->toastrel,
-									AccessShareLock,
-									&iter->toastidxs,
-									&iter->num_indexes);
+		/* Look for the valid index of the toast relation */
+		iter->valid_index = toast_open_indexes(iter->toastrel,
+											   AccessShareLock,
+											   &iter->toastidxs,
+											   &iter->num_indexes);
+
+		init_toast_snapshot(&iter->snapshot);
+	}
 
 	/*
 	 * Setup a scan key to fetch from the index by va_valueid
 	 */
-	ScanKeyInit(&iter->toastkey,
+	ScanKeyInit(&iter->toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(iter->toast_pointer.va_valueid));
+
+	if (first_chunkno > 0)
+		ScanKeyInit(&iter->toastkey[1],
+					(AttrNumber) 2,
+					BTGreaterEqualStrategyNumber, F_INT4GE,
+					Int32GetDatum(first_chunkno));
 
 	/*
 	 * Read the chunks by index
@@ -541,9 +693,12 @@ jsonx_create_fetch_datum_iterator_scan(JsonxFetchDatumIterator iter)
 	 * for it.
 	 */
 
-	init_toast_snapshot(&iter->snapshot);
-	iter->toastscan = systable_beginscan_ordered(iter->toastrel, iter->toastidxs[validIndex],
-												 &iter->snapshot, 1, &iter->toastkey);
+	iter->toastscan = systable_beginscan_ordered(iter->toastrel,
+												 iter->toastidxs[iter->valid_index],
+												 &iter->snapshot,
+												 first_chunkno > 0 ? 2 : 1,
+												 iter->toastkey);
+	iter->nextidx = first_chunkno;
 
 	MemoryContextSwitchTo(oldcxt);
 }
@@ -569,14 +724,16 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr)
 	/* Must copy to access aligned fields */
 	VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
 
+	iter->chunksize = TOAST_MAX_CHUNK_SIZE;
 	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer);
-	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+	iter->numchunks = ((iter->ressize - 1) / iter->chunksize) + 1;
 
 	iter->buf = create_toast_buffer(iter->ressize + VARHDRSZ,
 									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer));
 
 	iter->nextidx = 0;
 	iter->done = false;
+	iter->chunks_bitmap = palloc0((iter->numchunks + 7) / 8);
 
 	return iter;
 }
@@ -587,14 +744,61 @@ jsonx_free_fetch_datum_iterator(JsonxFetchDatumIterator iter)
 	if (iter == NULL)
 		return;
 
-	if (!iter->done && iter->toastscan)
+	if (!iter->done)
 	{
-		systable_endscan_ordered(iter->toastscan);
-		toast_close_indexes(iter->toastidxs, iter->num_indexes, AccessShareLock);
-		table_close(iter->toastrel, AccessShareLock);
+		if (iter->toastscan)
+			systable_endscan_ordered(iter->toastscan);
+
+		if (!iter->cached)
+		{
+			if (iter->toastrel)
+			{
+				if (iter->num_indexes > 0)
+					toast_close_indexes(iter->toastidxs, iter->num_indexes, AccessShareLock);
+				table_close(iter->toastrel, AccessShareLock);
+			}
+
+			if (iter->slot)
+				ExecDropSingleTupleTableSlot(iter->slot);
+
+			if (iter->heapfetch)
+				table_index_fetch_end(iter->heapfetch);
+		}
+
+		if (iter->compressed_chunk_tids)
+			pfree(iter->chunk_tids);
 	}
 	free_toast_buffer(iter->buf);
 	pfree(iter);
+}
+
+typedef struct ToastTIdScanCache
+{
+	Relation toastrel;
+	struct TupleTableSlot *slot;
+	struct IndexFetchTableData *heapfetch;
+	ResourceOwner resowner;
+	MemoryContextCallback free_callback;
+} ToastTIdScanCache;
+
+static void
+jsonx_free_toast_cache(void *arg)
+{
+	ToastTIdScanCache *cache = arg;
+	ResourceOwner old_resowner = CurrentResourceOwner;
+
+	CurrentResourceOwner = cache->resowner;
+
+	if (cache->toastrel)
+		table_close(cache->toastrel, AccessShareLock);
+
+	if (cache->slot)
+		ExecDropSingleTupleTableSlot(cache->slot);
+
+	if (cache->heapfetch)
+		table_index_fetch_end(cache->heapfetch);
+
+	CurrentResourceOwner = old_resowner;
 }
 
 /* ----------
@@ -616,8 +820,115 @@ jsonx_fetch_datum_iterate(JsonxFetchDatumIterator iter)
 
 	Assert(iter != NULL && !iter->done);
 
+	if (iter->chunk_tids)
+	{
+		bool		all_dead = false;
+		bool		found;
+		bool		heap_continue = false;
+		bool		shouldFree = false;
+
+		ToastTIdScanCache *cache = NULL;
+
+		if (0 && jsonb_iter_cache)
+		{
+			cache = *jsonb_iter_cache;
+
+			if (!cache)
+			{
+				*jsonb_iter_cache = cache = MemoryContextAllocZero(jsonb_iter_cache_mcxt, sizeof(*cache));
+
+				cache->free_callback.func = jsonx_free_toast_cache;
+				cache->free_callback.arg = cache;
+				MemoryContextRegisterResetCallback(jsonb_iter_cache_mcxt, &cache->free_callback);
+			}
+		}
+
+		if (!iter->toastrel)
+		{
+			MemoryContext oldcxt = MemoryContextSwitchTo(cache ? jsonb_iter_cache_mcxt : iter->mcxt);
+
+			if (cache && cache->toastrel)
+			{
+				iter->toastrel = cache->toastrel;
+				iter->slot = cache->slot;
+				iter->heapfetch = cache->heapfetch;
+
+				init_toast_snapshot(&iter->snapshot);
+			}
+			else
+			{
+				if (!iter->toastrel)
+				{
+					iter->toastrel = table_open(iter->toast_pointer.va_toastrelid, AccessShareLock);
+
+#if 0
+					/* Look for the valid index of the toast relation */
+					iter->valid_index = toast_open_indexes(iter->toastrel,
+														   AccessShareLock,
+														   &iter->toastidxs,
+														   &iter->num_indexes);
+#endif
+					init_toast_snapshot(&iter->snapshot);
+				}
+
+				iter->slot = table_slot_create(iter->toastrel, NULL);
+				iter->heapfetch = table_index_fetch_begin(iter->toastrel);
+
+				if (cache)
+				{
+					cache->toastrel = iter->toastrel;
+					cache->slot = iter->slot;
+					cache->heapfetch = iter->heapfetch;
+					cache->resowner = CurrentResourceOwner;
+
+					iter->cached = true;
+				}
+			}
+
+			MemoryContextSwitchTo(oldcxt);
+		}
+
+		if (iter->nextidx >= iter->nchunk_tids)
+			found = false;
+		else
+		{
+			ItemPointerData tid;
+
+			if (iter->compressed_chunk_tids)
+				jsonx_toast_decompress_tid(iter->compressed_chunk_tids, iter->chunk_tids, iter->nextidx);
+
+			tid = iter->chunk_tids[iter->nextidx];
+
+			found = table_index_fetch_tuple(iter->heapfetch, &tid,
+											&iter->snapshot, iter->slot,
+											&heap_continue, &all_dead);
+
+			//Assert(!heap_continue);
+		}
+
+		if (!found)
+		{
+			if (!iter->cached)
+			{
+				table_index_fetch_end(iter->heapfetch);
+				if (iter->num_indexes > 0)
+					toast_close_indexes(iter->toastidxs, iter->num_indexes, AccessShareLock);
+				table_close(iter->toastrel, AccessShareLock);
+				ExecDropSingleTupleTableSlot(iter->slot);
+			}
+
+			iter->done = true;
+			return;
+		}
+
+		ttup = ExecFetchSlotHeapTuple(iter->slot, false, &shouldFree);
+		Assert(!shouldFree);
+	}
+	else
+	{
+
 	if (!iter->toastscan)
-		jsonx_create_fetch_datum_iterator_scan(iter);
+		jsonx_create_fetch_datum_iterator_scan(iter, iter->nextidx);
 
 	ttup = systable_getnext_ordered(iter->toastscan, ForwardScanDirection);
 	if (ttup == NULL)
@@ -640,6 +951,7 @@ jsonx_fetch_datum_iterate(JsonxFetchDatumIterator iter)
 
 		iter->done = true;
 		return;
+	}
 	}
 
 	/*
@@ -691,7 +1003,29 @@ jsonx_fetch_datum_iterate(JsonxFetchDatumIterator iter)
 	memcpy(iter->buf->limit, chunkdata, chunksize);
 	iter->buf->limit += chunksize;
 
+	iter->chunks_bitmap[iter->nextidx / 8] |= 1 << (iter->nextidx % 8);
+
 	iter->nextidx++;
+}
+
+
+static void
+jsonx_fetch_datum_iterate_to(JsonxFetchDatumIterator iter, int32 chunkno)
+{
+	if (iter->nextidx != chunkno)
+	{
+		if (iter->toastscan)
+			systable_endscan_ordered(iter->toastscan);
+
+		if (iter->chunk_tids)
+			iter->nextidx = chunkno;
+		else
+			jsonx_create_fetch_datum_iterator_scan(iter, chunkno);
+
+		iter->buf->limit = (char *) VARDATA(iter->buf->buf) + (Size) iter->chunksize * chunkno;
+	}
+
+	jsonx_fetch_datum_iterate(iter);
 }
 
 static void
@@ -745,7 +1079,75 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 	struct varatt_external toast_pointer;
 	JsonxDetoastIterator iter;
 
-	if (VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (VARATT_IS_CUSTOM(attr))
+	{
+		JsonxFetchDatumIterator fetch_iter;
+		char	   *data = (char *) INTALIGN((intptr_t) VARATT_CUSTOM_GET_DATA(attr));
+		char	   *inlineData;
+		uint32		inlineSize;
+		uint32		ntids;
+
+		if (!VARATT_IS_EXTERNAL_ONDISK(data))
+			return NULL;
+
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, data);
+
+		iter = (JsonxDetoastIterator) palloc0(sizeof(JsonxDetoastIteratorData));
+		iter->done = false;
+		iter->nrefs = 1;
+		iter->gen.free_callback.func = (void (*)(void *)) jsonx_free_detoast_iterator_internal;
+
+		data = VARATT_CUSTOM_GET_DATA(attr);
+		inlineData = data + TOAST_POINTER_SIZE;
+		inlineSize = VARATT_CUSTOM_GET_DATA_SIZE(attr) - (data - (char *) VARATT_CUSTOM_GET_DATA(attr)) - TOAST_POINTER_SIZE;
+
+		iter->fetch_datum_iterator = fetch_iter = jsonx_create_fetch_datum_iterator((struct varlena *) data);
+		fetch_iter->toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
+
+		memcpy(&ntids, inlineData, sizeof(uint32));
+
+		fetch_iter->chunk_tids_inline_size = inlineSize;
+
+		if (inlineSize <= 0)
+		{
+			fetch_iter->nchunk_tids = 0;
+			fetch_iter->chunk_tids = NULL;
+			fetch_iter->compressed_chunk_tids = NULL;
+		}
+		else if (ntids & 0x80000000)
+		{
+			fetch_iter->nchunk_tids = ntids & 0x7FFFFFFF;
+			fetch_iter->chunk_tids = palloc0(sizeof(ItemPointerData) * fetch_iter->nchunk_tids);
+			fetch_iter->compressed_chunk_tids = (char *) inlineData + sizeof(uint32);
+		}
+		else
+		{
+			fetch_iter->nchunk_tids = ntids;
+			fetch_iter->chunk_tids = (ItemPointer)((char *) inlineData + sizeof(uint32));
+			fetch_iter->compressed_chunk_tids = NULL;
+			Assert(fetch_iter->nchunk_tids == (inlineSize - sizeof(uint32)) / sizeof(ItemPointerData));
+		}
+
+		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		{
+			iter->compressed = true;
+			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
+
+			/* prepare buffer to received decompressed data */
+			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
+		}
+		else
+		{
+			iter->compressed = false;
+			iter->compression_method = TOAST_INVALID_COMPRESSION_ID;
+
+			/* point the buffer directly at the raw data */
+			iter->buf = fetch_iter->buf;
+		}
+
+		return iter;
+	}
+	else if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
 		JsonxFetchDatumIterator fetch_iter;
 
@@ -857,4 +1259,75 @@ jsonx_detoast_iterate(JsonxDetoastIterator detoast_iter, const char *destend)
 		detoast_iter->fetch_datum_iterator = NULL;
 #endif
 	}
+}
+
+void
+jsonx_detoast_iterate_slice(JsonxDetoastIterator detoast_iter, int32 offset, int32 length)
+{
+	JsonxFetchDatumIterator fetch_iter = detoast_iter->fetch_datum_iterator;
+	int32		first_read_chunk_offset = -1;
+	int32		maxoffset = offset - 4 + length;
+
+	Assert(offset >= 0);
+	Assert(length > 0);
+
+	if (detoast_iter->compressed)
+	{
+		const char *need = detoast_iter->buf->buf + offset + length;
+
+		Assert(need <= detoast_iter->buf->capacity);
+
+		while (!detoast_iter->done && need > detoast_iter->buf->limit)
+			jsonx_detoast_iterate(detoast_iter, need);
+
+		return;
+	}
+
+#if 0
+	if (fetch_iter->compressed_chunks)
+	{
+#define BITMAP_CHUNK_SIZE 128
+		int32		maxoffset2 = (maxoffset + BITMAP_CHUNK_SIZE - 1) & ~(BITMAP_CHUNK_SIZE - 1);
+
+		for (int32 byteno = (offset - 4) / BITMAP_CHUNK_SIZE; byteno < (maxoffset + BITMAP_CHUNK_SIZE - 1) / BITMAP_CHUNK_SIZE;)
+		{
+			uint8		mask = fetch_iter->chunks_bitmap[byteno / 8];
+
+			if (mask == 0xFF)
+				byteno = (byteno + 8) & ~7;
+			else
+			{
+				if (!(mask & (1 << (byteno % 8))))
+				{
+					fetch_datum_iterate_to(fetch_iter, byteno * BITMAP_CHUNK_SIZE, maxoffset2);
+
+					Assert(fetch_iter->chunks_bitmap[byteno / 8] & (1 << (byteno % 8)));
+
+					if (first_read_chunk_offset < 0)
+						first_read_chunk_offset = 4 + byteno * BITMAP_CHUNK_SIZE;
+				}
+
+				byteno++;
+			}
+		}
+	}
+	else
+#endif
+	{
+		int32		maxchunk = (maxoffset + fetch_iter->chunksize - 1) / fetch_iter->chunksize;
+
+		for (int32 chunkno = (offset - 4) / fetch_iter->chunksize;
+			 chunkno < maxchunk;
+			 chunkno++)
+		{
+			if (!(fetch_iter->chunks_bitmap[chunkno / 8] & (1 << (chunkno % 8))))
+			{
+				jsonx_fetch_datum_iterate_to(fetch_iter, chunkno /*, maxoffset */);
+				if (first_read_chunk_offset < 0)
+					first_read_chunk_offset = 4 + fetch_iter->chunksize * chunkno;
+			}
+		}
+	}
+
+	//Assert(need <= detoast_iter->buf->limit);
 }

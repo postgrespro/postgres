@@ -25,5 +25,6 @@ SELECT i, (
 )
 FROM generate_series(1, 10) i;
 
+SELECT id, key, pg_column_size(value::text) FROM test_jsonb_toaster, jsonb_each(jb);
 
 DROP TABLE test_jsonb_toaster;
