@@ -48,6 +48,9 @@ static Selectivity clauselist_selectivity_or(PlannerInfo *root,
 											 JoinType jointype,
 											 SpecialJoinInfo *sjinfo,
 											 bool use_extended_stats);
+static inline bool treat_as_join_clause(PlannerInfo *root,
+										Node *clause, RestrictInfo *rinfo,
+										int varRelid, SpecialJoinInfo *sjinfo);
 
 /****************************************************************************
  *		ROUTINES TO COMPUTE SELECTIVITIES
@@ -127,6 +130,43 @@ clauselist_selectivity_ext(PlannerInfo *root,
 	RangeQueryClause *rqlist = NULL;
 	ListCell   *l;
 	int			listidx;
+	bool		single_clause_optimization = true;
+
+	/*
+	 * The optimization of skipping to clause_selectivity_ext for single
+	 * clauses means we can't improve join estimates with a single join
+	 * clause but additional baserel restrictions. So we disable it when
+	 * estimating joins.
+	 *
+	 * XXX Not sure if this is the right way to do it, but more elaborate
+	 * checks would mostly negate the whole point of the optimization.
+	 * The (Var op Var) patch has the same issue.
+	 *
+	 * XXX An alternative might be making clause_selectivity_ext smarter
+	 * and make it use the join extended stats there. But that seems kinda
+	 * against the whole point of the optimization (skipping expensive
+	 * stuff) and it's making other parts more complex.
+	 *
+	 * XXX Maybe this should check if there are at least some restrictions
+	 * on some base relations, which seems important. But then again, that
+	 * seems to go against the idea of this check to be cheap. Moreover, it
+	 * won't work for OR clauses, which may have multiple parts but we still
+	 * see them as a single BoolExpr clause (it doesn't work later, though).
+	 */
+	if (list_length(clauses) == 1)
+	{
+		Node *clause = linitial(clauses);
+		RestrictInfo *rinfo = NULL;
+
+		if (IsA(clause, RestrictInfo))
+		{
+			rinfo = (RestrictInfo *) clause;
+			clause = (Node *) rinfo->clause;
+		}
+
+		single_clause_optimization
+			= !treat_as_join_clause(root, clause, rinfo, varRelid, sjinfo);
+	}
 
 	if (clauselist_selectivity_hook)
 		s1 = clauselist_selectivity_hook(root, clauses, varRelid, jointype,
@@ -136,8 +176,12 @@ clauselist_selectivity_ext(PlannerInfo *root,
 	/*
 	 * If there's exactly one clause, just go directly to
 	 * clause_selectivity_ext(). None of what we might do below is relevant.
+	 *
+	 * XXX This means we won't try using extended stats on OR-clauses (which
+	 * are a single BoolExpr clause at this point), although we'll do that
+	 * later (once we look at the arguments).
 	 */
-	if (list_length(clauses) == 1)
+	if ((list_length(clauses) == 1) && single_clause_optimization)
 		return clause_selectivity_ext(root, (Node *) linitial(clauses),
 									  varRelid, jointype, sjinfo,
 									  use_extended_stats);
@@ -158,6 +202,23 @@ clauselist_selectivity_ext(PlannerInfo *root,
 		s1 = statext_clauselist_selectivity(root, clauses, varRelid,
 											jointype, sjinfo, rel,
 											&estimatedclauses, false);
+	}
+
+	/*
+	 * Try applying extended statistics to joins. There's not much we can
+	 * do to detect when this makes sense, but we can check that there are
+	 * join clauses, and that at least some of the rels have stats.
+	 *
+	 * XXX Isn't this mutually exclusive with the preceding block which
+	 * calculates estimates for a single relation?
+	 */
+	if (use_extended_stats &&
+		statext_try_join_estimates(root, clauses, varRelid, jointype, sjinfo,
+						 estimatedclauses))
+	{
+		s1 *= statext_clauselist_join_selectivity(root, clauses, varRelid,
+												  jointype, sjinfo,
+												  &estimatedclauses);
 	}
 
 	/*

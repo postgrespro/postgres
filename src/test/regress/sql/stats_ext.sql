@@ -1547,6 +1547,72 @@ SELECT c0 FROM ONLY expr_stats_incompatible_test WHERE
 
 DROP TABLE expr_stats_incompatible_test;
 
+
+-- Test join estimates.
+CREATE TABLE join_test_1 (a int, b int, c int);
+CREATE TABLE join_test_2 (a int, b int, c int);
+
+INSERT INTO join_test_1 SELECT mod(i,10), mod(i,10), mod(i,10) FROM generate_series(1,1000) s(i);
+INSERT INTO join_test_2 SELECT mod(i,10), mod(i,10), mod(i,10) FROM generate_series(1,1000) s(i);
+
+ANALYZE join_test_1;
+ANALYZE join_test_2;
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b))');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 0');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5 and j2.c < 3');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5 and j2.c > 5');
+
+-- can't be improved due to the optimization in clauselist_selectivity_ext,
+-- which skips cases with a single (join) clause
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5 and j2.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5 and j2.c > 5');
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a + 1) where j1.c < 5');
+
+-- create extended statistics on the join/where columns
+CREATE STATISTICS join_stats_1 ON a, b, c, (a+1), (b+1) FROM join_test_1;
+CREATE STATISTICS join_stats_2 ON a, b, c, (a+1), (b+1) FROM join_test_2;
+
+ANALYZE join_test_1;
+ANALYZE join_test_2;
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b))');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 0');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5 and j2.c < 3');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1) and (j1.b = j2.b)) where j1.c < 5 and j2.c > 5');
+
+-- can't be improved due to the optimization in clauselist_selectivity_ext,
+-- which skips cases with a single (join) clause
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5 and j2.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on ((j1.a + 1 = j2.a + 1)) where j1.c < 5 and j2.c > 5');
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a + 1) where j1.c < 5');
+
+-- try combining with single-column (and single-expression) statistics
+DROP STATISTICS join_stats_2;
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a) where j1.c < 5');
+
+-- no MCV on join_test_2 (on the (a+1) expression)
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a + 1) where j1.c < 5');
+
+CREATE STATISTICS join_stats_2 ON (a+1) FROM join_test_2;
+ANALYZE join_test_2;
+
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a) where j1.c < 5');
+SELECT * FROM check_estimated_rows('select * from join_test_1 j1 join join_test_2 j2 on (j1.a + 1 = j2.a + 1) where j1.c < 5');
+
+
+DROP TABLE join_test_1;
+DROP TABLE join_test_2;
+
 -- Permission tests. Users should not be able to see specific data values in
 -- the extended statistics, if they lack permission to see those values in
 -- the underlying table.

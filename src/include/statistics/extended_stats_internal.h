@@ -15,6 +15,7 @@
 #define EXTENDED_STATS_INTERNAL_H
 
 #include "statistics/statistics.h"
+#include "utils/lsyscache.h"
 #include "utils/sortsupport.h"
 
 typedef struct
@@ -126,5 +127,24 @@ extern Selectivity mcv_clause_selectivity_or(PlannerInfo *root,
 											 Selectivity *overlap_mcvsel,
 											 Selectivity *overlap_basesel,
 											 Selectivity *totalsel);
+
+extern Selectivity mcv_combine_simple(PlannerInfo *root,
+									  RelOptInfo *rel,
+									  StatisticExtInfo *stat,
+									  AttStatsSlot *sslot,
+									  double stanullfrac,
+									  double nd, bool isdefault,
+									  Node *clause);
+
+extern Selectivity mcv_combine_extended(PlannerInfo *root,
+										RelOptInfo *rel1,
+										RelOptInfo *rel2,
+										StatisticExtInfo *stat1,
+										StatisticExtInfo *stat2,
+										List *clauses);
+
+extern List *statext_determine_join_restrictions(PlannerInfo *root,
+												 RelOptInfo *rel,
+												 StatisticExtInfo *info);
 
 #endif							/* EXTENDED_STATS_INTERNAL_H */
