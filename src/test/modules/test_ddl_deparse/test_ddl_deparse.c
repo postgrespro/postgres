@@ -279,6 +279,9 @@ get_altertable_subcmdtypes(PG_FUNCTION_ARGS)
 			case AT_GenericOptions:
 				strtype = "SET OPTIONS";
 				break;
+			case AT_SetToaster:
+				strtype = "SET TOASTER";
+				break;
 			default:
 				strtype = "unrecognized";
 				break;

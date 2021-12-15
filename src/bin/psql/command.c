@@ -877,6 +877,8 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 					if (pattern2)
 						free(pattern2);
 				}
+				else if (cmd[2] == '+' || cmd[2] == '\0')
+					success = describeToasters(pattern, show_verbose);
 				else
 					status = PSQL_CMD_UNKNOWN;
 				break;
