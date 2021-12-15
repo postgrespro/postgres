@@ -834,6 +834,9 @@ BuildDescForRelation(List *schema)
 		if (entry->storage)
 			att->attstorage = entry->storage;
 
+		if (entry->toaster)
+			elog(ERROR, "unimplemented yet (toaster: %s)", entry->toaster);
+
 		/* Fill in additional stuff not handled by TupleDescInitEntry */
 		att->attnotnull = entry->is_not_null;
 		has_not_null |= entry->is_not_null;
