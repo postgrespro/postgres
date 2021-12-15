@@ -2558,6 +2558,10 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 									   storage_name(def->storage),
 									   storage_name(attribute->attstorage))));
 
+				/* XXX teodor: attribute should has toaster oid */
+				if (def->toaster != NULL)
+					elog(ERROR, "unimplemented yet (toaster: %s)", def->toaster);
+
 				/* Copy/check compression parameter */
 				if (CompressionMethodIsValid(attribute->attcompression))
 				{
@@ -2601,6 +2605,7 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				def->is_not_null = attribute->attnotnull;
 				def->is_from_type = false;
 				def->storage = attribute->attstorage;
+				def->toaster = NULL; /* XXX teodor */
 				def->raw_default = NULL;
 				def->cooked_default = NULL;
 				def->generated = attribute->attgenerated;
@@ -2860,6 +2865,20 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 							 errdetail("%s versus %s",
 									   storage_name(def->storage),
 									   storage_name(newdef->storage))));
+
+				/* Copy toaster parameter */
+				if (def->toaster == NULL)
+					def->toaster = newdef->toaster;
+				else if (newdef->toaster != NULL &&
+						 strcmp(def->toaster, newdef->toaster) != 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("column \"%s\" has a toaster parameter conflict",
+									attributeName),
+							 errdetail("%s versus %s",
+									   def->toaster,
+									   newdef->toaster)));
+
 
 				/* Copy compression parameter */
 				if (def->compression == NULL)
@@ -4228,6 +4247,7 @@ AlterTableGetLockLevel(List *cmds)
 			case AT_SetIdentity:
 			case AT_DropExpression:
 			case AT_SetCompression:
+			case AT_SetToaster:
 				cmd_lockmode = AccessExclusiveLock;
 				break;
 
@@ -4753,6 +4773,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_DisableRowSecurity:
 		case AT_ForceRowSecurity:
 		case AT_NoForceRowSecurity:
+		case AT_SetToaster: /* XXX - teodor ? */
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
 			/* These commands never recurse */
 			/* No command-specific prep needed */
@@ -5182,6 +5203,10 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab,
 			break;
 		case AT_DetachPartitionFinalize:
 			ATExecDetachPartitionFinalize(rel, ((PartitionCmd *) cmd->def)->name);
+			break;
+		case AT_SetToaster:		/* ALTER COLUMN SET TOASTER */
+			Assert(IsA(cmd->def, String));
+			elog(ERROR, "unimplemented yet (toaster: %s)", strVal(cmd->def));
 			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
@@ -6156,6 +6181,8 @@ alter_table_type_to_string(AlterTableType cmdtype)
 			return "ALTER COLUMN ... DROP IDENTITY";
 		case AT_ReAddStatistics:
 			return NULL;		/* not real grammar */
+		case AT_SetToaster:
+			return "ALTER COLUMN ... SET TOASTER";
 	}
 
 	return NULL;
@@ -6747,6 +6774,9 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	aclresult = pg_type_aclcheck(typeOid, GetUserId(), ACL_USAGE);
 	if (aclresult != ACLCHECK_OK)
 		aclcheck_error_type(aclresult, typeOid);
+
+	if (colDef->toaster != NULL)
+		elog(WARNING, "unimplemented yet (toaster: %s)", colDef->toaster);
 
 	collOid = GetColumnDefCollation(NULL, colDef, typeOid);
 
@@ -12106,6 +12136,8 @@ ATPrepAlterColumnType(List **wqueue,
 	/* And the collation */
 	targetcollid = GetColumnDefCollation(NULL, def, targettype);
 
+	/* XXX teodor: what about toaster? */
+
 	/* make sure datatype is legal for a column */
 	CheckAttributeType(colName, targettype, targetcollid,
 					   list_make1_oid(rel->rd_rel->reltype),
@@ -12383,6 +12415,8 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	HeapTuple	depTup;
 	ObjectAddress address;
 
+	/* XXX teodor: there is not work with toaster yet */
+
 	/*
 	 * Clear all the missing values if we're rewriting the table, since this
 	 * renders them pointless.
@@ -12425,6 +12459,8 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	targettype = tform->oid;
 	/* And the collation */
 	targetcollid = GetColumnDefCollation(NULL, def, targettype);
+
+	/* XXX teodor: what about toaster? */
 
 	/*
 	 * If there is a default expression for the column, get it and ensure we
@@ -12648,6 +12684,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PUBLICATION_REL:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
+			case OCLASS_TOASTER:
 
 				/*
 				 * We don't expect any of these sorts of objects to depend on
