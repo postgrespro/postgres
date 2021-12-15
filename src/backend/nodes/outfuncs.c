@@ -2963,6 +2963,8 @@ _outColumnDef(StringInfo str, const ColumnDef *node)
 	WRITE_CHAR_FIELD(identity);
 	WRITE_NODE_FIELD(identitySequence);
 	WRITE_CHAR_FIELD(generated);
+	WRITE_STRING_FIELD(toaster);
+	WRITE_OID_FIELD(tsrOid);
 	WRITE_NODE_FIELD(collClause);
 	WRITE_OID_FIELD(collOid);
 	WRITE_NODE_FIELD(constraints);

@@ -6947,3 +6947,67 @@ listOpFamilyFunctions(const char *access_method_pattern,
 	PQclear(res);
 	return true;
 }
+
+/*
+ * \dr
+ * Takes an optional regexp to select particular toaster
+ */
+bool
+describeToasters(const char *pattern, bool verbose)
+{
+	PQExpBufferData buf;
+	PGresult   *res;
+	printQueryOpt myopt = pset.popt;
+	static const bool translate_columns[] = {false, false, false};
+
+	if (pset.sversion < 150000)
+	{
+		char		sverbuf[32];
+
+		pg_log_error("The server (version %s) does not support toasters.",
+					 formatPGVersionNumber(pset.sversion, false,
+										   sverbuf, sizeof(sverbuf)));
+		return true;
+	}
+
+	initPQExpBuffer(&buf);
+
+	printfPQExpBuffer(&buf,
+					  "SELECT tsrname AS \"%s\"",
+					  gettext_noop("Name"));
+
+	if (verbose)
+	{
+		appendPQExpBuffer(&buf,
+						  ",\n  tsrhandler AS \"%s\",\n"
+						  "  pg_catalog.obj_description(oid, 'pg_toaster') AS \"%s\"",
+						  gettext_noop("Handler"),
+						  gettext_noop("Description"));
+	}
+
+	appendPQExpBufferStr(&buf,
+						 "\nFROM pg_catalog.pg_toaster\n");
+
+	processSQLNamePattern(pset.db, &buf, pattern, false, false,
+						  NULL, "tsrname", NULL,
+						  NULL);
+
+	appendPQExpBufferStr(&buf, "ORDER BY 1;");
+
+	res = PSQLexec(buf.data);
+	termPQExpBuffer(&buf);
+	if (!res)
+		return false;
+
+	myopt.nullPrint = NULL;
+	myopt.title = _("List of toasters");
+	myopt.translate_header = true;
+	myopt.translate_columns = translate_columns;
+	myopt.n_translate_columns = lengthof(translate_columns);
+
+	printQuery(res, &myopt, pset.queryFout, false, pset.logfile);
+
+	PQclear(res);
+	return true;
+}
+

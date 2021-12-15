@@ -3045,6 +3045,8 @@ _copyColumnDef(const ColumnDef *from)
 	COPY_SCALAR_FIELD(identity);
 	COPY_NODE_FIELD(identitySequence);
 	COPY_SCALAR_FIELD(generated);
+	COPY_STRING_FIELD(toaster);
+	COPY_SCALAR_FIELD(tsrOid);
 	COPY_NODE_FIELD(collClause);
 	COPY_SCALAR_FIELD(collOid);
 	COPY_NODE_FIELD(constraints);
@@ -4448,6 +4450,17 @@ _copyCreateAmStmt(const CreateAmStmt *from)
 	return newnode;
 }
 
+static CreateToasterStmt *
+_copyCreateToasterStmt(const CreateToasterStmt *from)
+{
+	CreateToasterStmt *newnode = makeNode(CreateToasterStmt);
+
+	COPY_STRING_FIELD(tsrname);
+	COPY_NODE_FIELD(handler_name);
+
+	return newnode;
+}
+
 static CreateTrigStmt *
 _copyCreateTrigStmt(const CreateTrigStmt *from)
 {
@@ -5663,6 +5676,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_CreateAmStmt:
 			retval = _copyCreateAmStmt(from);
+			break;
+		case T_CreateToasterStmt:
+			retval = _copyCreateToasterStmt(from);
 			break;
 		case T_CreateTrigStmt:
 			retval = _copyCreateTrigStmt(from);

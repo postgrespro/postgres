@@ -54,6 +54,7 @@
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_ts_config.h"
@@ -766,6 +767,10 @@ static const struct object_type_map
 	{
 		"schema", OBJECT_SCHEMA
 	},
+	/* OCLASS_STATISTIC_EXT */
+	{
+		"statistics object", OBJECT_STATISTIC_EXT
+	},
 	/* OCLASS_TSPARSER */
 	{
 		"text search parser", OBJECT_TSPARSER
@@ -842,9 +847,9 @@ static const struct object_type_map
 	{
 		"transform", OBJECT_TRANSFORM
 	},
-	/* OCLASS_STATISTIC_EXT */
+	/* OCLASS_TOASTER */
 	{
-		"statistics object", OBJECT_STATISTIC_EXT
+		"toaster", OBJECT_TOASTER
 	}
 };
 
@@ -1017,6 +1022,7 @@ get_object_address(ObjectType objtype, Node *object,
 			case OBJECT_ACCESS_METHOD:
 			case OBJECT_PUBLICATION:
 			case OBJECT_SUBSCRIPTION:
+			case OBJECT_TOASTER:
 				address = get_object_address_unqualified(objtype,
 														 castNode(String, object), missing_ok);
 				break;
@@ -1268,6 +1274,11 @@ get_object_address_unqualified(ObjectType objtype,
 		case OBJECT_ACCESS_METHOD:
 			address.classId = AccessMethodRelationId;
 			address.objectId = get_am_oid(name, missing_ok);
+			address.objectSubId = 0;
+			break;
+		case OBJECT_TOASTER:
+			address.classId = ToasterRelationId;
+			address.objectId = get_toaster_oid(name, missing_ok);
 			address.objectSubId = 0;
 			break;
 		case OBJECT_DATABASE:
@@ -2336,6 +2347,7 @@ pg_get_object_address(PG_FUNCTION_ARGS)
 		case OBJECT_SCHEMA:
 		case OBJECT_SUBSCRIPTION:
 		case OBJECT_TABLESPACE:
+		case OBJECT_TOASTER:
 			if (list_length(name) != 1)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2619,6 +2631,7 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 		case OBJECT_TSPARSER:
 		case OBJECT_TSTEMPLATE:
 		case OBJECT_ACCESS_METHOD:
+		case OBJECT_TOASTER:
 			/* We treat these object types as being owned by superusers */
 			if (!superuser_arg(roleid))
 				ereport(ERROR,
@@ -4059,6 +4072,26 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case OCLASS_TOASTER:
+			{
+				HeapTuple	tup;
+
+				tup = SearchSysCache1(TOASTEROID,
+									  ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tup))
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for toaster %u",
+							 object->objectId);
+					break;
+				}
+
+				appendStringInfo(&buffer, _("toaster %s"),
+								 NameStr(((Form_pg_toaster) GETSTRUCT(tup))->tsrname));
+				ReleaseSysCache(tup);
+				break;
+			}
+
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
@@ -4608,6 +4641,10 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 
 		case OCLASS_TRANSFORM:
 			appendStringInfoString(&buffer, "transform");
+			break;
+
+		case OCLASS_TOASTER:
+			appendStringInfoString(&buffer, "toaster");
 			break;
 
 			/*
@@ -5915,6 +5952,24 @@ getObjectIdentityParts(const ObjectAddress *object,
 				}
 
 				table_close(transformDesc, AccessShareLock);
+			}
+			break;
+
+		case OCLASS_TOASTER:
+			{
+				char	   *tsrname;
+
+				tsrname = get_toaster_name(object->objectId);
+				if (!tsrname)
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for toaster %u",
+							 object->objectId);
+					break;
+				}
+				appendStringInfoString(&buffer, quote_identifier(tsrname));
+				if (objname)
+					*objname = list_make1(tsrname);
 			}
 			break;
 
