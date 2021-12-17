@@ -3046,7 +3046,6 @@ _copyColumnDef(const ColumnDef *from)
 	COPY_NODE_FIELD(identitySequence);
 	COPY_SCALAR_FIELD(generated);
 	COPY_STRING_FIELD(toaster);
-	COPY_SCALAR_FIELD(tsrOid);
 	COPY_NODE_FIELD(collClause);
 	COPY_SCALAR_FIELD(collOid);
 	COPY_NODE_FIELD(constraints);

@@ -683,7 +683,6 @@ typedef struct ColumnDef
 									 * ALTER TABLE ... ADD COLUMN */
 	char		generated;		/* attgenerated setting */
 	char	   *toaster;		/* toaster name or NULL for default */
-	Oid			tsrOid;			/* toaster oid or InvalidOid for default */
 	CollateClause *collClause;	/* untransformed COLLATE spec, if any */
 	Oid			collOid;		/* collation OID (InvalidOid if not set) */
 	List	   *constraints;	/* other constraints on column */
