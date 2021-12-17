@@ -501,7 +501,6 @@ makeColumnDef(const char *colname, Oid typeOid, int32 typmod, Oid collOid)
 	n->raw_default = NULL;
 	n->cooked_default = NULL;
 	n->toaster = NULL;
-	n->tsrOid = InvalidOid;
 	n->collClause = NULL;
 	n->collOid = collOid;
 	n->constraints = NIL;
