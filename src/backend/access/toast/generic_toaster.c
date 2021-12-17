@@ -55,8 +55,8 @@ genericToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
 
 /* Toast function */
 static struct varlena*
-genericToast(Relation toast_rel, Datum value, Datum oldvalue,
-			 int options)
+genericToast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
+			 int max_inline_size, int options)
 {
 	Datum result;
 

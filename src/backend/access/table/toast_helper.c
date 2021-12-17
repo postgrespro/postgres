@@ -128,6 +128,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 			if (att->attstorage == TYPSTORAGE_PLAIN)
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 
+			if (VARATT_IS_CUSTOM(new_value))
+				ttc->ttc_values[i] = PointerGetDatum(new_value);
 			/*
 			 * We took care of UPDATE above, so any external value we find
 			 * still in the tuple must be someone else's that we cannot reuse
@@ -136,7 +138,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * PLAIN storage).  If necessary, we'll push it out as a new
 			 * external value below.
 			 */
-			if (VARATT_IS_EXTERNAL(new_value))
+			else if (VARATT_IS_EXTERNAL(new_value))
 			{
 				ttc->ttc_attr[i].tai_oldexternal = new_value;
 				if (att->attstorage == TYPSTORAGE_PLAIN)
@@ -152,7 +154,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * Remember the size of this attribute
 			 */
 			ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
-			ttc->ttc_attr[i].tai_toaster = (OidIsValid(att->atttoaster) 
+			ttc->ttc_attr[i].tai_toaster = (OidIsValid(att->atttoaster)
 				? SearchTsrCache(att->atttoaster) : NULL);
 			ttc->ttc_attr[i].tai_toasterid = att->atttoaster;
 		}
@@ -163,7 +165,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 			ttc->ttc_attr[i].tai_toaster = NULL;
-			ttc->ttc_attr[i].tai_toaster = InvalidOid;
+			ttc->ttc_attr[i].tai_toasterid = InvalidOid;
 		}
 	}
 }
@@ -201,13 +203,13 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 	for (i = 0; i < numAttrs; i++)
 	{
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
+		Pointer		value = DatumGetPointer(ttc->ttc_values[i]);
 
 		if ((ttc->ttc_attr[i].tai_colflags & skip_colflags) != 0)
 			continue;
-		if (VARATT_IS_EXTERNAL(DatumGetPointer(ttc->ttc_values[i])))
+		if (VARATT_IS_EXTERNAL(value) && !VARATT_IS_CUSTOM(value))
 			continue;			/* can't happen, toast_action would be PLAIN */
-		if (for_compression &&
-			VARATT_IS_COMPRESSED(DatumGetPointer(ttc->ttc_values[i])))
+		if (for_compression && VARATT_IS_COMPRESSED(value))
 			continue;
 		if (check_main && att->attstorage != TYPSTORAGE_MAIN)
 			continue;
@@ -273,8 +275,10 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
 	*value = PointerGetDatum(toaster->toast(ttc->ttc_rel,
+											attr->tai_toasterid,
 											old_value,
 											PointerGetDatum(attr->tai_oldexternal),
+											0,
 											options));
 
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
@@ -925,7 +929,7 @@ toast_raw_datum_size(Datum value)
 		/*
 		 * Custom toaster pointer size
 		 */
-		result = VARATT_CUSTOM_GET_DATA_SIZE(attr) + VARHDRSZ_EXTERNAL;
+		result = VARATT_CUSTOM_GET_RAWSIZE(attr) + VARHDRSZ_EXTERNAL;
 	}
 	else
 	{
@@ -980,7 +984,7 @@ toast_datum_size(Datum value)
 	}
 	else if (VARATT_IS_CUSTOM(attr))
 	{
-		result = VARATT_CUSTOM_GET_DATA_SIZE(attr);
+		result = VARSIZE_EXTERNAL(attr);
 	}
 	else
 	{

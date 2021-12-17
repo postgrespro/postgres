@@ -24,7 +24,9 @@ typedef void (*toast_init)(Relation rel, Datum reloptions, LOCKMODE lockmode,
 
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
+										   Oid toasterid,
 										   Datum value, Datum oldvalue,
+										   int max_inline_size,
 										   int options);
 
 /* Detoast function */
