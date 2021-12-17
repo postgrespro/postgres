@@ -2709,7 +2709,6 @@ _equalColumnDef(const ColumnDef *a, const ColumnDef *b)
 	COMPARE_NODE_FIELD(identitySequence);
 	COMPARE_SCALAR_FIELD(generated);
 	COMPARE_STRING_FIELD(toaster);
-	COMPARE_SCALAR_FIELD(tsrOid);
 	COMPARE_NODE_FIELD(collClause);
 	COMPARE_SCALAR_FIELD(collOid);
 	COMPARE_NODE_FIELD(constraints);
