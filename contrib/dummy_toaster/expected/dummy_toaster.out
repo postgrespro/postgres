@@ -37,3 +37,15 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
       1 | t       |       25 | x          | dummy_toaster
 (1 row)
 
+\d+ tst1
+                                          Table "public.tst1"
+ Column | Type | Collation | Nullable | Default | Storage  |    Toaster    | Stats target | Description 
+--------+------+-----------+----------+---------+----------+---------------+--------------+-------------
+ t      | text |           |          |         | extended | dummy_toaster |              | 
+
+\d+ tst2
+                                          Table "public.tst2"
+ Column | Type | Collation | Nullable | Default | Storage  |    Toaster    | Stats target | Description 
+--------+------+-----------+----------+---------+----------+---------------+--------------+-------------
+ t      | text |           |          |         | extended | dummy_toaster |              | 
+
