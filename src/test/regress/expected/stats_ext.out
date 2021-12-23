@@ -150,11 +150,11 @@ SELECT stxname, stxdndistinct, stxddependencies, stxdmcv, stxdinherit
 
 ALTER STATISTICS ab1_a_b_stats SET STATISTICS -1;
 \d+ ab1
-                                    Table "public.ab1"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           |          |         | plain   |              | 
- b      | integer |           |          |         | plain   |              | 
+                                         Table "public.ab1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ a      | integer |           |          |         | plain   |         |              | 
+ b      | integer |           |          |         | plain   |         |              | 
 Statistics objects:
     "public.ab1_a_b_stats" ON a, b FROM ab1
 
