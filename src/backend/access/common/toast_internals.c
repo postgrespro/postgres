@@ -26,6 +26,7 @@
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "access/deftoaster.h"
 
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
@@ -145,7 +146,7 @@ toast_save_datum(Relation rel, Datum value,
 	int			num_indexes;
 	int			validIndex;
 
-	Assert(!VARATT_IS_EXTERNAL(value));
+	Assert(!(VARATT_IS_EXTERNAL(value)));
 
 	/*
 	 * Open the toast relation and its indexes.  We can use the index to check
