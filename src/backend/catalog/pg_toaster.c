@@ -33,7 +33,7 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "access/toasterapi.h"
-#include "access/deftoaster.h"
+#include "access/detoast.h"
 
 extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
