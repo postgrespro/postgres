@@ -56,7 +56,7 @@ genericToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
 /* Toast function */
 static struct varlena*
 genericToast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
-			 int max_inline_size, int options)
+			 int max_inline_size, char cmethod, int options)
 {
 	Datum result;
 
@@ -91,12 +91,10 @@ genericDetoast(Datum toast_ptr, int offset, int length)
 }
 
 /* Delete toast function */
-static Datum
+static void
 genericDeleteToast(Datum value, bool is_speculative)
 {
-	struct varlena *result = 0;
 	toast_delete_datum(value, is_speculative);
-	return PointerGetDatum(result);
 }
 
 /* validate definition of a toaster Oid */
@@ -116,6 +114,8 @@ default_toaster_handler(PG_FUNCTION_ARGS)
 	tsrroutine->toast = genericToast;
 	tsrroutine->detoast = genericDetoast;
 	tsrroutine->deltoast = genericDeleteToast;
+	tsrroutine->update_toast = NULL;
+	tsrroutine->copy_toast = NULL;
 	tsrroutine->get_vtable = NULL;
 	tsrroutine->toastervalidate = genericValidate;
 

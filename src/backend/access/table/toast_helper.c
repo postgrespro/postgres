@@ -53,10 +53,20 @@ toast_tuple_init(ToastTupleContext *ttc)
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
 		struct varlena *old_value;
 		struct varlena *new_value;
+		TsrRoutine *toaster;
+		Oid			toasterid;
+		bool		need_detoast = true;
 
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
+
+		toasterid = att->atttoaster;
+		toaster = att->attlen == -1 && OidIsValid(toasterid) ?
+			SearchTsrCache(att->atttoaster) : NULL;
+
+		ttc->ttc_attr[i].tai_toaster = toaster;
+		ttc->ttc_attr[i].tai_toasterid = toasterid;
 
 		if (ttc->ttc_oldvalues != NULL)
 		{
@@ -76,26 +86,62 @@ toast_tuple_init(ToastTupleContext *ttc)
 				(VARATT_IS_EXTERNAL_ONDISK(old_value) || VARATT_IS_CUSTOM(old_value)))
 			{
 				if (ttc->ttc_isnull[i] ||
-					!(VARATT_IS_EXTERNAL_ONDISK(new_value) || VARATT_IS_CUSTOM(old_value)) ||
-					memcmp((char *) old_value, (char *) new_value,
-						   VARSIZE_EXTERNAL(old_value)) != 0)
+					!(VARATT_IS_EXTERNAL_ONDISK(new_value) || VARATT_IS_CUSTOM(new_value)))
 				{
 					/*
-					 * The old external stored value isn't needed any more
-					 * after the update
+					 * The old external stored value isn't needed
+					 * any more after the update
 					 */
 					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
 					ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 				}
-				else
+				else if (VARSIZE_EXTERNAL(old_value) == VARSIZE_EXTERNAL(new_value) &&
+						 memcmp((char *) old_value, (char *) new_value,
+								VARSIZE_EXTERNAL(old_value)) == 0)
 				{
 					/*
-					 * This attribute isn't changed by this update so we reuse
-					 * the original reference to the old value in the new
-					 * tuple.
+					 * This attribute isn't changed by this update so
+					 * we reuse the original reference to the old value
+					 * in the new tuple.
 					 */
 					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 					continue;
+				}
+				else if (toaster && toaster->update_toast &&
+						 VARATT_IS_CUSTOM(old_value) &&
+						 VARATT_IS_CUSTOM(new_value) &&
+						 VARATT_CUSTOM_GET_TOASTERID(old_value) == toasterid &&
+						 VARATT_CUSTOM_GET_TOASTERID(new_value) == toasterid)
+				{
+					struct varlena *new_val =
+						toaster->update_toast(ttc->ttc_rel, toasterid,
+											  ttc->ttc_values[i],
+											  ttc->ttc_oldvalues[i],
+											  ttc->ttc_attr[i].tai_compression,
+											  0 /* FIXME speculative */);
+
+					if (new_val)
+					{
+						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+							pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+						ttc->ttc_values[i] = PointerGetDatum(new_val);
+						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+
+						new_value = new_val;
+					}
+
+					need_detoast = false;
+				}
+				else
+				{
+					/*
+					 * The old external stored value isn't needed
+					 * any more after the update
+					 */
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+					ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 				}
 			}
 		}
@@ -105,6 +151,31 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * For INSERT simply get the new value
 			 */
 			new_value = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
+
+			if (toaster && toaster->copy_toast && !ttc->ttc_isnull[i] &&
+				VARATT_IS_CUSTOM(new_value) &&
+				VARATT_CUSTOM_GET_TOASTERID(new_value) == toasterid)
+			{
+				struct varlena *new_val =
+					toaster->copy_toast(ttc->ttc_rel, toasterid,
+										ttc->ttc_values[i],
+										ttc->ttc_attr[i].tai_compression,
+										0 /* FIXME speculative */);
+
+				if (new_val)
+				{
+					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+						pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+					ttc->ttc_values[i] = PointerGetDatum(new_val);
+					ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
+					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+
+					new_value = new_val;
+				}
+
+				need_detoast = false;
+			}
 		}
 
 		/*
@@ -126,10 +197,11 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * If the table's attribute says PLAIN always, force it so.
 			 */
 			if (att->attstorage == TYPSTORAGE_PLAIN)
+			{
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+				need_detoast = true;
+			}
 
-			if (VARATT_IS_CUSTOM(new_value))
-				ttc->ttc_values[i] = PointerGetDatum(new_value);
 			/*
 			 * We took care of UPDATE above, so any external value we find
 			 * still in the tuple must be someone else's that we cannot reuse
@@ -138,7 +210,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * PLAIN storage).  If necessary, we'll push it out as a new
 			 * external value below.
 			 */
-			else if (VARATT_IS_EXTERNAL(new_value))
+			if (VARATT_IS_EXTERNAL(new_value) && need_detoast)
 			{
 				ttc->ttc_attr[i].tai_oldexternal = new_value;
 				if (att->attstorage == TYPSTORAGE_PLAIN)
@@ -154,9 +226,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * Remember the size of this attribute
 			 */
 			ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
-			ttc->ttc_attr[i].tai_toaster = (OidIsValid(att->atttoaster)
-				? SearchTsrCache(att->atttoaster) : NULL);
-			ttc->ttc_attr[i].tai_toasterid = att->atttoaster;
 		}
 		else
 		{
@@ -164,8 +233,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * Not a varlena attribute, plain storage always
 			 */
 			ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
-			ttc->ttc_attr[i].tai_toaster = NULL;
-			ttc->ttc_attr[i].tai_toasterid = InvalidOid;
 		}
 	}
 }
@@ -262,7 +329,8 @@ toast_tuple_try_compression(ToastTupleContext *ttc, int attribute)
  * Move an attribute to external storage.
  */
 void
-toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
+toast_tuple_externalize(ToastTupleContext *ttc, int attribute,
+						int options, int max_inline_size)
 {
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
@@ -278,13 +346,36 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 											attr->tai_toasterid,
 											old_value,
 											PointerGetDatum(attr->tai_oldexternal),
-											0,
+											max_inline_size,
+											attr->tai_compression,
 											options));
 
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
 	ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+}
+
+static void
+toast_delete_external_datum(Datum value, bool is_speculative)
+{
+	Oid			toasterid;
+
+	if (VARATT_IS_EXTERNAL(value))
+		toasterid = DEFAULT_TOASTER_OID;
+	else if (VARATT_IS_CUSTOM(value))
+		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+	else
+		toasterid = InvalidOid;
+
+	if (toasterid != InvalidOid)
+	{
+
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+
+		toaster->deltoast(value, is_speculative);
+		/*toast_delete_datum(value, false);*/
+	}
 }
 
 /*
@@ -318,28 +409,13 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 	if ((ttc->ttc_flags & TOAST_NEEDS_DELETE_OLD) != 0)
 	{
 		int			i;
-		Oid toasterid = InvalidOid;
 
 		for (i = 0; i < numAttrs; i++)
 		{
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-			{
-				if (VARATT_IS_EXTERNAL(PointerGetDatum(ttc->ttc_oldvalues[i])))
-					toasterid = DEFAULT_TOASTER_OID;
-				else if (VARATT_IS_CUSTOM(PointerGetDatum(ttc->ttc_oldvalues[i])))
-					toasterid = VARATT_CUSTOM_GET_TOASTERID(ttc->ttc_oldvalues[i]);
-
-				if(toasterid != InvalidOid)
-				{
-
-					TsrRoutine *toaster = SearchTsrCache(toasterid);
-					toaster->deltoast(ttc->ttc_oldvalues[i], false);
-
-/*					toast_delete_datum(ttc->ttc_oldvalues[i], false);*/
-				}
-			}
+				toast_delete_external_datum(PointerGetDatum(ttc->ttc_oldvalues[i]), false);
 		}
 	}
 }
@@ -355,27 +431,12 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 	TupleDesc	tupleDesc = rel->rd_att;
 	int			numAttrs = tupleDesc->natts;
 	int			i;
-	Oid	toasterid = InvalidOid;
 
 	for (i = 0; i < numAttrs; i++)
 	{
-		if (TupleDescAttr(tupleDesc, i)->attlen == -1)
-		{
-			Datum		value = values[i];
-
-			if (isnull[i])
-				continue;
-			else if (VARATT_IS_EXTERNAL_ONDISK(PointerGetDatum(value)))
-				toasterid = DEFAULT_TOASTER_OID;
-			else if (VARATT_IS_CUSTOM(PointerGetDatum(value)))
-				toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
-
-			if(toasterid != InvalidOid)
-			{
-				TsrRoutine *toaster = SearchTsrCache(toasterid);
-				toaster->deltoast(value, is_speculative);
-			}
-		}
+		if (TupleDescAttr(tupleDesc, i)->attlen == -1 && !isnull[i])
+			toast_delete_external_datum(PointerGetDatum(values[i]),
+										is_speculative);
 	}
 }
 
@@ -596,7 +657,6 @@ detoast_external_attr(struct varlena *attr)
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
 		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
-
 	else
 	{
 		/*
