@@ -925,7 +925,7 @@ XLogCompressBackupBlock(char *page, uint16 hole_offset, uint16 hole_length,
 	switch ((WalCompression) wal_compression)
 	{
 		case WAL_COMPRESSION_PGLZ:
-			len = pglz_compress(source, orig_len, dest, PGLZ_strategy_default);
+			len = pglz_compress(source, orig_len, dest, PGLZ_strategy_default, NULL);
 			break;
 
 		case WAL_COMPRESSION_LZ4:

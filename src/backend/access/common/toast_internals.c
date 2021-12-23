@@ -1421,28 +1421,12 @@ toast_update_datum(Datum value,
 	table_close(toastrel, NoLock);
 }
 
-/* ----------
- * create_fetch_datum_iterator -
- *
- * Initialize fetch datum iterator.
- * ----------
- */
-FetchDatumIterator
-create_fetch_datum_iterator(struct varlena *attr)
+static void
+create_fetch_datum_iterator_scan(FetchDatumIterator iter)
 {
 	int			validIndex;
-	FetchDatumIterator iter;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
-		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
-
-	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
-
-	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
-
-	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer);
-	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+	MemoryContext oldcxt = MemoryContextSwitchTo(iter->mcxt);
 
 	/*
 	 * Open the toast relation and its indexes
@@ -1475,6 +1459,33 @@ create_fetch_datum_iterator(struct varlena *attr)
 	iter->toastscan = systable_beginscan_ordered(iter->toastrel, iter->toastidxs[validIndex],
 												 &iter->snapshot, 1, &iter->toastkey);
 
+	MemoryContextSwitchTo(oldcxt);
+}
+
+/* ----------
+ * create_fetch_datum_iterator -
+ *
+ * Initialize fetch datum iterator.
+ * ----------
+ */
+FetchDatumIterator
+create_fetch_datum_iterator(struct varlena *attr)
+{
+	FetchDatumIterator iter;
+
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
+
+	iter = (FetchDatumIterator) palloc0(sizeof(FetchDatumIteratorData));
+
+	iter->mcxt = CurrentMemoryContext;
+
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(iter->toast_pointer, attr);
+
+	iter->ressize = VARATT_EXTERNAL_GET_EXTSIZE(iter->toast_pointer);
+	iter->numchunks = ((iter->ressize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+
 	iter->buf = create_toast_buffer(iter->ressize + VARHDRSZ,
 									VARATT_EXTERNAL_IS_COMPRESSED(iter->toast_pointer));
 
@@ -1490,7 +1501,7 @@ free_fetch_datum_iterator(FetchDatumIterator iter)
 	if (iter == NULL)
 		return;
 
-	if (!iter->done)
+	if (!iter->done && iter->toastscan)
 	{
 		systable_endscan_ordered(iter->toastscan);
 		toast_close_indexes(iter->toastidxs, iter->num_indexes, AccessShareLock);
@@ -1521,6 +1532,9 @@ fetch_datum_iterate(FetchDatumIterator iter)
 	int32		chunksize;
 
 	Assert(iter != NULL && !iter->done);
+
+	if (!iter->toastscan)
+		create_fetch_datum_iterator_scan(iter);
 
 	ttup = systable_getnext_ordered(iter->toastscan, ForwardScanDirection);
 	if (ttup == NULL)
@@ -1630,8 +1644,9 @@ ToastBuffer *
 create_toast_buffer(int32 size, bool compressed)
 {
 	ToastBuffer *buf = (ToastBuffer *) palloc0(sizeof(ToastBuffer));
-	buf->buf = (const char *) palloc0(size);
-	if (compressed) {
+	buf->buf = (const char *) palloc(size);
+	if (compressed)
+	{
 		SET_VARSIZE_COMPRESSED(buf->buf, size);
 		/*
 		 * Note the constraint buf->position <= buf->limit may be broken
@@ -1661,6 +1676,7 @@ free_toast_buffer(ToastBuffer *buf)
 	pfree(buf);
 }
 
+#if 0
 /* ----------
  * pglz_decompress_iterate -
  *
@@ -1678,7 +1694,7 @@ free_toast_buffer(ToastBuffer *buf)
  */
 void
 pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
-						DetoastIterator iter, unsigned char *destend)
+						DetoastIterator iter, const char *destend)
 {
 	const unsigned char *sp;
 	const unsigned char *srcend;
@@ -1811,3 +1827,4 @@ pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 	source->position = (char *) sp;
 	dest->limit = (char *) dp;
 }
+#endif

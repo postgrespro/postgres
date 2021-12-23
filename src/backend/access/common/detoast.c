@@ -49,19 +49,15 @@ create_detoast_iterator(struct varlena *attr)
 		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
 			iter->compressed = true;
+			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
 
 			/* prepare buffer to received decompressed data */
 			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
-
-			/* initialize state for pglz_decompress_iterate() */
-			iter->ctrl = 0;
-			iter->ctrlc = INVALID_CTRLC;
-			iter->len = 0;
-			iter->off = 0;
 		}
 		else
 		{
 			iter->compressed = false;
+			iter->compression_method = TOAST_INVALID_COMPRESSION_ID;
 
 			/* point the buffer directly at the raw data */
 			iter->buf = fetch_iter->buf;
@@ -95,6 +91,7 @@ create_detoast_iterator(struct varlena *attr)
 		iter->fetch_datum_iterator->buf = buf = create_toast_buffer(VARSIZE_ANY(attr), true);
 		iter->fetch_datum_iterator->done = true;
 		iter->compressed = true;
+		iter->compression_method = VARDATA_COMPRESSED_GET_COMPRESS_METHOD(attr);
 
 		memcpy((void *) buf->buf, attr, VARSIZE_ANY(attr));
 		buf->limit = (char *) buf->capacity;
@@ -102,9 +99,6 @@ create_detoast_iterator(struct varlena *attr)
 		/* prepare buffer to received decompressed data */
 		iter->buf = create_toast_buffer(TOAST_COMPRESS_EXTSIZE(attr) + VARHDRSZ, false);
 
-		/* initialize state for pglz_decompress_iterate() */
-		iter->ctrl = 0;
-		iter->ctrlc = INVALID_CTRLC;
 		return iter;
 	}
 	else

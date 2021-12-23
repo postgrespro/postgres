@@ -64,6 +64,7 @@ pglz_compress_datum(const struct varlena *value)
 	len = pglz_compress(VARDATA_ANY(value),
 						valsize,
 						(char *) tmp + VARHDRSZ_COMPRESSED,
+						NULL,
 						NULL);
 	if (len < 0)
 	{
