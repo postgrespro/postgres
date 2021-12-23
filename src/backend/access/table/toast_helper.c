@@ -19,6 +19,7 @@
 #include "access/toast_helper.h"
 #include "access/toast_internals.h"
 #include "catalog/pg_type_d.h"
+#include "access/toasterapi.h"
 
 
 /*
@@ -71,10 +72,10 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * we have to delete it later.
 			 */
 			if (att->attlen == -1 && !ttc->ttc_oldisnull[i] &&
-				VARATT_IS_EXTERNAL_ONDISK(old_value))
+				(VARATT_IS_EXTERNAL_ONDISK(old_value) || VARATT_IS_CUSTOM(old_value)))
 			{
 				if (ttc->ttc_isnull[i] ||
-					!VARATT_IS_EXTERNAL_ONDISK(new_value) ||
+					!(VARATT_IS_EXTERNAL_ONDISK(new_value) || VARATT_IS_CUSTOM(old_value)) ||
 					memcmp((char *) old_value, (char *) new_value,
 						   VARSIZE_EXTERNAL(old_value)) != 0)
 				{
@@ -150,6 +151,9 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * Remember the size of this attribute
 			 */
 			ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+			ttc->ttc_attr[i].tai_toaster = (OidIsValid(att->atttoaster) 
+				? GetTsrRoutineByAmId(att->atttoaster, false) : NULL);
+			ttc->ttc_attr[i].tai_toasterid = att->atttoaster;
 		}
 		else
 		{
@@ -157,6 +161,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * Not a varlena attribute, plain storage always
 			 */
 			ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+			ttc->ttc_attr[i].tai_toaster = NULL;
+			ttc->ttc_attr[i].tai_toaster = InvalidOid;
 		}
 	}
 }
@@ -260,6 +266,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
+	/* TODO if column attribute Toaster call toast routine */
 	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
 							  options);
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
@@ -332,6 +339,12 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 				continue;
 			else if (VARATT_IS_EXTERNAL_ONDISK(PointerGetDatum(value)))
 				toast_delete_datum(rel, value, is_speculative);
+			else if (VARATT_IS_CUSTOM(PointerGetDatum(value)))
+			{
+				Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value); 
+				TsrRoutine *toaster = GetTsrRoutineByAmId(toasterid, false);
+				toaster->deltoast(rel, value);
+			}
 		}
 	}
 }

@@ -21,6 +21,7 @@
 #include "common/pg_lzcompress.h"
 #include "utils/expandeddatum.h"
 #include "utils/rel.h"
+#include "access/toasterapi.h"
 
 static struct varlena *toast_fetch_datum(struct varlena *attr);
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
@@ -90,6 +91,13 @@ detoast_external_attr(struct varlena *attr)
 		result = (struct varlena *) palloc(resultsize);
 		EOH_flatten_into(eoh, (void *) result, resultsize);
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
+		TsrRoutine *toaster = GetTsrRoutineByAmId(toasterid, false);
+		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
+	}
+
 	else
 	{
 		/*
@@ -186,6 +194,12 @@ detoast_attr(struct varlena *attr)
 		memcpy(VARDATA(new_attr), VARDATA_SHORT(attr), data_size);
 		attr = new_attr;
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
+		TsrRoutine *toaster = GetTsrRoutineByAmId(toasterid, false);
+		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
+	}
 
 	return attr;
 }
@@ -281,6 +295,13 @@ detoast_attr_slice(struct varlena *attr,
 		/* pass it off to detoast_external_attr to flatten */
 		preslice = detoast_external_attr(attr);
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
+		TsrRoutine *toaster = GetTsrRoutineByAmId(toasterid, false);
+		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength));
+	}
+
 	else
 		preslice = attr;
 
@@ -583,6 +604,13 @@ toast_raw_datum_size(Datum value)
 		 */
 		result = VARSIZE_SHORT(attr) - VARHDRSZ_SHORT + VARHDRSZ;
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		/*
+		 * Custom toaster pointer size
+		 */
+		result = VARATT_CUSTOM_GET_DATA_SIZE(attr) + VARHDRSZ_EXTERNAL;
+	}
 	else
 	{
 		/* plain untoasted datum */
@@ -633,6 +661,10 @@ toast_datum_size(Datum value)
 	else if (VARATT_IS_SHORT(attr))
 	{
 		result = VARSIZE_SHORT(attr);
+	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		result = VARATT_CUSTOM_GET_DATA_SIZE(attr);
 	}
 	else
 	{

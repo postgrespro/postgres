@@ -31,7 +31,7 @@
 #include "access/toast_helper.h"
 #include "access/toast_internals.h"
 #include "utils/fmgroids.h"
-
+#include "access/toasterapi.h"
 
 /* ----------
  * heap_toast_delete -
@@ -109,7 +109,14 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	Datum		toast_oldvalues[MaxHeapAttributeNumber];
 	ToastAttrInfo toast_attr[MaxHeapAttributeNumber];
 	ToastTupleContext ttc;
-
+	/* Call new Toaster interface according to column toaster ID */
+	/*
+	Oid			toasteroid = InvalidOid;
+	bool		result;
+	HeapTuple	toastertup;
+	Oid			tsroid;
+	TsrRoutine *tsrroutine;
+*/
 	/*
 	 * Ignore the INSERT_SPECULATIVE option. Speculative insertions/super
 	 * deletions just normally insert/delete the toast values. It seems
@@ -124,6 +131,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
 		   rel->rd_rel->relkind == RELKIND_MATVIEW);
+
+/*	tsrroutine = GetTsrRoutineByAmId(InvalidOid, false);*/
 
 	/*
 	 * Get the tuple descriptor and break down the tuple(s) into fields.
@@ -627,6 +636,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 					   int32 sliceoffset, int32 slicelength,
 					   struct varlena *result)
 {
+	
 	Relation   *toastidxs;
 	ScanKeyData toastkey[3];
 	TupleDesc	toasttupDesc = toastrel->rd_att;
