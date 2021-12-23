@@ -1620,7 +1620,7 @@ describeOneTableDetails(const char *schemaname,
 	bool		printTableInitialized = false;
 	int			i;
 	char	   *view_def = NULL;
-	char	   *headers[12];
+	char	   *headers[13];
 	PQExpBufferData title;
 	PQExpBufferData tmpbuf;
 	int			cols;
@@ -1635,6 +1635,7 @@ describeOneTableDetails(const char *schemaname,
 				indexdef_col = -1,
 				fdwopts_col = -1,
 				attstorage_col = -1,
+				atttoaster_col = -1,
 				attcompression_col = -1,
 				attstattarget_col = -1,
 				attdescr_col = -1;
@@ -2054,6 +2055,17 @@ describeOneTableDetails(const char *schemaname,
 		appendPQExpBufferStr(&buf, ",\n  a.attstorage");
 		attstorage_col = cols++;
 
+		/* toaster info, if relevant to relkind */
+		if (pset.sversion >= 150000 &&
+			(tableinfo.relkind == RELKIND_RELATION ||
+			 tableinfo.relkind == RELKIND_PARTITIONED_TABLE ||
+			 tableinfo.relkind == RELKIND_MATVIEW))
+		{
+			appendPQExpBufferStr(&buf, ",\n  (SELECT tsrname FROM pg_toaster "
+				"WHERE oid = a.atttoaster) AS atttoaster");
+			atttoaster_col = cols++;
+		}
+
 		/* compression info, if relevant to relkind */
 		if (pset.sversion >= 140000 &&
 			!pset.hide_compression &&
@@ -2191,6 +2203,8 @@ describeOneTableDetails(const char *schemaname,
 		headers[cols++] = gettext_noop("FDW options");
 	if (attstorage_col >= 0)
 		headers[cols++] = gettext_noop("Storage");
+	if (atttoaster_col >= 0)
+		headers[cols++] = gettext_noop("Toaster");
 	if (attcompression_col >= 0)
 		headers[cols++] = gettext_noop("Compression");
 	if (attstattarget_col >= 0)
@@ -2270,6 +2284,16 @@ describeOneTableDetails(const char *schemaname,
 										(storage[0] == 'e' ? "external" :
 										 "???")))),
 							  false, false);
+
+			if (atttoaster_col >= 0)
+			{
+				if (PQgetisnull(res, i, atttoaster_col))
+					printTableAddCell(&cont, "",
+									  false, false);
+				else
+					printTableAddCell(&cont, PQgetvalue(res, i, atttoaster_col),
+									  false, false);
+			}
 		}
 
 		/* Column compression, if relevant */
