@@ -44,13 +44,20 @@ typedef enum IndexTsrProperty
 
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
-								Datum value,
+								Datum value, Datum oldvalue,
 								int max_inline_size);
 
 /* Detoast function */
 typedef Datum (*detoast_function) (Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length);
+
+/* Delete toast function */
+typedef Datum (*del_toast_function) (Relation toast_rel,
+								Datum value);
+
+/* Return virtual table of functions */
+typedef Size (*get_rawsize_function) (Datum toast_ptr);
 
 /* Return virtual table of functions */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
@@ -88,6 +95,7 @@ typedef struct TsrRoutine
 	/* interface functions */
 	toast_function toast;
 	detoast_function detoast;
+	del_toast_function deltoast;
 	get_vtable_function get_vtable;
 	toastervalidate_function toastervalidate;
 } TsrRoutine;

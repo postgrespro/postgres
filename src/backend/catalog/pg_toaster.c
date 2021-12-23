@@ -32,14 +32,18 @@
 #include "utils/pg_lsn.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "access/toasterapi.h"
+#include "access/deftoaster.h"
 
 Datum
 default_toaster_handler(PG_FUNCTION_ARGS)
 {
-	TsrRoutine	*tsr = makeNode(TsrRoutine);
-
-	elog(ERROR, "unimplemented yet (default_toaster_handler)");
-
-	PG_RETURN_POINTER(tsr);
+	TsrRoutine *tsrroutine = GetTsrRoutineByAmId(DEFAULT_TOASTER_OID, false);
+	tsrroutine->toast = genericToast;
+	tsrroutine->detoast = genericDetoast;
+	tsrroutine->deltoast = genericDeleteToast;
+	tsrroutine->get_vtable = genericGetVtable;
+	tsrroutine->toastervalidate = genericToasterValidate;
+	PG_RETURN_POINTER(tsrroutine);
 }
 
