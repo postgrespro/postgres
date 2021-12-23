@@ -4914,6 +4914,15 @@ AlterExtensionContentsStmt:
 					n->object = (Node *) $6;
 					$$ = (Node *)n;
 				}
+			| ALTER EXTENSION name add_drop TOASTER name
+				{
+					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
+					n->extname = $3;
+					n->action = $4;
+					n->objtype = OBJECT_TOASTER;
+					n->object = (Node *) makeString($6);
+					$$ = (Node *)n;
+				}
 			| ALTER EXTENSION name add_drop TRANSFORM FOR Typename LANGUAGE name
 				{
 					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
