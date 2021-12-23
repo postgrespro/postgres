@@ -29,3 +29,5 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
 	WHERE attrelid = 'tst2'::regclass and attnum>0 and t.oid = atttoaster
 	ORDER BY attnum;
 
+\d+ tst1
+\d+ tst2
