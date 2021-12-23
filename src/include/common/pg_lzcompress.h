@@ -84,10 +84,10 @@ extern PGDLLIMPORT const PGLZ_Strategy *const PGLZ_strategy_always;
  * ----------
  */
 extern int32 pglz_compress(const char *source, int32 slen, char *dest,
-						   const PGLZ_Strategy *strategy);
+						   const PGLZ_Strategy *strategy, int32 *dlen);
 extern int32 pglz_decompress(const char *source, int32 slen, char *dest,
 							 int32 rawsize, bool check_complete);
-extern int32 pglz_decompress_state(const char *source, int32 slen,
+extern int32 pglz_decompress_state(const char *source, int32 *slen,
 								   char *dest, int32 dlen,
 								   bool check_complete, bool last_source_chunk,
 								   void **state);
