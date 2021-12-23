@@ -118,12 +118,11 @@ genericToasterValidate(Oid toasteroid)
 	return result;
 }
 
-PG_FUNCTION_INFO_V1(generic_toaster_handler);
-
+PG_FUNCTION_INFO_V1(default_toaster_handler);
 Datum
 default_toaster_handler(PG_FUNCTION_ARGS)
 {
-	TsrRoutine *tsrroutine = GetTsrRoutineByAmId(DEFAULT_TOASTER_OID, false);
+	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
 	tsrroutine->toast = genericToast;
 	tsrroutine->detoast = genericDetoast;
 	tsrroutine->deltoast = genericDeleteToast;
