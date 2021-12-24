@@ -14,33 +14,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
-#include "access/detoast.h"
-#include "access/heaptoast.h"
-#include "access/htup_details.h"
-#include "catalog/pg_toaster.h"
-#include "utils/builtins.h"
-#include "utils/syscache.h"
-#include "access/toast_compression.h"
-#include "access/xact.h"
-#include "catalog/binary_upgrade.h"
-#include "catalog/catalog.h"
-#include "catalog/dependency.h"
-#include "catalog/heap.h"
-#include "catalog/index.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_am.h"
-#include "catalog/pg_namespace.h"
-#include "catalog/pg_opclass.h"
-#include "catalog/pg_type.h"
-#include "catalog/toasting.h"
-#include "miscadmin.h"
 #include "nodes/makefuncs.h"
-#include "storage/lock.h"
-#include "utils/rel.h"
-#include "access/relation.h"
-#include "access/table.h"
-#include "access/toast_internals.h"
-#include "access/heapam.h"
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(dummy_toaster_handler);
@@ -242,6 +216,7 @@ dummyGetVtable(Datum toast_ptr)
 bool
 dummyToasterValidate(Oid toasteroid)
 {
+<<<<<<< HEAD
 	bool result = true;
 
 	return result;
@@ -270,6 +245,11 @@ dummy_toaster_get_pointer(Oid toasterid, struct varatt_external *ptr,
 		*pdata = VARATT_CUSTOM_GET_DATA(result) + VARATT_DUMMY_HDRSZ;
 
 	return result;
+=======
+	TsrRoutine  *tsr = makeNode(TsrRoutine);
+
+	PG_RETURN_POINTER(tsr);
+>>>>>>>  use validateToster call
 }
 */
 
