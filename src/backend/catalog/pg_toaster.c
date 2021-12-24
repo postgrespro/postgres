@@ -38,8 +38,6 @@ default_toaster_handler(PG_FUNCTION_ARGS)
 {
 	TsrRoutine	*tsr = makeNode(TsrRoutine);
 
-	elog(ERROR, "unimplemented yet (default_toaster_handler)");
-
 	PG_RETURN_POINTER(tsr);
 }
 

@@ -23,6 +23,7 @@
 #include "access/relscan.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
+#include "access/toasterapi.h"
 #include "access/toast_compression.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -340,7 +341,8 @@ static void truncate_check_activity(Relation rel);
 static void RangeVarCallbackForTruncate(const RangeVar *relation,
 										Oid relId, Oid oldRelId, void *arg);
 static List *MergeAttributes(List *schema, List *supers, char relpersistence,
-							 bool is_partition, List **supconstr);
+							 bool is_partition, List **supconstr,
+							 Oid accessMethodId);
 static bool MergeCheckConstraint(List *constraints, char *name, Node *expr);
 static void MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel);
 static void MergeConstraintsIntoExisting(Relation child_rel, Relation parent_rel);
@@ -827,6 +829,27 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		ofTypeId = InvalidOid;
 
 	/*
+	 * If the statement hasn't specified an access method, but we're defining
+	 * a type of relation that needs one, use the default.
+	 */
+	if (stmt->accessMethod != NULL)
+	{
+		accessMethod = stmt->accessMethod;
+
+		if (partitioned)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("specifying a table access method is not supported on a partitioned table")));
+
+	}
+	else if (RELKIND_HAS_TABLE_AM(relkind))
+		accessMethod = default_table_access_method;
+
+	/* look up the access method, verify it is for a table */
+	if (accessMethod != NULL)
+		accessMethodId = get_table_am_oid(accessMethod, false);
+
+	/*
 	 * Look up inheritance ancestors and generate relation schema, including
 	 * inherited attributes.  (Note that stmt->tableElts is destructively
 	 * modified by MergeAttributes.)
@@ -835,7 +858,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		MergeAttributes(stmt->tableElts, inheritOids,
 						stmt->relation->relpersistence,
 						stmt->partbound != NULL,
-						&old_constraints);
+						&old_constraints, accessMethodId);
 
 	/*
 	 * Create a tuple descriptor from the relation schema.  Note that this
@@ -926,46 +949,15 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		}
 
 		if (colDef->toaster)
-		{
-			/*
-			 * safety check: do not allow toaster unless column datatype
-			 * is TOAST-aware.
-			 */
-			if (!TypeIsToastable(attr->atttypid))
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("column data type %s can not have toaster",
-								format_type_be(attr->atttypid))));
-
 			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
-		}
 		else if (TypeIsToastable(attr->atttypid))
 			attr->atttoaster = DEFAULT_TOASTER_OID;
 		else
 			attr->atttoaster = InvalidOid;
 
+		if (OidIsValid(attr->atttoaster))
+			validateToaster(attr->atttoaster, attr->atttypid, accessMethodId, false);
 	}
-
-	/*
-	 * If the statement hasn't specified an access method, but we're defining
-	 * a type of relation that needs one, use the default.
-	 */
-	if (stmt->accessMethod != NULL)
-	{
-		accessMethod = stmt->accessMethod;
-
-		if (partitioned)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("specifying a table access method is not supported on a partitioned table")));
-
-	}
-	else if (RELKIND_HAS_TABLE_AM(relkind))
-		accessMethod = default_table_access_method;
-
-	/* look up the access method, verify it is for a table */
-	if (accessMethod != NULL)
-		accessMethodId = get_table_am_oid(accessMethod, false);
 
 	/*
 	 * Create the relation.  Inherited defaults and constraints are passed in
@@ -2306,7 +2298,8 @@ storage_name(char c)
  */
 static List *
 MergeAttributes(List *schema, List *supers, char relpersistence,
-				bool is_partition, List **supconstr)
+				bool is_partition, List **supconstr,
+				Oid accessMethodId)
 {
 	List	   *inhSchema = NIL;
 	List	   *constraints = NIL;
@@ -2589,8 +2582,15 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 							 errdetail("%s versus %s",
 									   (def->toaster),
 									   get_toaster_name(attribute->atttoaster))));
-				def->toaster = OidIsValid(attribute->atttoaster) ?
-					get_toaster_name(attribute->atttoaster) : NULL;
+
+				if (OidIsValid(attribute->atttoaster))
+				{
+					validateToaster(attribute->atttoaster, attribute->atttypid,
+									accessMethodId, false);
+					def->toaster = get_toaster_name(attribute->atttoaster);
+				}
+				else
+					def->toaster = NULL;
 
 				/* Copy/check compression parameter */
 				if (CompressionMethodIsValid(attribute->attcompression))
@@ -2635,8 +2635,14 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				def->is_not_null = attribute->attnotnull;
 				def->is_from_type = false;
 				def->storage = attribute->attstorage;
-				def->toaster = OidIsValid(attribute->atttoaster) ?
-					get_toaster_name(attribute->atttoaster) : InvalidOid;
+				if (OidIsValid(attribute->atttoaster))
+				{
+					def->toaster = get_toaster_name(attribute->atttoaster);
+					validateToaster(attribute->atttoaster, attribute->atttypid,
+									accessMethodId, false);
+				}
+				else
+					def->toaster = NULL;
 				def->raw_default = NULL;
 				def->cooked_default = NULL;
 				def->generated = attribute->attgenerated;
@@ -6844,24 +6850,15 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		attribute.attstorage = tform->typstorage;
 
 	if (colDef->toaster)
-	{
-		/*
-		 * safety check: do not allow toaster unless column datatype
-		 * is TOAST-aware.
-		 */
-		if (!TypeIsToastable(attribute.atttypid))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("column data type %s can not have toaster",
-							format_type_be(attribute.atttypid))));
-
-		attribute.atttoaster =
-			get_toaster_oid(colDef->toaster, false);
-	}
+		attribute.atttoaster = get_toaster_oid(colDef->toaster, false);
 	else if (TypeIsToastable(attribute.atttypid))
 		attribute.atttoaster = DEFAULT_TOASTER_OID;
 	else
 		attribute.atttoaster = InvalidOid;
+
+	if (OidIsValid(attribute.atttoaster))
+		validateToaster(attribute.atttoaster, attribute.atttypid,
+						rel->rd_rel->relam, false);
 
 	attribute.attcompression = GetAttributeCompression(typeOid,
 													   colDef->compression);
@@ -8439,16 +8436,14 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 				 errmsg("cannot alter system column \"%s\"",
 						colName)));
 
-	/*
-	 * safety check: do not allow toaster unless column datatype
-	 * is TOAST-aware.
-	 */
-	if (TypeIsToastable(attrtuple->atttypid))
-		attrtuple->atttoaster = newToaster;
-	else
+	attrtuple->atttoaster = newToaster;
+	if (OidIsValid(newToaster))
+		validateToaster(attrtuple->atttoaster, attrtuple->atttypid,
+						rel->rd_rel->relam, false);
+	else if (TypeIsToastable(attrtuple->atttypid))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("column data type %s can not use toaster",
+				 errmsg("column data type %s should use toaster",
 						format_type_be(attrtuple->atttypid))));
 
 	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
@@ -12715,7 +12710,11 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	if (tform->typstorage == TYPSTORAGE_PLAIN)
 		attTup->atttoaster = InvalidOid;
 	else
+	{
 		attTup->atttoaster = DEFAULT_TOASTER_OID;
+		validateToaster(attTup->atttoaster, attTup->atttypid,
+						rel->rd_rel->relam, false);
+	}
 
 	ReleaseSysCache(typeTuple);
 

@@ -13,6 +13,8 @@
  */
 #include "postgres.h"
 #include "fmgr.h"
+#include "access/toasterapi.h"
+#include "nodes/makefuncs.h"
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(dummy_toaster_handler);
@@ -20,13 +22,8 @@ PG_FUNCTION_INFO_V1(dummy_toaster_handler);
 Datum
 dummy_toaster_handler(PG_FUNCTION_ARGS)
 {
-	/*
-	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
+	TsrRoutine  *tsr = makeNode(TsrRoutine);
 
-	amroutine->amstrategies = BLOOM_NSTRATEGIES;
-	*/
-
-	elog(ERROR, "dummy_toaster_handler is uninimplemented yet");
-	PG_RETURN_POINTER(NULL);
+	PG_RETURN_POINTER(tsr);
 }
 
