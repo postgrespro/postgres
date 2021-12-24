@@ -52,11 +52,12 @@ typedef Datum (*detoast_function) (Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length);
 
-/* Return virtual table of functions */
+/* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
 
 /* validate definition of a toaster Oid */
-typedef bool (*toastervalidate_function) (Oid toasteroid);
+typedef bool (*toastervalidate_function) (Oid typeoid,
+										  Oid amoid, bool false_ok);
 
 /*
  * API struct for Toaster.  Note this must be stored in a single palloc'd
@@ -65,25 +66,6 @@ typedef bool (*toastervalidate_function) (Oid toasteroid);
 typedef struct TsrRoutine
 {
 	NodeTag		type;
-
-	/*
-	 * Toaster version
-	 */
-	uint16		toasterversion;
-	/* Does this toaster uses compression? */
-	bool		toastercompressed;
-	/* Reserved field */
-	uint16		toasterreserved;
-	/* OR of parallel vacuum flags.  See vacuum.h for flags. */
-	uint8		toasterparallelvacuumoptions;
-	/* type of data stored in toaster, or InvalidOid if variable */
-	Oid			toasterkeytype;
-
-	/*
-	 * If you add new properties to either the above or the below lists, then
-	 * they should also (usually) be exposed via the property API (see
-	 * IndexTsrProperty at the top of the file, and utils/adt/toasterutils.c).
-	 */
 
 	/* interface functions */
 	toast_function toast;
@@ -95,7 +77,7 @@ typedef struct TsrRoutine
 
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
-extern TsrRoutine *GetTsrRoutineByAmId(Oid tsroid, bool noerror);
-/* extern TsrRoutine *GetTsrRoutineByTsrId(Oid tsroid, bool noerror); */
-
+extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
+extern bool	validateToaster(Oid toasteroid, Oid typeoid, Oid amoid, bool
+							false_ok);
 #endif							/* TOASTERAPI_H */
