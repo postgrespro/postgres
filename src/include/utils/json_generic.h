@@ -29,6 +29,7 @@ typedef struct JsonContainerData
 	int					len;
 	int					size;
 	JsonbValueType		type;
+	Oid					toasterid;
 	void			   *_data[FLEXIBLE_ARRAY_MEMBER];
 } JsonContainerData;
 
@@ -63,6 +64,7 @@ struct JsonContainerOps
 								int estimated_len);
 	JsonContainer  *(*copy)(JsonContainer *jc);
 	void			(*free)(JsonContainer *jc);
+	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops);
 };
 
 typedef struct CompressedObject
@@ -248,6 +250,7 @@ JsonValueInitBinary(JsonValue *val, JsonContainer *cont)
 }
 
 extern Json *JsonValueToJson(JsonValue *val);
+extern Datum JsonbValueToOrigJsonbDatum(JsonValue *val, Json *origjs);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
 extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
@@ -285,13 +288,14 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 extern bool JsonValueScalarEquals(const JsonValue *aScalar,
 								  const JsonValue *bScalar);
 
-typedef void (*JsonValueEncoder)(StringInfo, const JsonValue *);
+typedef void (*JsonValueEncoder)(StringInfo, const JsonValue *, void *cxt);
 
 extern void *JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 								  JsonContainerOps *ops, const JsonValue *binary);
 
 extern void *JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
 							  JsonContainerOps *ops);
+extern void *JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt);
 
 static inline void *
 JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
@@ -299,7 +303,7 @@ JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
 	return JsonContainerFlatten(JsonRoot(json), encoder, ops, NULL);
 }
 
-extern void JsonbEncode(StringInfo, const JsonValue *);
+extern void JsonbEncode(StringInfo, const JsonValue *, void *cxt);
 
 #define JsonValueToJsonb(val) \
 		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps)
