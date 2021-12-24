@@ -81,6 +81,7 @@ JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 	json->root.ops = ops;
 	json->root.size = -1;
 	json->root.type = jbvBinary;
+	json->root.toasterid = InvalidOid;
 	json->is_json = false;
 
 	memset(json->root._data, 0, ops->data_size);
@@ -157,6 +158,21 @@ JsonValueToJson(JsonValue *val)
 
 		return DatumGetJsonbP(PointerGetDatum(jsonb));
 	}
+}
+
+Datum
+JsonbValueToOrigJsonbDatum(JsonValue *val, Json *orig_json)
+{
+	if (val->type != jbvBinary &&
+		JsonRoot(orig_json)->ops->encode)
+	{
+		void	   *res = JsonRoot(orig_json)->ops->encode(val, &jsonbContainerOps);
+
+		if (res)
+			return PointerGetDatum(res);
+	}
+
+	return JsonValueToJsonbDatum(val);
 }
 
 JsonContainer *

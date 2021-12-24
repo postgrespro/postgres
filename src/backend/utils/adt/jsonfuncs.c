@@ -1633,7 +1633,7 @@ jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
 
 	pfree(path_nulls);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, jb));
 }
 
 static void
@@ -4287,7 +4287,7 @@ jsonb_strip_nulls(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, jb));
 }
 
 /*
@@ -4342,7 +4342,7 @@ jsonb_concat(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, jb1));
 }
 
 
@@ -4396,7 +4396,7 @@ jsonb_delete(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 /*
@@ -4482,7 +4482,7 @@ jsonb_delete_array(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 /*
@@ -4550,7 +4550,16 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	if (idx < 0 && -idx <= res->val.array.nElems)
+	{
+		idx = res->val.array.nElems + idx;
+		res->val.array.nElems--;
+		memmove(&res->val.array.elems[idx],
+				&res->val.array.elems[idx + 1],
+				sizeof(JsonValue) * (res->val.array.nElems - idx));
+	}
+
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 /*
@@ -4599,7 +4608,7 @@ jsonb_set(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 
@@ -4711,7 +4720,7 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 /*
@@ -4757,7 +4766,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
 
 	Assert(res != NULL);
 
-	PG_RETURN_JSONB_VALUE_P(res);
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
 /*
