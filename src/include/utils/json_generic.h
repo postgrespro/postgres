@@ -29,6 +29,7 @@ typedef struct JsonContainerData
 	int					len;
 	int					size;
 	JsonbValueType		type;
+	Oid					toasterid;
 	void			   *_data[FLEXIBLE_ARRAY_MEMBER];
 } JsonContainerData;
 
@@ -63,6 +64,7 @@ struct JsonContainerOps
 								int estimated_len);
 	JsonContainer  *(*copy)(JsonContainer *jc);
 	void			(*free)(JsonContainer *jc);
+	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops);
 };
 
 typedef struct CompressedObject
@@ -252,6 +254,7 @@ JsonValueInitBinary(JsonValue *val, JsonContainer *cont)
 }
 
 extern Json *JsonValueToJson(JsonValue *val);
+extern Datum JsonbValueToOrigJsonbDatum(JsonValue *val, Json *origjs);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
 extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
@@ -289,7 +292,7 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 extern bool JsonValueScalarEquals(const JsonValue *aScalar,
 								  const JsonValue *bScalar);
 
-typedef bool (*JsonValueEncoder)(StringInfo, const JsonValue *, Node *escontext);
+typedef bool (*JsonValueEncoder)(StringInfo, const JsonValue *, void *cxt, Node *escontext);
 
 extern void *JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 								  JsonContainerOps *ops, const JsonValue *binary,
@@ -297,6 +300,7 @@ extern void *JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 
 extern void *JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
 							  JsonContainerOps *ops, Node *escontext);
+extern void *JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt, Node *escontext);
 
 static inline void *
 JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
@@ -304,7 +308,7 @@ JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
 	return JsonContainerFlatten(JsonRoot(json), encoder, ops, NULL, NULL);
 }
 
-extern bool JsonbEncode(StringInfo, const JsonValue *, Node *escontext);
+extern bool JsonbEncode(StringInfo, const JsonValue *, void *cxt, Node *escontext);
 
 #define JsonValueToJsonbSafe(val, escontext) \
 		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps, escontext)

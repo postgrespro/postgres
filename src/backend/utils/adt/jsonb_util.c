@@ -86,7 +86,6 @@ static void fillJsonbValue(const JsonbContainerHeader *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
 static int	compareJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
-static void *convertToJsonb(const JsonbValue *val, JsonValueEncoder encoder, Node *escontext);
 static bool convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
 static bool convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
 static bool convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
@@ -123,6 +122,18 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 {
 	JsonbValue jbv;
 
+	if (jc->ops->encode)
+	{
+		JsonbValue bin;
+		void	   *res;
+
+		JsonValueInitBinary(&bin, jc);
+		res = jc->ops->encode(&bin, ops);
+
+		if (res)
+			return res;
+	}
+
 	if (jc->ops == ops)
 	{
 		int			size = jc->len;
@@ -139,7 +150,7 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 	else
 		binary = JsonValueInitBinary(&jbv, jc);
 
-	return convertToJsonb(binary, encoder, escontext);
+	return JsonEncode(binary, encoder, NULL, escontext);
 }
 
 /*
@@ -172,7 +183,7 @@ JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
 		Assert(val->type == jbvObject || val->type == jbvArray);
 	}
 
-	return convertToJsonb(val, encoder, escontext);
+	return JsonEncode(val, encoder, NULL, escontext);
 }
 
 /*
@@ -1712,29 +1723,33 @@ padBufferToInt(StringInfo buffer)
 }
 
 bool
-JsonbEncode(StringInfoData *buffer, const JsonbValue *val, Node *escontext)
+JsonbEncode(StringInfoData *buffer, const JsonbValue *val, void *cxt, Node *escontext)
 {
 	JEntry	jentry;
 
-	return convertJsonbValue(buffer, &jentry, val, 0, escontext);
+	/* Make room for the varlena header */
+	reserveFromBuffer(buffer, VARHDRSZ);
+
+	if (!convertJsonbValue(buffer, &jentry, val, 0, escontext))
+		return false;
+
+	SET_VARSIZE(buffer->data, buffer->len);
+
+	return true;
 }
 
 /*
  * Given a JsonbValue, convert to Jsonb. The result is palloc'd.
  */
-static void *
-convertToJsonb(const JsonbValue *val, JsonValueEncoder encoder, Node *escontext)
+void *
+JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt, Node *escontext)
 {
 	StringInfoData	buffer;
-	void		   *res;
 
 	/* Allocate an output buffer. It will be enlarged as needed */
 	initStringInfo(&buffer);
 
-	/* Make room for the varlena header */
-	reserveFromBuffer(&buffer, VARHDRSZ);
-
-	if (!encoder(&buffer, val, escontext))
+	if (!encoder(&buffer, val, cxt, escontext))
 	{
 		pfree(buffer.data);
 		return NULL;
@@ -1746,11 +1761,7 @@ convertToJsonb(const JsonbValue *val, JsonValueEncoder encoder, Node *escontext)
 	 * of value it is.
 	 */
 
-	res = (void *) buffer.data;
-
-	SET_VARSIZE(res, buffer.len);
-
-	return res;
+	return buffer.data;
 }
 
 /*
@@ -2204,6 +2215,7 @@ jsonbInitContainer(JsonContainerData *jc, JsonbContainerHeader *jbc, int len)
 	jc->ops = &jsonbContainerOps;
 	JsonContainerDataPtr(jc) = jbc;
 	jc->len = len;
+	jc->toasterid = InvalidOid;
 	jc->size = jbc->header & JBC_CMASK;
 	jc->type = jbc->header & JBC_FOBJECT ? jbvObject :
 			   jbc->header & JBC_FSCALAR ? jbvArray | jbvScalar :
@@ -2230,4 +2242,5 @@ jsonbContainerOps =
 	JsonbToCStringRaw,
 	JsonCopyFlat,
 	NULL,
+	NULL
 };
