@@ -14,33 +14,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
-#include "access/detoast.h"
-#include "access/heaptoast.h"
-#include "access/htup_details.h"
-#include "catalog/pg_toaster.h"
-#include "utils/builtins.h"
-#include "utils/syscache.h"
-#include "access/toast_compression.h"
-#include "access/xact.h"
-#include "catalog/binary_upgrade.h"
-#include "catalog/catalog.h"
-#include "catalog/dependency.h"
-#include "catalog/heap.h"
-#include "catalog/index.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_am.h"
-#include "catalog/pg_namespace.h"
-#include "catalog/pg_opclass.h"
-#include "catalog/pg_type.h"
-#include "catalog/toasting.h"
-#include "miscadmin.h"
 #include "nodes/makefuncs.h"
-#include "storage/lock.h"
-#include "utils/rel.h"
-#include "access/relation.h"
-#include "access/table.h"
-#include "access/toast_internals.h"
-#include "access/heapam.h"
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(dummy_toaster_handler);
@@ -242,36 +216,11 @@ dummyGetVtable(Datum toast_ptr)
 bool
 dummyToasterValidate(Oid toasteroid)
 {
-	bool result = true;
+	TsrRoutine  *tsr = makeNode(TsrRoutine);
 
-	return result;
+	PG_RETURN_POINTER(tsr);
 }
-/*
-static struct varlena *
-dummy_toaster_get_pointer(Oid toasterid, struct varatt_external *ptr,
-						   Size data_size, char **pdata)
-{
-	Size size = (VARATT_DUMMY_HDRSZ + data_size);
-	struct varlena *result = palloc(size);
-	varatt_dummy_toaster result_data;
-	varatt_custom va_custom;
 
-	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
-
-	va_custom.va_toasterid = toasterid;
-	va_custom.va_toasterdatalen = VARATT_DUMMY_HDRSZ + data_size;
-	memcpy(VARDATA_EXTERNAL(result), &va_custom, sizeof(va_custom));
-
-	result_data.toast_ptr = *ptr;
-
-	memcpy(VARATT_CUSTOM_GET_DATA(result), &result_data, VARATT_DUMMY_HDRSZ);
-
-	if (pdata)
-		*pdata = VARATT_CUSTOM_GET_DATA(result) + VARATT_DUMMY_HDRSZ;
-
-	return result;
-}
-*/
 
 Datum
 dummy_toaster_handler(PG_FUNCTION_ARGS)

@@ -115,19 +115,6 @@ genericToasterValidate(Oid toasteroid)
 {
 	bool result = true;
 
-	return result;
-}
-
-PG_FUNCTION_INFO_V1(default_toaster_handler);
-Datum
-default_toaster_handler(PG_FUNCTION_ARGS)
-{
-	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
-	tsrroutine->toast = genericToast;
-	tsrroutine->detoast = genericDetoast;
-	tsrroutine->deltoast = genericDeleteToast;
-	tsrroutine->get_vtable = genericGetVtable;
-	tsrroutine->toastervalidate = genericToasterValidate;
-	PG_RETURN_POINTER(tsrroutine);
+	PG_RETURN_POINTER(tsr);
 }
 
