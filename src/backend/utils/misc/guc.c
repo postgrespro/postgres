@@ -9194,6 +9194,9 @@ reapply_stacked_values(struct config_generic *variable,
 	}
 }
 
+/*
+ * Functions for extensions to call to define their custom GUC variables.
+ */
 void
 DefineCustomBoolVariable(const char *name,
 						 const char *short_desc,
@@ -9333,6 +9336,10 @@ DefineCustomEnumVariable(const char *name,
 	define_custom_variable(&var->gen);
 }
 
+/*
+ * Extensions should call this after they've defined all of their custom
+ * GUCs, to help catch misspelled config-file entries,
+ */
 void
 EmitWarningsOnPlaceholders(const char *className)
 {
@@ -12438,7 +12445,7 @@ check_recovery_target_xid(char **newval, void **extra, GucSource source)
 		TransactionId *myextra;
 
 		errno = 0;
-		xid = (TransactionId) pg_strtouint64(*newval, NULL, 0);
+		xid = (TransactionId) strtou64(*newval, NULL, 0);
 		if (errno == EINVAL || errno == ERANGE)
 			return false;
 

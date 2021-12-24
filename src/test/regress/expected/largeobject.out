@@ -1,6 +1,9 @@
 --
 -- Test large object support
 --
+-- directory paths are passed to us in environment variables
+\getenv abs_srcdir PG_ABS_SRCDIR
+\getenv abs_builddir PG_ABS_BUILDDIR
 -- ensure consistent test output regardless of the default bytea format
 SET bytea_output TO escape;
 -- Load a file
@@ -161,16 +164,13 @@ SELECT lo_open(loid, x'40000'::int) from lotest_stash_values;
 (1 row)
 
 ABORT;
-DO $$
-DECLARE
-  loid oid;
-BEGIN
-  SELECT tbl.loid INTO loid FROM lotest_stash_values tbl;
-  PERFORM lo_export(loid, '@abs_builddir@/results/invalid/path');
-EXCEPTION
-  WHEN UNDEFINED_FILE THEN RAISE NOTICE 'could not open file, as expected';
-END;
-$$;
+\set filename :abs_builddir '/results/invalid/path'
+\set dobody 'DECLARE loid oid; BEGIN '
+\set dobody :dobody 'SELECT tbl.loid INTO loid FROM lotest_stash_values tbl; '
+\set dobody :dobody 'PERFORM lo_export(loid, ' :'filename' '); '
+\set dobody :dobody 'EXCEPTION WHEN UNDEFINED_FILE THEN '
+\set dobody :dobody 'RAISE NOTICE ''could not open file, as expected''; END'
+DO :'dobody';
 NOTICE:  could not open file, as expected
 -- Test truncation.
 BEGIN;
@@ -327,14 +327,15 @@ SELECT lo_unlink(loid) from lotest_stash_values;
 (1 row)
 
 TRUNCATE lotest_stash_values;
-INSERT INTO lotest_stash_values (loid) SELECT lo_import('@abs_srcdir@/data/tenk.data');
+\set filename :abs_srcdir '/data/tenk.data'
+INSERT INTO lotest_stash_values (loid) SELECT lo_import(:'filename');
 BEGIN;
 UPDATE lotest_stash_values SET fd=lo_open(loid, CAST(x'20000' | x'40000' AS integer));
 -- verify length of large object
 SELECT lo_lseek(fd, 0, 2) FROM lotest_stash_values;
  lo_lseek 
 ----------
-   680800
+   670800
 (1 row)
 
 -- with the default BLCKSZ, LOBLKSIZE = 2048, so this positions us for a block
@@ -348,9 +349,9 @@ SELECT lo_lseek(fd, 2030, 0) FROM lotest_stash_values;
 -- this should get half of the value from page 0 and half from page 1 of the
 -- large object
 SELECT loread(fd, 36) FROM lotest_stash_values;
-                            loread                            
---------------------------------------------------------------
- 44\011144\0111144\0114144\0119144\01188\01189\011SNAAAA\011F
+                             loread                              
+-----------------------------------------------------------------
+ AAA\011FBAAAA\011VVVVxx\0122513\01132\0111\0111\0113\01113\0111
 (1 row)
 
 SELECT lo_tell(fd) FROM lotest_stash_values;
@@ -378,9 +379,9 @@ SELECT lo_lseek(fd, 2030, 0) FROM lotest_stash_values;
 (1 row)
 
 SELECT loread(fd, 36) FROM lotest_stash_values;
-                      loread                      
---------------------------------------------------
- 44\011144\011114abcdefghijklmnop9\011SNAAAA\011F
+                       loread                        
+-----------------------------------------------------
+ AAA\011FBAAAAabcdefghijklmnop1\0111\0113\01113\0111
 (1 row)
 
 SELECT lo_close(fd) FROM lotest_stash_values;
@@ -390,16 +391,18 @@ SELECT lo_close(fd) FROM lotest_stash_values;
 (1 row)
 
 END;
-SELECT lo_export(loid, '@abs_builddir@/results/lotest.txt') FROM lotest_stash_values;
+\set filename :abs_builddir '/results/lotest.txt'
+SELECT lo_export(loid, :'filename') FROM lotest_stash_values;
  lo_export 
 -----------
          1
 (1 row)
 
-\lo_import '@abs_builddir@/results/lotest.txt'
+\lo_import :filename
 \set newloid :LASTOID
 -- just make sure \lo_export does not barf
-\lo_export :newloid '@abs_builddir@/results/lotest2.txt'
+\set filename :abs_builddir '/results/lotest2.txt'
+\lo_export :newloid :filename
 -- This is a hack to test that export/import are reversible
 -- This uses knowledge about the inner workings of large object mechanism
 -- which should not be used outside it.  This makes it a HACK
@@ -418,7 +421,8 @@ SELECT lo_unlink(loid) FROM lotest_stash_values;
 
 TRUNCATE lotest_stash_values;
 \lo_unlink :newloid
-\lo_import '@abs_builddir@/results/lotest.txt'
+\set filename :abs_builddir '/results/lotest.txt'
+\lo_import :filename
 \set newloid_1 :LASTOID
 SELECT lo_from_bytea(0, lo_get(:newloid_1)) AS newloid_2
 \gset

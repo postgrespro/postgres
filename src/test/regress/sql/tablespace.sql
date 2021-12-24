@@ -1,6 +1,11 @@
+-- directory paths are passed to us in environment variables
+\getenv abs_builddir PG_ABS_BUILDDIR
+
+\set testtablespace :abs_builddir '/testtablespace'
+
 -- create a tablespace using WITH clause
-CREATE TABLESPACE regress_tblspacewith LOCATION '@testtablespace@' WITH (some_nonexistent_parameter = true); -- fail
-CREATE TABLESPACE regress_tblspacewith LOCATION '@testtablespace@' WITH (random_page_cost = 3.0); -- ok
+CREATE TABLESPACE regress_tblspacewith LOCATION :'testtablespace' WITH (some_nonexistent_parameter = true); -- fail
+CREATE TABLESPACE regress_tblspacewith LOCATION :'testtablespace' WITH (random_page_cost = 3.0); -- ok
 
 -- check to see the parameter was used
 SELECT spcoptions FROM pg_tablespace WHERE spcname = 'regress_tblspacewith';
@@ -9,7 +14,7 @@ SELECT spcoptions FROM pg_tablespace WHERE spcname = 'regress_tblspacewith';
 DROP TABLESPACE regress_tblspacewith;
 
 -- create a tablespace we can use
-CREATE TABLESPACE regress_tblspace LOCATION '@testtablespace@';
+CREATE TABLESPACE regress_tblspace LOCATION :'testtablespace';
 
 -- try setting and resetting some properties for the new tablespace
 ALTER TABLESPACE regress_tblspace SET (random_page_cost = 1.0, seq_page_cost = 1.1);
@@ -388,7 +393,7 @@ CREATE INDEX k ON testschema.tablespace_acl (c) TABLESPACE regress_tblspace;
 ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 
 SET SESSION ROLE regress_tablespace_user2;
-CREATE TEMP TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
+CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
 ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail
 REINDEX (TABLESPACE regress_tblspace, CONCURRENTLY) TABLE tablespace_table; -- fail
@@ -409,6 +414,3 @@ DROP SCHEMA testschema CASCADE;
 
 DROP ROLE regress_tablespace_user1;
 DROP ROLE regress_tablespace_user2;
-
--- Rest of this suite can use the public schema freely.
-GRANT ALL ON SCHEMA public TO public;
