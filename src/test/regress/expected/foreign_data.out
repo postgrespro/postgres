@@ -1597,7 +1597,7 @@ ALTER TABLE fd_pt1 ALTER COLUMN c8 SET STORAGE EXTERNAL;
  c5     | integer |           |          |         | plain    |            |              | 
  c6     | integer |           | not null |         | plain    |            |              | 
  c7     | integer |           |          |         | plain    |            |              | 
- c8     | text    |           |          |         | external |            |              | 
+ c8     | text    |           |          |         | external | deftoaster |              | 
 Child tables: ft2
 
 \d+ ft2
