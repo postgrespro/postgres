@@ -4820,7 +4820,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_DisableRowSecurity:
 		case AT_ForceRowSecurity:
 		case AT_NoForceRowSecurity:
-		case AT_SetToaster: /* XXX - teodor ? */
+		case AT_SetToaster:
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
 			/* These commands never recurse */
 			/* No command-specific prep needed */
@@ -12279,8 +12279,6 @@ ATPrepAlterColumnType(List **wqueue,
 	/* And the collation */
 	targetcollid = GetColumnDefCollation(NULL, def, targettype);
 
-	/* XXX teodor: what about toaster? */
-
 	/* make sure datatype is legal for a column */
 	CheckAttributeType(colName, targettype, targetcollid,
 					   list_make1_oid(rel->rd_rel->reltype),
@@ -12557,8 +12555,6 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	SysScanDesc scan;
 	HeapTuple	depTup;
 	ObjectAddress address;
-
-	/* XXX teodor: there is not work with toaster yet */
 
 	/*
 	 * Clear all the missing values if we're rewriting the table, since this
@@ -12974,6 +12970,12 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	attTup->attalign = tform->typalign;
 	attTup->attstorage = tform->typstorage;
 	attTup->attcompression = InvalidCompressionMethod;
+
+	/* set default toaster for toastable type */
+	if (tform->typstorage == TYPSTORAGE_PLAIN)
+		attTup->atttoaster = InvalidOid;
+	else
+		attTup->atttoaster = DEFAULT_TOASTER_OID;
 
 	ReleaseSysCache(typeTuple);
 
