@@ -1307,15 +1307,9 @@ LPVOID
 LPWSTR
 LSEG
 LUID
-LVDeadTuples
 LVPagePruneState
-LVParallelIndStats
-LVParallelIndVacStatus
-LVParallelState
 LVRelState
 LVSavedErrInfo
-LVShared
-LVSharedIndStats
 LWLock
 LWLockHandle
 LWLockMode
@@ -1778,7 +1772,10 @@ PTIterationArray
 PTOKEN_PRIVILEGES
 PTOKEN_USER
 PUTENVPROC
+PVIndStats
+PvIndVacStatus
 PVOID
+PVShared
 PX_Alias
 PX_Cipher
 PX_Combo
@@ -1812,6 +1809,7 @@ ParallelSlotResultHandler
 ParallelState
 ParallelTableScanDesc
 ParallelTableScanDescData
+ParallelVacuumState
 ParallelWorkerContext
 ParallelWorkerInfo
 Param
@@ -2802,6 +2800,7 @@ UserMapping
 UserOpts
 VacAttrStats
 VacAttrStatsP
+VacDeadItems
 VacErrPhase
 VacOptValue
 VacuumParams

@@ -15194,8 +15194,6 @@ MarkInheritDetached(Relation child_rel, Relation parent_rel)
 	HeapTuple	inheritsTuple;
 	bool		found = false;
 
-	Assert(child_rel->rd_rel->relkind == RELKIND_RELATION ||
-		   child_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 	Assert(parent_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 
 	/*
@@ -15582,7 +15580,7 @@ ATExecAddOf(Relation rel, const TypeName *ofTypename, LOCKMODE lockmode)
 					 errmsg("table \"%s\" has different type for column \"%s\"",
 							RelationGetRelationName(rel), type_attname)));
 	}
-	DecrTupleDescRefCount(typeTupleDesc);
+	ReleaseTupleDesc(typeTupleDesc);
 
 	/* Any remaining columns at the end of the table had better be dropped. */
 	for (; table_attno <= tableTupleDesc->natts; table_attno++)
