@@ -12,8 +12,7 @@
 #ifndef TOASTERAPI_H
 #define TOASTERAPI_H
 
-#include "postgres.h"
-#include "nodes/nodes.h"
+#include "access/genam.h"
 
 /*
  * Callback function signatures --- see indexam.sgml for more info.
