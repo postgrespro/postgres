@@ -156,7 +156,7 @@ dummyDetoast(Relation toast_rel,
 		length -= MAX_DUMMY_CHUNK_SIZE;
 		cur = head->next;
 	}
-	
+
 	pfree(head);
 	return PointerGetDatum(result);
 }
@@ -233,14 +233,8 @@ dummyToast(Relation toast_rel,
 	}
 }
 
-void *
-dummyGetVtable(Datum toast_ptr)
-{
-	PG_RETURN_VOID();
-}
-
 bool
-dummyToasterValidate(Oid toasteroid)
+dummyToasterValidate(Oid toasteroid, Oid typeoid,  Oid amoid, bool false_ok)
 {
 	bool result = true;
 
@@ -279,7 +273,7 @@ dummy_toaster_handler(PG_FUNCTION_ARGS)
 	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
 	tsrroutine->toast = dummyToast;
 	tsrroutine->detoast = dummyDetoast;
-	tsrroutine->get_vtable = dummyGetVtable;
+	tsrroutine->get_vtable = NULL;
 	tsrroutine->toastervalidate = dummyToasterValidate;
 	PG_RETURN_POINTER(tsrroutine);
 }

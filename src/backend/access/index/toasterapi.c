@@ -16,7 +16,9 @@
 #include "access/toasterapi.h"
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
+#include "commands/defrem.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 /*
@@ -41,14 +43,14 @@ GetTsrRoutine(Oid tsrhandler)
 }
 
 /*
- * GetIndexAmRoutineByAmId - look up the handler of the index access method
- * with the given OID, and get its IndexAmRoutine struct.
+ * GetTsrRoutineByOid - look up the handler of the toaster
+ * with the given OID, and get its TsrRoutine struct.
  *
- * If the given OID isn't a valid index access method, returns NULL if
+ * If the given OID isn't a valid toaster, returns NULL if
  * noerror is true, else throws error.
  */
 TsrRoutine *
-GetTsrRoutineByAmId(Oid tsroid, bool noerror)
+GetTsrRoutineByOid(Oid tsroid, bool noerror)
 {
 	HeapTuple	tuple;
 	Form_pg_toaster	tsrform;
@@ -87,41 +89,36 @@ GetTsrRoutineByAmId(Oid tsroid, bool noerror)
 	return GetTsrRoutine(tsrhandler);
 }
 
-#if 0
-/* XXX teodor: it is not clear now what is a purpose of toaster validate, may
- * be, is toaster applicable to current column/access method? */
 /*
- * Ask appropriate access method to validate the specified opclass.
+ * could toaster operates with given type and access method?
+ * If it can't then validate method should emit an error if false_ok = false
  */
-Datum
-tsrvalidate(PG_FUNCTION_ARGS)
+bool
+validateToaster(Oid toasteroid, Oid typeoid, Oid amoid, bool false_ok)
 {
-	Oid			toasteroid = PG_GETARG_OID(0);
-	bool		result;
-	HeapTuple	toastertup;
-	Form_pg_toaster toasterform;
-	Oid			tsroid;
 	TsrRoutine *tsrroutine;
+	bool	result = true;
 
-	toastertup = SearchSysCache1(TOASTEROID, ObjectIdGetDatum(opclassoid));
-	if (!HeapTupleIsValid(toastertup))
-		elog(ERROR, "cache lookup failed for toaster %u", toasteroid);
-	toasterform = (Form_pg_toaster) GETSTRUCT(toastertup);
+	if (!TypeIsToastable(typeoid))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("data type %s can not be toasted",
+						format_type_be(typeoid))));
 
-	tsroid = toasterform->oid;
+	tsrroutine = GetTsrRoutineByOid(toasteroid, false_ok);
 
-	ReleaseSysCache(toastertup);
+	/* if false_ok == false then GetTsrRoutineByOid emits an error */
+	if (tsrroutine == NULL)
+		return false;
 
-	tsrroutine = GetTsrRoutineByAmId(tsroid, false);
+	/* should not happen */
+	if (tsrroutine->toastervalidate == NULL)
+		elog(ERROR, "function toastervalidate is not defined for toaster %s",
+			 get_toaster_name(toasteroid));
 
-	if (tsrroutine->tsrvalidate == NULL)
-		elog(ERROR, "function tsrvalidate is not defined for toaster %u",
-			 tsroid);
-
-	result = tsrroutine->tsrvalidate(toasteroid);
+	result = tsrroutine->toastervalidate(typeoid, amoid, false_ok);
 
 	pfree(tsrroutine);
 
-	PG_RETURN_BOOL(result);
+	return result;
 }
-#endif
