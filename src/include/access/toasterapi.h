@@ -15,30 +15,6 @@
 #include "access/genam.h"
 
 /*
- * We don't wish to include planner header files here, since most of an toaster
- * implementation isn't concerned with those data structures.  To allow
- * declaring functions here, use forward struct references.
- */
-struct PlannerInfo;
-struct IndexPath;
-
-/* Likewise, this file shouldn't depend on execnodes.h. */
-struct IndexInfo;
-
-
-/*
- * Properties for tsrproperty API.  This list covers properties known to the
- * core code
- */
-typedef enum IndexTsrProperty
-{
-	TSRPROP_UNKNOWN = 0,			/* anything not known to core code */
-	TSRPROP_VERSION,				/* toaster version */
-	TSRPROP_COMPRESSED,				/* is compressed */
-	TSRPROP_RESERVED,
-} IndexTsrProperty;
-
-/*
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
