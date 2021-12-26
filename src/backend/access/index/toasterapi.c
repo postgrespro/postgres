@@ -54,15 +54,18 @@ SearchTsrCache(Oid	toasterOid)
 	ToasterCacheEntry  *entry;
 	MemoryContext		ctx;
 
-	/* fast path */
-	entry = (ToasterCacheEntry*)linitial(ToasterCache);
-	if (entry != NULL && entry->toasterOid == toasterOid)
-		return entry->routine;
+	if (list_length(ToasterCache) > 0)
+	{
+		/* fast path */
+		entry = (ToasterCacheEntry*)linitial(ToasterCache);
+		if (entry->toasterOid == toasterOid)
+			return entry->routine;
+	}
 
 	/* didn't find in first position */
 	ctx = MemoryContextSwitchTo(CacheMemoryContext);
 
-	for_each_from(lc, ToasterCache, 1)
+	for_each_from(lc, ToasterCache, 0)
 	{
 		entry = (ToasterCacheEntry*)lfirst(lc);
 
