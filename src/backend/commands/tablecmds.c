@@ -973,7 +973,9 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 			attr->atttoaster = InvalidOid;
 
 		if (OidIsValid(attr->atttoaster))
-			validateToaster(attr->atttoaster, attr->atttypid, accessMethodId, false);
+			validateToaster(attr->atttoaster, attr->atttypid,
+							attr->attstorage, attr->attcompression,
+							accessMethodId, false);
 	}
 
 	/*
@@ -2589,26 +2591,6 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 									   storage_name(def->storage),
 									   storage_name(attribute->attstorage))));
 
-				/* Copy/check toaster parameter */
-				if (def->toaster &&
-					get_toaster_oid(def->toaster, false) != attribute->atttoaster)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("inherited column \"%s\" has a toaster conflict",
-									attributeName),
-							 errdetail("%s versus %s",
-									   (def->toaster),
-									   get_toaster_name(attribute->atttoaster))));
-
-				if (OidIsValid(attribute->atttoaster))
-				{
-					validateToaster(attribute->atttoaster, attribute->atttypid,
-									accessMethodId, false);
-					def->toaster = get_toaster_name(attribute->atttoaster);
-				}
-				else
-					def->toaster = NULL;
-
 				/* Copy/check compression parameter */
 				if (CompressionMethodIsValid(attribute->attcompression))
 				{
@@ -2624,6 +2606,27 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 										attributeName),
 								 errdetail("%s versus %s", def->compression, compression)));
 				}
+
+				/* Copy/check toaster parameter */
+				if (def->toaster &&
+					get_toaster_oid(def->toaster, false) != attribute->atttoaster)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("inherited column \"%s\" has a toaster conflict",
+									attributeName),
+							 errdetail("%s versus %s",
+									   (def->toaster),
+									   get_toaster_name(attribute->atttoaster))));
+
+				if (OidIsValid(attribute->atttoaster))
+				{
+					validateToaster(attribute->atttoaster, attribute->atttypid,
+									attribute->attstorage, attribute->attcompression,
+									accessMethodId, false);
+					def->toaster = get_toaster_name(attribute->atttoaster);
+				}
+				else
+					def->toaster = NULL;
 
 				def->inhcount++;
 				/* Merge of NOT NULL constraints = OR 'em together */
@@ -2656,6 +2659,7 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				{
 					def->toaster = get_toaster_name(attribute->atttoaster);
 					validateToaster(attribute->atttoaster, attribute->atttypid,
+									attribute->attstorage, attribute->attcompression,
 									accessMethodId, false);
 				}
 				else
@@ -6866,6 +6870,9 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	else
 		attribute.attstorage = tform->typstorage;
 
+	attribute.attcompression = GetAttributeCompression(typeOid,
+													   colDef->compression);
+
 	if (colDef->toaster)
 		attribute.atttoaster = get_toaster_oid(colDef->toaster, false);
 	else if (TypeIsToastable(attribute.atttypid))
@@ -6875,10 +6882,9 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 
 	if (OidIsValid(attribute.atttoaster))
 		validateToaster(attribute.atttoaster, attribute.atttypid,
+						attribute.attstorage, attribute.attcompression,
 						rel->rd_rel->relam, false);
 
-	attribute.attcompression = GetAttributeCompression(typeOid,
-													   colDef->compression);
 	attribute.attnotnull = colDef->is_not_null;
 	attribute.atthasdef = false;
 	attribute.atthasmissing = false;
@@ -8456,6 +8462,7 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	attrtuple->atttoaster = newToaster;
 	if (OidIsValid(newToaster))
 		validateToaster(attrtuple->atttoaster, attrtuple->atttypid,
+						attrtuple->attstorage, attrtuple->attcompression,
 						rel->rd_rel->relam, false);
 	else if (TypeIsToastable(attrtuple->atttypid))
 		ereport(ERROR,
@@ -12973,6 +12980,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	{
 		attTup->atttoaster = DEFAULT_TOASTER_OID;
 		validateToaster(attTup->atttoaster, attTup->atttypid,
+						attTup->attstorage, attTup->attcompression,
 						rel->rd_rel->relam, false);
 	}
 
