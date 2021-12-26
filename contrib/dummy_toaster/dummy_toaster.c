@@ -84,7 +84,7 @@ do { \
  * detoasts it to varlena.
  *
  */
-Datum
+static struct varlena*
 dummyDetoast(Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length)
@@ -160,17 +160,13 @@ dummyToast(Relation toast_rel,
 	}
 	else
 	{
-		PG_RETURN_VOID();
+		return NULL;
 	}
 }
 
-/*
- * Dummy Validate, always returns True
- * 
- */
-
-bool
-dummyToasterValidate(Oid toasteroid, Oid typeoid,  Oid amoid, bool false_ok)
+static bool
+dummyToasterValidate(Oid typeoid,  char storage, char compression,
+					 Oid amoid, bool false_ok)
 {
 	bool result = true;
 
