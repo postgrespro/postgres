@@ -21,7 +21,7 @@
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-
+#include "access/toast_helper.h"
 
 /*
  * To avoid consuming too much memory, IO and CPU load during analysis, and/or

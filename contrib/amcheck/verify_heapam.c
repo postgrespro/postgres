@@ -24,6 +24,8 @@
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "access/toast_helper.h"
+#include "access/toast_table.h"
 
 PG_FUNCTION_INFO_V1(verify_heapam);
 

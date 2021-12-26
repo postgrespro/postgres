@@ -34,7 +34,7 @@
 #include "utils/syscache.h"
 #include "access/toasterapi.h"
 #include "access/detoast.h"
-
+/*
 extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
@@ -46,13 +46,14 @@ extern void
 heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		   int32 sliceoffset, int32 slicelength,
 		   struct varlena *result);
-
+*/
 /*
  *  * Validate the generic options given to a FOREIGN DATA WRAPPER, SERVER,
  *   * USER MAPPING or FOREIGN TABLE that uses file_fdw.
  *    *
  *     * Raise an ERROR if the option or its value is considered invalid.
  *      */
+/*
 Datum genericDetoast(Relation toast_rel,
 	Datum toast_ptr,
 	int offset, int length)
@@ -117,4 +118,4 @@ genericToasterValidate(Oid toasteroid)
 
 	PG_RETURN_POINTER(tsr);
 }
-
+*/

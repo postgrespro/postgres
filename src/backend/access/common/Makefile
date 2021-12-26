@@ -27,6 +27,7 @@ OBJS = \
 	syncscan.o \
 	toast_compression.o \
 	toast_internals.o \
+	toast_table.o \
 	tupconvert.o \
 	tupdesc.o
 
