@@ -152,7 +152,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
 			ttc->ttc_attr[i].tai_toaster = (OidIsValid(att->atttoaster) 
-				? GetTsrRoutineByOid(att->atttoaster, false) : NULL);
+				? SearchTsrCache(att->atttoaster) : NULL);
 			ttc->ttc_attr[i].tai_toasterid = att->atttoaster;
 		}
 		else
@@ -342,7 +342,7 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 			else if (VARATT_IS_CUSTOM(PointerGetDatum(value)))
 			{
 				Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
-				TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
+				TsrRoutine *toaster = SearchTsrCache(toasterid);
 				toaster->deltoast(rel, value);
 			}
 		}

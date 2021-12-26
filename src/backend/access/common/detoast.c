@@ -94,7 +94,7 @@ detoast_external_attr(struct varlena *attr)
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
 		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
 	}
 
@@ -197,7 +197,7 @@ detoast_attr(struct varlena *attr)
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
 		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
 	}
 
@@ -298,7 +298,7 @@ detoast_attr_slice(struct varlena *attr,
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
 		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength));
 	}
 

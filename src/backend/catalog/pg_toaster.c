@@ -74,7 +74,8 @@ genericDeleteToast(Relation rel, Datum toast_ptr)
 }
 
 static bool
-genericToasterValidate(Oid typeoid, Oid amoid, bool false_ok)
+genericToasterValidate(Oid typeoid, char storage, char compression,
+					   Oid amoid, bool false_ok)
 {
 	/* generic toaster works for every type and access method */
 	return true;

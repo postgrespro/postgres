@@ -112,12 +112,11 @@ dummy_toast_save_datum(Relation rel, Datum value);
  *
  * Raise an ERROR if the option or its value is considered invalid.
  */
-Datum
+static Datum
 dummyDetoast(Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length)
 {
-	Datum		tsrDatum;
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
 	/*Oid			tsrOid;*/
 	struct varlena *result = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
@@ -161,7 +160,7 @@ dummyDetoast(Relation toast_rel,
 	return PointerGetDatum(result);
 }
 
-Datum
+static Datum
 dummyToast(Relation toast_rel,
 								Datum value, Datum oldvalue,
 								int max_inline_size)
@@ -233,8 +232,9 @@ dummyToast(Relation toast_rel,
 	}
 }
 
-bool
-dummyToasterValidate(Oid toasteroid, Oid typeoid,  Oid amoid, bool false_ok)
+static bool
+dummyToasterValidate(Oid typeoid,  char storage, char compression,
+					 Oid amoid, bool false_ok)
 {
 	bool result = true;
 

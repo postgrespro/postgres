@@ -132,7 +132,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
 		   rel->rd_rel->relkind == RELKIND_MATVIEW);
 
-/*	tsrroutine = GetTsrRoutineByOid(InvalidOid, false);*/
+/*	tsrroutine = SearchTsrCache(InvalidOid);*/
 
 	/*
 	 * Get the tuple descriptor and break down the tuple(s) into fields.
