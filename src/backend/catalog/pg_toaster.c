@@ -25,7 +25,7 @@
 #include "utils/fmgrprotos.h"
 #include "access/detoast.h"
 
-static Datum
+static struct varlena*
 genericDetoast(Relation toast_rel, Datum toast_ptr, int offset, int length)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
@@ -43,10 +43,10 @@ genericDetoast(Relation toast_rel, Datum toast_ptr, int offset, int length)
 
 	table_close(toastrel, AccessShareLock);
 
-	return PointerGetDatum(result);
+	return result;
 }
 
-static Datum
+static struct varlena*
 genericToast(Relation toast_rel, Datum newvalue,
 			 Datum oldvalue, int max_inline_size)
 {
@@ -64,7 +64,7 @@ genericToast(Relation toast_rel, Datum newvalue,
 		PG_RETURN_VOID();
 	}
 
-	return PointerGetDatum(result);
+	return result;
 }
 
 static Datum

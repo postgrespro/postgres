@@ -112,7 +112,7 @@ dummy_toast_save_datum(Relation rel, Datum value);
  *
  * Raise an ERROR if the option or its value is considered invalid.
  */
-static Datum
+static struct varlena*
 dummyDetoast(Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length)
@@ -120,7 +120,7 @@ dummyDetoast(Relation toast_rel,
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
 	/*Oid			tsrOid;*/
 	struct varlena *result = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
-	struct varlena *tptr = 0;
+	struct varlena *tptr = NULL;
 	dummy_node *cur = head;
 	struct varatt_custom customPtr;
 	int l_offset = 0;
@@ -157,10 +157,10 @@ dummyDetoast(Relation toast_rel,
 	}
 
 	pfree(head);
-	return PointerGetDatum(result);
+	return result;
 }
 
-static Datum
+static struct varlena*
 dummyToast(Relation toast_rel,
 								Datum value, Datum oldvalue,
 								int max_inline_size)
@@ -168,14 +168,14 @@ dummyToast(Relation toast_rel,
 	Datum		tsrDatum = value;
 	struct varlena *attr = (struct varlena *) DatumGetPointer(tsrDatum);
 	struct varatt_custom *dptr = palloc(VARHDRSZ_EXTERNAL + ((varatt_custom *)(attr))->va_rawsize);
-	struct varlena *result = 0; 
+	struct varlena *result = NULL;
 	struct dummy_node *cur, *prev;
 	int l_offset = 0;
 	int l_length = 0;
 	int cpy_size = 0;
 	int counter = 0;
 	struct varatt_custom *new_ptr;
-	
+
 	if(VARATT_IS_CUSTOM(attr))
 	{
 		memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), ((varatt_external *)(attr))->va_rawsize);
@@ -214,7 +214,7 @@ dummyToast(Relation toast_rel,
 		}
 		result = (struct varlena *) head;
 		pfree(dptr);
-		return PointerGetDatum(result);
+		return result;
 
 	}
 	if(VARATT_IS_EXTERNAL(attr))
@@ -224,11 +224,11 @@ dummyToast(Relation toast_rel,
 		dptr->va_toasterdatalen = (((varatt_external *)(attr))->va_rawsize);
 		memcpy(result, dptr, sizeof(*dptr));
 		pfree(dptr);
-		return PointerGetDatum(result);
+		return result;
 	}
 	else
 	{
-		PG_RETURN_VOID();
+		return NULL;
 	}
 }
 
