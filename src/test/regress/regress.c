@@ -44,6 +44,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 #define EXPECT_TRUE(expr)	\
 	do { \

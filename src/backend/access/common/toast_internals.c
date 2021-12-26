@@ -19,6 +19,7 @@
 #include "access/heaptoast.h"
 #include "access/table.h"
 #include "access/toast_internals.h"
+#include "access/toast_table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "common/pg_lzcompress.h"
@@ -30,79 +31,6 @@
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
-/* ----------
- * toast_compress_datum -
- *
- *	Create a compressed version of a varlena datum
- *
- *	If we fail (ie, compressed result is actually bigger than original)
- *	then return NULL.  We must not use compressed data if it'd expand
- *	the tuple!
- *
- *	We use VAR{SIZE,DATA}_ANY so we can handle short varlenas here without
- *	copying them.  But we can't handle external or compressed datums.
- * ----------
- */
-Datum
-toast_compress_datum(Datum value, char cmethod)
-{
-	struct varlena *tmp = NULL;
-	int32		valsize;
-	ToastCompressionId cmid = TOAST_INVALID_COMPRESSION_ID;
-
-	Assert(!VARATT_IS_EXTERNAL(DatumGetPointer(value)));
-	Assert(!VARATT_IS_COMPRESSED(DatumGetPointer(value)));
-
-	valsize = VARSIZE_ANY_EXHDR(DatumGetPointer(value));
-
-	/* If the compression method is not valid, use the current default */
-	if (!CompressionMethodIsValid(cmethod))
-		cmethod = default_toast_compression;
-
-	/*
-	 * Call appropriate compression routine for the compression method.
-	 */
-	switch (cmethod)
-	{
-		case TOAST_PGLZ_COMPRESSION:
-			tmp = pglz_compress_datum((const struct varlena *) value);
-			cmid = TOAST_PGLZ_COMPRESSION_ID;
-			break;
-		case TOAST_LZ4_COMPRESSION:
-			tmp = lz4_compress_datum((const struct varlena *) value);
-			cmid = TOAST_LZ4_COMPRESSION_ID;
-			break;
-		default:
-			elog(ERROR, "invalid compression method %c", cmethod);
-	}
-
-	if (tmp == NULL)
-		return PointerGetDatum(NULL);
-
-	/*
-	 * We recheck the actual size even if compression reports success, because
-	 * it might be satisfied with having saved as little as one byte in the
-	 * compressed data --- which could turn into a net loss once you consider
-	 * header and alignment padding.  Worst case, the compressed format might
-	 * require three padding bytes (plus header, which is included in
-	 * VARSIZE(tmp)), whereas the uncompressed format would take only one
-	 * header byte and no padding if the value is short enough.  So we insist
-	 * on a savings of more than 2 bytes to ensure we have a gain.
-	 */
-	if (VARSIZE(tmp) < valsize - 2)
-	{
-		/* successful compression */
-		Assert(cmid != TOAST_INVALID_COMPRESSION_ID);
-		TOAST_COMPRESS_SET_SIZE_AND_COMPRESS_METHOD(tmp, valsize, cmid);
-		return PointerGetDatum(tmp);
-	}
-	else
-	{
-		/* incompressible data */
-		pfree(tmp);
-		return PointerGetDatum(NULL);
-	}
-}
 
 /* ----------
  * toast_save_datum -
@@ -521,144 +449,409 @@ toastid_valueid_exists(Oid toastrelid, Oid valueid)
 	return result;
 }
 
+
 /* ----------
- * toast_get_valid_index
+ * toast_fetch_datum -
  *
- *	Get OID of valid index associated to given toast relation. A toast
- *	relation can have only one valid index at the same time.
+ *	Reconstruct an in memory Datum from the chunks saved
+ *	in the toast relation
+ * ----------
  */
-Oid
-toast_get_valid_index(Oid toastoid, LOCKMODE lock)
+extern struct varlena *
+toast_fetch_datum(struct varlena *attr)
 {
-	int			num_indexes;
-	int			validIndex;
-	Oid			validIndexOid;
-	Relation   *toastidxs;
 	Relation	toastrel;
+	struct varlena *result;
+	struct varatt_external toast_pointer;
+	int32		attrsize;
 
-	/* Open the toast relation */
-	toastrel = table_open(toastoid, lock);
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+		elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
 
-	/* Look for the valid index of the toast relation */
-	validIndex = toast_open_indexes(toastrel,
-									lock,
-									&toastidxs,
-									&num_indexes);
-	validIndexOid = RelationGetRelid(toastidxs[validIndex]);
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
-	/* Close the toast relation and all its indexes */
-	toast_close_indexes(toastidxs, num_indexes, NoLock);
-	table_close(toastrel, NoLock);
+	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
 
-	return validIndexOid;
+	result = (struct varlena *) palloc(attrsize + VARHDRSZ);
+
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		SET_VARSIZE_COMPRESSED(result, attrsize + VARHDRSZ);
+	else
+		SET_VARSIZE(result, attrsize + VARHDRSZ);
+
+	if (attrsize == 0)
+		return result;			/* Probably shouldn't happen, but just in
+								 * case. */
+
+	/*
+	 * Open the toast relation and its indexes
+	 */
+	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+
+	/* Fetch all chunks */
+	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+									 attr, attrsize, 0, attrsize, result);
+
+	/* Close toast table */
+	table_close(toastrel, AccessShareLock);
+
+	return result;
 }
 
 /* ----------
- * toast_open_indexes
+ * toast_fetch_datum_slice -
  *
- *	Get an array of the indexes associated to the given toast relation
- *	and return as well the position of the valid index used by the toast
- *	relation in this array. It is the responsibility of the caller of this
- *	function to close the indexes as well as free them.
+ *	Reconstruct a segment of a Datum from the chunks saved
+ *	in the toast relation
+ *
+ *	Note that this function supports non-compressed external datums
+ *	and compressed external datums (in which case the requested slice
+ *	has to be a prefix, i.e. sliceoffset has to be 0).
+ * ----------
  */
-int
-toast_open_indexes(Relation toastrel,
-				   LOCKMODE lock,
-				   Relation **toastidxs,
-				   int *num_indexes)
+extern struct varlena *
+toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
+						int32 slicelength)
 {
-	int			i = 0;
-	int			res = 0;
-	bool		found = false;
-	List	   *indexlist;
-	ListCell   *lc;
+	Relation	toastrel;
+	struct varlena *result;
+	struct varatt_external toast_pointer;
+	int32		attrsize;
 
-	/* Get index list of the toast relation */
-	indexlist = RelationGetIndexList(toastrel);
-	Assert(indexlist != NIL);
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk datums");
 
-	*num_indexes = list_length(indexlist);
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
-	/* Open all the index relations */
-	*toastidxs = (Relation *) palloc(*num_indexes * sizeof(Relation));
-	foreach(lc, indexlist)
-		(*toastidxs)[i++] = index_open(lfirst_oid(lc), lock);
+	/*
+	 * It's nonsense to fetch slices of a compressed datum unless when it's a
+	 * prefix -- this isn't lo_* we can't return a compressed datum which is
+	 * meaningful to toast later.
+	 */
+	Assert(!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) || 0 == sliceoffset);
 
-	/* Fetch the first valid index in list */
-	for (i = 0; i < *num_indexes; i++)
+	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+
+	if (sliceoffset >= attrsize)
 	{
-		Relation	toastidx = (*toastidxs)[i];
-
-		if (toastidx->rd_index->indisvalid)
-		{
-			res = i;
-			found = true;
-			break;
-		}
+		sliceoffset = 0;
+		slicelength = 0;
 	}
 
 	/*
-	 * Free index list, not necessary anymore as relations are opened and a
-	 * valid index has been found.
+	 * When fetching a prefix of a compressed external datum, account for the
+	 * space required by va_tcinfo, which is stored at the beginning as an
+	 * int32 value.
 	 */
-	list_free(indexlist);
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) && slicelength > 0)
+		slicelength = slicelength + sizeof(int32);
 
 	/*
-	 * The toast relation should have one valid index, so something is going
-	 * wrong if there is nothing.
+	 * Adjust length request if needed.  (Note: our sole caller,
+	 * detoast_attr_slice, protects us against sliceoffset + slicelength
+	 * overflowing.)
 	 */
-	if (!found)
-		elog(ERROR, "no valid index found for toast relation with Oid %u",
-			 RelationGetRelid(toastrel));
+	if (((sliceoffset + slicelength) > attrsize) || slicelength < 0)
+		slicelength = attrsize - sliceoffset;
 
-	return res;
+	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
+
+	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		SET_VARSIZE_COMPRESSED(result, slicelength + VARHDRSZ);
+	else
+		SET_VARSIZE(result, slicelength + VARHDRSZ);
+
+	if (slicelength == 0)
+		return result;			/* Can save a lot of work at this point! */
+
+	/* Open the toast relation */
+	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+
+	/* Fetch all chunks */
+	table_relation_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+									 attr, attrsize, sliceoffset, slicelength,
+									 result);
+
+	/* Close toast table */
+	table_close(toastrel, AccessShareLock);
+
+	return result;
 }
 
-/* ----------
- * toast_close_indexes
- *
- *	Close an array of indexes for a toast relation and free it. This should
- *	be called for a set of indexes opened previously with toast_open_indexes.
- */
 void
-toast_close_indexes(Relation *toastidxs, int num_indexes, LOCKMODE lock)
+toast_update_datum(Datum value,
+				   void *slice_data, int slice_offset, int slice_length)
 {
-	int			i;
+	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
+	struct varatt_external toast_pointer;
+	Relation	toastrel;
+	Relation   *toastidxs;
+	int			num_indexes;
+	int			validIndex;
+	int			options = 0;
 
-	/* Close relations and clean up things */
-	for (i = 0; i < num_indexes; i++)
-		index_close(toastidxs[i], lock);
-	pfree(toastidxs);
+	Assert(VARATT_IS_EXTERNAL_ONDISK(attr));
+
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+	/* Open the toast relation and its indexes */
+	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+
+	/* Fetch valid relation used for process */
+	validIndex = toast_open_indexes(toastrel,
+									RowExclusiveLock,
+									&toastidxs,
+									&num_indexes);
+
+	toast_write_slice(toastrel, toastidxs, num_indexes, validIndex,
+					  toast_pointer.va_valueid,
+					  VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer),
+					  slice_offset, slice_length, slice_data,
+					  options, NULL, 0);
+
+	toast_close_indexes(toastidxs, num_indexes, NoLock);
+	table_close(toastrel, NoLock);
 }
 
-/* ----------
- * init_toast_snapshot
- *
- *	Initialize an appropriate TOAST snapshot.  We must use an MVCC snapshot
- *	to initialize the TOAST snapshot; since we don't know which one to use,
- *	just use the oldest one.  This is safe: at worst, we will get a "snapshot
- *	too old" error that might have been avoided otherwise.
- */
-void
-init_toast_snapshot(Snapshot toast_snapshot)
+extern void
+toast_write_slice(Relation toastrel, Relation *toastidxs,
+				  int num_indexes, int validIndex,
+				  Oid valueid, int32 value_size, int32 slice_offset,
+				  int32 slice_length, char *slice_data,
+				  int options,
+				  void *chunk_header, int chunk_header_size)
 {
-	Snapshot	snapshot = GetOldestSnapshot();
+	CommandId	mycid = GetCurrentCommandId(true);
+	TupleDesc	toasttupDesc = toastrel->rd_att;
+	union
+	{
+		struct varlena hdr;
+		/* this is to make the union big enough for a chunk: */
+		char		data[TOAST_MAX_CHUNK_SIZE + VARHDRSZ];
+		/* ensure union is aligned well enough: */
+		int32		align_it;
+	}			chunk_data;
+	int32		max_chunks_size = TOAST_MAX_CHUNK_SIZE - chunk_header_size;
+	int32		chunk_size;
+	int32		chunk_seq = slice_offset / max_chunks_size;
+	int32		chunk_offset = chunk_seq * max_chunks_size;
+	Datum		t_values[3];
+	bool		t_isnull[3];
+
+	ScanKeyData toastkey[2];
+	SysScanDesc toastscan = NULL;
+	SnapshotData SnapshotToast;
+
+	if (chunk_offset < value_size)
+	{
+		/*
+		 * Setup a scan key to find chunks with matching va_valueid
+		 */
+		ScanKeyInit(&toastkey[0],
+					(AttrNumber) 1,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(valueid));
+
+		ScanKeyInit(&toastkey[1],
+					(AttrNumber) 2,
+					BTGreaterEqualStrategyNumber, F_INT4GE,
+					Int32GetDatum(chunk_seq));
+
+		/*
+		 * Find all the chunks.  (We don't actually care whether we see them in
+		 * sequence or not, but since we've already locked the index we might as
+		 * well use systable_beginscan_ordered.)
+		 */
+		init_toast_snapshot(&SnapshotToast);
+		toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
+											   &SnapshotToast, 2, toastkey);
+	}
 
 	/*
-	 * GetOldestSnapshot returns NULL if the session has no active snapshots.
-	 * We can get that if, for example, a procedure fetches a toasted value
-	 * into a local variable, commits, and then tries to detoast the value.
-	 * Such coding is unsafe, because once we commit there is nothing to
-	 * prevent the toast data from being deleted.  Detoasting *must* happen in
-	 * the same transaction that originally fetched the toast pointer.  Hence,
-	 * rather than trying to band-aid over the problem, throw an error.  (This
-	 * is not very much protection, because in many scenarios the procedure
-	 * would have already created a new transaction snapshot, preventing us
-	 * from detecting the problem.  But it's better than nothing, and for sure
-	 * we shouldn't expend code on masking the problem more.)
+	 * Initialize constant parts of the tuple data
 	 */
-	if (snapshot == NULL)
-		elog(ERROR, "cannot fetch toast data without an active snapshot");
+	t_values[0] = ObjectIdGetDatum(valueid);
+	t_values[2] = PointerGetDatum(&chunk_data);
+	t_isnull[0] = false;
+	t_isnull[1] = false;
+	t_isnull[2] = false;
 
-	InitToastSnapshot(*toast_snapshot, snapshot->lsn, snapshot->whenTaken);
+	/*
+	 * Split up the item into chunks
+	 */
+	while (slice_length > 0)
+	{
+		HeapTuple	toasttup;
+		HeapTuple	old_toasttup = NULL;
+		char	   *old_chunk_data;
+		int32		old_chunk_size = chunk_offset >= value_size ? 0 :
+			Min(max_chunks_size, value_size - chunk_offset);
+		int32		chunk_slice_start = slice_offset <= chunk_offset ?
+			0 : slice_offset - chunk_offset;
+		int32		copied_slice_size =
+			Min(max_chunks_size - chunk_slice_start, slice_length);
+		bool		rewrite_chunk =
+			(slice_offset > chunk_offset &&
+			 slice_offset < chunk_offset + max_chunks_size) ||
+			slice_length < old_chunk_size;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/* Fetch old tuple and copy its data */
+		if (toastscan)
+		{
+			while ((old_toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
+			{
+				if (rewrite_chunk)
+				{
+					int32		old_chunk_seq;
+					int32		old_chunk_data_size;
+
+					toast_extract_chunk_fields(toastrel, toasttupDesc,
+											   valueid, old_toasttup,
+											   &old_chunk_seq,
+											   &old_chunk_data,
+											   &old_chunk_data_size);
+
+					Assert(old_chunk_seq == chunk_seq);
+					Assert(old_chunk_size == old_chunk_data_size - chunk_header_size);
+
+					memcpy(VARDATA(&chunk_data), old_chunk_data,
+						   old_chunk_data_size);
+				}
+			}
+		}
+
+		/*
+		 * Calculate the size of this chunk
+		 */
+		copied_slice_size = Min(max_chunks_size - chunk_slice_start, slice_length);
+		chunk_size = Max(old_chunk_size, chunk_slice_start + copied_slice_size);
+
+		/*
+		 * Build a tuple and store it
+		 */
+		t_values[1] = Int32GetDatum(chunk_seq++);
+		SET_VARSIZE(&chunk_data, chunk_size + chunk_header_size + VARHDRSZ);
+		if (chunk_header_size > 0)
+			memcpy(VARDATA(&chunk_data), chunk_header, chunk_header_size);
+		memcpy(VARDATA(&chunk_data) + chunk_slice_start + chunk_header_size, slice_data, copied_slice_size);
+		toasttup = heap_form_tuple(toasttupDesc, t_values, t_isnull);
+
+		if (old_toasttup)
+		{
+			TM_Result	result;
+			TM_FailureData tmfd;
+			LockTupleMode lockmode;
+
+			result = heap_update(toastrel, &old_toasttup->t_self, toasttup,
+								 mycid, InvalidSnapshot,
+								 true, /* wait for commit */
+								 &tmfd, &lockmode);
+
+			switch (result)
+			{
+				case TM_Ok:
+					/* done successfully */
+					break;
+
+				case TM_SelfModified:
+					elog(ERROR, "TOAST tuple already updated by self");
+					break;
+
+				case TM_Updated:
+					elog(ERROR, "TOAST tuple concurrently updated");
+					break;
+
+				case TM_Deleted:
+					elog(ERROR, "TOAST tuple concurrently deleted");
+					break;
+
+				default:
+					elog(ERROR, "unrecognized heap_update status: %u", result);
+					break;
+			}
+		}
+		else
+			heap_insert(toastrel, toasttup, mycid, options, NULL);
+
+		/*
+		 * Create the index entry.  We cheat a little here by not using
+		 * FormIndexDatum: this relies on the knowledge that the index columns
+		 * are the same as the initial columns of the table for all the
+		 * indexes.  We also cheat by not providing an IndexInfo: this is okay
+		 * for now because btree doesn't need one, but we might have to be
+		 * more honest someday.
+		 *
+		 * Note also that there had better not be any user-created index on
+		 * the TOAST table, since we don't bother to update anything else.
+		 */
+		for (int i = 0; i < num_indexes; i++)
+		{
+			/* Only index relations marked as ready can be updated */
+			if (toastidxs[i]->rd_index->indisready)
+				index_insert(toastidxs[i], t_values, t_isnull,
+							 &(toasttup->t_self),
+							 toastrel,
+							 toastidxs[i]->rd_index->indisunique ?
+							 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
+							 false, NULL);
+		}
+
+		/*
+		 * Free memory
+		 */
+		heap_freetuple(toasttup);
+
+		/*
+		 * Move on to next chunk
+		 */
+		chunk_offset += chunk_size;
+		slice_length -= copied_slice_size;
+		slice_data += copied_slice_size;
+	}
+
+	if (toastscan)
+		systable_endscan_ordered(toastscan);
+}
+
+void
+toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
+						   Oid valueid, HeapTuple ttup, int32 *seqno,
+						   char **chunkdata, int *chunksize)
+{
+	Pointer		chunk;
+	bool		isnull;
+
+	/*
+	 * Have a chunk, extract the sequence number and the data
+	 */
+	*seqno = DatumGetInt32(fastgetattr(ttup, 2, toasttupDesc, &isnull));
+	Assert(!isnull);
+
+	chunk = DatumGetPointer(fastgetattr(ttup, 3, toasttupDesc, &isnull));
+	Assert(!isnull);
+
+	if (!VARATT_IS_EXTENDED(chunk))
+	{
+		*chunksize = VARSIZE(chunk) - VARHDRSZ;
+		*chunkdata = VARDATA(chunk);
+	}
+	else if (VARATT_IS_SHORT(chunk))
+	{
+		/* could happen due to heap_form_tuple doing its thing */
+		*chunksize = VARSIZE_SHORT(chunk) - VARHDRSZ_SHORT;
+		*chunkdata = VARDATA_SHORT(chunk);
+	}
+	else
+	{
+		/* should never happen */
+		elog(ERROR, "found toasted toast chunk for toast value %u in %s",
+			 valueid, RelationGetRelationName(toastrel));
+		*chunksize = 0;		/* keep compiler quiet */
+		*chunkdata = NULL;
+	}
 }

@@ -46,6 +46,7 @@
 #include "utils/selfuncs.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 /*
  * To avoid consuming too much memory during analysis and/or too much space

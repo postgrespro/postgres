@@ -51,6 +51,7 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 /*
  * All plpgsql function executions within a single transaction share the same

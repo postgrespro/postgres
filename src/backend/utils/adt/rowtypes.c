@@ -27,7 +27,7 @@
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-
+#include "access/toast_helper.h"
 
 /*
  * structure to cache metadata needed for record I/O

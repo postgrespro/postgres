@@ -28,6 +28,7 @@
 #include "utils/expandedrecord.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 
 /* "Methods" required for an expanded object */

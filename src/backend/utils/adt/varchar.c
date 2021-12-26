@@ -27,6 +27,7 @@
 #include "utils/lsyscache.h"
 #include "utils/pg_locale.h"
 #include "utils/varlena.h"
+#include "access/toast_helper.h"
 
 /* common code for bpchartypmodin and varchartypmodin */
 static int32

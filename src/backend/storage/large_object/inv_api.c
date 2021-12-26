@@ -50,6 +50,7 @@
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "access/toast_helper.h"
 
 
 /*

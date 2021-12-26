@@ -48,7 +48,7 @@
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/expandeddatum.h"
-
+#include "access/toast_helper.h"
 
 /*-------------------------------------------------------------------------
  * datumGetSize

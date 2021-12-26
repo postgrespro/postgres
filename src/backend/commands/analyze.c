@@ -67,7 +67,7 @@
 #include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
-
+#include "access/toast_helper.h"
 
 /* Per-index data for ANALYZE */
 typedef struct AnlIndexData

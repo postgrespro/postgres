@@ -38,6 +38,7 @@
 #include "utils/pg_locale.h"
 #include "utils/sortsupport.h"
 #include "utils/varlena.h"
+#include "access/toast_helper.h"
 
 
 /* GUC variable */
