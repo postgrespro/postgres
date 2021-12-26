@@ -20,7 +20,8 @@
 
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
-										   Datum value, int max_inline_size);
+										   Datum value, Datum oldvalue,
+										   int max_inline_size);
 
 /* Detoast function */
 typedef struct varlena* (*detoast_function) (Relation toast_rel,
