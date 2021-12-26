@@ -40,7 +40,7 @@
 #include "access/tupmacs.h"
 #include "utils/datum.h"
 #include "utils/memutils.h"
-
+#include "access/toast_helper.h"
 
 /*
  * This enables de-toasting of index entries.  Needed until VACUUM is

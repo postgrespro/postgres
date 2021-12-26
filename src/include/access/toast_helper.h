@@ -16,6 +16,13 @@
 
 #include "utils/rel.h"
 #include "access/toasterapi.h"
+#include "access/toast_internals.h"
+#include "access/detoast.h"
+#include "access/table.h"
+#include "access/tableam.h"
+#include "common/int.h"
+#include "common/pg_lzcompress.h"
+#include "utils/expandeddatum.h"
 
 /*
  * Information about one column of a tuple being toasted.
@@ -115,5 +122,28 @@ extern void toast_tuple_cleanup(ToastTupleContext *ttc);
 
 extern void toast_delete_external(Relation rel, Datum *values, bool *isnull,
 								  bool is_speculative);
+
+extern Datum toast_compress_datum(Datum value, char cmethod);
+extern struct varlena *toast_decompress_datum(struct varlena *attr);
+extern struct varlena *toast_decompress_datum_slice(struct varlena *attr, int32 slicelength);
+extern struct varlena *detoast_attr_slice(struct varlena *attr,
+				   int32 sliceoffset, int32 slicelength);
+extern struct varlena *detoast_attr(struct varlena *attr);
+extern struct varlena *detoast_external_attr(struct varlena *attr);
+/* ----------
+ * toast_raw_datum_size -
+ *
+ *	Return the raw (detoasted) size of a varlena datum
+ * ----------
+ */
+extern Size toast_raw_datum_size(Datum value);
+
+/* ----------
+ * toast_datum_size -
+ *
+ *	Return the storage size of a varlena datum
+ * ----------
+ */
+extern Size toast_datum_size(Datum value);
 
 #endif

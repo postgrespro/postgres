@@ -21,6 +21,7 @@
 #include "access/htup_details.h"
 #include "access/itup.h"
 #include "access/toast_internals.h"
+#include "access/toast_helper.h"
 
 /*
  * This enables de-toasting of index entries.  Needed until VACUUM is

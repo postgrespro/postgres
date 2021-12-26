@@ -18,29 +18,12 @@
 
 PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(dummy_toaster_handler);
-/*
-Datum dummyToast (Relation toast_rel,
-								Datum value,
-								int max_inline_size);
-Datum dummyDetoast (Relation toast_rel,
-								Datum toast_ptr, Datum oldvalue,
-								int offset, int length);
-void * dummyGetVtable (Datum toast_ptr);
-bool dummyToasterValidate (Oid toasteroid);
-*/
+
 typedef struct varatt_dummy_toaster
 {
 	varatt_external	toast_ptr;
 	char *data_buffer;
 } varatt_dummy_toaster;
-
-typedef struct dummy_node dummy_node;
-struct dummy_node
-{
-	dummy_node *next;
-	int32 toasted_length;
-	char *toasted_data;
-};
 
 #define VARATT_DUMMY_HDRSZ \
 	offsetof(varatt_custom, va_toasterdata)
@@ -68,137 +51,85 @@ do { \
 
 #define VARATT_IS_DUMMY(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
-
-extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
-extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
-
-static dummy_node *head = 0;
 #define MAX_DUMMY_CHUNK_SIZE 2048
 
 /*
-Datum
-dummy_toast_save_datum(Relation rel, Datum value);
-*/
-
-/*
- * Validate the generic options given to a FOREIGN DATA WRAPPER, SERVER,
- * USER MAPPING or FOREIGN TABLE that uses file_fdw.
+ * Dummy Detoast function, receives single varatt_custom pointer,
+ * detoasts it to varlena.
  *
- * Raise an ERROR if the option or its value is considered invalid.
  */
 Datum
 dummyDetoast(Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length)
 {
-	Datum		tsrDatum;
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
-	/*Oid			tsrOid;*/
-	struct varlena *result = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
-	struct varlena *tptr = 0;
-	dummy_node *cur = head;
-	struct varatt_custom customPtr;
-	int l_offset = 0;
-	int cpy_size = 0;
-	int counter = 0;
+	struct varlena *result = 0;// = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
+	struct varatt_custom *customPtr;
 
-	palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
-	memcpy(&customPtr, attr, (VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen)));
+	Assert(VARATT_IS_EXTERNAL(attr));
+	Assert(VARATT_IS_CUSTOM(attr));
+
+	customPtr = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
+	memcpy(customPtr, attr, (VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen)));
 
 	/* Create regular varlena and return */
-	while(cur != 0 && length > 0)
+	if((((varatt_custom *)(attr))->va_toasterdatalen) > MAX_DUMMY_CHUNK_SIZE)
 	{
-		cpy_size = MAX_DUMMY_CHUNK_SIZE;
-
-		if( offset < (l_offset + MAX_DUMMY_CHUNK_SIZE) )
-		{
-			if(offset >= l_offset)
-			{
-				offset = 0;
-			}
-		}
-		if( offset >= (l_offset + MAX_DUMMY_CHUNK_SIZE) )
-			continue;
-
-		if(length <= MAX_DUMMY_CHUNK_SIZE)
-		{
-			cpy_size = length;
-		}
-		tptr = (result + VARHDRSZ_EXTERNAL + counter * MAX_DUMMY_CHUNK_SIZE);
-		memcpy(tptr, (attr + VARATT_DUMMY_HDRSZ + l_offset), cpy_size);
-		counter++;
-		length -= MAX_DUMMY_CHUNK_SIZE;
-		cur = head->next;
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("Data <%d> size exceeds MAX_DUMMY_CHUNK_SIZE <%d>",
+				 				 (((varatt_custom *)(attr))->va_toasterdatalen),
+								 MAX_DUMMY_CHUNK_SIZE)));
+		
 	}
-	
-	pfree(head);
+	memcpy(VARDATA(result), (((varatt_custom *)(attr))->va_toasterdata), 
+		(((varatt_custom *)(attr))->va_toasterdatalen));
+	pfree(customPtr);
 	return PointerGetDatum(result);
 }
+
+/*
+ * Dummy Toast function, receives varlena pointer, creates single varatt_custom
+ * varlena size is limited to 1024 bytes
+ */
 
 Datum
 dummyToast(Relation toast_rel,
 								Datum value, Datum oldvalue,
 								int max_inline_size)
 {
-	Datum		tsrDatum = value;
-	struct varlena *attr = (struct varlena *) DatumGetPointer(tsrDatum);
+	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	struct varatt_custom *dptr = palloc(VARHDRSZ_EXTERNAL + ((varatt_custom *)(attr))->va_rawsize);
 	struct varlena *result = 0; 
-	struct dummy_node *cur, *prev;
 	int l_offset = 0;
 	int l_length = 0;
 	int cpy_size = 0;
 	int counter = 0;
 	struct varatt_custom *new_ptr;
-	
-	if(VARATT_IS_CUSTOM(attr))
-	{
-		memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), ((varatt_external *)(attr))->va_rawsize);
-		l_length = ((varatt_external *)(attr))->va_rawsize;
-		prev = head;
-		while(l_length > 0)
-		{
-			cpy_size = MAX_DUMMY_CHUNK_SIZE;
-			if(l_length < MAX_DUMMY_CHUNK_SIZE)
-			{
-				cpy_size = l_length;
-			}
 
-			new_ptr = palloc(VARHDRSZ_EXTERNAL + cpy_size);
-			cur = palloc(sizeof(dummy_node*) + sizeof(int32) + cpy_size);
-			memcpy((cur->toasted_data), (dptr->va_toasterdata + l_offset), cpy_size);
-			memcpy(new_ptr->va_toasterdata, (dptr->va_toasterdata + l_offset), cpy_size);
-			memcpy(new_ptr, dptr, VARHDRSZ_EXTERNAL);
-			new_ptr->va_toasterdatalen = cpy_size;
-			cur->toasted_length = cpy_size;
-			cur->next = 0;
-			l_length -= MAX_DUMMY_CHUNK_SIZE;
-			l_offset += MAX_DUMMY_CHUNK_SIZE;
-			if(counter == 0)
-			{
-				head = cur;
-				prev = cur;
-			}
-			else
-			{
-				prev->next = cur;
-			}
-			prev = cur;
-			counter++;
-			pfree(new_ptr);
-		}
-		result = (struct varlena *) head;
-		pfree(dptr);
+	Assert(VARATT_IS_EXTERNAL(attr));
+	Assert(VARATT_IS_CUSTOM(attr));
+
+	if((((varatt_custom *)(attr))->va_toasterdatalen) > MAX_DUMMY_CHUNK_SIZE)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("Data <%d> size exceeds MAX_DUMMY_CHUNK_SIZE <%d>",
+				 				 (((varatt_custom *)(attr))->va_toasterdatalen),
+								 MAX_DUMMY_CHUNK_SIZE)));
+		
+	}
+
+	memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), ((varatt_custom *)(attr))->va_toasterdatalen);
 		return PointerGetDatum(result);
 
-	}
 	if(VARATT_IS_EXTERNAL(attr))
 	{
 		memcpy(dptr, (attr + VARHDRSZ_EXTERNAL), ((varatt_external *)(attr))->va_rawsize);
 		dptr->va_version = 1;
 		dptr->va_toasterdatalen = (((varatt_external *)(attr))->va_rawsize);
 		memcpy(result, dptr, sizeof(*dptr));
-		pfree(dptr);
 		return PointerGetDatum(result);
 	}
 	else
@@ -207,11 +138,10 @@ dummyToast(Relation toast_rel,
 	}
 }
 
-void *
-dummyGetVtable(Datum toast_ptr)
-{
-	PG_RETURN_VOID();
-}
+/*
+ * Dummy Validate, always returns True
+ * 
+ */
 
 bool
 dummyToasterValidate(Oid toasteroid)
@@ -221,24 +151,8 @@ dummyToasterValidate(Oid toasteroid)
 
 	return result;
 }
-/*
-static struct varlena *
-dummy_toaster_get_pointer(Oid toasterid, struct varatt_external *ptr,
-						   Size data_size, char **pdata)
-{
-	Size size = (VARATT_DUMMY_HDRSZ + data_size);
-	struct varlena *result = palloc(size);
-	varatt_dummy_toaster result_data;
-	varatt_custom va_custom;
 
-	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
-
-	va_custom.va_toasterid = toasterid;
-	va_custom.va_toasterdatalen = VARATT_DUMMY_HDRSZ + data_size;
-	memcpy(VARDATA_EXTERNAL(result), &va_custom, sizeof(va_custom));
-
-	result_data.toast_ptr = *ptr;
-
+<<<<<<< HEAD
 	memcpy(VARATT_CUSTOM_GET_DATA(result), &result_data, VARATT_DUMMY_HDRSZ);
 
 	if (pdata)
@@ -252,6 +166,8 @@ dummy_toaster_get_pointer(Oid toasterid, struct varatt_external *ptr,
 >>>>>>>  use validateToster call
 }
 */
+=======
+>>>>>>> Dummy toaster and default through new API
 
 Datum
 dummy_toaster_handler(PG_FUNCTION_ARGS)
