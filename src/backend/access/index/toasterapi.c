@@ -17,9 +17,75 @@
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
 #include "commands/defrem.h"
+#include "lib/pairingheap.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+
+
+/*
+ * Toasters is very often called so syscache lookup and TsrRoutine allocation are
+ * expensive and we need to cache them.
+ *
+ * We believe what there are only a few toasters and there is high chance that
+ * only one or only two of them are heavy used, so most used toasters should be
+ * found as easy as possible. So, let us use a simple list, in future it could
+ * be changed to other structure. For now it will be stored in TopCacheContext
+ * and never destroed in backend life cycle - toasters are never deleted.
+ */
+
+typedef struct ToasterCacheEntry
+{
+	Oid			toasterOid;
+	TsrRoutine *routine;
+} ToasterCacheEntry;
+
+static List	*ToasterCache = NIL;
+
+/*
+ * SearchTsrCache - get cached toaster routine, emits an error if toaster
+ * doesn't exist
+ */
+TsrRoutine*
+SearchTsrCache(Oid	toasterOid)
+{
+	ListCell		   *lc;
+	ToasterCacheEntry  *entry;
+	MemoryContext		ctx;
+
+	/* fast path */
+	entry = (ToasterCacheEntry*)linitial(ToasterCache);
+	if (entry != NULL && entry->toasterOid == toasterOid)
+		return entry->routine;
+
+	/* didn't find in first position */
+	ctx = MemoryContextSwitchTo(CacheMemoryContext);
+
+	for_each_from(lc, ToasterCache, 1)
+	{
+		entry = (ToasterCacheEntry*)lfirst(lc);
+
+		if (entry->toasterOid == toasterOid)
+		{
+			/* remove entry from list, it will be added in a head of list below */
+			foreach_delete_current(ToasterCache, lc);
+			goto out;
+		}
+	}
+
+	/* did not find entry, make a new one */
+	entry = palloc(sizeof(*entry));
+
+	entry->toasterOid = toasterOid;
+	entry->routine = GetTsrRoutineByOid(toasterOid, false);
+
+out:
+	ToasterCache = lcons(entry, ToasterCache);
+	MemoryContextSwitchTo(ctx);
+
+	return entry->routine;
+}
 
 /*
  * GetRoutine - call the specified toaster handler routine to get
@@ -94,7 +160,8 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
  * If it can't then validate method should emit an error if false_ok = false
  */
 bool
-validateToaster(Oid toasteroid, Oid typeoid, Oid amoid, bool false_ok)
+validateToaster(Oid toasteroid, Oid typeoid,
+				char storage, char compression, Oid amoid, bool false_ok)
 {
 	TsrRoutine *tsrroutine;
 	bool	result = true;
@@ -117,7 +184,8 @@ validateToaster(Oid toasteroid, Oid typeoid, Oid amoid, bool false_ok)
 		elog(ERROR, "function toastervalidate is not defined for toaster %s",
 			 get_toaster_name(toasteroid));
 
-	result = tsrroutine->toastervalidate(typeoid, amoid, false_ok);
+	result = tsrroutine->toastervalidate(typeoid, storage, compression,
+										 amoid, false_ok);
 #endif
 
 	pfree(tsrroutine);

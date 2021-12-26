@@ -33,6 +33,7 @@ typedef void * (*get_vtable_function) (Datum toast_ptr);
 
 /* validate definition of a toaster Oid */
 typedef bool (*toastervalidate_function) (Oid typeoid,
+										  char storage, char compression,
 										  Oid amoid, bool false_ok);
 
 /*
@@ -55,6 +56,7 @@ typedef struct TsrRoutine
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
-extern bool	validateToaster(Oid toasteroid, Oid typeoid, Oid amoid, bool
-							false_ok);
+extern TsrRoutine *SearchTsrCache(Oid tsroid);
+extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
+							char compression, Oid amoid, bool false_ok);
 #endif							/* TOASTERAPI_H */
