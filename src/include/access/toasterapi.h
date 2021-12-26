@@ -19,14 +19,13 @@
  */
 
 /* Toast function */
-typedef Datum (*toast_function) (Relation toast_rel,
-								Datum value, Datum oldvalue,
-								int max_inline_size);
+typedef struct varlena* (*toast_function) (Relation toast_rel,
+										   Datum value, int max_inline_size);
 
 /* Detoast function */
-typedef Datum (*detoast_function) (Relation toast_rel,
-								Datum toast_ptr,
-								int offset, int length);
+typedef struct varlena* (*detoast_function) (Relation toast_rel,
+											 Datum toast_ptr,
+											 int offset, int length);
 
 /* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
