@@ -362,7 +362,6 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 	int			numAttrs = tupleDesc->natts;
 	int			i;
 	Oid	toasterid = InvalidOid;
-	TsrRoutine *toaster;
 
 	for (i = 0; i < numAttrs; i++)
 	{
@@ -376,10 +375,9 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 				toasterid = DEFAULT_TOASTER_OID;
 			else if (VARATT_IS_CUSTOM(PointerGetDatum(value)))
 				toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
-			
+
 			if(toasterid != InvalidOid)
 			{
-				Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 				TsrRoutine *toaster = SearchTsrCache(toasterid);
 				toaster->deltoast(rel, value);
 			}
