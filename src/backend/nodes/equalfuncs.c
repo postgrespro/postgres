@@ -2082,6 +2082,7 @@ _equalCreateToasterStmt(const CreateToasterStmt *a, const CreateToasterStmt *b)
 {
 	COMPARE_STRING_FIELD(tsrname);
 	COMPARE_NODE_FIELD(handler_name);
+	COMPARE_SCALAR_FIELD(if_not_exists);
 
 	return true;
 }

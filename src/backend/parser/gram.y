@@ -5493,11 +5493,20 @@ am_type:
  *****************************************************************************/
 
 CreateToasterStmt:
-	CREATE TOASTER name HANDLER handler_name
+	CREATE TOASTER IF_P NOT EXISTS name HANDLER handler_name
+		{
+			CreateToasterStmt *n = makeNode(CreateToasterStmt);
+			n->if_not_exists = true;
+			n->tsrname = $6;
+			n->handler_name = $8;
+			$$ = (Node *) n;
+		}
+	| CREATE TOASTER name HANDLER handler_name
 		{
 			CreateToasterStmt *n = makeNode(CreateToasterStmt);
 			n->tsrname = $3;
 			n->handler_name = $5;
+			n->if_not_exists = false;
 			$$ = (Node *) n;
 		}
 		;
