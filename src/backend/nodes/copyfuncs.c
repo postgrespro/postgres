@@ -4472,6 +4472,7 @@ _copyCreateToasterStmt(const CreateToasterStmt *from)
 
 	COPY_STRING_FIELD(tsrname);
 	COPY_NODE_FIELD(handler_name);
+	COPY_SCALAR_FIELD(if_not_exists);
 
 	return newnode;
 }
