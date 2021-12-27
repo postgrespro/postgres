@@ -18,6 +18,9 @@
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
+/* Create toast storage */
+void (*toast_init)(Relation *rel);
+
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
 										   Datum value, Datum oldvalue,
@@ -47,6 +50,7 @@ typedef struct TsrRoutine
 	NodeTag		type;
 
 	/* interface functions */
+	toast_init init;
 	toast_function toast;
 	detoast_function detoast;
 	del_toast_function deltoast;
