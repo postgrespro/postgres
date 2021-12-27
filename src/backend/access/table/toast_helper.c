@@ -262,53 +262,24 @@ toast_tuple_try_compression(ToastTupleContext *ttc, int attribute)
 void
 toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 {
-	Datum	    *value = &ttc->ttc_values[attribute];
+	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
-	Size		maxDataLen;
-	Size		hoff;
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
+	TsrRoutine  *toaster;
 
-	if ( ttc->ttc_attr[attribute].tai_toasterid != InvalidOid )
-	{
-		TsrRoutine *toaster = SearchTsrCache(ttc->ttc_attr[attribute].tai_toasterid);
-		hoff = SizeofHeapTupleHeader;
-		if ((ttc->ttc_flags & TOAST_HAS_NULLS) != 0)
-			hoff += BITMAPLEN(ttc->ttc_rel->rd_att->natts);
-		hoff = MAXALIGN(hoff);
-		/* now convert to a limit on the tuple data size */
-		maxDataLen = RelationGetToastTupleTarget(ttc->ttc_rel, TOAST_TUPLE_TARGET) - hoff;
+	Assert(OidIsValid(ttc->ttc_attr[attribute].tai_toasterid));
 
-		if ((ttc->ttc_attr[attribute].tai_toasterid == DEFAULT_TOASTER_OID
-			&& ttc->ttc_attr[attribute].tai_size > maxDataLen
-			&& ttc->ttc_rel->rd_rel->reltoastrelid != InvalidOid)
-			|| ttc->ttc_attr[attribute].tai_toasterid != DEFAULT_TOASTER_OID)
-		{
-			/* toast!  */
-			value = &ttc->ttc_values[attribute];
-			old_value = *value;
-			/* attr = &ttc->ttc_attr[attribute]; */
-			*value = PointerGetDatum(toaster->toast(ttc->ttc_rel, ttc->ttc_values[attribute], ttc->ttc_values[attribute], maxDataLen));
-			ttc->ttc_values[attribute] = *value;
-			if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
-			{
-					pfree(DatumGetPointer(old_value));
-				attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
-				ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
-			}
-		}
-	}
-	return;
-	/* Redirect to new API above */
-	/*
-	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
-							  options);
-	*/							  
-/*
+	toaster = SearchTsrCache(ttc->ttc_attr[attribute].tai_toasterid);
+
+	attr->tai_colflags |= TOASTCOL_IGNORE;
+	*value = PointerGetDatum(toaster->toast(ttc->ttc_rel,
+											ttc->ttc_values[attribute],
+											ttc->ttc_values[attribute], options));
+
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
 	ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
-*/	
 }
 
 /*
