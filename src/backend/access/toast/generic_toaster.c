@@ -202,16 +202,9 @@ genericGetSize(Datum toast_ptr)
 	return result;
 }
 
-/* Return virtual table of functions, optional */
-static void *
-genericGetVtable(Datum toast_ptr)
-{
-	return NULL;
-}
-
 /* validate definition of a toaster Oid */
 static bool
-genericValidate (Oid typeoid, char storage, char compression,
+genericValidate(Oid typeoid, char storage, char compression,
 				 Oid amoid, bool false_ok)
 {
 	return true;
