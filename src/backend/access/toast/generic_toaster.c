@@ -67,15 +67,17 @@ struct varlena* (genericDetoast) (Relation toast_rel,
 											 int offset, int length)
 {
 	struct varlena *result = 0;
-	struct varatt_external *toast_pointer = (struct varatt_external*)DatumGetPointer(toast_ptr);
+	struct varatt_external texternal;
+	struct varlena *toast_pointer = (struct varlena *) DatumGetPointer(toast_ptr);
+	VARATT_EXTERNAL_GET_POINTER(texternal, toast_pointer);
 	if( offset == 0 
-		&& length >= VARATT_EXTERNAL_GET_EXTSIZE(*toast_pointer) )
+		&& length >= VARATT_EXTERNAL_GET_EXTSIZE(texternal))
 	{
-		result = toast_fetch_datum((struct varlena *)(toast_pointer));
+		result = toast_fetch_datum(toast_pointer);
 	}
 	else
 	{
-		result = toast_fetch_datum_slice((struct varlena *)(toast_pointer), offset,
+		result = toast_fetch_datum_slice(toast_pointer, offset,
 						length);
 	}
 
