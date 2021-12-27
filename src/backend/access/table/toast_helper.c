@@ -297,15 +297,18 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 			}
 		}
 	}
+	return;
 	/* Redirect to new API above */
 	/*
 	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
 							  options);
 	*/							  
+/*
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
 	ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+*/	
 }
 
 /*
