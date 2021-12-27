@@ -331,7 +331,7 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 				{
 
 					TsrRoutine *toaster = SearchTsrCache(toasterid);
-					toaster->deltoast(ttc->ttc_oldvalues[i]);
+					toaster->deltoast(ttc->ttc_oldvalues[i], false);
 
 /*					toast_delete_datum(ttc->ttc_oldvalues[i], false);*/
 				}
@@ -369,7 +369,7 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 			if(toasterid != InvalidOid)
 			{
 				TsrRoutine *toaster = SearchTsrCache(toasterid);
-				toaster->deltoast(value);
+				toaster->deltoast(value, is_speculative);
 			}
 		}
 	}

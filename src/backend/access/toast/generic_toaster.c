@@ -92,10 +92,10 @@ genericDetoast(Datum toast_ptr, int offset, int length)
 
 /* Delete toast function */
 static Datum
-genericDeleteToast(Datum value)
+genericDeleteToast(Datum value, bool is_speculative)
 {
 	struct varlena *result = 0;
-	toast_delete_datum(value, false);
+	toast_delete_datum(value, is_speculative);
 	return PointerGetDatum(result);
 }
 
