@@ -1,3 +1,5 @@
+#ifndef GENERIC_TOASTER_H
+#define GENERIC_TOASTER_H
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
@@ -37,31 +39,8 @@
 #include "utils/fmgroids.h"
 #include "access/toasterapi.h"
 
-/* Toast function */
-struct varlena* (genericToast) (Relation toast_rel,
-										   Datum value, Datum oldvalue,
-										   int max_inline_size);
-
-/* Detoast function */
-struct varlena* (genericDetoast) (Relation toast_rel,
-											 Datum toast_ptr,
-											 int offset, int length);
-
-/* Delete toast function */
-Datum (genericDeleteToast) (Relation toast_rel,
-								Datum value);
-
-/* Return virtual table of functions */
-Size (genericGetRawsize) (Datum toast_ptr);
-
-Size (genericGetSize) (Datum toast_ptr);
-
-/* Return virtual table of functions, optional */
-void * (genericGetVtable) (Datum toast_ptr);
-/* validate definition of a toaster Oid */
-bool (genericValidate) (Oid typeoid,
-										  char storage, char compression,
-										  Oid amoid, bool false_ok);
 HeapTuple
 heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 							int options);
+
+#endif
