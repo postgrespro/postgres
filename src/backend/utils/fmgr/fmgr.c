@@ -31,6 +31,7 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "access/toast_helper.h"
 
 /*
  * Hooks for function calls
