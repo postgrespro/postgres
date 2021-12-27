@@ -61,7 +61,7 @@ genericToast(Relation toast_rel, Datum value, Datum oldvalue,
 
 /* Detoast function */
 static struct varlena*
-genericDetoast(Relation toast_rel, Datum toast_ptr, int offset, int length)
+genericDetoast(Datum toast_ptr, int offset, int length)
 {
 	struct varlena *result = 0;
 	struct varlena *tvalue = (struct varlena*)DatumGetPointer(toast_ptr);
@@ -83,10 +83,10 @@ genericDetoast(Relation toast_rel, Datum toast_ptr, int offset, int length)
 
 /* Delete toast function */
 static Datum
-genericDeleteToast(Relation toast_rel, Datum value)
+genericDeleteToast(Datum value)
 {
 	struct varlena *result = 0;
-	toast_delete_datum(toast_rel, value, false);
+	toast_delete_datum(value, false);
 	return PointerGetDatum(result);
 }
 

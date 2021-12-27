@@ -311,7 +311,7 @@ toast_save_datum(Relation rel, Datum value,
  * ----------
  */
 void
-toast_delete_datum(Relation rel, Datum value, bool is_speculative)
+toast_delete_datum(Datum value, bool is_speculative)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 	struct varatt_external toast_pointer;
