@@ -48,43 +48,43 @@ do { \
  */
 
 /* Toast function */
-struct varlena* (genericToast) (Relation toast_rel,
-										   Datum value, Datum oldvalue,
-										   int max_inline_size)
-{	
-	struct varlena *result = NULL;
+static struct varlena*
+genericToast(Relation toast_rel, Datum value, Datum oldvalue,
+			 int options)
+{
+	Datum result;
 
-	if (value == (Datum) 0 || toast_rel == 0 )
-		return (Datum) 0;
+	Assert(toast_rel != NULL);
 
-	result = (struct varlena *) DatumGetPointer(toast_save_datum(toast_rel, value, (struct varlena *) DatumGetPointer(oldvalue), 0));
-	return result;
+	result = toast_save_datum(toast_rel, value,
+							  (struct varlena *) DatumGetPointer(oldvalue),
+							  options);
+	return (struct varlena*)DatumGetPointer(result);
 }
 
 /* Detoast function */
-struct varlena* (genericDetoast) (Relation toast_rel,
-											 Datum toast_ptr,
-											 int offset, int length)
+static struct varlena*
+genericDetoast(Relation toast_rel, Datum toast_ptr, int offset, int length)
 {
 	struct varlena *result = 0;
 	struct varatt_external *toast_pointer = (struct varatt_external*)DatumGetPointer(toast_ptr);
-	if( offset == 0 
+	if( offset == 0
 		&& length >= VARATT_EXTERNAL_GET_EXTSIZE(*toast_pointer) )
 	{
 		result = toast_fetch_datum((struct varlena *)(toast_pointer));
 	}
 	else
 	{
-		result = toast_fetch_datum_slice((struct varlena *)(toast_pointer), offset,
-						length);
+		result = toast_fetch_datum_slice((struct varlena *)(toast_pointer),
+										 offset, length);
 	}
 
 	return result;
 }
 
 /* Delete toast function */
-Datum (genericDeleteToast) (Relation toast_rel,
-								Datum value)
+static Datum
+genericDeleteToast(Relation toast_rel, Datum value)
 {
 	struct varlena *result = 0;
 	toast_delete_datum(toast_rel, value, false);
@@ -92,7 +92,8 @@ Datum (genericDeleteToast) (Relation toast_rel,
 }
 
 /* Return virtual table of functions */
-Size (genericGetRawsize) (Datum toast_ptr)
+static Size
+genericGetRawsize(Datum toast_ptr)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
 	Size		result;
@@ -149,7 +150,8 @@ Size (genericGetRawsize) (Datum toast_ptr)
 }
 
 /* Return virtual table of functions */
-Size (genericGetSize) (Datum toast_ptr)
+static Size
+genericGetSize(Datum toast_ptr)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
 	Size		result;
@@ -201,18 +203,17 @@ Size (genericGetSize) (Datum toast_ptr)
 }
 
 /* Return virtual table of functions, optional */
-void * (genericGetVtable) (Datum toast_ptr)
+static void *
+genericGetVtable(Datum toast_ptr)
 {
-	PG_RETURN_VOID();
+	return NULL;
 }
 
 /* validate definition of a toaster Oid */
-bool (genericValidate) (Oid typeoid,
-										  char storage, char compression,
-										  Oid amoid, bool false_ok)
+static bool
+genericValidate (Oid typeoid, char storage, char compression,
+				 Oid amoid, bool false_ok)
 {
-	if( CompressionMethodIsValid(compression) )
-		return false;
 	return true;
 }
 
