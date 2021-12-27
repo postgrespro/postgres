@@ -75,12 +75,31 @@ typedef struct varatt_external
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
 }			varatt_external;
 
+typedef union Int32AlignedBy2
+{
+	int32		int_val;
+	uint32		uint_val;
+	Oid			oid_val;
+	struct
+	{
+#ifdef WORDS_BIGENDIAN
+		uint16		hi;
+		uint16		lo;
+#else
+		uint16		lo;
+		uint16		hi;
+#endif
+	}			unaligned_val;
+} Int32AlignedBy2;
+
+#define UINT32_READ_UNALIGNED2(val) (((uint32) (val).hi << 16) | (val).lo)
+
 typedef struct varatt_custom
 {
-	int32		va_rawsize;		/* Original data size (includes header) */
-	uint32		va_toasterdatalen;/* Toaster data buffer size */
-	Oid			va_toasterid;	/* Toaster ID */
-	Oid			va_version;		/* Reserved field for version and alignment */
+	Int32AlignedBy2	va_rawsize;		/* Original data size (includes header) */
+	Int32AlignedBy2 va_toasterdatalen;/* Toaster data buffer size */
+	Int32AlignedBy2	va_toasterid;	/* Toaster ID */
+	Int32AlignedBy2	va_version;		/* Reserved field for version and alignment */
 	char		va_toasterdata[FLEXIBLE_ARRAY_MEMBER];	/* Custom toaster data */
 }			varatt_custom;
 
@@ -140,9 +159,11 @@ typedef enum vartag_external
 #define VARTAG_IS_EXPANDED(tag) \
 	(((tag) & ~1) == VARTAG_EXPANDED_RO)
 
-#define VARTAG_SIZE(tag) \
+#define VARTAG_SIZE(tag, ptr) \
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
+	 (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata) + \
+							  VARATT_CUSTOM_GET_DATA_SIZE(ptr) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
 	 (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata)	: \
 	 TrapMacro(true, "unrecognized TOAST vartag"))
@@ -336,7 +357,7 @@ typedef struct
 #define VARDATA_SHORT(PTR)					VARDATA_1B(PTR)
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
-#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR)))
+#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), PTR))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
 #define VARDATA_TOASTER(PTR)				VARDATA_1B_E(PTR)
 #define VARSIZE_TOASTER(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_CUSTOM_SIZE(VARTAG_EXTERNAL(PTR), PTR))
@@ -365,17 +386,19 @@ typedef struct
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
 
 #define VARATT_CUSTOM_GET_TOASTERID(PTR) \
-	(((Oid)((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_toasterid))
+	((Oid) UINT32_READ_UNALIGNED2(((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_toasterid.unaligned_val))
 
 #define VARATT_CUSTOM_GET_DATA_SIZE(PTR) \
-	(((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_toasterdatalen)
+	UINT32_READ_UNALIGNED2(((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_toasterdatalen.unaligned_val)
+
+#define VARATT_CUSTOM_GET_RAWSIZE(PTR) \
+	((int32) UINT32_READ_UNALIGNED2(((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_rawsize.unaligned_val))
 
 #define VARATT_CUSTOM_GET_DATA(PTR) \
 	(((varatt_custom *) VARDATA_EXTERNAL(PTR))->va_toasterdata)
 
 #define VARATT_CUSTOM_SIZE(datalen) \
 	((Size) VARHDRSZ_EXTERNAL + offsetof(varatt_custom, va_toasterdata) + (datalen))
-
 
 #define SET_VARSIZE(PTR, len)				SET_VARSIZE_4B(PTR, len)
 #define SET_VARSIZE_SHORT(PTR, len)			SET_VARSIZE_1B(PTR, len)
