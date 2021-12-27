@@ -35,6 +35,15 @@ do { \
 	((varatt_custom)(toast_pointer)).va_toasterdata = VARATT_CUSTOM_GET_DATA(attre) + VARATT_DUMMY_HDRSZ; \
 } while (0)
 
+
+#define VARATT_DUMMY_GET_POINTER(toast_pointer, attr) \
+do { \
+	varattrib_1b_e *attre = (varattrib_1b_e *) (attr); \
+	Assert(VARATT_IS_CUSTOM(attre)); \
+	Assert(VARSIZE_EXTERNAL(attre) == sizeof(toast_pointer) + VARHDRSZ_EXTERNAL); \
+	memcpy(&(toast_pointer), VARDATA_EXTERNAL(attre), sizeof(toast_pointer)); \
+} while (0)
+
 #define VARDATA_DUMMY(PTR)	(((varattrib_1b_e *) (PTR)) + VARATT_DUMMY_HDRSZ)
 
 #define DUMMY_TOAST_MAX_CHUNK_SIZE	\
@@ -51,30 +60,39 @@ do { \
 
 #define VARATT_IS_DUMMY(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
-#define MAX_DUMMY_CHUNK_SIZE 2048
+#define MAX_DUMMY_CHUNK_SIZE 1024
+
+static void
+dummyToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
+				 bool check, Oid OIDOldToast)
+{
+	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
+							  check, OIDOldToast);
+}
 
 /*
  * Dummy Detoast function, receives single varatt_custom pointer,
  * detoasts it to varlena.
  *
  */
+<<<<<<< HEAD
 Datum
 dummyDetoast(Relation toast_rel,
 								Datum toast_ptr,
 								int offset, int length)
+=======
+static struct varlena*
+dummyDetoast(Datum toast_ptr,
+				int offset, int length)
+>>>>>>> Dummy minor changes
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
-	struct varlena *result = 0;// = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
-	struct varatt_custom *customPtr;
+	struct varlena *result = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
 
 	Assert(VARATT_IS_EXTERNAL(attr));
 	Assert(VARATT_IS_CUSTOM(attr));
-
-	customPtr = palloc(VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen));
-	memcpy(customPtr, attr, (VARATT_DUMMY_HDRSZ + (((varatt_custom *)(attr))->va_toasterdatalen)));
-
 	/* Create regular varlena and return */
-	if((((varatt_custom *)(attr))->va_toasterdatalen) > MAX_DUMMY_CHUNK_SIZE)
+	if(VARATT_CUSTOM_GET_DATA_SIZE(attr) > MAX_DUMMY_CHUNK_SIZE)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
@@ -83,10 +101,10 @@ dummyDetoast(Relation toast_rel,
 								 MAX_DUMMY_CHUNK_SIZE)));
 		
 	}
-	memcpy(VARDATA(result), (((varatt_custom *)(attr))->va_toasterdata), 
-		(((varatt_custom *)(attr))->va_toasterdatalen));
-	pfree(customPtr);
-	return PointerGetDatum(result);
+	SET_VARSIZE(result, VARATT_CUSTOM_GET_DATA_SIZE(attr) + VARHDRSZ);
+	memcpy(VARDATA(result), VARATT_CUSTOM_GET_DATA(attr), VARATT_CUSTOM_GET_DATA_SIZE(attr));
+
+	return result;
 }
 
 /*
@@ -94,24 +112,19 @@ dummyDetoast(Relation toast_rel,
  * varlena size is limited to 1024 bytes
  */
 
-Datum
+static struct varlena*
 dummyToast(Relation toast_rel,
-								Datum value, Datum oldvalue,
-								int max_inline_size)
+					Datum value, Datum oldvalue,
+					int max_inline_size)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
-	struct varatt_custom *dptr = palloc(VARHDRSZ_EXTERNAL + ((varatt_custom *)(attr))->va_rawsize);
-	struct varlena *result = 0; 
-	int l_offset = 0;
-	int l_length = 0;
-	int cpy_size = 0;
-	int counter = 0;
-	struct varatt_custom *new_ptr;
+	/* struct varatt_custom *dptr = palloc(VARATT_CUSTOM_SIZE(VARATT_CUSTOM_GET_DATA_SIZE(attr)));*/
+	/* struct varlena *result = 0;  */
 
 	Assert(VARATT_IS_EXTERNAL(attr));
 	Assert(VARATT_IS_CUSTOM(attr));
 
-	if((((varatt_custom *)(attr))->va_toasterdatalen) > MAX_DUMMY_CHUNK_SIZE)
+	if(VARATT_CUSTOM_GET_DATA_SIZE(attr) > MAX_DUMMY_CHUNK_SIZE)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
@@ -120,22 +133,10 @@ dummyToast(Relation toast_rel,
 								 MAX_DUMMY_CHUNK_SIZE)));
 		
 	}
-
-	memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), ((varatt_custom *)(attr))->va_toasterdatalen);
-		return PointerGetDatum(result);
-
-	if(VARATT_IS_EXTERNAL(attr))
-	{
-		memcpy(dptr, (attr + VARHDRSZ_EXTERNAL), ((varatt_external *)(attr))->va_rawsize);
-		dptr->va_version = 1;
-		dptr->va_toasterdatalen = (((varatt_external *)(attr))->va_rawsize);
-		memcpy(result, dptr, sizeof(*dptr));
-		return PointerGetDatum(result);
-	}
-	else
-	{
-		PG_RETURN_VOID();
-	}
+	PG_RETURN_VOID();
+/*
+	memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return PointerGetDatum(dptr); */
 }
 
 /*
@@ -173,6 +174,7 @@ Datum
 dummy_toaster_handler(PG_FUNCTION_ARGS)
 {
 	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
+	tsrroutine->init = dummyToastInit;
 	tsrroutine->toast = dummyToast;
 	tsrroutine->detoast = dummyDetoast;
 	tsrroutine->get_vtable = dummyGetVtable;
