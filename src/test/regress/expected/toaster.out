@@ -1,4 +1,7 @@
 CREATE TOASTER tsttoaster HANDLER default_toaster_handler;
+CREATE TOASTER IF NOT EXISTS tsttoaster HANDLER default_toaster_handler;
+NOTICE:  toaster "tsttoaster" already exists, skipping
+CREATE TOASTER IF NOT EXISTS tsttoaster1 HANDLER default_toaster_handler;
 COMMENT ON TOASTER tsttoaster IS 'tsttoaster is a clone of default toaster';
 CREATE TABLE tsttsrtbl_failed (
 	t text TOASTER tsttoaster TOASTER tsttoaster;

@@ -1,6 +1,8 @@
 
 
 CREATE TOASTER tsttoaster HANDLER default_toaster_handler;
+CREATE TOASTER IF NOT EXISTS tsttoaster HANDLER default_toaster_handler;
+CREATE TOASTER IF NOT EXISTS tsttoaster1 HANDLER default_toaster_handler;
 
 COMMENT ON TOASTER tsttoaster IS 'tsttoaster is a clone of default toaster';
 
