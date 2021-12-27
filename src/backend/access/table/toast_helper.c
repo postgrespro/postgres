@@ -270,7 +270,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 
 	if ( ttc->ttc_attr[attribute].tai_toasterid != InvalidOid )
 	{
-		TsrRoutine *toaster = GetTsrRoutineByOid(ttc->ttc_attr[attribute].tai_toasterid, false);
+		TsrRoutine *toaster = SearchTsrCache(ttc->ttc_attr[attribute].tai_toasterid);
 		hoff = SizeofHeapTupleHeader;
 		if ((ttc->ttc_flags & TOAST_HAS_NULLS) != 0)
 			hoff += BITMAPLEN(ttc->ttc_rel->rd_att->natts);
@@ -559,8 +559,8 @@ detoast_external_attr(struct varlena *attr)
 		/*
 		result = toast_fetch_datum(attr);
 		*/
-		TsrRoutine *toaster = GetTsrRoutineByOid(DEFAULT_TOASTER_OID, false);
-		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
+		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
+		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -602,8 +602,8 @@ detoast_external_attr(struct varlena *attr)
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
-		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr)));
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 
 	else
@@ -640,7 +640,7 @@ detoast_attr(struct varlena *attr)
 		/*
 		attr = toast_fetch_datum(attr);
 		*/
-		TsrRoutine *toaster = GetTsrRoutineByOid(DEFAULT_TOASTER_OID, false);
+		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 		attr = toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 
 		/* If it's compressed, decompress it */
@@ -711,8 +711,8 @@ detoast_attr(struct varlena *attr)
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
-		return (struct varlena *) toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 
 	return attr;
@@ -754,14 +754,14 @@ detoast_attr_slice(struct varlena *attr,
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
 		struct varatt_external toast_pointer;
-		TsrRoutine *toaster = GetTsrRoutineByOid(DEFAULT_TOASTER_OID, false);
+		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 
 		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
 		/* fast path for non-compressed external datums */
 		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
-			return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength));
+			return toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength);
 
 			/* New API */
 			/* return toast_fetch_datum_slice(attr, sliceoffset, slicelength);  */
@@ -829,8 +829,8 @@ detoast_attr_slice(struct varlena *attr,
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = GetTsrRoutineByOid(toasterid, false);
-		return (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength));
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+		return toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength);
 	}
 
 	else
