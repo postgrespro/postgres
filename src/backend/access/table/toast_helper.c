@@ -314,13 +314,28 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 	if ((ttc->ttc_flags & TOAST_NEEDS_DELETE_OLD) != 0)
 	{
 		int			i;
+		Oid toasterid = InvalidOid;
 
 		for (i = 0; i < numAttrs; i++)
 		{
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-				toast_delete_datum(ttc->ttc_rel, ttc->ttc_oldvalues[i], false);
+			{
+				if (VARATT_IS_EXTERNAL(PointerGetDatum(ttc->ttc_oldvalues[i])))
+					toasterid = DEFAULT_TOASTER_OID;
+				else if (VARATT_IS_CUSTOM(PointerGetDatum(ttc->ttc_oldvalues[i])))
+					toasterid = VARATT_CUSTOM_GET_TOASTERID(ttc->ttc_oldvalues[i]);
+
+				if(toasterid != InvalidOid)
+				{
+
+					TsrRoutine *toaster = SearchTsrCache(toasterid);
+					toaster->deltoast(ttc->ttc_oldvalues[i]);
+
+/*					toast_delete_datum(ttc->ttc_oldvalues[i], false);*/
+				}
+			}
 		}
 	}
 }
@@ -354,7 +369,7 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 			if(toasterid != InvalidOid)
 			{
 				TsrRoutine *toaster = SearchTsrCache(toasterid);
-				toaster->deltoast(rel, value);
+				toaster->deltoast(value);
 			}
 		}
 	}
@@ -532,7 +547,7 @@ detoast_external_attr(struct varlena *attr)
 		result = toast_fetch_datum(attr);
 		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
-		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -575,7 +590,7 @@ detoast_external_attr(struct varlena *attr)
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 
 	else
@@ -613,7 +628,7 @@ detoast_attr(struct varlena *attr)
 		attr = toast_fetch_datum(attr);
 		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
-		attr = toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		attr = toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 
 		/* If it's compressed, decompress it */
 		if (VARATT_IS_COMPRESSED(attr))
@@ -684,7 +699,7 @@ detoast_attr(struct varlena *attr)
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		return toaster->detoast(NULL, PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 
 	return attr;
@@ -733,7 +748,7 @@ detoast_attr_slice(struct varlena *attr,
 		/* fast path for non-compressed external datums */
 		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
-			return toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength);
+			return toaster->detoast(PointerGetDatum(attr), sliceoffset, slicelength);
 
 			/* New API */
 			/* return toast_fetch_datum_slice(attr, sliceoffset, slicelength);  */
@@ -766,7 +781,7 @@ detoast_attr_slice(struct varlena *attr,
 			 * automatically).
 			 */
 
-			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, max_size));
+			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, max_size));
 
 			/*
 			preslice = toast_fetch_datum_slice(attr, 0, max_size);
@@ -777,7 +792,7 @@ detoast_attr_slice(struct varlena *attr,
 			struct varatt_external toast_pointer;
 			VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
-			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(NULL, PointerGetDatum(attr), 0, -1));
+			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, -1));
 			/* preslice = toast_fetch_datum(attr); */
 		}
 	}
@@ -802,7 +817,7 @@ detoast_attr_slice(struct varlena *attr,
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		return toaster->detoast(NULL, PointerGetDatum(attr), sliceoffset, slicelength);
+		return toaster->detoast(PointerGetDatum(attr), sliceoffset, slicelength);
 	}
 
 	else
