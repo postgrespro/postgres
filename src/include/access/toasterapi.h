@@ -21,12 +21,15 @@
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
 										   Datum value, Datum oldvalue,
-										   int max_inline_size);
+										   int options);
 
 /* Detoast function */
 typedef struct varlena* (*detoast_function) (Relation toast_rel,
 											 Datum toast_ptr,
 											 int offset, int length);
+
+/* Delete toast function */
+typedef Datum (*del_toast_function) (Relation toast_rel, Datum value);
 
 /* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
@@ -47,6 +50,7 @@ typedef struct TsrRoutine
 	/* interface functions */
 	toast_function toast;
 	detoast_function detoast;
+	del_toast_function deltoast;
 	get_vtable_function get_vtable;
 	toastervalidate_function toastervalidate;
 } TsrRoutine;
