@@ -35,9 +35,7 @@
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/toast_helper.h"
-#include "access/toast_internals.h"
 #include "utils/fmgroids.h"
-#include "access/toasterapi.h"
 
 HeapTuple
 heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
