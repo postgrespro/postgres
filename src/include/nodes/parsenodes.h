@@ -2548,6 +2548,7 @@ typedef struct CreateToasterStmt
 	NodeTag		type;
 	char	   *tsrname;			/* toaster name */
 	List	   *handler_name;	/* handler function name */
+	bool		if_not_exists;
 } CreateToasterStmt;
 
 /* ----------------------

@@ -64,10 +64,21 @@ CreateToaster(CreateToasterStmt *stmt)
 							CStringGetDatum(stmt->tsrname));
 	if (OidIsValid(tsroid))
 	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("toaster \"%s\" already exists",
-						stmt->tsrname)));
+		if (stmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("toaster \"%s\" already exists, skipping",
+							stmt->tsrname)));
+
+			table_close(rel, RowExclusiveLock);
+			return InvalidObjectAddress;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("toaster \"%s\" already exists",
+							stmt->tsrname)));
 	}
 
 	/*
