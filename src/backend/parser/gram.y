@@ -3611,7 +3611,7 @@ ColConstraint:
 					$$ = (Node *) n;
 				}
 			| TOASTER name
-				{ 
+				{
 					/*
 					 * Note: the toaster name is momentarily included in
 					 * the list built by ColQualList, but we split it out
