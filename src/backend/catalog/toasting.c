@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/heapam.h"
+#include "access/toasterapi.h"
 #include "access/toast_compression.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
@@ -38,9 +39,6 @@
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
 									 Oid OIDOldToast);
-static bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
-							   Datum reloptions, LOCKMODE lockmode, bool check,
-							   Oid OIDOldToast);
 static bool needs_toast_table(Relation rel);
 
 
@@ -81,12 +79,36 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 						 bool check, Oid OIDOldToast)
 {
 	Relation	rel;
+	int			i;
+	TupleDesc	tupDesc;
+	List	   *tsrOids = NIL;
 
 	rel = table_open(relOid, lockmode);
 
-	/* create_toast_table does all the work */
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
-							  check, OIDOldToast);
+	tupDesc = RelationGetDescr(rel);
+
+	/*
+	 * Create toaster data storage (heap table for generic toaster), once per
+	 * table for each toster.
+	 */
+	for(i = 0; i < tupDesc->natts; i++)
+	{
+		FormData_pg_attribute   *attr = TupleDescAttr(tupDesc, i);
+		TsrRoutine				*tsr;
+
+		if (attr->attisdropped || !OidIsValid(attr->atttoaster))
+			continue;
+
+		/* such toaster is already created its storage */
+		if (list_member_oid(tsrOids, attr->atttoaster))
+			continue;
+
+		tsr = SearchTsrCache(attr->atttoaster);
+
+		tsr->init(rel, reloptions, lockmode, check, OIDOldToast);
+
+		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
+	}
 
 	table_close(rel, NoLock);
 }
@@ -119,13 +141,13 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 
 
 /*
- * create_toast_table --- internal workhorse
+ * create_toast_table --- do main work
  *
  * rel is already opened and locked
  * toastOid and toastIndexOid are normally InvalidOid, but during
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
-static bool
+bool
 create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				   Datum reloptions, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)

@@ -41,8 +41,17 @@ do { \
 } while (0)
 
 /*
- * Callback function signatures --- see indexam.sgml for more info.
+ * Callback function signatures --- see toaster.sgml for more info.
  */
+
+static void
+genericToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
+				 bool check, Oid OIDOldToast)
+{
+	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
+							  check, OIDOldToast);
+}
+
 
 /* Toast function */
 static struct varlena*
@@ -103,6 +112,7 @@ default_toaster_handler(PG_FUNCTION_ARGS)
 {
 	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
 
+	tsrroutine->init = genericToastInit;
 	tsrroutine->toast = genericToast;
 	tsrroutine->detoast = genericDetoast;
 	tsrroutine->deltoast = genericDeleteToast;
