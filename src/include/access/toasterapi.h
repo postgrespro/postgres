@@ -19,7 +19,8 @@
  */
 
 /* Create toast storage */
-void (*toast_init)(Relation *rel);
+typedef void (*toast_init)(Relation *rel, Datum reloptions, LOCKMODE lockmode,
+						   bool check, Oid OIDOldToast);
 
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
