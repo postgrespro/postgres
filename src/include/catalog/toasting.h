@@ -27,4 +27,9 @@ extern void AlterTableCreateToastTable(Oid relOid, Datum reloptions,
 extern void BootstrapToastTable(char *relName,
 								Oid toastOid, Oid toastIndexOid);
 
+/* generic toaster access */
+extern bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
+							   Datum reloptions, LOCKMODE lockmode, bool check,
+							   Oid OIDOldToast);
+
 #endif							/* TOASTING_H */
