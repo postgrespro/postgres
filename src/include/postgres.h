@@ -307,6 +307,8 @@ typedef struct
 #define VARHDRSZ_COMPRESSED		offsetof(varattrib_4b, va_compressed.va_data)
 #define VARHDRSZ_SHORT			offsetof(varattrib_1b, va_data)
 #define VARHDRSZ_TOASTER		offsetof(varattrib_1b_e, va_toasterdata)
+#define VARHDRSZ_CUSTOM			offsetof(varattrib_1b_e, va_toasterdata)
+
 
 #define VARATT_SHORT_MAX		0x7F
 #define VARATT_CAN_MAKE_SHORT(PTR) \
@@ -340,6 +342,7 @@ typedef struct
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
 #define VARDATA_TOASTER(PTR)				VARDATA_1B_E(PTR)
 #define VARSIZE_TOASTER(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_CUSTOM_SIZE(VARTAG_EXTERNAL(PTR), PTR))
+#define VARSIZE_CUSTOM(PTR)					(VARHDRSZ_EXTERNAL + VARTAG_CUSTOM_SIZE(VARTAG_EXTERNAL(PTR), PTR))
 
 #define VARATT_IS_COMPRESSED(PTR)			VARATT_IS_4B_C(PTR)
 #define VARATT_IS_EXTERNAL(PTR)				VARATT_IS_1B_E(PTR)
