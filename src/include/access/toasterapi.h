@@ -35,14 +35,12 @@ typedef struct varlena *(*update_toast_function) (Relation toast_rel,
 												  Oid toasterid,
 												  Datum newvalue,
 												  Datum oldvalue,
-												  char cmethod,
 												  int options);
 
 /* Copy toast function, optional */
 typedef struct varlena *(*copy_toast_function) (Relation toast_rel,
 												Oid toasterid,
 												Datum newvalue,
-												char cmethod,
 												int options);
 
 /* Detoast function */
