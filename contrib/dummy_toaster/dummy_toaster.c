@@ -14,7 +14,6 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
-#include "access/detoast.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
@@ -139,7 +138,6 @@ dummyToasterValidate(Oid typeoid,  char storage, char compression,
 					 Oid amoid, bool false_ok)
 {
 	bool result = true;
-
 	return result;
 }
 
