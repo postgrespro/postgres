@@ -49,7 +49,7 @@ PG_FUNCTION_INFO_V1(dummy_toaster_handler);
  */
 static struct varlena*
 dummyDetoast(Datum toast_ptr,
-				int offset, int length)
+			 int offset, int length)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(toast_ptr);
 	struct varlena *result;
@@ -71,12 +71,11 @@ dummyDetoast(Datum toast_ptr,
  */
 
 static struct varlena*
-dummyToast(Relation toast_rel,
-					Datum value, Datum oldvalue,
-					int max_inline_size)
+dummyToast(Relation toast_rel, Oid toasterid,
+		   Datum value, Datum oldvalue,
+		   int max_inline_size,  int options)
 {
 	struct varlena			*attr;
-	struct varatt_custom	*toast_pointer;
 	struct varlena			*result;
 	int	len;
 
@@ -88,24 +87,28 @@ dummyToast(Relation toast_rel,
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg_internal("Data <%d> size exceeds MAX_DUMMY_CHUNK_SIZE <%d>",
-								 (((varatt_custom *)(attr))->va_toasterdatalen),
-								 MAX_DUMMY_CHUNK_SIZE)));
+								 (int)VARSIZE_ANY_EXHDR(attr), MAX_DUMMY_CHUNK_SIZE)));
 
 	}
 
 	len = VARATT_CUSTOM_SIZE(VARSIZE_ANY_EXHDR(attr));
+
+	if (len > max_inline_size)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("Data <%d> size exceeds max inline size <%d>",
+								 len, max_inline_size)));
+	}
+
 	result = palloc(len);
+
 	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
-	Assert(VARATT_IS_EXTERNAL(result));
-	Assert(VARATT_IS_CUSTOM(result));
+	VARATT_CUSTOM_SET_DATA_RAW_SIZE(result, VARSIZE_ANY_EXHDR(attr) + VARHDRSZ);
+	VARATT_CUSTOM_SET_DATA_SIZE(result, len);
+	VARATT_CUSTOM_SET_TOASTERID(result, get_toaster_oid("dummy_toaster", false));
 
-	toast_pointer = VARATT_CUSTOM_GET_TOASTPOINTER(result);
-	toast_pointer->va_rawsize = VARSIZE_ANY_EXHDR(attr) + VARHDRSZ;
-	toast_pointer->va_toasterdatalen = len;
-	toast_pointer->va_toasterid = get_toaster_oid("dummy_toaster", false);
-	toast_pointer->va_version = 0xBADC0DED;
-
-	memcpy(toast_pointer->va_toasterdata, VARDATA_ANY(attr),
+	memcpy(VARATT_CUSTOM_GET_DATA(result), VARDATA_ANY(attr),
 		   VARSIZE_ANY_EXHDR(attr));
 
 	if ((char*)attr != DatumGetPointer(value))
@@ -162,6 +165,8 @@ dummy_toaster_handler(PG_FUNCTION_ARGS)
 	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
 	tsrroutine->init = dummyToastInit;
 	tsrroutine->toast = dummyToast;
+	tsrroutine->update_toast = NULL;
+	tsrroutine->copy_toast = NULL;
 	tsrroutine->detoast = dummyDetoast;
 <<<<<<< HEAD
 	tsrroutine->get_vtable = dummyGetVtable;
