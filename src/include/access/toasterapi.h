@@ -32,7 +32,7 @@ typedef struct varlena* (*detoast_function) (Datum toast_ptr,
 											 int offset, int length);
 
 /* Delete toast function */
-typedef Datum (*del_toast_function) (Datum value, bool is_speculative);
+typedef void (*del_toast_function) (Datum value, bool is_speculative);
 
 /* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
