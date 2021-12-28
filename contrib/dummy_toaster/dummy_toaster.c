@@ -99,7 +99,7 @@ dummyToast(Relation toast_rel, Oid toasterid,
 
 	len = VARATT_CUSTOM_SIZE(VARSIZE_ANY_EXHDR(attr));
 
-	if (len > max_inline_size)
+	if (max_inline_size > 0 && len > max_inline_size)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
@@ -112,7 +112,7 @@ dummyToast(Relation toast_rel, Oid toasterid,
 	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
 	VARATT_CUSTOM_SET_DATA_RAW_SIZE(result, VARSIZE_ANY_EXHDR(attr) + VARHDRSZ);
 	VARATT_CUSTOM_SET_DATA_SIZE(result, len);
-	VARATT_CUSTOM_SET_TOASTERID(result, get_toaster_oid("dummy_toaster", false));
+	VARATT_CUSTOM_SET_TOASTERID(result, toasterid);
 
 	memcpy(VARATT_CUSTOM_GET_DATA(result), VARDATA_ANY(attr),
 		   VARSIZE_ANY_EXHDR(attr));
