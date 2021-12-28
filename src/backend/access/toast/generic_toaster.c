@@ -32,14 +32,6 @@
 #include "utils/fmgroids.h"
 #include "access/generic_toaster.h"
 
-
-#define VARATT_CUSTOM_TOASTER_GET_DATA(toast_pointer, attr) \
-do { \
-	varattrib_1b_e *attre = (varattrib_1b_e *) (attr); \
-	memcpy(&(toast_pointer), VARATT_CUSTOM_GET_DATA(attre), VARHDRSZ_EXTERNAL); \
-	((varatt_custom)(toast_pointer)).va_toasterdata = VARATT_CUSTOM_GET_DATA(attre) + VARHDRSZ_EXTERNAL; \
-} while (0)
-
 /*
  * Callback function signatures --- see toaster.sgml for more info.
  */
@@ -55,8 +47,9 @@ genericToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
 
 /* Toast function */
 static struct varlena*
-genericToast(Relation toast_rel, Datum value, Datum oldvalue,
-			 int options)
+genericToast(Relation toast_rel, Oid toasterid,
+			 Datum value, Datum oldvalue,
+			 int max_inline_size, int options)
 {
 	Datum result;
 
@@ -113,6 +106,8 @@ default_toaster_handler(PG_FUNCTION_ARGS)
 
 	tsrroutine->init = genericToastInit;
 	tsrroutine->toast = genericToast;
+	tsrroutine->update_toast = NULL;
+	tsrroutine->copy_toast = NULL;
 	tsrroutine->detoast = genericDetoast;
 	tsrroutine->deltoast = genericDeleteToast;
 	tsrroutine->get_vtable = NULL;
