@@ -14,7 +14,6 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
-#include "access/detoast.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
@@ -75,9 +74,7 @@ dummyToast(Relation toast_rel, Oid toasterid,
 		   Datum value, Datum oldvalue,
 		   int max_inline_size,  int options)
 {
-	struct varlena			*attr;
-	struct varlena			*result;
-	int	len;
+	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
 
 	/* dummy: simplify work as possible */
 	attr = pg_detoast_datum((struct varlena*)DatumGetPointer(value));
@@ -90,30 +87,13 @@ dummyToast(Relation toast_rel, Oid toasterid,
 								 (int)VARSIZE_ANY_EXHDR(attr), MAX_DUMMY_CHUNK_SIZE)));
 
 	}
+	PG_RETURN_VOID();
+}
 
-	len = VARATT_CUSTOM_SIZE(VARSIZE_ANY_EXHDR(attr));
-
-	if (max_inline_size > 0 && len > max_inline_size)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg_internal("Data <%d> size exceeds max inline size <%d>",
-								 len, max_inline_size)));
-	}
-
-	result = palloc(len);
-
-	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
-	VARATT_CUSTOM_SET_DATA_RAW_SIZE(result, VARSIZE_ANY_EXHDR(attr) + VARHDRSZ);
-	VARATT_CUSTOM_SET_DATA_SIZE(result, len);
-	VARATT_CUSTOM_SET_TOASTERID(result, toasterid);
-
-	memcpy(VARATT_CUSTOM_GET_DATA(result), VARDATA_ANY(attr),
-		   VARSIZE_ANY_EXHDR(attr));
-
-	if ((char*)attr != DatumGetPointer(value))
-		pfree(attr);
-
+static void
+dummyDelete(Datum value, bool is_speculative)
+{
+	bool result = true;
 	return result;
 }
 
@@ -123,20 +103,12 @@ dummyToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
 {
 }
 
-static void
-dummyDelete(Datum value, bool is_speculative)
+static bool
+dummyToasterValidate(Oid typeoid,  char storage, char compression,
+					 Oid amoid, bool false_ok)
 {
-}
-
-/*
- * Dummy Validate, always returns True
- * 
- */
-
-bool
-dummyToasterValidate(Oid toasteroid, Oid typeoid,  Oid amoid, bool false_ok)
-{
-	PG_RETURN_VOID();
+	bool result = true;
+	return result;
 }
 
 

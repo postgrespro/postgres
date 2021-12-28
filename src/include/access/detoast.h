@@ -19,6 +19,7 @@
  * that assumes the datum contents are aligned.  Introducing an explicit
  * intermediate "varattrib_1b_e *" variable seems to fix it.
  */
+/*
 #define VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr) \
 do { \
 	varattrib_1b_e *attre = (varattrib_1b_e *) (attr); \
@@ -27,10 +28,8 @@ do { \
 	memcpy(&(toast_pointer), VARDATA_EXTERNAL(attre), sizeof(toast_pointer)); \
 } while (0)
 
-/* Size of an EXTERNAL datum that contains a standard TOAST pointer */
 #define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
 
-/* Size of an EXTERNAL datum that contains an indirection pointer */
 #define INDIRECT_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_indirect))
 
 #define VARATT_TOASTER_GET_POINTER(toast_pointer, attr) \
@@ -41,7 +40,6 @@ do { \
 	memcpy(&(toast_pointer), VARDATA_TOASTER(attre), sizeof(toast_pointer)); \
 } while (0)
 
-/* Size of an EXTERNAL datum that contains a custom TOAST pointer */
 #define TOASTER_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_custom))
-
+*/
 #endif							/* DETOAST_H */
