@@ -75,9 +75,10 @@ genericDetoast(Datum toast_ptr, int offset, int length)
 	struct varlena *result = 0;
 	struct varlena *tvalue = (struct varlena*)DatumGetPointer(toast_ptr);
 	struct varatt_external toast_pointer;
+
 	VARATT_EXTERNAL_GET_POINTER(toast_pointer, tvalue);
-	if( offset == 0
-		&& length >= VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer) )
+	if(offset == 0
+	   && (length < 0 || length >= VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer)))
 	{
 		result = toast_fetch_datum(tvalue);
 	}

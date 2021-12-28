@@ -537,7 +537,7 @@ detoast_external_attr(struct varlena *attr)
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
-		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return toaster->detoast(PointerGetDatum(attr), 0, -1);
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
 	{
@@ -580,7 +580,7 @@ detoast_external_attr(struct varlena *attr)
 	{
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		return toaster->detoast(PointerGetDatum(attr), 0, -1);
 	}
 
 	else
@@ -614,7 +614,7 @@ detoast_attr(struct varlena *attr)
 		 * This is an externally stored datum --- fetch it back from there
 		 */
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
-		attr = toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
+		attr = toaster->detoast(PointerGetDatum(attr), 0, -1);
 
 		/* If it's compressed, decompress it */
 		if (VARATT_IS_COMPRESSED(attr))
@@ -667,6 +667,12 @@ detoast_attr(struct varlena *attr)
 		 */
 		attr = toast_decompress_datum(attr);
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+		attr = toaster->detoast(PointerGetDatum(attr), 0, -1);
+	}
 	else if (VARATT_IS_SHORT(attr))
 	{
 		/*
@@ -680,12 +686,6 @@ detoast_attr(struct varlena *attr)
 		SET_VARSIZE(new_attr, new_size);
 		memcpy(VARDATA(new_attr), VARDATA_SHORT(attr), data_size);
 		attr = new_attr;
-	}
-	else if (VARATT_IS_CUSTOM(attr))
-	{
-		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(attr);
-		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
 
 	return attr;
@@ -764,7 +764,7 @@ detoast_attr_slice(struct varlena *attr,
 			 * automatically).
 			 */
 
-			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, max_size));
+			preslice = toaster->detoast(PointerGetDatum(attr), 0, max_size);
 		}
 		else
 		{
@@ -890,6 +890,13 @@ toast_raw_datum_size(Datum value)
 		/* here, va_rawsize is just the payload size */
 		result = VARDATA_COMPRESSED_GET_EXTSIZE(attr) + VARHDRSZ;
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		/*
+		 * Custom toaster raw size of data
+		 */
+		result = VARATT_CUSTOM_GET_DATA_RAW_SIZE(value);
+	}
 	else if (VARATT_IS_SHORT(attr))
 	{
 		/*
@@ -897,13 +904,6 @@ toast_raw_datum_size(Datum value)
 		 * callers of this function will be confused.
 		 */
 		result = VARSIZE_SHORT(attr) - VARHDRSZ_SHORT + VARHDRSZ;
-	}
-	else if (VARATT_IS_CUSTOM(attr))
-	{
-		/*
-		 * Custom toaster pointer size
-		 */
-		result = VARATT_CUSTOM_GET_DATA_SIZE(attr) + VARHDRSZ_EXTERNAL;
 	}
 	else
 	{
@@ -952,13 +952,13 @@ toast_datum_size(Datum value)
 	{
 		result = EOH_get_flat_size(DatumGetEOHP(value));
 	}
-	else if (VARATT_IS_SHORT(attr))
-	{
-		result = VARSIZE_SHORT(attr);
-	}
 	else if (VARATT_IS_CUSTOM(attr))
 	{
 		result = VARATT_CUSTOM_GET_DATA_SIZE(attr);
+	}
+	else if (VARATT_IS_SHORT(attr))
+	{
+		result = VARSIZE_SHORT(attr);
 	}
 	else
 	{
