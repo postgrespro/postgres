@@ -32,7 +32,7 @@
 #include "postgres.h"
 
 #include "access/brin_tuple.h"
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "access/toast_internals.h"

@@ -13,13 +13,13 @@
 
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/table.h"
 #include "access/toast_internals.h"
-#include "access/toast_table.h"
+#include "catalog/toasting.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "common/pg_lzcompress.h"

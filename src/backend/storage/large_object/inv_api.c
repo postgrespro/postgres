@@ -32,7 +32,7 @@
 
 #include <limits.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"

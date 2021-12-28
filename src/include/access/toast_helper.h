@@ -17,7 +17,6 @@
 #include "utils/rel.h"
 #include "access/toasterapi.h"
 #include "access/toast_internals.h"
-#include "access/detoast.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "common/int.h"

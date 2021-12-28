@@ -14,7 +14,7 @@
 
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/table.h"
 #include "access/toast_helper.h"
 #include "access/toast_internals.h"
@@ -410,7 +410,18 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-				toast_delete_external_datum(PointerGetDatum(ttc->ttc_oldvalues[i]), false);
+			{
+				if (VARATT_IS_EXTERNAL(PointerGetDatum(ttc->ttc_oldvalues[i])))
+					toasterid = DEFAULT_TOASTER_OID;
+				else if (VARATT_IS_CUSTOM(PointerGetDatum(ttc->ttc_oldvalues[i])))
+					toasterid = VARATT_CUSTOM_GET_TOASTERID(ttc->ttc_oldvalues[i]);
+
+				if(toasterid != InvalidOid)
+				{
+					TsrRoutine *toaster = SearchTsrCache(toasterid);
+					toaster->deltoast(ttc->ttc_oldvalues[i], false);
+				}
+			}
 		}
 	}
 }
@@ -599,13 +610,6 @@ detoast_external_attr(struct varlena *attr)
 
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
-		/*
-		 * This is an external stored plain value
-		 */
-		/* Redirect to new API */
-		/*
-		result = toast_fetch_datum(attr);
-		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 		return toaster->detoast(PointerGetDatum(attr), 0, -1);
 	}
@@ -682,10 +686,6 @@ detoast_attr(struct varlena *attr)
 		/*
 		 * This is an externally stored datum --- fetch it back from there
 		 */
-		/* Redirect via new API */
-		/*
-		attr = toast_fetch_datum(attr);
-		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 		attr = toaster->detoast(PointerGetDatum(attr), 0, -1);
 
@@ -808,9 +808,6 @@ detoast_attr_slice(struct varlena *attr,
 		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
 			return toaster->detoast(PointerGetDatum(attr), sliceoffset, slicelength);
-
-			/* New API */
-			/* return toast_fetch_datum_slice(attr, sliceoffset, slicelength);  */
 		}
 
 		/*
@@ -840,11 +837,7 @@ detoast_attr_slice(struct varlena *attr,
 			 * automatically).
 			 */
 
-			preslice = toaster->detoast(PointerGetDatum(attr), 0, max_size);
-
-			/*
-			preslice = toast_fetch_datum_slice(attr, 0, max_size);
-			*/
+			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, max_size));
 		}
 		else
 		{
@@ -852,7 +845,6 @@ detoast_attr_slice(struct varlena *attr,
 			VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
 			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, -1));
-			/* preslice = toast_fetch_datum(attr); */
 		}
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
