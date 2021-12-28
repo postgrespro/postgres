@@ -5,8 +5,21 @@ CREATE TABLE tst_failed (
 );
 
 CREATE TABLE tst1 (
-	t text TOASTER dummy_toaster
+	f text STORAGE plain,
+	t text STORAGE external TOASTER dummy_toaster,
+	l int
 );
+
+SELECT  setseed(0);
+
+INSERT INTO tst1
+	SELECT repeat('a', 2000)::text as f, t.t as t, length(t.t) as l FROM
+		(SELECT
+			repeat(random()::text, (20+30*random())::int) as t
+		 FROM
+			generate_series(1, 32) as  i) as t;
+
+SELECT length(t), l, length(t) = l FROM tst1 ORDER BY 1, 3;
 
 SELECT attnum, attname, atttypid, attstorage, tsrname 
 	FROM pg_attribute, pg_toaster t
