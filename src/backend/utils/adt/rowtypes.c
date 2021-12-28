@@ -16,7 +16,7 @@
 
 #include <ctype.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"

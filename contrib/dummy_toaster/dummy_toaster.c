@@ -14,7 +14,6 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "access/toasterapi.h"
-#include "access/detoast.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
@@ -137,8 +136,6 @@ dummyToast(Relation toast_rel,
 					int max_inline_size)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
-	/* struct varatt_custom *dptr = palloc(VARATT_CUSTOM_SIZE(VARATT_CUSTOM_GET_DATA_SIZE(attr)));*/
-	/* struct varlena *result = 0;  */
 
 	Assert(VARATT_IS_EXTERNAL(attr));
 	Assert(VARATT_IS_CUSTOM(attr));
@@ -153,9 +150,6 @@ dummyToast(Relation toast_rel,
 		
 	}
 	PG_RETURN_VOID();
-/*
-	memcpy(dptr, VARATT_CUSTOM_GET_DATA(attr), VARATT_CUSTOM_GET_DATA_SIZE(attr));
-		return PointerGetDatum(dptr); */
 }
 
 static bool
@@ -163,7 +157,6 @@ dummyToasterValidate(Oid typeoid,  char storage, char compression,
 					 Oid amoid, bool false_ok)
 {
 	bool result = true;
-
 	return result;
 }
 

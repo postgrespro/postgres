@@ -7,7 +7,7 @@
 #include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "utils/fmgrprotos.h"
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "fmgr.h"
 #include "access/htup_details.h"
 #include "utils/builtins.h"
@@ -91,12 +91,10 @@ genericDetoast(Datum toast_ptr, int offset, int length)
 }
 
 /* Delete toast function */
-static Datum
+static void
 genericDeleteToast(Datum value, bool is_speculative)
 {
-	struct varlena *result = 0;
 	toast_delete_datum(value, is_speculative);
-	return PointerGetDatum(result);
 }
 
 /* validate definition of a toaster Oid */

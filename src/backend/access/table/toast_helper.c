@@ -14,7 +14,7 @@
 
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/table.h"
 #include "access/toast_helper.h"
 #include "access/toast_internals.h"
@@ -329,11 +329,8 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 
 				if(toasterid != InvalidOid)
 				{
-
 					TsrRoutine *toaster = SearchTsrCache(toasterid);
 					toaster->deltoast(ttc->ttc_oldvalues[i], false);
-
-/*					toast_delete_datum(ttc->ttc_oldvalues[i], false);*/
 				}
 			}
 		}
@@ -539,13 +536,6 @@ detoast_external_attr(struct varlena *attr)
 
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
-		/*
-		 * This is an external stored plain value
-		 */
-		/* Redirect to new API */
-		/*
-		result = toast_fetch_datum(attr);
-		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 		return toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 	}
@@ -623,10 +613,6 @@ detoast_attr(struct varlena *attr)
 		/*
 		 * This is an externally stored datum --- fetch it back from there
 		 */
-		/* Redirect via new API */
-		/*
-		attr = toast_fetch_datum(attr);
-		*/
 		TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
 		attr = toaster->detoast(PointerGetDatum(attr), 0, VARATT_CUSTOM_GET_DATA_SIZE(attr));
 
@@ -749,9 +735,6 @@ detoast_attr_slice(struct varlena *attr,
 		if (!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
 			return toaster->detoast(PointerGetDatum(attr), sliceoffset, slicelength);
-
-			/* New API */
-			/* return toast_fetch_datum_slice(attr, sliceoffset, slicelength);  */
 		}
 
 		/*
@@ -782,10 +765,6 @@ detoast_attr_slice(struct varlena *attr,
 			 */
 
 			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, max_size));
-
-			/*
-			preslice = toast_fetch_datum_slice(attr, 0, max_size);
-			*/
 		}
 		else
 		{
@@ -793,7 +772,6 @@ detoast_attr_slice(struct varlena *attr,
 			VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
 			preslice = (struct varlena *) DatumGetPointer(toaster->detoast(PointerGetDatum(attr), 0, -1));
-			/* preslice = toast_fetch_datum(attr); */
 		}
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))

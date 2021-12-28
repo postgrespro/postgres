@@ -17,7 +17,7 @@
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 #include "utils/rel.h"
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "common/int.h"

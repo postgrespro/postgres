@@ -24,13 +24,12 @@
 
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/toast_helper.h"
-#include "access/toast_internals.h"
-#include "access/toast_table.h"
+#include "catalog/toasting.h"
 #include "utils/fmgroids.h"
 #include "access/toasterapi.h"
 
