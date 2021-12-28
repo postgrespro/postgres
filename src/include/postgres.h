@@ -75,12 +75,27 @@ typedef struct varatt_external
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
 }			varatt_external;
 
+typedef struct uint32align16
+{
+	uint16	hi;
+	uint16	lo;
+} uint32align16;
+
+#define set_uint32align16(p, v)	\
+	( \
+		(p)->hi = (v) >> 16, \
+		(p)->lo = (v) & 0xffff \
+	)
+
+#define get_uint32align16(p)	\
+	(((uint32)((p)->hi)) << 16 | ((uint32)((p)->lo)))
+
+/* varatt_custom uses 16bit aligment */
 typedef struct varatt_custom
 {
-	int32		va_rawsize;		/* Original data size (includes header) */
-	uint32		va_toasterdatalen;/* total size of toast pointer */
-	Oid			va_toasterid;	/* Toaster ID */
-	Oid			va_version;		/* Reserved field for version and alignment */
+	uint16			va_toasterdatalen;/* total size of toast pointer, < BLCKSZ */
+	uint32align16	va_rawsize;		/* Original data size (includes header) */
+	uint32align16	va_toasterid;	/* Toaster ID, actually Oid */
 	char		va_toasterdata[FLEXIBLE_ARRAY_MEMBER];	/* Custom toaster data */
 }			varatt_custom;
 
@@ -337,9 +352,6 @@ typedef struct
 											 (VARHDRSZ_EXTERNAL + \
 											  VARTAG_SIZE(VARTAG_EXTERNAL(PTR))))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
-#define VARDATA_TOASTER(PTR)				VARDATA_1B_E(PTR)
-#define VARSIZE_TOASTER(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_CUSTOM_SIZE(VARTAG_EXTERNAL(PTR), PTR))
-#define VARSIZE_CUSTOM(PTR)					(VARHDRSZ_EXTERNAL + VARTAG_CUSTOM_SIZE(VARTAG_EXTERNAL(PTR), PTR))
 
 #define VARATT_IS_COMPRESSED(PTR)			VARATT_IS_4B_C(PTR)
 #define VARATT_IS_EXTERNAL(PTR)				VARATT_IS_1B_E(PTR)
@@ -353,6 +365,8 @@ typedef struct
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_EXPANDED_RW)
 #define VARATT_IS_EXTERNAL_EXPANDED(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_IS_EXPANDED(VARTAG_EXTERNAL(PTR)))
+#define VARATT_IS_CUSTOM(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
 #define VARATT_IS_EXTERNAL_NON_EXPANDED(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && !VARTAG_IS_EXPANDED(VARTAG_EXTERNAL(PTR)))
 #define VARATT_IS_EXTERNAL_TOASTER(PTR) \
@@ -361,20 +375,26 @@ typedef struct
 #define VARATT_IS_EXTENDED(PTR)				(!VARATT_IS_4B_U(PTR))
 
 /* Custom Toast pointer */
-#define VARATT_IS_CUSTOM(PTR) \
-	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
-
 #define VARATT_CUSTOM_GET_TOASTPOINTER(PTR) \
 	((varatt_custom *) VARDATA_EXTERNAL(PTR))
 
 #define VARATT_CUSTOM_GET_TOASTERID(PTR) \
-	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterid)
+	(get_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterid))
+
+#define VARATT_CUSTOM_SET_TOASTERID(PTR, V) \
+	(set_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterid, (V)))
 
 #define VARATT_CUSTOM_GET_DATA_RAW_SIZE(PTR) \
-	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_rawsize)
+	(get_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_rawsize))
+
+#define VARATT_CUSTOM_SET_DATA_RAW_SIZE(PTR, V) \
+	(set_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_rawsize, (V)))
 
 #define VARATT_CUSTOM_GET_DATA_SIZE(PTR) \
 	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen)
+
+#define VARATT_CUSTOM_SET_DATA_SIZE(PTR, V) \
+	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen = (V))
 
 #define VARATT_CUSTOM_GET_DATA(PTR) \
 	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdata)
