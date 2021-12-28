@@ -15,7 +15,6 @@ include $(top_builddir)/src/Makefile.global
 OBJS = \
 	attmap.o \
 	bufmask.o \
-	detoast.o \
 	heaptuple.o \
 	indextuple.o \
 	printsimple.o \
@@ -27,7 +26,6 @@ OBJS = \
 	syncscan.o \
 	toast_compression.o \
 	toast_internals.o \
-	toast_table.o \
 	tupconvert.o \
 	tupdesc.o
 

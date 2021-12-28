@@ -7,7 +7,7 @@
 #include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "utils/fmgrprotos.h"
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "fmgr.h"
 #include "access/htup_details.h"
 #include "utils/builtins.h"

@@ -16,7 +16,7 @@
 
 #include <math.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/genam.h"
 #include "access/multixact.h"
 #include "access/relation.h"
