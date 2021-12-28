@@ -24,8 +24,26 @@ typedef void (*toast_init)(Relation rel, Datum reloptions, LOCKMODE lockmode,
 
 /* Toast function */
 typedef struct varlena* (*toast_function) (Relation toast_rel,
-										   Datum value, Datum oldvalue,
+										   Oid toasterid,
+										   Datum value,
+										   Datum oldvalue,
+										   int max_inline_size,
 										   int options);
+
+/* Update toast function, optional */
+typedef struct varlena *(*update_toast_function) (Relation toast_rel,
+												  Oid toasterid,
+												  Datum newvalue,
+												  Datum oldvalue,
+												  char cmethod,
+												  int options);
+
+/* Copy toast function, optional */
+typedef struct varlena *(*copy_toast_function) (Relation toast_rel,
+												Oid toasterid,
+												Datum newvalue,
+												char cmethod,
+												int options);
 
 /* Detoast function */
 typedef struct varlena* (*detoast_function) (Relation toast_rel,
@@ -34,6 +52,8 @@ typedef struct varlena* (*detoast_function) (Relation toast_rel,
 
 /* Delete toast function */
 typedef void (*del_toast_function) (Datum value, bool is_speculative);
+
+
 
 /* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
@@ -54,6 +74,8 @@ typedef struct TsrRoutine
 	/* interface functions */
 	toast_init init;
 	toast_function toast;
+	update_toast_function update_toast;
+	copy_toast_function copy_toast;
 	detoast_function detoast;
 	del_toast_function deltoast;
 	get_vtable_function get_vtable;
