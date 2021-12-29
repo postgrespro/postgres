@@ -61,22 +61,6 @@ extern struct varlena *toast_fetch_datum(struct varlena *attr);
 extern struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 sliceoffset,
 											   int32 slicelength);
-extern void
-toast_update_datum(Datum value,
-				   void *slice_data, int slice_offset, int slice_length);
-
-extern void
-toast_write_slice(Relation toastrel, Relation *toastidxs,
-				  int num_indexes, int validIndex,
-				  Oid valueid, int32 value_size, int32 slice_offset,
-				  int32 slice_length, char *slice_data,
-				  int options,
-				  void *chunk_header, int chunk_header_size);
-
-extern void
-toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
-						   Oid valueid, HeapTuple ttup, int32 *seqno,
-						   char **chunkdata, int *chunksize);
 
 /*
 extern Size toast_datum_size(Datum value);
