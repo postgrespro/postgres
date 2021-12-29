@@ -71,7 +71,7 @@ ALTER TABLE tst3 ALTER COLUMN t SET TOASTER deftoaster;
 
 update tst3 set t = repeat('e', 2000)::text;
 
-SELECT l, left(f,20), left(t,20) FROM tst3;
+SELECT l, left(f,20), left(t,20) FROM tst3 ORDER BY 1, 3;
 
 SELECT attnum, attname, atttypid, attstorage, tsrname 
 	FROM pg_attribute, pg_toaster t
