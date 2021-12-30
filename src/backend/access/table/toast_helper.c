@@ -232,7 +232,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 */
 			ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 			ttc->ttc_attr[i].tai_toaster = NULL;
-			ttc->ttc_attr[i].tai_toaster = InvalidOid;
+			ttc->ttc_attr[i].tai_toasterid = InvalidOid;
 		}
 	}
 }
