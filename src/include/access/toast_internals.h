@@ -62,6 +62,12 @@ extern struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 sliceoffset,
 											   int32 slicelength);
 
+extern void
+toast_fetch_toast_slice(Relation toastrel, Oid valueid, 
+					   struct varlena *attr, int32 attrsize,
+					   int32 sliceoffset, int32 slicelength,
+					   struct varlena *result);
+
 /*
 extern Size toast_datum_size(Datum value);
 extern Size toast_raw_datum_size(Datum value);
