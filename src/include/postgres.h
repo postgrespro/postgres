@@ -347,7 +347,7 @@ typedef struct
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
 #define VARSIZE_EXTERNAL(PTR)				(VARATT_IS_CUSTOM(PTR) ? \
-											 VARATT_CUSTOM_GET_DATA_SIZE(PTR) : \
+											 VARSIZE_CUSTOM(PTR) : \
 											 (VARHDRSZ_EXTERNAL + \
 											  VARTAG_SIZE(VARTAG_EXTERNAL(PTR))))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
@@ -390,7 +390,7 @@ typedef struct
 	(set_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_rawsize, (V)))
 
 #define VARATT_CUSTOM_GET_DATA_SIZE(PTR) \
-	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen)
+	((int32) VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen)
 
 #define VARATT_CUSTOM_SET_DATA_SIZE(PTR, V) \
 	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen = (V))
@@ -401,6 +401,7 @@ typedef struct
 #define VARATT_CUSTOM_SIZE(datalen) \
 	((Size) VARHDRSZ_EXTERNAL + offsetof(varatt_custom, va_toasterdata) + (datalen))
 
+#define VARSIZE_CUSTOM(PTR)	VARATT_CUSTOM_SIZE(VARATT_CUSTOM_GET_DATA_SIZE(PTR))
 
 #define SET_VARSIZE(PTR, len)				SET_VARSIZE_4B(PTR, len)
 #define SET_VARSIZE_SHORT(PTR, len)			SET_VARSIZE_1B(PTR, len)
