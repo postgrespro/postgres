@@ -28,24 +28,6 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
-static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
-static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
-
-static void
-toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
-						   Oid valueid, HeapTuple ttup, int32 *seqno,
-						   char **chunkdata, int *chunksize);
-
-static void
-toast_write_slice(Relation toastrel, Relation *toastidxs,
-				  int num_indexes, int validIndex,
-				  Oid valueid, int32 value_size, int32 slice_offset,
-				  int32 slice_length, char *slice_data,
-				  int options,
-				  void *chunk_header, int chunk_header_size,
-				  ToastChunkVisibilityCheck visibility_check,
-				  void *visibility_cxt);
-
 /* ----------
  * toast_save_datum -
  *
@@ -330,7 +312,7 @@ toast_delete_datum(Datum value, bool is_speculative)
  *	toast rows with that ID; see notes for GetNewOidWithIndex().
  * ----------
  */
-static bool
+bool
 toastrel_valueid_exists(Relation toastrel, Oid valueid)
 {
 	bool		result = false;
@@ -378,7 +360,7 @@ toastrel_valueid_exists(Relation toastrel, Oid valueid)
  *	As above, but work from toast rel's OID not an open relation
  * ----------
  */
-static bool
+bool
 toastid_valueid_exists(Oid toastrelid, Oid valueid)
 {
 	bool		result;
