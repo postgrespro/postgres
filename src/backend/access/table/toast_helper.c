@@ -365,11 +365,8 @@ toast_delete_external_datum(Datum value, bool is_speculative)
 
 	if (toasterid != InvalidOid)
 	{
-
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-
 		toaster->deltoast(value, is_speculative);
-		/*toast_delete_datum(value, false);*/
 	}
 }
 
@@ -410,18 +407,7 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-			{
-				if (VARATT_IS_EXTERNAL(PointerGetDatum(ttc->ttc_oldvalues[i])))
-					toasterid = DEFAULT_TOASTER_OID;
-				else if (VARATT_IS_CUSTOM(PointerGetDatum(ttc->ttc_oldvalues[i])))
-					toasterid = VARATT_CUSTOM_GET_TOASTERID(ttc->ttc_oldvalues[i]);
-
-				if(toasterid != InvalidOid)
-				{
-					TsrRoutine *toaster = SearchTsrCache(toasterid);
-					toaster->deltoast(ttc->ttc_oldvalues[i], false);
-				}
-			}
+				toast_delete_external_datum(PointerGetDatum(ttc->ttc_oldvalues[i]), false);
 		}
 	}
 }
