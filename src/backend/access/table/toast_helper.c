@@ -1043,3 +1043,15 @@ toast_datum_size(Datum value)
 	}
 	return result;
 }
+
+void
+fetch_toast_slice(Relation toastrel, Oid valueid, 
+					   struct varlena *attr, int32 attrsize,
+					   int32 sliceoffset, int32 slicelength,
+					   struct varlena *result)
+{
+	toast_fetch_toast_slice( toastrel, valueid, 
+					   attr, attrsize,
+					   sliceoffset, slicelength,
+					   result);
+}
