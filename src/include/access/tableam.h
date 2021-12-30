@@ -725,7 +725,7 @@ typedef struct TableAmRoutine
 	 * for more details.
 	 */
 	void		(*relation_fetch_toast_slice) (Relation toastrel, Oid valueid,
-												struct varlena *attr,
+											   struct varlena *attr,
 											   int32 attrsize,
 											   int32 sliceoffset,
 											   int32 slicelength,

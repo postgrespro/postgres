@@ -365,7 +365,6 @@ toast_delete_external_datum(Datum value, bool is_speculative)
 
 	if (toasterid != InvalidOid)
 	{
-
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
 
 		toaster->deltoast(value, is_speculative);

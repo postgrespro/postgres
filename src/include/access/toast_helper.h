@@ -40,7 +40,7 @@ typedef struct
 	int32		tai_size;
 	uint8		tai_colflags;
 	char		tai_compression;
-	TsrRoutine	*tai_toaster;
+	TsrRoutine *tai_toaster;
 	Oid			tai_toasterid;
 } ToastAttrInfo;
 
