@@ -19,7 +19,6 @@
 
 #include "access/toasterapi.h"
 #include "access/toast_compression.h"
-#include "access/toasterapi.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
@@ -3219,23 +3218,8 @@ byteaoctetlen(PG_FUNCTION_ARGS)
 Datum
 byteacat(PG_FUNCTION_ARGS)
 {
-	Datum		d1 = PG_GETARG_DATUM(0);
-	Datum		d2 = PG_GETARG_DATUM(1);
-	bytea	   *t1;
-	bytea	   *t2;
-
-	if (VARATT_IS_CUSTOM(d1))
-	{
-		Oid			toasterid = VARATT_CUSTOM_GET_TOASTERID(d1);
-		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		ByteaToastRoutine *routine = toaster->get_vtable(toasterid);
-
-		if (routine->magic == BYTEA_TOASTER_MAGIC)
-			PG_RETURN_DATUM(routine->append(d1, d2));
-	}
-
-	t1 = PG_GETARG_BYTEA_PP(0);
-	t2 = PG_GETARG_BYTEA_PP(1);
+	bytea	   *t1 = PG_GETARG_BYTEA_PP(0);
+	bytea	   *t2 = PG_GETARG_BYTEA_PP(1);
 
 	PG_RETURN_BYTEA_P(bytea_catenate(t1, t2));
 }
