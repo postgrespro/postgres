@@ -112,7 +112,9 @@ extern void fetch_datum_iterate(FetchDatumIterator iter);
 extern ToastBuffer *create_toast_buffer(int32 size, bool compressed);
 extern void free_toast_buffer(ToastBuffer *buf);
 extern void toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
-									 DetoastIterator iter, const char *destend);
+									 ToastCompressionId compression_method,
+									 void **decompression_state,
+									 const char *destend);
 extern void pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 									DetoastIterator iter, char *destend);
 
@@ -166,7 +168,10 @@ detoast_iterate(DetoastIterator detoast_iter, const char *destend)
 		fetch_datum_iterate(fetch_iter);
 
 	if (detoast_iter->compressed)
-		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf, detoast_iter, destend);
+		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf,
+								 detoast_iter->compression_method,
+								 &detoast_iter->decompression_state,
+								 destend);
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
 		detoast_iter->done = true;
