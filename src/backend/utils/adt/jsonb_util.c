@@ -161,6 +161,9 @@ bool jsonb_sort_field_values = true;		/* GUC */
 bool jsonb_partial_decompression = true;	/* GUC */
 bool jsonb_partial_detoast = true;			/* GUC */
 
+void **jsonb_iter_cache;
+MemoryContext jsonb_iter_cache_mcxt;
+
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
 {
