@@ -249,7 +249,9 @@ lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 
 void
 toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
-						 DetoastIterator iter, const char *destend)
+						 ToastCompressionId compression_method,
+						 void **decompression_state,
+						 const char *destend)
 {
 	const char *sp;
 	const char *srcend;
@@ -278,13 +280,13 @@ toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 	/*
 	 * Decompress the data using the appropriate decompression routine.
 	 */
-	switch (iter->compression_method)
+	switch (compression_method)
 	{
 		case TOAST_PGLZ_COMPRESSION_ID:
 			dlen = pglz_decompress_state(sp, &slen, dp, destend - dp,
 										 last_source_chunk && destend == dest->capacity,
 										 last_source_chunk,
-										 &iter->decompression_state);
+										 decompression_state);
 			break;
 		case TOAST_LZ4_COMPRESSION_ID:
 			if (source->limit < source->capacity)
@@ -310,7 +312,7 @@ toast_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
 			}
 			break;
 		default:
-			elog(ERROR, "invalid compression method id %d", iter->compression_method);
+			elog(ERROR, "invalid compression method id %d", compression_method);
 			return;		/* keep compiler quiet */
 	}
 
