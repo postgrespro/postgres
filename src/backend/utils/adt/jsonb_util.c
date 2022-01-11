@@ -152,7 +152,6 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonb *cjb,
 											const JsonbContainerHeader *container,
 											int index, char *base_addr,
 											uint32 offset, JsonValue *result);
-static JsonbContainerHeader *jsonbzDecompress(JsonContainer *jc);
 
 bool jsonb_sort_field_values = true;		/* GUC */
 bool jsonb_partial_decompression = true;	/* GUC */
@@ -2635,7 +2634,7 @@ jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb, int len)
 	jsonbInitContainerFromHeader(jc, jbc);
 }
 
-static JsonbContainerHeader *
+JsonbContainerHeader *
 jsonbzDecompress(JsonContainer *jc)
 {
 	CompressedJsonb *cjb = (CompressedJsonb *) &jc->_data;
