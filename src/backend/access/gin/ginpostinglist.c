@@ -288,6 +288,33 @@ ginPostingListDecode(GinPostingList *plist, int *ndecoded_out)
 										   ndecoded_out);
 }
 
+int
+ginPostingListDecodeOneSegment(GinPostingList *segment, ItemPointer result)
+{
+	unsigned char *ptr;
+	unsigned char *endptr;
+	uint64		val;
+	int			ndecoded = 0;
+
+	/* copy the first item */
+	Assert(OffsetNumberIsValid(ItemPointerGetOffsetNumber(&segment->first)));
+	result[ndecoded] = segment->first;
+	ndecoded++;
+
+	val = itemptr_to_uint64(&segment->first);
+	ptr = segment->bytes;
+	endptr = segment->bytes + segment->nbytes;
+
+	while (ptr < endptr)
+	{
+		val += decode_varbyte(&ptr);
+		uint64_to_itemptr(val, &result[ndecoded]);
+		ndecoded++;
+	}
+
+	return ndecoded;
+}
+
 /*
  * Decode multiple posting list segments into an array of item pointers.
  * The number of items is returned in *ndecoded_out. The segments are stored
