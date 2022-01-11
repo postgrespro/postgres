@@ -472,6 +472,7 @@ extern GinPostingList *ginCompressPostingList(const ItemPointer ipd, int nipd,
 extern int	ginPostingListDecodeAllSegmentsToTbm(GinPostingList *ptr, int totalsize, TIDBitmap *tbm);
 
 extern ItemPointer ginPostingListDecodeAllSegments(GinPostingList *ptr, int len, int *ndecoded);
+extern int ginPostingListDecodeOneSegment(GinPostingList *segment, ItemPointer result);
 extern ItemPointer ginPostingListDecode(GinPostingList *ptr, int *ndecoded);
 extern ItemPointer ginMergeItemPointers(ItemPointerData *a, uint32 na,
 										ItemPointerData *b, uint32 nb,
