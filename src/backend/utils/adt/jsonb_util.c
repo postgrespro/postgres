@@ -64,16 +64,6 @@ typedef struct CompressedDatum
 	int			decompressed_len;
 } CompressedDatum;
 
-typedef struct CompressedJsonb
-{
-#ifndef JSONB_DETOAST_ITERATOR
-	CompressedDatum *datum;
-#else
-	DetoastIterator iter;
-#endif
-	int			offset;
-} CompressedJsonb;
-
 typedef struct JsonbKVMap
 {
 	union
