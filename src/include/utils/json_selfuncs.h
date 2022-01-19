@@ -93,8 +93,4 @@ extern bool jsonAnalyzeBuildSubPathsData(Datum *pathsDatums,
 										 bool includeSubpaths, float4 nullfrac,
 										 Datum *pvals, Datum *pnums);
 
-extern Datum jsonb_typanalyze(PG_FUNCTION_ARGS);
-extern Datum jsonb_stats(PG_FUNCTION_ARGS);
-extern Datum jsonb_sel(PG_FUNCTION_ARGS);
-
 #endif /* JSON_SELFUNCS_H */
