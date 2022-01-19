@@ -100,7 +100,11 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 						  ATTSTATSSLOT_NUMBERS | ATTSTATSSLOT_VALUES))
 		return false;
 
-	/* XXX Not sure what this means / how could it happen? */
+	/*
+	 * Valid JSON stats should have at least 2 elements in values:
+	 *  0th - root path prefix
+	 *  1st - root path stats
+	 */
 	if (data->attslot.nvalues < 2)
 	{
 		free_attstatsslot(&data->attslot);
@@ -115,9 +119,14 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 	data->values = data->attslot.values;
 	data->nvalues = data->attslot.nvalues;
 
+	/* Extract root path prefix */
 	jb = DatumGetJsonbP(data->values[0]);
-	JsonbExtractScalar(&jb->root, &prefix);
-	Assert(prefix.type == jbvString);
+	if (!JsonbExtractScalar(&jb->root, &prefix) || prefix.type != jbvString)
+	{
+		free_attstatsslot(&data->attslot);
+		return false;
+	}
+
 	data->prefix = prefix.val.string.val;
 	data->prefixlen = prefix.val.string.len;
 
