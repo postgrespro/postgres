@@ -1076,10 +1076,35 @@ jsonSelectivity(JsonPathStats stats, Datum scalar, Oid operator)
 }
 
 /*
+ * jsonAccumulateSubPathSelectivity
+ *		Transform absolute subpath selectivity into relative and accumulate it
+ *		into parent path simply by multiplication of relative selectivities.
+ */
+static void
+jsonAccumulateSubPathSelectivity(Selectivity subpath_abs_sel,
+								 Selectivity path_freq,
+								 Selectivity *path_relative_sel,
+								 StringInfo pathstr,
+								 JsonPathStats path_stats)
+{
+	Selectivity sel = subpath_abs_sel / path_freq;	/* relative selectivity */
+
+	/* XXX Try to take into account array length */
+	if (pathstr->data[pathstr->len - 1] == '#')
+		sel = 1.0 - pow(1.0 - sel, jsonPathStatsGetAvgArraySize(path_stats));
+
+	/* Accumulate selectivity of subpath into parent path */
+	*path_relative_sel *= sel;
+}
+
+/*
  * jsonSelectivityContains
  *		Estimate selectivity for containment operator on JSON.
  *
- * XXX This really needs more comments explaining the logic.
+ * Iterate through query jsonb elements, build paths to its leaf elements,
+ * calculate selectivies of 'path == scalar' in leaves, multiply relative
+ * selectivities of subpaths at each path level, propagate computed
+ * selectivities to the root.
  */
 static Selectivity
 jsonSelectivityContains(JsonStats stats, Jsonb *jb)
@@ -1087,32 +1112,45 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 	JsonbValue		v;
 	JsonbIterator  *it;
 	JsonbIteratorToken r;
-	StringInfoData	pathstr;
-	struct Path
+	StringInfoData	pathstr;	/* path string */
+	struct Path					/* path stack entry */
 	{
-		struct Path *parent;
-		int			len;
-		JsonPathStats stats;
-		Selectivity	freq;
-		Selectivity	sel;
-	}			root,
-			   *path = &root;
-	Selectivity	scalarSel = 0.0;
-	Selectivity	sel;
-	bool		rawScalar = false;
+		struct Path *parent;	/* parent entry */
+		int			len;		/* associated length of pathstr */
+		Selectivity	freq;		/* absolute frequence of path */
+		Selectivity	sel;		/* relative selectivity of subpaths */
+		JsonPathStats stats;	/* statistics for the path */
+	}			root,			/* root path entry */
+			   *path = &root;	/* path entry stack */
+	Selectivity	sel;			/* resulting selectivity */
+	Selectivity	scalarSel;		/* selectivity of 'jsonb == scalar' */
 
+	/* Initialize root path string */
 	initStringInfo(&pathstr);
-
 	appendStringInfo(&pathstr, "$");
 
+	/* Initialize root path entry */
 	root.parent = NULL;
 	root.len = pathstr.len;
 	root.stats = jsonStatsGetPathStatsStr(stats, pathstr.data, pathstr.len);
 	root.freq = jsonPathStatsGetFreq(root.stats, 0.0);
 	root.sel = 1.0;
 
+	/* Return 0, if NULL fraction is 1. */
 	if (root.freq <= 0.0)
 		return 0.0;
+
+	/*
+	 * Selectivity of query 'jsonb @> scalar' consists of  selectivities of
+	 * 'jsonb == scalar' and 'jsonb[*] == scalar'.  Selectivity of
+	 * 'jsonb[*] == scalar' will be computed in root.sel, but for
+	 * 'jsonb == scalar' we need additional computation.
+	 */
+	if (JsonContainerIsScalar(&jb->root))
+		scalarSel = jsonSelectivity(root.stats, JsonbPGetDatum(jb),
+									JsonbEqOperator);
+	else
+		scalarSel = 0.0;
 
 	it = JsonbIteratorInit(&jb->root);
 
@@ -1122,14 +1160,23 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 		{
 			case WJB_BEGIN_OBJECT:
 			{
-				struct Path *p = palloc(sizeof(*p));
+				struct Path *p;
+				Selectivity freq =
+					jsonPathStatsGetTypeFreq(path->stats, jbvObject, 0.0);
 
+				/* If there are no objects, selectivity is 0. */
+				if (freq <= 0.0)
+					return 0.0;
+
+				/*
+				 * Push path entry for object keys, actual key names are
+				 * appended later in WJB_KEY case.
+				 */
+				p = palloc(sizeof(*p));
 				p->len = pathstr.len;
 				p->parent = path;
 				p->stats = NULL;
-				p->freq = jsonPathStatsGetTypeFreq(path->stats, jbvObject, 0.0);
-				if (p->freq <= 0.0)
-					return 0.0;
+				p->freq = freq;
 				p->sel = 1.0;
 				path = p;
 				break;
@@ -1137,21 +1184,28 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 			case WJB_BEGIN_ARRAY:
 			{
-				struct Path *p = palloc(sizeof(*p));
+				struct Path *p;
+				JsonPathStats pstats;
+				Selectivity freq;
 
-				rawScalar = v.val.array.rawScalar;
-
+				/* Appeend path string entry for array elements, get stats. */
 				appendStringInfo(&pathstr, ".#");
+				pstats = jsonStatsGetPathStatsStr(stats, pathstr.data,
+												 pathstr.len);
+				freq = jsonPathStatsGetFreq(pstats, 0.0);
+
+				/* If there are no arrays, return 0 or scalar selectivity */
+				if (freq <= 0.0)
+					return scalarSel;
+
+				/* Push path entry for array elements. */
+				p = palloc(sizeof(*p));
 				p->len = pathstr.len;
 				p->parent = path;
-				p->stats = jsonStatsGetPathStatsStr(stats, pathstr.data,
-													pathstr.len);
-				p->freq = jsonPathStatsGetFreq(p->stats, 0.0);
-				if (p->freq <= 0.0 && !rawScalar)
-					return 0.0;
+				p->stats = pstats;
+				p->freq = freq;
 				p->sel = 1.0;
 				path = p;
-
 				break;
 			}
 
@@ -1159,21 +1213,29 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 			case WJB_END_ARRAY:
 			{
 				struct Path *p = path;
+				/* Absoulte selectivity of the path with its all subpaths */
+				Selectivity abs_sel = p->sel * p->freq;
 
+				/* Pop last path entry */
 				path = path->parent;
-				sel = p->sel * p->freq / path->freq;
 				pfree(p);
-				pathstr.data[pathstr.len = path->len] = '\0';
-				if (pathstr.data[pathstr.len - 1] == '#')
-					sel = 1.0 - pow(1.0 - sel,
-								jsonPathStatsGetAvgArraySize(path->stats));
-				path->sel *= sel;
+				pathstr.len = path->len;
+				pathstr.data[pathstr.len] = '\0';
+
+				/* Accumulate selectivity into parent path */
+				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
+												 &path->sel, &pathstr,
+												 path->stats);
 				break;
 			}
 
 			case WJB_KEY:
 			{
-				pathstr.data[pathstr.len = path->parent->len] = '\0';
+				/* Remove previous key in the path string */
+				pathstr.len = path->parent->len;
+				pathstr.data[pathstr.len] = '\0';
+
+				/* Append current key to path string */
 				jsonPathAppendEntryWithLen(&pathstr, v.val.string.val,
 										   v.val.string.len);
 				path->len = pathstr.len;
@@ -1183,26 +1245,22 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 			case WJB_VALUE:
 			case WJB_ELEM:
 			{
-				JsonPathStats	pstats = r == WJB_ELEM ? path->stats :
+				/*
+				 * Extract statistics for path.  Arrays elements shares the
+				 * same statistics that was extracted in WJB_BEGIN_ARRAY.
+				 */
+				JsonPathStats pstats = r == WJB_ELEM ? path->stats :
 					jsonStatsGetPathStatsStr(stats, pathstr.data, pathstr.len);
-				Datum			scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
+				/* Make scalar jsonb datum */
+				Datum		scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
+				/* Absolute selectivity of 'path == scalar' */
+				Selectivity abs_sel = jsonSelectivity(pstats, scalar,
+													  JsonbEqOperator);
 
-				if (path->freq <= 0.0)
-					sel = 0.0;
-				else
-				{
-					sel = jsonSelectivity(pstats, scalar, JsonbEqOperator);
-					sel /= path->freq;
-					if (pathstr.data[pathstr.len - 1] == '#')
-						sel = 1.0 - pow(1.0 - sel,
-										jsonPathStatsGetAvgArraySize(path->stats));
-				}
-
-				path->sel *= sel;
-
-				if (r == WJB_ELEM && path->parent == &root && rawScalar)
-					scalarSel = jsonSelectivity(root.stats, scalar,
-												JsonbEqOperator);
+				/* Accumulate selectivity into parent path */
+				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
+												 &path->sel, &pathstr,
+												 path->stats);
 				break;
 			}
 
@@ -1211,7 +1269,8 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 		}
 	}
 
-	sel = scalarSel + root.sel * root.freq;
+	/* Compute absolute selectivity for root, including raw scalar case. */
+	sel = root.sel * root.freq + scalarSel;
 	CLAMP_PROBABILITY(sel);
 	return sel;
 }
