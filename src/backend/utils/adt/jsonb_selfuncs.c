@@ -941,7 +941,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 			Datum	   *path;
 			bool	   *nulls;
 			int			pathlen;
-			int			i;
+			bool		have_nulls = false;
 
 			if (cnst->consttype != TEXTARRAYOID)
 			{
@@ -952,18 +952,18 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 			deconstruct_array(DatumGetArrayTypeP(cnst->constvalue), TEXTOID,
 							  -1, false, 'i', &path, &nulls, &pathlen);
 
-			for (i = 0; i < pathlen; i++)
+			for (int i = 0; i < pathlen; i++)
 			{
 				if (nulls[i])
 				{
-					pfree(path);
-					pfree(nulls);
-					PG_RETURN_VOID();
+					have_nulls = true;
+					break;
 				}
 			}
 
-			resdata->statsTuple =
-				jsonStatsGetPathStatsTuple(&jsdata, statype, path, pathlen);
+			if (!have_nulls)
+				resdata->statsTuple =
+					jsonStatsGetPathStatsTuple(&jsdata, statype, path, pathlen);
 
 			pfree(path);
 			pfree(nulls);
