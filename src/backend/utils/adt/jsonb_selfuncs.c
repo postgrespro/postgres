@@ -996,8 +996,9 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
  *
  * This only supports OpExpr expressions, with (Var op Const) shape.
  *
- * XXX It might be useful to allow recursion, i.e. get_restriction_variable
- * might derive statistics too. I don't think it does that now, right?
+ * Var really can be a chain of OpExprs with derived statistics
+ * (jsonb_column -> 'key1' -> key2'), because get_restriction_variable()
+ * already handles this case.
  */
 Datum
 jsonb_stats(PG_FUNCTION_ARGS)
