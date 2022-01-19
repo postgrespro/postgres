@@ -51,20 +51,23 @@ jsonGetField(Datum obj, const char *field)
  *
  * This expects the JSONB value to be a numeric, because that's how we store
  * floats in JSONB, and we cast it to float4.
- *
- * XXX Not sure assert is a sufficient protection against different types of
- * JSONB values to be passed in.
  */
-static inline Datum
-jsonGetFloat4(Datum jsonb)
+static inline float4
+jsonGetFloat4(Datum jsonb, float4 default_val)
 {
-	Jsonb	   *jb = DatumGetJsonbP(jsonb);
+	Jsonb	   *jb;
 	JsonbValue	jv;
 
-	JsonbExtractScalar(&jb->root, &jv);
-	Assert(jv.type == jbvNumeric);
+	if (!DatumGetPointer(jsonb))
+		return default_val;
 
-	return DirectFunctionCall1(numeric_float4, NumericGetDatum(jv.val.numeric));
+	jb = DatumGetJsonbP(jsonb);
+
+	if (!JsonbExtractScalar(&jb->root, &jv) || jv.type != jbvNumeric)
+		return default_val;
+
+	return DatumGetFloat4(DirectFunctionCall1(numeric_float4,
+											  NumericGetDatum(jv.val.numeric)));
 }
 
 /*
@@ -663,12 +666,9 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 	hst = jsonGetField(data, "histogram");
 	corr = jsonGetField(data, "correlation");
 
-	statdata->nullfrac = DatumGetPointer(nullf) ?
-							DatumGetFloat4(jsonGetFloat4(nullf)) : 0.0;
-	statdata->distinct = DatumGetPointer(dist) ?
-							DatumGetFloat4(jsonGetFloat4(dist)) : 0.0;
-	statdata->width = DatumGetPointer(width) ?
-							(int32) DatumGetFloat4(jsonGetFloat4(width)) : 0;
+	statdata->nullfrac = jsonGetFloat4(nullf, 0);
+	statdata->distinct = jsonGetFloat4(dist, 0);
+	statdata->width = (int32) jsonGetFloat4(width, 0);
 
 	statdata->nullfrac += (1.0 - statdata->nullfrac) * nullfrac;
 
@@ -697,7 +697,8 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 
 	if (DatumGetPointer(corr))
 	{
-		Datum	correlation = jsonGetFloat4(corr);
+		Datum		correlation = Float4GetDatum(jsonGetFloat4(corr, 0));
+
 		slot->kind = STATISTIC_KIND_CORRELATION;
 		slot->opid = ltop;
 		slot->numbers = PointerGetDatum(construct_array(&correlation, 1,
@@ -726,15 +727,12 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 }
 
 static float4
-jsonPathStatsGetFloat(JsonPathStats pstats, const char *key,
-					float4 defaultval)
+jsonPathStatsGetFloat(JsonPathStats pstats, const char *key, float4 defaultval)
 {
-	Datum		freq;
-
-	if (!pstats || !(freq = jsonGetField(*pstats->datum, key)))
+	if (!pstats)
 		return defaultval;
 
-	return DatumGetFloat4(jsonGetFloat4(freq));
+	return jsonGetFloat4(jsonGetField(*pstats->datum, key), defaultval);
 }
 
 float4
