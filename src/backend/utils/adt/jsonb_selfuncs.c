@@ -1307,6 +1307,71 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 	return sel;
 }
 
+static Selectivity
+jsonb_sel_internal(JsonStats stats, Oid operator, Const *cnst, bool varonleft)
+{
+	switch (operator)
+	{
+		case JsonbExistsOperator:
+			if (!varonleft || cnst->consttype != TEXTOID)
+				break;
+
+			return jsonSelectivityExists(stats, cnst->constvalue);
+
+		case JsonbExistsAnyOperator:
+		case JsonbExistsAllOperator:
+		{
+			Datum	   *keys;
+			bool	   *nulls;
+			Selectivity	freq = 1.0;
+			int			nkeys;
+			int			i;
+			bool		all = operator == JsonbExistsAllOperator;
+
+			if (!varonleft || cnst->consttype != TEXTARRAYOID)
+				break;
+
+			deconstruct_array(DatumGetArrayTypeP(cnst->constvalue), TEXTOID,
+							  -1, false, 'i', &keys, &nulls, &nkeys);
+
+			for (i = 0; i < nkeys; i++)
+				if (!nulls[i])
+				{
+					Selectivity pathfreq = jsonSelectivityExists(stats,
+																 keys[i]);
+					freq *= all ? pathfreq : (1.0 - pathfreq);
+				}
+
+			pfree(keys);
+			pfree(nulls);
+
+			if (!all)
+				freq = 1.0 - freq;
+
+			return freq;
+		}
+
+		case JsonbContainedOperator:
+			if (varonleft || cnst->consttype != JSONBOID)
+				break;
+
+			return jsonSelectivityContains(stats,
+										   DatumGetJsonbP(cnst->constvalue));
+
+		case JsonbContainsOperator:
+			if (!varonleft || cnst->consttype != JSONBOID)
+				break;
+
+			return jsonSelectivityContains(stats,
+										   DatumGetJsonbP(cnst->constvalue));
+
+		default:
+			break;
+	}
+
+	return DEFAULT_JSON_CONTAINS_SEL;
+}
+
 /*
  * jsonb_sel
  *		The main procedure estimating selectivity for all JSONB operators.
@@ -1320,92 +1385,32 @@ jsonb_sel(PG_FUNCTION_ARGS)
 	int			varRelid = PG_GETARG_INT32(3);
 	double		sel = DEFAULT_JSON_CONTAINS_SEL;
 	Node	   *other;
-	Const	   *cnst;
 	bool		varonleft;
-	JsonStatData stats;
 	VariableStatData vardata;
 
-	if (!get_restriction_variable(root, args, varRelid,
+	if (get_restriction_variable(root, args, varRelid,
 								  &vardata, &other, &varonleft))
-		PG_RETURN_FLOAT8(sel);
-
-	if (!IsA(other, Const))
-		goto out;
-
-	cnst = (Const *) other;
-
-	if (cnst->constisnull)
 	{
-		sel = 0.0;
-		goto out;
-	}
-
-	if (!jsonStatsInit(&stats, &vardata))
-		goto out;
-
-	switch (operator)
-	{
-		case JsonbExistsOperator:
-			if (!varonleft || cnst->consttype != TEXTOID)
-				goto out;
-
-			sel = jsonSelectivityExists(&stats, cnst->constvalue);
-			break;
-
-		case JsonbExistsAnyOperator:
-		case JsonbExistsAllOperator:
+		if (IsA(other, Const))
 		{
-			Datum	   *keys;
-			bool	   *nulls;
-			Selectivity	freq = 1.0;
-			int			nkeys;
-			int			i;
-			bool		all = operator == JsonbExistsAllOperator;
+			Const	   *cnst = (Const *) other;
 
-			if (!varonleft || cnst->consttype != TEXTARRAYOID)
-				goto out;
+			if (cnst->constisnull)
+				sel = 0.0;
+			else
+			{
+				JsonStatData stats;
 
-			deconstruct_array(DatumGetArrayTypeP(cnst->constvalue), TEXTOID,
-							  -1, false, 'i', &keys, &nulls, &nkeys);
-
-			for (i = 0; i < nkeys; i++)
-				if (!nulls[i])
+				if (jsonStatsInit(&stats, &vardata))
 				{
-					Selectivity pathfreq = jsonSelectivityExists(&stats,
-																 keys[i]);
-					freq *= all ? pathfreq : (1.0 - pathfreq);
+					sel = jsonb_sel_internal(&stats, operator, cnst, varonleft);
+					jsonStatsRelease(&stats);
 				}
-
-			pfree(keys);
-			pfree(nulls);
-
-			if (!all)
-				freq = 1.0 - freq;
-
-			sel = freq;
-			break;
+			}
 		}
 
-		case JsonbContainedOperator:
-			if (varonleft || cnst->consttype != JSONBOID)
-				goto out;
-
-			sel = jsonSelectivityContains(&stats,
-										  DatumGetJsonbP(cnst->constvalue));
-			break;
-
-		case JsonbContainsOperator:
-			if (!varonleft || cnst->consttype != JSONBOID)
-				goto out;
-
-			sel = jsonSelectivityContains(&stats,
-										  DatumGetJsonbP(cnst->constvalue));
-			break;
+		ReleaseVariableStats(vardata);
 	}
-
-out:
-	jsonStatsRelease(&stats);
-	ReleaseVariableStats(vardata);
 
 	PG_RETURN_FLOAT8((float8) sel);
 }
