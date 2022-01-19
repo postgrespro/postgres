@@ -206,9 +206,7 @@ jsonPathStatsCompare(const void *pv1, const void *pv2)
 	JsonbValue	pathkey;
 	JsonbValue *path2;
 	JsonbValue const *path1 = pv1;
-	/* XXX Seems a bit convoluted to first cast it to Datum, then Jsonb ... */
-	Datum const *pdatum = pv2;
-	Jsonb	   *jsonb = DatumGetJsonbP(*pdatum);
+	Jsonb	   *jsonb = DatumGetJsonbP(*(Datum const *) pv2);
 	int			res;
 
 	/* extract path from the statistics represented as jsonb document */
