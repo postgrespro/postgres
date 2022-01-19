@@ -576,7 +576,7 @@ SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 100]}'$$, 1);
  t
 (1 row)
 
-SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 3]}'$$, 100);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 3]}'$$, 3);
  check_jsonb_stats_test_estimate 
 ---------------------------------
  t

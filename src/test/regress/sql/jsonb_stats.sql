@@ -218,7 +218,7 @@ SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [100]}'$$, 0.3);
 SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2]}'$$, 1);
 SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 100]}'$$, 1);
 SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 100]}'$$, 1);
-SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 3]}'$$, 100);
+SELECT check_jsonb_stats_test_estimate($$js @> '{"array": [1, 2, 3]}'$$, 3);
 
 -- check misc containment
 SELECT check_jsonb_stats_test_estimate($$js @> '"foo"'$$, 0.1);
