@@ -81,12 +81,11 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 	Jsonb	   *jb;
 	JsonbValue	prefix;
 
+	if (!vardata->statsTuple)
+		return false;
+
 	memset(&data->attslot, 0, sizeof(data->attslot));
 	data->statsTuple = vardata->statsTuple;
-
-	/* FIXME Could be before the memset, I guess? Checking vardata->statsTuple. */
-	if (!data->statsTuple)
-		return false;
 
 	/* Were there just NULL values in the column? No JSON stats, but still useful. */
 	if (((Form_pg_statistic) GETSTRUCT(data->statsTuple))->stanullfrac >= 1.0)
