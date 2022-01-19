@@ -21,6 +21,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
+#include "common/string.h"
 #include "nodes/primnodes.h"
 #include "utils/builtins.h"
 #include "utils/json.h"
@@ -378,66 +379,48 @@ jsonPathStatsGetArrayIndexSelectivity(JsonPathStats pstats, int index)
 
 /*
  * jsonStatsGetPathStats
- *		???
+ *		Find JSON statistics for a given path.
  *
- * XXX I guess pathLen stored number of pathEntries elements, so it should be
- * nEntries or something. pathLen implies it's a string length.
+ * 'path' is an array of text datums of length 'pathlen' (can be zero).
  */
 static JsonPathStats
-jsonStatsGetPathStats(JsonStats jsdata, Datum *pathEntries, int pathLen,
+jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
 					  float4 *nullfrac)
 {
-	JsonPathStats pstats;
+	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$", 1);
 	Selectivity	sel = 1.0;
-	int			i;
 
-	if (!pathEntries && pathLen < 0)
+	for (int i = 0; pstats && i < pathlen; i++)
 	{
-		if ((pstats = jsonStatsGetPathStatsStr(jsdata, "$.#", 3)))
+		char	   *key = text_to_cstring(DatumGetTextP(path[i]));
+		int			keylen = strlen(key);
+		char	   *tail;
+		int			index;
+
+		/* Try to interpret path entry as integer array index */
+		errno = 0;
+		index = strtoint(key, &tail, 10);
+
+		if (tail == key || *tail != '\0' || errno != 0)
 		{
-			sel = jsonPathStatsGetArrayIndexSelectivity(pstats, -1 - pathLen);
-			sel /= jsonPathStatsGetFreq(pstats, 0.0);
+			/* Find object key stats */
+			pstats = jsonPathStatsGetSubpath(pstats, key, keylen);
 		}
-	}
-	else
-	{
-		pstats = jsonStatsGetPathStatsStr(jsdata, "$", 1);
-
-		for (i = 0; pstats && i < pathLen; i++)
+		else
 		{
-			char	   *key = text_to_cstring(DatumGetTextP(pathEntries[i]));
-			int			keylen = strlen(key);
+			/* Find array index stats */
+			float4	arrfreq;
 
-			/* XXX What's this key "0123456789" about? */
-			if (key[0] >= '0' && key[0] <= '9' &&
-				key[strspn(key, "0123456789")] == '\0')
-			{
-				char	   *tail;
-				long		index;
+			/* FIXME consider object key "index" also */
+			pstats = jsonPathStatsGetSubpath(pstats, NULL, 0);
+			sel *= jsonPathStatsGetArrayIndexSelectivity(pstats, index);
+			arrfreq = jsonPathStatsGetFreq(pstats, 0.0);
 
-				errno = 0;
-				index = strtol(key, &tail, 10);
-
-				if (*tail || errno || index > INT_MAX || index < 0)
-					pstats = jsonPathStatsGetSubpath(pstats, key, keylen);
-				else
-				{
-					float4	arrfreq;
-
-					/* FIXME consider key also */
-					pstats = jsonPathStatsGetSubpath(pstats, NULL, 0);
-					sel *= jsonPathStatsGetArrayIndexSelectivity(pstats, index);
-					arrfreq = jsonPathStatsGetFreq(pstats, 0.0);
-
-					if (arrfreq > 0.0)
-						sel /= arrfreq;
-				}
-			}
-			else
-				pstats = jsonPathStatsGetSubpath(pstats, key, keylen);
-
-			pfree(key);
+			if (arrfreq > 0.0)
+				sel /= arrfreq;
 		}
+
+		pfree(key);
 	}
 
 	*nullfrac = 1.0 - sel;
@@ -844,7 +827,7 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 
 /*
  * jsonStatsGetPathStatsTuple
- *		???
+ *		Extract JSON statistics for a path and form pg_statistics tuple.
  */
 static HeapTuple
 jsonStatsGetPathStatsTuple(JsonStats jsdata, JsonStatType type,
@@ -855,6 +838,28 @@ jsonStatsGetPathStatsTuple(JsonStats jsdata, JsonStatType type,
 												   &nullfrac);
 
 	return jsonPathStatsFormTuple(pstats, type, nullfrac);
+}
+
+/*
+ * jsonStatsGetArrayIndexStatsTuple
+ *		Extract JSON statistics for a array index and form pg_statistics tuple.
+ */
+static HeapTuple
+jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 index)
+{
+	/* Extract statistics for root array elements */
+	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$.#", 3);
+	Selectivity	index_sel;
+
+	if (!pstats)
+		return NULL;
+
+	/* Compute relative selectivity of 'EXISTS($[index])' */
+	index_sel = jsonPathStatsGetArrayIndexSelectivity(pstats, index);
+	index_sel /= jsonPathStatsGetFreq(pstats, 0.0);
+
+	/* Form pg_statistics tuple, taking into account array index selectivity */
+	return jsonPathStatsFormTuple(pstats, type, 1.0 - index_sel);
 }
 
 /*
@@ -929,8 +934,8 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 			}
 
 			resdata->statsTuple =
-				jsonStatsGetPathStatsTuple(&jsdata, statype, NULL,
-										   -1 - DatumGetInt32(cnst->constvalue));
+				jsonStatsGetArrayIndexStatsTuple(&jsdata, statype,
+												 DatumGetInt32(cnst->constvalue));
 			break;
 		}
 
