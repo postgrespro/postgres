@@ -756,18 +756,29 @@ jsonPathStatsGetTypeFreq(JsonPathStats pstats, JsonbValueType type,
 	 * When dealing with (object/array) length stats, we only really care about
 	 * objects and arrays.
 	 */
-	if (pstats->type == JsonPathStatsLength ||
-		pstats->type == JsonPathStatsArrayLength)
+	if (pstats->type == JsonPathStatsLength)
 	{
-		/* XXX Seems more like an error, no? Why ignore it? */
+		/*
+		 * Array/object length is always numeric, so simply return 0 if
+		 * requested non-numeric frequency.
+		 */
 		if (type != jbvNumeric)
 			return 0.0;
 
-		/* FIXME This is really hard to read/understand, with two nested ternary operators. */
-		return pstats->type == JsonPathStatsArrayLength
-				? jsonPathStatsGetFreq(pstats, defaultfreq)
-				: jsonPathStatsGetFloat(pstats, "freq_array", defaultfreq) +
-				  jsonPathStatsGetFloat(pstats, "freq_object", defaultfreq);
+		return jsonPathStatsGetFloat(pstats, "freq_array", defaultfreq) +
+			   jsonPathStatsGetFloat(pstats, "freq_object", defaultfreq);
+	}
+
+	if (pstats->type == JsonPathStatsArrayLength)
+	{
+		/*
+		 * Array length is always numeric, so simply return 0 if requested
+		 * non-numeric frequency.
+		 */
+		if (type != jbvNumeric)
+			return 0.0;
+
+		return jsonPathStatsGetFreq(pstats, defaultfreq);
 	}
 
 	/* Which JSON type are we interested in? Pick the right freq_type key. */
