@@ -67,7 +67,7 @@ extern JsonPathStats jsonStatsGetPathStatsStr(JsonStats stats,
 												const char *path, int pathlen);
 
 extern JsonPathStats jsonPathStatsGetSubpath(JsonPathStats stats,
-										const char *subpath, int subpathlen);
+											 const char *subpath);
 
 extern bool jsonPathStatsGetNextKeyStats(JsonPathStats stats,
 										JsonPathStats *keystats, bool keysOnly);

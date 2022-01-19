@@ -314,10 +314,10 @@ jsonPathAppendEntryWithLen(StringInfo path, const char *entry, int len)
 
 /*
  * jsonPathStatsGetSubpath
- *		???
+ *		Find JSON path stats for object key or array elements (if 'key' = NULL).
  */
 JsonPathStats
-jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key, int keylen)
+jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key)
 {
 	JsonPathStats spstats;
 	char	   *path;
@@ -329,7 +329,7 @@ jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key, int keylen)
 
 		initStringInfo(&str);
 		appendBinaryStringInfo(&str, pstats->path, pstats->pathlen);
-		jsonPathAppendEntryWithLen(&str, key, keylen);
+		jsonPathAppendEntry(&str, key);
 
 		path = str.data;
 		pathlen = str.len;
@@ -390,8 +390,7 @@ jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
 
 	for (int i = 0; pstats && i < pathlen; i++)
 	{
-		char	   *key = text_to_cstring(DatumGetTextP(path[i]));
-		int			keylen = strlen(key);
+		char	   *key = TextDatumGetCString(path[i]);
 		char	   *tail;
 		int			index;
 
@@ -402,7 +401,7 @@ jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
 		if (tail == key || *tail != '\0' || errno != 0)
 		{
 			/* Find object key stats */
-			pstats = jsonPathStatsGetSubpath(pstats, key, keylen);
+			pstats = jsonPathStatsGetSubpath(pstats, key);
 		}
 		else
 		{
@@ -410,7 +409,7 @@ jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
 			float4	arrfreq;
 
 			/* FIXME consider object key "index" also */
-			pstats = jsonPathStatsGetSubpath(pstats, NULL, 0);
+			pstats = jsonPathStatsGetSubpath(pstats, NULL);
 			sel *= jsonPathStatsGetArrayIndexSelectivity(pstats, index);
 			arrfreq = jsonPathStatsGetFreq(pstats, 0.0);
 
