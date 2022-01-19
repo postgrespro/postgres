@@ -301,8 +301,6 @@ jsonPathAppendEntry(StringInfo path, const char *entry)
 /*
  * jsonPathAppendEntryWithLen
  *		Append string (represented as string + length) to a path.
- *
- * XXX Doesn't this need ecape_json too?
  */
 static void
 jsonPathAppendEntryWithLen(StringInfo path, const char *entry, int len)
