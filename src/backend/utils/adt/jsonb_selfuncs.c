@@ -84,8 +84,8 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 	if (!vardata->statsTuple)
 		return false;
 
-	memset(&data->attslot, 0, sizeof(data->attslot));
 	data->statsTuple = vardata->statsTuple;
+	memset(&data->attslot, 0, sizeof(data->attslot));
 
 	/* Were there just NULL values in the column? No JSON stats, but still useful. */
 	if (((Form_pg_statistic) GETSTRUCT(data->statsTuple))->stanullfrac >= 1.0)
