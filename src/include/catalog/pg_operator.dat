@@ -3230,7 +3230,7 @@
 { oid => '3246', oid_symbol => 'JsonbContainsOperator', descr => 'contains',
   oprname => '@>', oprleft => 'jsonb', oprright => 'jsonb', oprresult => 'bool',
   oprcom => '<@(jsonb,jsonb)', oprcode => 'jsonb_contains',
-  oprrest => 'matchingsel', oprjoin => 'matchingjoinsel' },
+  oprrest => 'jsonb_sel', oprjoin => 'matchingjoinsel' },
 { oid => '3247', oid_symbol => 'JsonbExistsOperator', descr => 'key exists',
   oprname => '?', oprleft => 'jsonb', oprright => 'text', oprresult => 'bool',
   oprcode => 'jsonb_exists', oprrest => 'jsonb_sel',
