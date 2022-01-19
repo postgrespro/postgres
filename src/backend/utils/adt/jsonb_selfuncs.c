@@ -1389,7 +1389,11 @@ jsonb_sel(PG_FUNCTION_ARGS)
 		}
 
 		case JsonbContainedOperator:
-			/* TODO */
+			if (varonleft || cnst->consttype != JSONBOID)
+				goto out;
+
+			sel = jsonSelectivityContains(&stats,
+										  DatumGetJsonbP(cnst->constvalue));
 			break;
 
 		case JsonbContainsOperator:
