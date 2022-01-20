@@ -81,19 +81,13 @@ typedef struct JsonPathEntry JsonPathEntry;
  * XXX We need entry+lenth because JSON path elements may contain null
  * bytes, I guess?
  */
-struct JsonPathEntry
+typedef struct JsonPathEntry
 {
 	JsonPathEntry  *parent;
 	const char	   *entry;		/* element of the path as a string */
 	int				len;		/* length of entry string (may be 0) */
 	uint32			hash;		/* hash of the whole path (with parent) */
-};
-
-/*
- * A path is simply a pointer to the last element (we can traverse to
- * the top easily).
- */
-typedef JsonPathEntry *JsonPath;
+} JsonPathEntry;
 
 /* An array containing a dynamic number of JSON values. */
 typedef struct JsonValues
@@ -191,12 +185,9 @@ typedef struct JsonAnalyzeContext
  *
  * Returned int instead of bool, because it is an implementation of
  * HashCompareFunc.
- *
- * XXX Sould be JsonPathEntryMatch as it deals with JsonPathEntry nodes
- * not whole paths, no?
  */
 static int
-JsonPathMatch(const void *key1, const void *key2, Size keysize)
+JsonPathEntryMatch(const void *key1, const void *key2, Size keysize)
 {
 	const JsonPathEntry *path1 = key1;
 	const JsonPathEntry *path2 = key2;
@@ -211,23 +202,17 @@ JsonPathMatch(const void *key1, const void *key2, Size keysize)
  * JsonPathHash
  *		Calculate hash of the path entry.
  *
- * XXX Again, maybe JsonPathEntryHash would be a better name?
- *
- * XXX Maybe should call JsonPathHash on the parent, instead of looking
- * at the field directly. Could easily happen we have not calculated it
- * yet, I guess.
+ * Parent hash should be already calculated.
  */
 static uint32
-JsonPathHash(const void *key, Size keysize)
+JsonPathEntryHash(const void *key, Size keysize)
 {
 	const JsonPathEntry	   *path = key;
-
-	/* XXX Call JsonPathHash instead of direct access? */
 	uint32					hash = path->parent ? path->parent->hash : 0;
 
 	hash = (hash << 1) | (hash >> 31);
-	hash ^= path->len < 0 ? 0 : DatumGetUInt32(
-					hash_any((const unsigned char *) path->entry, path->len));
+	hash ^= path->len < 0 ? 0 :
+		DatumGetUInt32(hash_any((const unsigned char *) path->entry, path->len));
 
 	return hash;
 }
@@ -241,7 +226,7 @@ JsonPathHash(const void *key, Size keysize)
  * updated.
  */
 static inline JsonPathAnlStats *
-jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath parent,
+jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPathEntry *parent,
 				   const char *entry, int len)
 {
 	JsonPathEntry path;
@@ -252,7 +237,7 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath parent,
 	path.parent = parent;
 	path.entry = entry;
 	path.len = len;
-	path.hash = JsonPathHash(&path, 0);
+	path.hash = JsonPathEntryHash(&path, 0);
 
 	/* XXX See if we already saw this path earlier. */
 	stats = hash_search_with_hash_value(ctx->pathshash, &path, path.hash,
@@ -265,7 +250,7 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath parent,
 	if (!found)
 	{
 		JsonPathAnlStats *parent = (JsonPathAnlStats *) stats->path.parent;
-		JsonPath	path = &stats->path;
+		JsonPathEntry *path = &stats->path;
 		const char *ppath = parent->pathstr;
 		StringInfoData si;
 		MemoryContext oldcxt = MemoryContextSwitchTo(ctx->mcxt);
@@ -586,7 +571,7 @@ jsonAnalyzeCollectPath(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 	JsonPathAnlStats   *pstats = (JsonPathAnlStats *) param;
 	JsonbValue			jbvtmp;
 	JsonbValue		   *jbv = JsonValueInitBinary(&jbvtmp, jb);
-	JsonPath			path;
+	JsonPathEntry *path;
 
 	if (!pstats->entries)
 	{
@@ -1100,8 +1085,8 @@ jsonAnalyzeInit(JsonAnalyzeContext *ctx, VacAttrStats *stats,
 	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(JsonPathEntry);
 	hash_ctl.entrysize = sizeof(JsonPathAnlStats);
-	hash_ctl.hash = JsonPathHash;
-	hash_ctl.match = JsonPathMatch;
+	hash_ctl.hash = JsonPathEntryHash;
+	hash_ctl.match = JsonPathEntryMatch;
 	hash_ctl.hcxt = ctx->mcxt;
 
 	ctx->pathshash = hash_create("JSON analyze path table", 100, &hash_ctl,
