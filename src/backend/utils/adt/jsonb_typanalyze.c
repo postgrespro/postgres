@@ -1228,18 +1228,14 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 
 		oldcxt = MemoryContextSwitchTo(tmpcxt);
 
-		/*
-		 * XXX If I understand correctly, we simply collect all paths first,
-		 * without accumulating any Values. And then in the next step we
-		 * process each path independently, probably to save memory (we
-		 * don't want to accumulate all values for all paths, with a lot
-		 * of duplicities).
-		 */
-
-		/* Collect all paths first and sort them */
+		/* Collect all paths first without accumulating any Values, sort them */
 		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) false);
 		jsonAnalyzeSortPaths(&ctx);
 
+		/*
+		 * Next, process each path independently to save memory (we don't want
+		 * to accumulate all values for all paths, with a lot of duplicities).
+		 */
 		MemoryContextReset(tmpcxt);
 
 		for (i = 0; i < ctx.npaths; i++)
