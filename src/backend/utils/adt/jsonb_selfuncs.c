@@ -829,7 +829,10 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 	if (!pstats || !pstats->datum)
 		return NULL;
 
-	/* FIXME What does this mean? */
+	/*
+	 * If it is the ordinary root path stats, there is no need to transform
+	 * the tuple, it can be simply copied.
+	 */
 	if (pstats->datum == &pstats->data->values[1] &&
 		pstats->type == JsonPathStatsValues)
 		return heap_copytuple(pstats->data->statsTuple);
