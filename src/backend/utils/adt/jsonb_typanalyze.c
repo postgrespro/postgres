@@ -292,8 +292,8 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath parent,
 		stats->entries = NULL;
 		stats->nentries = 0;
 
-		/* XXX Seems strange. Should we even add the path in this case? */
-		if (stats->depth > ctx->maxdepth)
+		/* update maximal depth */
+		if (ctx->maxdepth < stats->depth)
 			ctx->maxdepth = stats->depth;
 	}
 
