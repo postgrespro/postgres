@@ -242,15 +242,21 @@ JsonPathHash(const void *key, Size keysize)
  * updated.
  */
 static inline JsonPathAnlStats *
-jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath path)
+jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath parent,
+				   const char *entry, int len)
 {
-	JsonPathAnlStats   *stats;
-	bool				found;
+	JsonPathEntry path;
+	JsonPathAnlStats *stats;
+	bool		found;
 
-	path->hash = JsonPathHash(path, 0);
+	/* Init path entry */
+	path.parent = parent;
+	path.entry = entry;
+	path.len = len;
+	path.hash = JsonPathHash(&path, 0);
 
 	/* XXX See if we already saw this path earlier. */
-	stats = hash_search_with_hash_value(ctx->pathshash, path, path->hash,
+	stats = hash_search_with_hash_value(ctx->pathshash, &path, path.hash,
 										HASH_ENTER, &found);
 
 	/*
@@ -430,8 +436,6 @@ jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 	JsonbIteratorToken	tok;
 	JsonPathAnlStats   *target = (JsonPathAnlStats *) param;
 	JsonPathAnlStats   *stats = ctx->root;
-	JsonPath			path = &stats->path;
-	JsonPathEntry		entry;
 	bool				scalar = false;
 
 	if ((!target || target == stats) &&
@@ -445,37 +449,49 @@ jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 		switch (tok)
 		{
 			case WJB_BEGIN_OBJECT:
-				entry.entry = NULL;
-				entry.len = -1;
-				entry.parent = path;
-				path = &entry;
+				/*
+				 * Read next token to see if the object is empty or not.
+				 * If not, make stats for the first key.  Subsequent WJB_KEYs
+				 * and WJB_END_OBJECT will expect that stats will be pointing
+				 * to the key of current object.
+				 */
+				tok = JsonbIteratorNext(&it, &jv, true);
 
-				break;
+				if (tok == WJB_END_OBJECT)
+					/* Empty object, simply skip stats initialization. */
+					break;
 
-			case WJB_END_OBJECT:
-				stats = (JsonPathAnlStats *)(path = path->parent);
+				if (tok != WJB_KEY)
+					elog(ERROR, "unexpected jsonb iterator token: %d", tok);
+
+				stats = jsonAnalyzeAddPath(ctx, &stats->path,
+										   jv.val.string.val,
+										   jv.val.string.len);
 				break;
 
 			case WJB_BEGIN_ARRAY:
+				/* Make stats for non-scalar array and use it for all elements */
 				if (!(scalar = jv.val.array.rawScalar))
-				{
-					entry.entry = NULL;
-					entry.len = -1;
-					entry.parent = path;
-					path = &(stats = jsonAnalyzeAddPath(ctx, &entry))->path;
-				}
+					stats = jsonAnalyzeAddPath(ctx, &stats->path, NULL, -1);
 				break;
 
 			case WJB_END_ARRAY:
-				if (!scalar)
-					stats = (JsonPathAnlStats *)(path = path->parent);
+				if (scalar)
+					break;
+				/* FALLTHROUGH */
+			case WJB_END_OBJECT:
+				/* Reset to parent stats */
+				stats = (JsonPathAnlStats *) stats->path.parent;
 				break;
 
 			case WJB_KEY:
-				entry.entry = jv.val.string.val;
-				entry.len = jv.val.string.len;
-				entry.parent = path->parent;
-				path = &(stats = jsonAnalyzeAddPath(ctx, &entry))->path;
+				/*
+				 * Stats should point to the previous key of current object,
+				 * use its parent path as a base path.
+				 */
+				stats = jsonAnalyzeAddPath(ctx, stats->path.parent,
+										   jv.val.string.val,
+										   jv.val.string.len);
 				break;
 
 			case WJB_VALUE:
