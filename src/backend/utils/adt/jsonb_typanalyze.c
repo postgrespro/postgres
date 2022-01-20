@@ -343,7 +343,7 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 	JsonbValue			jbvtmp;
 	Datum				value;
 
-	/* ??? */
+	/* XXX if analyzing only scalar values, make containers empty */
 	if (ctx->scalarsOnly && jv->type == jbvBinary)
 	{
 		if (JsonContainerIsObject(jv->val.binary.data))
