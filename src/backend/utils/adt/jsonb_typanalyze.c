@@ -1016,8 +1016,8 @@ jsonAnalyzeMakeStats(JsonAnalyzeContext *ctx, int *numvalues)
 	Datum		   *values;
 	MemoryContext	oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
 
-	values = jsonAnalyzeBuildPathStatsArray(ctx->paths, ctx->npaths,
-											numvalues, "$", 1);
+	values = jsonAnalyzeBuildPathStatsArray(ctx->paths, ctx->npaths, numvalues,
+											JSON_PATH_ROOT, JSON_PATH_ROOT_LEN);
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -1119,7 +1119,7 @@ jsonAnalyzeInit(JsonAnalyzeContext *ctx, VacAttrStats *stats,
 					HASH_ELEM | HASH_FUNCTION | HASH_COMPARE | HASH_CONTEXT);
 
 	ctx->root = MemoryContextAllocZero(ctx->mcxt, sizeof(JsonPathAnlStats));
-	ctx->root->pathstr = "$";
+	ctx->root->pathstr = JSON_PATH_ROOT;
 }
 
 /*

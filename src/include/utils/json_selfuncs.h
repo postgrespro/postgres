@@ -21,6 +21,12 @@
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 
+#define JSON_PATH_ROOT "$"
+#define JSON_PATH_ROOT_LEN 1
+
+#define JSON_PATH_ROOT_ARRAY "$[*]"
+#define JSON_PATH_ROOT_ARRAY_LEN 4
+
 typedef struct JsonStatData
 {
 	AttStatsSlot	attslot;
