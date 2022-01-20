@@ -1189,11 +1189,16 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				   int samplerows, double totalrows)
 {
 	JsonAnalyzeContext	ctx;
+	bool		sigle_pass = false;	/* FIXME make GUC or simply remove */
 
 	jsonAnalyzeInit(&ctx, stats, fetchfunc, samplerows, totalrows);
 
-	/* XXX Not sure what the first branch is doing (or supposed to)? */
-	if (false)
+	/*
+	 * Collect and analyze JSON path values in single or multiple passes.
+	 * Sigle-pass collection is faster but consumes much more memory than
+	 * collecting and analyzing by the one path at pass.
+	 */
+	if (sigle_pass)
 	{
 		/* Collect all values of all paths */
 		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true);
