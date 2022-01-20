@@ -129,9 +129,10 @@ typedef struct JsonValueStats
 {
 	JsonScalarStats	jsons;		/* stats for all JSON types together */
 
-	/* XXX used only with JSON_ANALYZE_SCALARS defined */
+#ifdef JSON_ANALYZE_SCALARS		/* XXX */
 	JsonScalarStats	strings;	/* stats for JSON strings */
 	JsonScalarStats	numerics;	/* stats for JSON numerics */
+#endif
 
 	/* stats for booleans */
 	struct
@@ -143,6 +144,8 @@ typedef struct JsonValueStats
 	int				nnulls;		/* number of JSON null values */
 	int				nobjects;	/* number of JSON objects */
 	int				narrays;	/* number of JSON arrays */
+	int				nstrings;	/* number of JSON strings */
+	int				nnumerics;	/* number of JSON numerics */
 
 	JsonScalarStats	lens;		/* stats of object lengths */
 	JsonScalarStats	arrlens;	/* stats of array lengths */
@@ -378,6 +381,7 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 			break;
 
 		case jbvString:
+			vstats->nstrings++;
 #ifdef JSON_ANALYZE_SCALARS
 			value = PointerGetDatum(
 						cstring_to_text_with_len(jv->val.string.val,
@@ -387,6 +391,7 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 			break;
 
 		case jbvNumeric:
+			vstats->nnumerics++;
 #ifdef JSON_ANALYZE_SCALARS
 			value = PointerGetDatum(jv->val.numeric);
 			JsonValuesAppend(&vstats->numerics.values, value, ctx->target);
@@ -804,11 +809,11 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 								  vstats->jsons.values.count);
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq_string",
-						   freq * vstats->strings.values.count /
+						   freq * vstats->nstrings /
 								  vstats->jsons.values.count);
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq_numeric",
-						   freq * vstats->numerics.values.count /
+						   freq * vstats->nnumerics /
 								  vstats->jsons.values.count);
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq_array",
