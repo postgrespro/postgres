@@ -92,7 +92,14 @@ typedef struct JsonPathEntry
 
 #define JsonPathEntryIsArray(entry) ((entry)->len == -1)
 
-/* An array containing a dynamic number of JSON values. */
+/*
+ * An array containing a dynamic number of values extracted from JSON documents.
+ * All values should have the same data type:
+ *		jsonb   - ordinary path stats, values of different JSON types
+ *		int32   - array/object length stats
+ *		text    - separate stats fro strings
+ *		numeric - separate stats fro numbers
+ */
 typedef struct JsonValues
 {
 	Datum	   *buf;
@@ -103,8 +110,6 @@ typedef struct JsonValues
 /*
  * Scalar statistics built for an array of values, extracted from a JSON
  * document (for one particular path).
- *
- * XXX The array can contain values of different JSON type, probably?
  */
 typedef struct JsonScalarStats
 {
