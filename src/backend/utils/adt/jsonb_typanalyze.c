@@ -147,15 +147,15 @@ typedef struct JsonValueStats
 	int				nnumerics;	/* number of JSON numerics */
 } JsonValueStats;
 
-/* ??? */
+/* Main structure for analyzed JSON path  */
 typedef struct JsonPathAnlStats
 {
-	JsonPathEntry		path;
-	JsonValueStats		vstats;
-	Jsonb			   *stats;
-	char			   *pathstr;
-	double				freq;
-	int					depth;
+	JsonPathEntry path;		/* path entry chain, used for hashing */
+	JsonValueStats vstats;	/* collected values and raw computed stats */
+	Jsonb	   *stats;		/* stats converted into jsonb form */
+	char	   *pathstr;	/* full path string */
+	double		freq;		/* frequence of the path */
+	int			depth;		/* nesting level, i.e. path length */
 } JsonPathAnlStats;
 
 /* various bits needed while analyzing JSON */
