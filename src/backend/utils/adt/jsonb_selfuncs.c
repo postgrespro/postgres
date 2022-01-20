@@ -233,13 +233,15 @@ jsonPathStatsCompare(const void *pv1, const void *pv2)
 }
 
 /*
- * jsonStatsFindPathStats
+ * jsonStatsFindPath
  *		Find stats for a given path.
  *
  * The stats are sorted by path, so we can simply do bsearch().
+ * This is low-level function and jsdata->prefix is not considered, the caller
+ * should handle it by itself.
  */
 static JsonPathStats
-jsonStatsFindPathStats(JsonStats jsdata, char *path, int pathlen)
+jsonStatsFindPath(JsonStats jsdata, char *path, int pathlen)
 {
 	JsonPathStats stats;
 	JsonbValue	jbvkey;
@@ -264,15 +266,11 @@ jsonStatsFindPathStats(JsonStats jsdata, char *path, int pathlen)
 }
 
 /*
- * jsonStatsGetPathStatsStr
- *		???
- *
- * XXX Seems to do essentially what jsonStatsFindPathStats, except that it also
- * considers jsdata->prefix. Seems fairly easy to combine those into a single
- * function.
+ * jsonStatsGetPathByStr
+ *		Find stats for a given path string considering jsdata->prefix.
  */
 JsonPathStats
-jsonStatsGetPathStatsStr(JsonStats jsdata, const char *subpath, int subpathlen)
+jsonStatsGetPathByStr(JsonStats jsdata, const char *subpath, int subpathlen)
 {
 	JsonPathStats stats;
 	char	   *path;
@@ -287,13 +285,19 @@ jsonStatsGetPathStatsStr(JsonStats jsdata, const char *subpath, int subpathlen)
 	memcpy(path, jsdata->prefix, jsdata->prefixlen);
 	memcpy(&path[jsdata->prefixlen], &subpath[1], subpathlen - 1);
 
-	stats = jsonStatsFindPathStats(jsdata, path, pathlen);
+	stats = jsonStatsFindPath(jsdata, path, pathlen);
 
 	if (!stats)
 		pfree(path);
 
 	return stats;
 }
+
+#define jsonStatsGetRootPath(jsdata) \
+		jsonStatsGetPathByStr(jsdata, JSON_PATH_ROOT, JSON_PATH_ROOT_LEN)
+
+#define jsonStatsGetRootArrayPath(jsdata) \
+		jsonStatsGetPathByStr(jsdata, JSON_PATH_ROOT_ARRAY, JSON_PATH_ROOT_ARRAY_LEN)
 
 /*
  * jsonPathAppendEntry
@@ -344,7 +348,7 @@ jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key)
 	path = str.data;
 	pathlen = str.len;
 
-	spstats = jsonStatsFindPathStats(pstats->data, path, pathlen);
+	spstats = jsonStatsFindPath(pstats->data, path, pathlen);
 	if (!spstats)
 		pfree(path);
 
@@ -378,16 +382,15 @@ jsonPathStatsGetArrayIndexSelectivity(JsonPathStats pstats, int index)
 }
 
 /*
- * jsonStatsGetPathStats
+ * jsonStatsGetPath
  *		Find JSON statistics for a given path.
  *
  * 'path' is an array of text datums of length 'pathlen' (can be zero).
  */
 static JsonPathStats
-jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
-					  float4 *nullfrac)
+jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
 {
-	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, JSON_PATH_ROOT, JSON_PATH_ROOT_LEN);
+	JsonPathStats pstats = jsonStatsGetRootPath(jsdata);
 	Selectivity	sel = 1.0;
 
 	for (int i = 0; pstats && i < pathlen; i++)
@@ -840,16 +843,15 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 }
 
 /*
- * jsonStatsGetPathStatsTuple
+ * jsonStatsGetPathTuple
  *		Extract JSON statistics for a path and form pg_statistics tuple.
  */
 static HeapTuple
-jsonStatsGetPathStatsTuple(JsonStats jsdata, JsonStatType type,
-						   Datum *path, int pathlen)
+jsonStatsGetPathTuple(JsonStats jsdata, JsonStatType type,
+					  Datum *path, int pathlen)
 {
 	float4			nullfrac;
-	JsonPathStats	pstats = jsonStatsGetPathStats(jsdata, path, pathlen,
-												   &nullfrac);
+	JsonPathStats	pstats = jsonStatsGetPath(jsdata, path, pathlen, &nullfrac);
 
 	return jsonPathStatsFormTuple(pstats, type, nullfrac);
 }
@@ -862,9 +864,7 @@ static HeapTuple
 jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 index)
 {
 	/* Extract statistics for root array elements */
-	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata,
-													JSON_PATH_ROOT_ARRAY,
-													JSON_PATH_ROOT_ARRAY_LEN);
+	JsonPathStats pstats = jsonStatsGetRootArrayPath(jsdata);
 	Selectivity	index_sel;
 
 	if (!pstats)
@@ -885,10 +885,9 @@ jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 inde
 static float4
 jsonStatsGetPathFreq(JsonStats jsdata, Datum *path, int pathlen)
 {
-	float4			nullfrac;
-	JsonPathStats	pstats = jsonStatsGetPathStats(jsdata, path, pathlen,
-												   &nullfrac);
-	float4			freq = (1.0 - nullfrac) * jsonPathStatsGetFreq(pstats, 0.0);
+	float4		nullfrac;
+	JsonPathStats pstats = jsonStatsGetPath(jsdata, path, pathlen, &nullfrac);
+	float4		freq = (1.0 - nullfrac) * jsonPathStatsGetFreq(pstats, 0.0);
 
 	CLAMP_PROBABILITY(freq);
 	return freq;
@@ -933,8 +932,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 			}
 
 			resdata->statsTuple =
-				jsonStatsGetPathStatsTuple(&jsdata, statype,
-										  &cnst->constvalue, 1);
+				jsonStatsGetPathTuple(&jsdata, statype, &cnst->constvalue, 1);
 			break;
 		}
 
@@ -985,7 +983,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 
 			if (!have_nulls)
 				resdata->statsTuple =
-					jsonStatsGetPathStatsTuple(&jsdata, statype, path, pathlen);
+					jsonStatsGetPathTuple(&jsdata, statype, path, pathlen);
 
 			pfree(path);
 			pfree(nulls);
@@ -1151,7 +1149,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 	/* Initialize root path entry */
 	root.parent = NULL;
 	root.len = pathstr.len;
-	root.stats = jsonStatsGetPathStatsStr(stats, pathstr.data, pathstr.len);
+	root.stats = jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
 	root.freq = jsonPathStatsGetFreq(root.stats, 0.0);
 	root.sel = 1.0;
 
@@ -1209,8 +1207,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 				/* Appeend path string entry for array elements, get stats. */
 				jsonPathAppendEntry(&pathstr, NULL);
-				pstats = jsonStatsGetPathStatsStr(stats, pathstr.data,
-												 pathstr.len);
+				pstats = jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
 				freq = jsonPathStatsGetFreq(pstats, 0.0);
 
 				/* If there are no arrays, return 0 or scalar selectivity */
@@ -1269,7 +1266,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				 * same statistics that was extracted in WJB_BEGIN_ARRAY.
 				 */
 				JsonPathStats pstats = r == WJB_ELEM ? path->stats :
-					jsonStatsGetPathStatsStr(stats, pathstr.data, pathstr.len);
+					jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
 				/* Make scalar jsonb datum */
 				Datum		scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
 				/* Absolute selectivity of 'path == scalar' */
@@ -1317,12 +1314,10 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 
 	keysel = jsonStatsGetPathFreq(stats, &key, 1);
 
-	rootstats = jsonStatsGetPathStatsStr(stats, JSON_PATH_ROOT,
-										 JSON_PATH_ROOT_LEN);
+	rootstats = jsonStatsGetRootPath(stats);
 	scalarsel = jsonSelectivity(rootstats, jbkey, JsonbEqOperator);
 
-	arrstats = jsonStatsGetPathStatsStr(stats, JSON_PATH_ROOT_ARRAY,
-										JSON_PATH_ROOT_ARRAY_LEN);
+	arrstats = jsonStatsGetRootArrayPath(stats);
 	arraysel = jsonSelectivity(arrstats, jbkey, JsonbEqOperator);
 	arraysel = 1.0 - pow(1.0 - arraysel,
 						 jsonPathStatsGetAvgArraySize(arrstats));
