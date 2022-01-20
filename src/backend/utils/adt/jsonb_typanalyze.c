@@ -134,6 +134,9 @@ typedef struct JsonValueStats
 	JsonScalarStats	numerics;	/* stats for JSON numerics */
 #endif
 
+	JsonScalarStats	lens;		/* stats of object/array lengths */
+	JsonScalarStats	arrlens;	/* stats of array lengths */
+
 	/* stats for booleans */
 	struct
 	{
@@ -146,9 +149,6 @@ typedef struct JsonValueStats
 	int				narrays;	/* number of JSON arrays */
 	int				nstrings;	/* number of JSON strings */
 	int				nnumerics;	/* number of JSON numerics */
-
-	JsonScalarStats	lens;		/* stats of object lengths */
-	JsonScalarStats	arrlens;	/* stats of array lengths */
 } JsonValueStats;
 
 /* ??? */
