@@ -955,11 +955,13 @@ jsonAnalyzeSortPaths(JsonAnalyzeContext *ctx, int *p_npaths)
 
 /*
  * jsonAnalyzeBuildPathStatsArray
- *		???
+ *		Build jsonb datum array for path stats, that will be used as stavalues.
+ *
+ * The first element is a path prefix.
  */
 static Datum *
 jsonAnalyzeBuildPathStatsArray(JsonPathAnlStats **paths, int npaths, int *nvals,
-								const char *prefix, int prefixlen)
+							   const char *prefix, int prefixlen)
 {
 	Datum	   *values = palloc(sizeof(Datum) * (npaths + 1));
 	JsonbValue *jbvprefix = palloc(sizeof(JsonbValue));
@@ -981,14 +983,14 @@ jsonAnalyzeBuildPathStatsArray(JsonPathAnlStats **paths, int npaths, int *nvals,
 
 /*
  * jsonAnalyzeMakeStats
- *		???
+ *		Build stavalues jsonb array for the root path prefix.
  */
 static Datum *
 jsonAnalyzeMakeStats(JsonAnalyzeContext *ctx, JsonPathAnlStats **paths,
 					 int npaths, int *numvalues)
 {
-	Datum		   *values;
-	MemoryContext	oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
+	Datum	   *values;
+	MemoryContext oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
 
 	values = jsonAnalyzeBuildPathStatsArray(paths, npaths, numvalues,
 											JSON_PATH_ROOT, JSON_PATH_ROOT_LEN);
@@ -1000,7 +1002,10 @@ jsonAnalyzeMakeStats(JsonAnalyzeContext *ctx, JsonPathAnlStats **paths,
 
 /*
  * jsonAnalyzeBuildSubPathsData
- *		???
+ *		Build statvalues and stanumbers arrays for the subset of paths starting
+ *		from a given prefix.
+ *
+ * pathsDatums[index] should point to the desired path.
  */
 bool
 jsonAnalyzeBuildSubPathsData(Datum *pathsDatums, int npaths, int index,
@@ -1009,21 +1014,23 @@ jsonAnalyzeBuildSubPathsData(Datum *pathsDatums, int npaths, int index,
 							 Datum *pvals, Datum *pnums)
 {
 	JsonPathAnlStats  **pvalues = palloc(sizeof(*pvalues) * npaths);
-	Datum			   *values;
-	Datum				numbers[1];
-	JsonbValue			pathkey;
-	int					nsubpaths = 0;
-	int					nvalues;
-	int					i;
+	Datum	   *values;
+	Datum		numbers[1];
+	JsonbValue	pathkey;
+	int			nsubpaths = 0;
+	int			nvalues;
+	int			i;
 
 	JsonValueInitStringWithLen(&pathkey, "path", 4);
 
 	for (i = index; i < npaths; i++)
 	{
+		/* Extract path name */
 		Jsonb	   *jb = DatumGetJsonbP(pathsDatums[i]);
 		JsonbValue *jbv = findJsonbValueFromContainer(&jb->root, JB_FOBJECT,
 													  &pathkey);
 
+		/* Check if path name starts with a given prefix */
 		if (!jbv || jbv->type != jbvString ||
 			jbv->val.string.len < pathlen ||
 			memcmp(jbv->val.string.val, path, pathlen))
@@ -1031,11 +1038,16 @@ jsonAnalyzeBuildSubPathsData(Datum *pathsDatums, int npaths, int index,
 
 		pfree(jbv);
 
+		/* Collect matching path */
 		pvalues[nsubpaths] = palloc(sizeof(**pvalues));
 		pvalues[nsubpaths]->stats = jb;
 
 		nsubpaths++;
 
+		/*
+		 * The path should go before its subpaths, so if subpaths are not
+		 * needed the loop is broken after the first matching path.
+		 */
 		if (!includeSubpaths)
 			break;
 	}
@@ -1046,6 +1058,7 @@ jsonAnalyzeBuildSubPathsData(Datum *pathsDatums, int npaths, int index,
 		return false;
 	}
 
+	/* Construct new array from the selected paths */
 	values = jsonAnalyzeBuildPathStatsArray(pvalues, nsubpaths, &nvalues,
 											path, pathlen);
 	*pvals = PointerGetDatum(construct_array(values, nvalues, JSONBOID, -1,
