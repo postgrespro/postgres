@@ -425,8 +425,6 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
  *		Parse the JSON document and build/update stats.
  *
  * XXX The name seems a bit weird, with the two json bits.
- *
- * XXX The param is either NULL, (char *) -1, or a pointer
  */
 static void
 jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
@@ -434,12 +432,11 @@ jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 	JsonbValue			jv;
 	JsonbIterator	   *it;
 	JsonbIteratorToken	tok;
-	JsonPathAnlStats   *target = (JsonPathAnlStats *) param;
 	JsonPathAnlStats   *stats = ctx->root;
+	bool				collect_values = (bool)(intptr_t) param;
 	bool				scalar = false;
 
-	if ((!target || target == stats) &&
-		!JB_ROOT_IS_SCALAR(jb))
+	if (collect_values && !JB_ROOT_IS_SCALAR(jb))
 		jsonAnalyzeJsonValue(ctx, &stats->vstats, JsonValueInitBinary(&jv, jb));
 
 	it = JsonbIteratorInit(&jb->root);
@@ -496,7 +493,7 @@ jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 
 			case WJB_VALUE:
 			case WJB_ELEM:
-				if (!target || target == stats)
+				if (collect_values)
 					jsonAnalyzeJsonValue(ctx, &stats->vstats, &jv);
 
 				/* XXX not sure why we're doing this? */
@@ -1222,7 +1219,8 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	/* XXX Not sure what the first branch is doing (or supposed to)? */
 	if (false)
 	{
-		jsonAnalyzePass(&ctx, jsonAnalyzeJson, NULL);
+		/* Collect all values of all paths */
+		jsonAnalyzePass(&ctx, jsonAnalyzeJson, (void *)(intptr_t) true);
 		jsonAnalyzePaths(&ctx);
 	}
 	else
@@ -1244,19 +1242,15 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		oldcxt = MemoryContextSwitchTo(tmpcxt);
 
 		/*
-		 * XXX It's not immediately clear why this is (-1) and not simply
-		 * NULL. It crashes, so presumably it's used to tweak the behavior,
-		 * but it's not clear why/how, and it affects place that is pretty
-		 * far away, and so not obvious. We should use some sort of flag
-		 * with a descriptive name instead.
-		 *
 		 * XXX If I understand correctly, we simply collect all paths first,
 		 * without accumulating any Values. And then in the next step we
 		 * process each path independently, probably to save memory (we
 		 * don't want to accumulate all values for all paths, with a lot
 		 * of duplicities).
 		 */
-		jsonAnalyzePass(&ctx, jsonAnalyzeJson, (void *) -1);
+
+		/* Collect all paths first and sort them */
+		jsonAnalyzePass(&ctx, jsonAnalyzeJson, (void *)(intptr_t) false);
 		jsonAnalyzeSortPaths(&ctx);
 
 		MemoryContextReset(tmpcxt);
