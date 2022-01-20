@@ -35,13 +35,14 @@
  *
  * This is stored in the stavalues array.
  *
+ * The first element of stavalues is a path prefix.  It is used for avoiding
+ * path transformations when the derived statistics for the chains of ->
+ * operators is computed.
+ *
  * The per-column stats (stored in the "json" key) have additional internal
  * structure, to allow storing multiple stakind types (histogram, mcv). See
  * jsonAnalyzeMakeScalarStats for details.
  *
- *
- * XXX There's additional stuff (prefix, length stats) stored in the first
- * two elements, I think.
  *
  * XXX It's a bit weird the "regular" stats are stored in the "json" key,
  * while the JSON stats (frequencies of different JSON types) are right
