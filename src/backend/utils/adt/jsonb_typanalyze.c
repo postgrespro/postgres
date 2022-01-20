@@ -420,13 +420,11 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 }
 
 /*
- * jsonAnalyzeJson
- *		Parse the JSON document and build/update stats.
- *
- * XXX The name seems a bit weird, with the two json bits.
+ * jsonAnalyzeCollectPaths
+ *		Parse the JSON document and collect all paths and their values.
  */
 static void
-jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
+jsonAnalyzeCollectPaths(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 {
 	JsonbValue			jv;
 	JsonbIterator	   *it;
@@ -513,12 +511,12 @@ jsonAnalyzeJson(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 }
 
 /*
- * jsonAnalyzeJsonSubpath
- *		???
+ * jsonAnalyzeCollectSubpath
+ *		Recursively extract trailing part of a path and collect its values.
  */
 static void
-jsonAnalyzeJsonSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
-					   JsonbValue *jbv, int n)
+jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
+						  JsonbValue *jbv, int n)
 {
 	JsonbValue	scalar;
 	int			i;
@@ -549,7 +547,7 @@ jsonAnalyzeJsonSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 			while ((r = JsonbIteratorNext(&it, &elem, true)) != WJB_DONE)
 			{
 				if (r == WJB_ELEM)
-					jsonAnalyzeJsonSubpath(ctx, pstats, &elem, i + 1);
+					jsonAnalyzeCollectSubpath(ctx, pstats, &elem, i + 1);
 			}
 
 			return;
@@ -579,11 +577,11 @@ jsonAnalyzeJsonSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 }
 
 /*
- * jsonAnalyzeJsonPath
- *		???
+ * jsonAnalyzeCollectPath
+ *		Extract a single path from JSON documents and collect its values.
  */
 static void
-jsonAnalyzeJsonPath(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
+jsonAnalyzeCollectPath(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 {
 	JsonPathAnlStats   *pstats = (JsonPathAnlStats *) param;
 	JsonbValue			jbvtmp;
@@ -603,7 +601,7 @@ jsonAnalyzeJsonPath(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 			pstats->entries[i] = path;
 	}
 
-	jsonAnalyzeJsonSubpath(ctx, pstats, jbv, 0);
+	jsonAnalyzeCollectSubpath(ctx, pstats, jbv, 0);
 }
 
 static Datum
@@ -1219,7 +1217,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	if (false)
 	{
 		/* Collect all values of all paths */
-		jsonAnalyzePass(&ctx, jsonAnalyzeJson, (void *)(intptr_t) true);
+		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true);
 		jsonAnalyzePaths(&ctx);
 	}
 	else
@@ -1249,7 +1247,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		 */
 
 		/* Collect all paths first and sort them */
-		jsonAnalyzePass(&ctx, jsonAnalyzeJson, (void *)(intptr_t) false);
+		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) false);
 		jsonAnalyzeSortPaths(&ctx);
 
 		MemoryContextReset(tmpcxt);
@@ -1261,7 +1259,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			elog(DEBUG1, "analyzing json path (%d/%d) %s",
 				 i + 1, ctx.npaths, path->pathstr);
 
-			jsonAnalyzePass(&ctx, jsonAnalyzeJsonPath, path);
+			jsonAnalyzePass(&ctx, jsonAnalyzeCollectPath, path);
 			jsonAnalyzePath(&ctx, path);
 
 			MemoryContextReset(tmpcxt);
