@@ -61,6 +61,7 @@ typedef enum JsonStatType
 	JsonStatJsonb,
 	JsonStatJsonbWithoutSubpaths,
 	JsonStatText,
+	JsonStatFloat4,
 	JsonStatString,
 	JsonStatNumeric,
 	JsonStatFreq,
