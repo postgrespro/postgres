@@ -298,12 +298,19 @@ jsonStatsGetPathStatsStr(JsonStats jsdata, const char *subpath, int subpathlen)
 /*
  * jsonPathAppendEntry
  *		Append entry (represented as simple string) to a path.
+ *
+ * NULL entry is treated as wildcard array accessor "[*]".
  */
-static void
+void
 jsonPathAppendEntry(StringInfo path, const char *entry)
 {
-	appendStringInfoCharMacro(path, '.');
-	escape_json(path, entry);
+	if (entry)
+	{
+		appendStringInfoCharMacro(path, '.');
+		escape_json(path, entry);
+	}
+	else
+		appendStringInfoString(path, "[*]");
 }
 
 /*
@@ -328,25 +335,14 @@ jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key)
 	JsonPathStats spstats;
 	char	   *path;
 	int			pathlen;
+	StringInfoData str;
 
-	if (key)
-	{
-		StringInfoData str;
+	initStringInfo(&str);
+	appendBinaryStringInfo(&str, pstats->path, pstats->pathlen);
+	jsonPathAppendEntry(&str, key);
 
-		initStringInfo(&str);
-		appendBinaryStringInfo(&str, pstats->path, pstats->pathlen);
-		jsonPathAppendEntry(&str, key);
-
-		path = str.data;
-		pathlen = str.len;
-	}
-	else
-	{
-		pathlen = pstats->pathlen + 2;
-		path = palloc(pathlen + 1);
-		snprintf(path, pstats->pathlen + pathlen, "%.*s.#",
-				 pstats->pathlen, pstats->path);
-	}
+	path = str.data;
+	pathlen = str.len;
 
 	spstats = jsonStatsFindPathStats(pstats->data, path, pathlen);
 	if (!spstats)
@@ -461,16 +457,20 @@ jsonPathStatsGetNextKeyStats(JsonPathStats stats, JsonPathStats *pkeystats,
 		{
 			const char *c = &jbvpath->val.string.val[stats->pathlen];
 
-			Assert(*c == '.');
-			c++;
-
-			if (*c == '#')
+			if (*c == '[')
 			{
+				c++;
+				Assert(*c == '*');
+				c++;
+				Assert(*c == ']');
+
 				if (keysOnly || jbvpath->val.string.len > stats->pathlen + 2)
 					continue;
 			}
 			else
 			{
+				Assert(*c == '.');
+				c++;
 				Assert(*c == '"');
 
 				while (*++c != '"')
@@ -862,7 +862,7 @@ static HeapTuple
 jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 index)
 {
 	/* Extract statistics for root array elements */
-	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$.#", 3);
+	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$[*]", 4);
 	Selectivity	index_sel;
 
 	if (!pstats)
@@ -1108,7 +1108,7 @@ jsonAccumulateSubPathSelectivity(Selectivity subpath_abs_sel,
 	Selectivity sel = subpath_abs_sel / path_freq;	/* relative selectivity */
 
 	/* XXX Try to take into account array length */
-	if (pathstr->data[pathstr->len - 1] == '#')
+	if (pathstr->data[pathstr->len - 1] == ']')
 		sel = 1.0 - pow(1.0 - sel, jsonPathStatsGetAvgArraySize(path_stats));
 
 	/* Accumulate selectivity of subpath into parent path */
@@ -1207,7 +1207,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				Selectivity freq;
 
 				/* Appeend path string entry for array elements, get stats. */
-				appendStringInfo(&pathstr, ".#");
+				jsonPathAppendEntry(&pathstr, NULL);
 				pstats = jsonStatsGetPathStatsStr(stats, pathstr.data,
 												 pathstr.len);
 				freq = jsonPathStatsGetFreq(pstats, 0.0);
@@ -1318,7 +1318,7 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 	scalarsel = jsonSelectivity(jsonStatsGetPathStatsStr(stats, "$", 1),
 								jbkey, JsonbEqOperator);
 
-	arrstats = jsonStatsGetPathStatsStr(stats, "$.#", 3);
+	arrstats = jsonStatsGetPathStatsStr(stats, "$[*]", 4);
 	arraysel = jsonSelectivity(arrstats, jbkey, JsonbEqOperator);
 	arraysel = 1.0 - pow(1.0 - arraysel,
 						 jsonPathStatsGetAvgArraySize(arrstats));

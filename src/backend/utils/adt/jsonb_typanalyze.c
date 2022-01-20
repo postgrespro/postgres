@@ -259,34 +259,24 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPath path)
 	 */
 	if (!found)
 	{
-		JsonPathAnlStats   *parent = (JsonPathAnlStats *) stats->path.parent;
-		const char		   *ppath = parent->pathstr;
+		JsonPathAnlStats *parent = (JsonPathAnlStats *) stats->path.parent;
+		JsonPath	path = &stats->path;
+		const char *ppath = parent->pathstr;
+		StringInfoData si;
+		MemoryContext oldcxt = MemoryContextSwitchTo(ctx->mcxt);
 
-		path = &stats->path;
-
-		/* Is it valid path? If not, we treat it as $.# */
-		if (path->len >= 0)
-		{
-			StringInfoData	si;
-			MemoryContext	oldcxt = MemoryContextSwitchTo(ctx->mcxt);
-
-			initStringInfo(&si);
-
+		/* NULL entries are treated as wildcard array accessors "[*]" */
+		if (path->entry)
+			/* Copy path entry name into the right MemoryContext */
 			path->entry = pnstrdup(path->entry, path->len);
 
-			appendStringInfo(&si, "%s.", ppath);
-			escape_json(&si, path->entry);
+		/* Initialze full path string */
+		initStringInfo(&si);
+		appendStringInfoString(&si, ppath);
+		jsonPathAppendEntry(&si, path->entry);
+		stats->pathstr = si.data;
 
-			stats->pathstr = si.data;
-
-			MemoryContextSwitchTo(oldcxt);
-		}
-		else
-		{
-			int pathstrlen = strlen(ppath) + 3;
-			stats->pathstr = MemoryContextAlloc(ctx->mcxt, pathstrlen);
-			snprintf(stats->pathstr, pathstrlen, "%s.#", ppath);
-		}
+		MemoryContextSwitchTo(oldcxt);
 
 		/* initialize the stats counter for this path entry */
 		memset(&stats->vstats, 0, sizeof(JsonValueStats));
