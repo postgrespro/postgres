@@ -896,9 +896,8 @@ jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats)
 	jsonAnalyzePathValues(ctx, &vstats->jsons, JSONBOID, pstats->freq);
 
 	/*
-	 * lengths and array lengths
-	 *
-	 * XXX Not sure why we divide it by the number of json values?
+	 * Lengths and array lengths.  We divide counts by the total number of json
+	 * values to compute correct nullfrac (i.e. not all jsons have lengths).
 	 */
 	jsonAnalyzePathValues(ctx, &vstats->lens, INT4OID,
 						  pstats->freq * vstats->lens.values.count /
