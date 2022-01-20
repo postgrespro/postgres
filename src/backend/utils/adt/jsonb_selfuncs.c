@@ -387,7 +387,7 @@ static JsonPathStats
 jsonStatsGetPathStats(JsonStats jsdata, Datum *path, int pathlen,
 					  float4 *nullfrac)
 {
-	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$", 1);
+	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, JSON_PATH_ROOT, JSON_PATH_ROOT_LEN);
 	Selectivity	sel = 1.0;
 
 	for (int i = 0; pstats && i < pathlen; i++)
@@ -862,7 +862,9 @@ static HeapTuple
 jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 index)
 {
 	/* Extract statistics for root array elements */
-	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata, "$[*]", 4);
+	JsonPathStats pstats = jsonStatsGetPathStatsStr(jsdata,
+													JSON_PATH_ROOT_ARRAY,
+													JSON_PATH_ROOT_ARRAY_LEN);
 	Selectivity	index_sel;
 
 	if (!pstats)
@@ -1144,7 +1146,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 	/* Initialize root path string */
 	initStringInfo(&pathstr);
-	appendStringInfo(&pathstr, "$");
+	appendStringInfo(&pathstr, JSON_PATH_ROOT);
 
 	/* Initialize root path entry */
 	root.parent = NULL;
@@ -1299,6 +1301,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 static Selectivity
 jsonSelectivityExists(JsonStats stats, Datum key)
 {
+	JsonPathStats rootstats;
 	JsonPathStats arrstats;
 	JsonbValue	jbvkey;
 	Datum		jbkey;
@@ -1314,10 +1317,12 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 
 	keysel = jsonStatsGetPathFreq(stats, &key, 1);
 
-	scalarsel = jsonSelectivity(jsonStatsGetPathStatsStr(stats, "$", 1),
-								jbkey, JsonbEqOperator);
+	rootstats = jsonStatsGetPathStatsStr(stats, JSON_PATH_ROOT,
+										 JSON_PATH_ROOT_LEN);
+	scalarsel = jsonSelectivity(rootstats, jbkey, JsonbEqOperator);
 
-	arrstats = jsonStatsGetPathStatsStr(stats, "$[*]", 4);
+	arrstats = jsonStatsGetPathStatsStr(stats, JSON_PATH_ROOT_ARRAY,
+										JSON_PATH_ROOT_ARRAY_LEN);
 	arraysel = jsonSelectivity(arrstats, jbkey, JsonbEqOperator);
 	arraysel = 1.0 - pow(1.0 - arraysel,
 						 jsonPathStatsGetAvgArraySize(arrstats));
