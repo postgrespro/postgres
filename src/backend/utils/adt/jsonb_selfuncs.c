@@ -555,6 +555,11 @@ jsonStatsConvertArray(Datum jsonbValueArray, JsonStatType type, Oid typid,
 
 				case JsonStatNumeric:
 					Assert(jbv.type == jbvNumeric);
+					value = NumericGetDatum(jbv.val.numeric);
+					break;
+
+				case JsonStatFloat4:
+					Assert(jbv.type == jbvNumeric);
 					value = DirectFunctionCall1(numeric_float4,
 												NumericGetDatum(jbv.val.numeric));
 					value = Float4GetDatum(DatumGetFloat4(value) * multiplier);
@@ -638,6 +643,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 			eqop = NumericEqOperator;
 			ltop = NumericLtOperator;
 			break;
+		case JsonStatFloat4:	/* special internal stats type */
 		default:
 			elog(ERROR, "invalid json statistic type %d", stattype);
 			break;
@@ -666,7 +672,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		slot->kind = STATISTIC_KIND_MCV;
 		slot->opid = eqop;
 		slot->numbers = jsonStatsConvertArray(jsonGetField(mcv, "numbers"),
-											  JsonStatNumeric, FLOAT4OID,
+											  JsonStatFloat4, FLOAT4OID,
 											  1.0 - nullfrac);
 		slot->values  = jsonStatsConvertArray(jsonGetField(mcv, "values"),
 											  stattype, type, 0);
@@ -678,7 +684,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		slot->kind = STATISTIC_KIND_HISTOGRAM;
 		slot->opid = ltop;
 		slot->numbers = jsonStatsConvertArray(jsonGetField(hst, "numbers"),
-											  JsonStatNumeric, FLOAT4OID, 1.0);
+											  JsonStatFloat4, FLOAT4OID, 1.0);
 		slot->values  = jsonStatsConvertArray(jsonGetField(hst, "values"),
 											  stattype, type, 0);
 		slot++;
