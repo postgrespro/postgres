@@ -340,7 +340,6 @@ static inline void
 jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 					 JsonbValue *jv)
 {
-	JsonScalarStats	   *sstats;
 	JsonbValue		   *jbv;
 	JsonbValue			jbvtmp;
 	Datum				value;
@@ -364,69 +363,60 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 					 JsonbPGetDatum(JsonbValueToJsonb(jbv)),
 					 ctx->target);
 
-	/*
-	 * Maybe also update the type-specific counters.
-	 *
-	 * XXX The mix of break/return statements in this block is really
-	 * confusing.
-	 */
+	/* also update the type-specific counters */
 	switch (jv->type)
 	{
 		case jbvNull:
-			++vstats->nnulls;
-			return;
+			vstats->nnulls++;
+			break;
 
 		case jbvBool:
-			++*(jv->val.boolean ? &vstats->booleans.ntrue
-								: &vstats->booleans.nfalse);
-			return;
+			if (jv->val.boolean)
+				vstats->booleans.ntrue++;
+			else
+				vstats->booleans.nfalse++;
+			break;
 
 		case jbvString:
 #ifdef JSON_ANALYZE_SCALARS
-			sstats = &vstats->strings;
 			value = PointerGetDatum(
 						cstring_to_text_with_len(jv->val.string.val,
 												 jv->val.string.len));
-			break;
-#else
-			return;
+			JsonValuesAppend(&vstats->strings.values, value, ctx->target);
 #endif
+			break;
 
 		case jbvNumeric:
 #ifdef JSON_ANALYZE_SCALARS
-			sstats = &vstats->numerics;
 			value = PointerGetDatum(jv->val.numeric);
-			break;
-#else
-			return;
+			JsonValuesAppend(&vstats->numerics.values, value, ctx->target);
 #endif
+			break;
 
 		case jbvBinary:
 			if (JsonContainerIsObject(jv->val.binary.data))
 			{
 				uint32 size = JsonContainerSize(jv->val.binary.data);
+
 				value = DatumGetInt32(size);
-				sstats = &vstats->lens;
 				vstats->nobjects++;
-				break;
+				JsonValuesAppend(&vstats->lens.values, value, ctx->target);
 			}
 			else if (JsonContainerIsArray(jv->val.binary.data))
 			{
 				uint32 size = JsonContainerSize(jv->val.binary.data);
+
 				value = DatumGetInt32(size);
-				sstats = &vstats->lens;
 				vstats->narrays++;
 				JsonValuesAppend(&vstats->arrlens.values, value, ctx->target);
-				break;
+				JsonValuesAppend(&vstats->lens.values, value, ctx->target);
 			}
-			return;
+			break;
 
 		default:
 			elog(ERROR, "invalid scalar json value type %d", jv->type);
 			break;
 	}
-
-	JsonValuesAppend(&sstats->values, value, ctx->target);
 }
 
 /*
