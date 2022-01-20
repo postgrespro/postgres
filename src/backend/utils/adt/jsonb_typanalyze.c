@@ -169,8 +169,6 @@ typedef struct JsonAnalyzeContext
 	AnalyzeAttrFetchFunc	fetchfunc;
 	HTAB				   *pathshash;
 	JsonPathAnlStats	   *root;
-	JsonPathAnlStats	  **paths;
-	int						npaths;
 	double					totalrows;
 	double					total_width;
 	int						samplerows;
@@ -929,30 +927,29 @@ JsonPathStatsCompare(const void *pv1, const void *pv2)
 /*
  * jsonAnalyzeSortPaths
  *		Reads all stats stored in the hash table and sorts them.
- *
- * XXX It's a bit strange we simply store the result in the context instead
- * of just returning it.
  */
-static void
-jsonAnalyzeSortPaths(JsonAnalyzeContext *ctx)
+static JsonPathAnlStats **
+jsonAnalyzeSortPaths(JsonAnalyzeContext *ctx, int *p_npaths)
 {
-	HASH_SEQ_STATUS		hseq;
-	JsonPathAnlStats   *path;
-	int					i;
+	HASH_SEQ_STATUS	hseq;
+	JsonPathAnlStats *path;
+	JsonPathAnlStats **paths;
+	int			npaths;
 
-	ctx->npaths = hash_get_num_entries(ctx->pathshash) + 1;
-	ctx->paths = MemoryContextAlloc(ctx->mcxt,
-									sizeof(*ctx->paths) * ctx->npaths);
+	npaths = hash_get_num_entries(ctx->pathshash) + 1;
+	paths = MemoryContextAlloc(ctx->mcxt, sizeof(*paths) * npaths);
 
-	ctx->paths[0] = ctx->root;
+	paths[0] = ctx->root;
 
 	hash_seq_init(&hseq, ctx->pathshash);
 
-	for (i = 1; (path = hash_seq_search(&hseq)); i++)
-		ctx->paths[i] = path;
+	for (int i = 1; (path = hash_seq_search(&hseq)) != NULL; i++)
+		paths[i] = path;
 
-	pg_qsort(ctx->paths, ctx->npaths, sizeof(*ctx->paths),
-			 JsonPathStatsCompare);
+	pg_qsort(paths, npaths, sizeof(*paths), JsonPathStatsCompare);
+
+	*p_npaths = npaths;
+	return paths;
 }
 
 /*
@@ -986,12 +983,13 @@ jsonAnalyzeBuildPathStatsArray(JsonPathAnlStats **paths, int npaths, int *nvals,
  *		???
  */
 static Datum *
-jsonAnalyzeMakeStats(JsonAnalyzeContext *ctx, int *numvalues)
+jsonAnalyzeMakeStats(JsonAnalyzeContext *ctx, JsonPathAnlStats **paths,
+					 int npaths, int *numvalues)
 {
 	Datum		   *values;
 	MemoryContext	oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
 
-	values = jsonAnalyzeBuildPathStatsArray(ctx->paths, ctx->npaths, numvalues,
+	values = jsonAnalyzeBuildPathStatsArray(paths, npaths, numvalues,
 											JSON_PATH_ROOT, JSON_PATH_ROOT_LEN);
 
 	MemoryContextSwitchTo(oldcxt);
@@ -1175,6 +1173,8 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				   int samplerows, double totalrows)
 {
 	JsonAnalyzeContext	ctx;
+	JsonPathAnlStats **paths;
+	int			npaths;
 	bool		sigle_pass = false;	/* FIXME make GUC or simply remove */
 
 	jsonAnalyzeInit(&ctx, stats, fetchfunc, samplerows, totalrows);
@@ -1196,14 +1196,13 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		 * XXX I wonder if we could do this in two phases, to maybe not collect
 		 * (or even accumulate) values for paths that are not interesting.
 		 */
-		jsonAnalyzeSortPaths(&ctx);
+		paths = jsonAnalyzeSortPaths(&ctx, &npaths);
 
-		for (int i = 0; i < ctx.npaths; i++)
-			jsonAnalyzePath(&ctx, ctx.paths[i]);
+		for (int i = 0; i < npaths; i++)
+			jsonAnalyzePath(&ctx, paths[i]);
 	}
 	else
 	{
-		int				i;
 		MemoryContext	oldcxt;
 		MemoryContext	tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
 													"Json Analyze Tmp Context",
@@ -1221,7 +1220,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 
 		/* Collect all paths first without accumulating any Values, sort them */
 		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) false);
-		jsonAnalyzeSortPaths(&ctx);
+		paths = jsonAnalyzeSortPaths(&ctx, &npaths);
 
 		/*
 		 * Next, process each path independently to save memory (we don't want
@@ -1229,12 +1228,12 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		 */
 		MemoryContextReset(tmpcxt);
 
-		for (i = 0; i < ctx.npaths; i++)
+		for (int i = 0; i < npaths; i++)
 		{
-			JsonPathAnlStats *path = ctx.paths[i];
+			JsonPathAnlStats *path = paths[i];
 
 			elog(DEBUG1, "analyzing json path (%d/%d) %s",
-				 i + 1, ctx.npaths, path->pathstr);
+				 i + 1, npaths, path->pathstr);
 
 			jsonAnalyzePass(&ctx, jsonAnalyzeCollectPath, path);
 			jsonAnalyzePath(&ctx, path);
@@ -1315,7 +1314,8 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 														   sizeof(float4));
 		stats->stanumbers[empty_slot][0] = 0.0; /* nullfrac */
 		stats->stavalues[empty_slot] =
-				jsonAnalyzeMakeStats(&ctx, &stats->numvalues[empty_slot]);
+			jsonAnalyzeMakeStats(&ctx, paths, npaths,
+								 &stats->numvalues[empty_slot]);
 
 		/* We are storing jsonb values */
 		stats->statypid[empty_slot] = JSONBOID;
