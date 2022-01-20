@@ -78,16 +78,19 @@ typedef struct JsonPathEntry JsonPathEntry;
  * Element of a path in the JSON document (i.e. not jsonpath). Elements
  * are linked together to build longer paths.
  *
- * XXX We need entry+lenth because JSON path elements may contain null
- * bytes, I guess?
+ * 'entry' can be not zero-terminated when it is pointing to JSONB keys, so
+ * 'len' is necessary.  'len' is also used for faster entry comparison, to
+ * distinguish array entries ('len' == -1).
  */
 typedef struct JsonPathEntry
 {
 	JsonPathEntry  *parent;
 	const char	   *entry;		/* element of the path as a string */
-	int				len;		/* length of entry string (may be 0) */
+	int				len;		/* length of entry string (may be 0 or -1) */
 	uint32			hash;		/* hash of the whole path (with parent) */
 } JsonPathEntry;
+
+#define JsonPathEntryIsArray(entry) ((entry)->len == -1)
 
 /* An array containing a dynamic number of JSON values. */
 typedef struct JsonValues
@@ -518,7 +521,7 @@ jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 		if (type != jbvBinary)
 			return;
 
-		if (entry->len == -1)
+		if (JsonPathEntryIsArray(entry))
 		{
 			JsonbIterator	   *it;
 			JsonbIteratorToken	r;
@@ -817,7 +820,7 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 	if (pstats->vstats.lens.values.count)
 		jsonAnalyzeMakeScalarStats(&ps, "length", &vstats->lens.stats);
 
-	if (pstats->path.len == -1)
+	if (JsonPathEntryIsArray(&pstats->path))
 	{
 		JsonPathAnlStats *parent = (JsonPathAnlStats *) pstats->path.parent;
 
@@ -854,10 +857,10 @@ jsonAnalyzeCalcPathFreq(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats)
 
 	if (parent)
 	{
-		pstats->freq = parent->freq *
-			(pstats->path.len == -1 ? parent->vstats.narrays
-									: pstats->vstats.jsons.values.count) /
-			parent->vstats.jsons.values.count;
+		int			count = JsonPathEntryIsArray(&pstats->path)	?
+			parent->vstats.narrays : pstats->vstats.jsons.values.count;
+
+		pstats->freq = parent->freq * count / parent->vstats.jsons.values.count;
 
 		CLAMP_PROBABILITY(pstats->freq);
 	}
