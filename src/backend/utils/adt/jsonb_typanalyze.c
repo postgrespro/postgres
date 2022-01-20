@@ -478,10 +478,13 @@ jsonAnalyzeCollectPaths(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 				if (collect_values)
 					jsonAnalyzeJsonValue(ctx, &stats->vstats, &jv);
 
-				/* XXX not sure why we're doing this? */
+				/*
+				 * Manually recurse into container by creating child iterator.
+				 * We use skipNested=true to give jsonAnalyzeJsonValue()
+				 * ability to access jbvBinary containers.
+				 */
 				if (jv.type == jbvBinary)
 				{
-					/* recurse into container */
 					JsonbIterator *it2 = JsonbIteratorInit(jv.val.binary.data);
 
 					it2->parent = it;
