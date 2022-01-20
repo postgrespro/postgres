@@ -632,7 +632,11 @@ jsonAnalyzePathValues(JsonAnalyzeContext *ctx, JsonScalarStats *sstats,
 
 	stats->exprvals = values->buf;
 
-	/* XXX Do we need to initialize all slots? */
+	/*
+	 * The fields describing the stats->stavalues[n] element types default to
+	 * the type of the data being analyzed, but the type-specific typanalyze
+	 * function can change them if it wants to store something else.
+	 */
 	for (i = 0; i < STATISTIC_NUM_SLOTS; i++)
 	{
 		stats->statypid[i] = stats->attrtypid;
