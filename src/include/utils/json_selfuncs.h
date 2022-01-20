@@ -86,6 +86,7 @@ extern Selectivity jsonPathStatsGetArrayIndexSelectivity(JsonPathStats pstats,
 
 extern Selectivity jsonSelectivity(JsonPathStats stats, Datum scalar, Oid oper);
 
+extern void jsonPathAppendEntry(StringInfo path, const char *entry);
 
 extern bool jsonAnalyzeBuildSubPathsData(Datum *pathsDatums,
 										 int npaths, int index,
