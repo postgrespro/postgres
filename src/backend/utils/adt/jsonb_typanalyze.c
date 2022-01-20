@@ -189,12 +189,11 @@ typedef struct JsonAnalyzeContext
  * JsonPathMatch
  *		Determine when two JSON paths (list of JsonPathEntry) match.
  *
+ * Returned int instead of bool, because it is an implementation of
+ * HashCompareFunc.
+ *
  * XXX Sould be JsonPathEntryMatch as it deals with JsonPathEntry nodes
  * not whole paths, no?
- *
- * XXX Seems a bit silly to return int, when the return statement only
- * really returns bool (because of how it compares paths). It's not really
- * a comparator for sorting, for example.
  */
 static int
 JsonPathMatch(const void *key1, const void *key2, Size keysize)
