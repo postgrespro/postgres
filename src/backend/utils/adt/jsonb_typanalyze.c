@@ -970,27 +970,6 @@ jsonAnalyzeSortPaths(JsonAnalyzeContext *ctx)
 }
 
 /*
- * jsonAnalyzePaths
- *		Sort the paths and calculate statistics for each of them.
- *
- * Now that we're done with processing the documents, we sort the paths
- * we extracted and calculate stats for each of them.
- *
- * XXX I wonder if we could do this in two phases, to maybe not collect
- * (or even accumulate) values for paths that are not interesting.
- */
-static void
-jsonAnalyzePaths(JsonAnalyzeContext	*ctx)
-{
-	int	i;
-
-	jsonAnalyzeSortPaths(ctx);
-
-	for (i = 0; i < ctx->npaths; i++)
-		jsonAnalyzePath(ctx, ctx->paths[i]);
-}
-
-/*
  * jsonAnalyzeBuildPathStatsArray
  *		???
  */
@@ -1218,7 +1197,18 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	{
 		/* Collect all values of all paths */
 		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true);
-		jsonAnalyzePaths(&ctx);
+
+		/*
+		 * Now that we're done with processing the documents, we sort the paths
+		 * we extracted and calculate stats for each of them.
+		 *
+		 * XXX I wonder if we could do this in two phases, to maybe not collect
+		 * (or even accumulate) values for paths that are not interesting.
+		 */
+		jsonAnalyzeSortPaths(&ctx);
+
+		for (int i = 0; i < ctx.npaths; i++)
+			jsonAnalyzePath(&ctx, ctx.paths[i]);
 	}
 	else
 	{
