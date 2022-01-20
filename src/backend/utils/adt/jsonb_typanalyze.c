@@ -1327,11 +1327,11 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				jsonAnalyzeMakeStats(&ctx, &stats->numvalues[empty_slot]);
 
 		/* We are storing jsonb values */
-		/* XXX Could the parameters be different on other platforms? */
 		stats->statypid[empty_slot] = JSONBOID;
-		stats->statyplen[empty_slot] = -1;
-		stats->statypbyval[empty_slot] = false;
-		stats->statypalign[empty_slot] = 'i';
+		get_typlenbyvalalign(stats->statypid[empty_slot],
+							 &stats->statyplen[empty_slot],
+							 &stats->statypbyval[empty_slot],
+							 &stats->statypalign[empty_slot]);
 	}
 }
 
