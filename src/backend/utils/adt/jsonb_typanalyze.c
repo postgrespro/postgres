@@ -156,9 +156,6 @@ typedef struct JsonPathAnlStats
 	char			   *pathstr;
 	double				freq;
 	int					depth;
-
-	JsonPathEntry	  **entries;
-	int					nentries;
 } JsonPathAnlStats;
 
 /* various bits needed while analyzing JSON */
@@ -273,8 +270,6 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPathEntry *parent,
 		stats->stats = NULL;
 		stats->freq = 0.0;
 		stats->depth = parent->depth + 1;
-		stats->entries = NULL;
-		stats->nentries = 0;
 
 		/* update maximal depth */
 		if (ctx->maxdepth < stats->depth)
@@ -504,18 +499,19 @@ jsonAnalyzeCollectPaths(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
  */
 static void
 jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
-						  JsonbValue *jbv, int n)
+						  JsonbValue *jbv, JsonPathEntry **entries,
+						  int start_entry)
 {
 	JsonbValue	scalar;
 	int			i;
 
-	for (i = n; i < pstats->depth; i++)
+	for (i = start_entry; i < pstats->depth; i++)
 	{
-		JsonPathEntry  *entry = pstats->entries[i];
+		JsonPathEntry  *entry = entries[i];
 		JsonbContainer *jbc = jbv->val.binary.data;
 		JsonbValueType	type = jbv->type;
 
-		if (i > n)
+		if (i > start_entry)
 			pfree(jbv);
 
 		if (type != jbvBinary)
@@ -535,7 +531,7 @@ jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 			while ((r = JsonbIteratorNext(&it, &elem, true)) != WJB_DONE)
 			{
 				if (r == WJB_ELEM)
-					jsonAnalyzeCollectSubpath(ctx, pstats, &elem, i + 1);
+					jsonAnalyzeCollectSubpath(ctx, pstats, &elem, entries, i + 1);
 			}
 
 			return;
@@ -553,14 +549,14 @@ jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 		}
 	}
 
-	if (i == n &&
+	if (i == start_entry &&
 		jbv->type == jbvBinary &&
 		JsonbExtractScalar(jbv->val.binary.data, &scalar))
 		jbv = &scalar;
 
 	jsonAnalyzeJsonValue(ctx, &pstats->vstats, jbv);
 
-	if (i > n)
+	if (i > start_entry)
 		pfree(jbv);
 }
 
@@ -571,25 +567,24 @@ jsonAnalyzeCollectSubpath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 static void
 jsonAnalyzeCollectPath(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 {
-	JsonPathAnlStats   *pstats = (JsonPathAnlStats *) param;
-	JsonbValue			jbvtmp;
-	JsonbValue		   *jbv = JsonValueInitBinary(&jbvtmp, jb);
+	JsonPathAnlStats *pstats = (JsonPathAnlStats *) param;
+	JsonbValue	jbvtmp;
+	JsonbValue *jbv = JsonValueInitBinary(&jbvtmp, jb);
 	JsonPathEntry *path;
+	JsonPathEntry **entries;
+	int			i;
 
-	if (!pstats->entries)
-	{
-		int i;
+	entries = palloc(sizeof(*entries) * pstats->depth);
 
-		pstats->entries = MemoryContextAlloc(ctx->mcxt,
-									sizeof(*pstats->entries) * pstats->depth);
+	/* Build entry array in direct order */
+	for (path = &pstats->path, i = pstats->depth - 1;
+		 path->parent && i >= 0;
+		 path = path->parent, i--)
+		entries[i] = path;
 
-		for (path = &pstats->path, i = pstats->depth - 1;
-			 path->parent && i >= 0;
-			 path = path->parent, i--)
-			pstats->entries[i] = path;
-	}
+	jsonAnalyzeCollectSubpath(ctx, pstats, jbv, entries, 0);
 
-	jsonAnalyzeCollectSubpath(ctx, pstats, jbv, 0);
+	pfree(entries);
 }
 
 static Datum
