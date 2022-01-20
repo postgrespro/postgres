@@ -237,7 +237,7 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPathEntry *parent,
 	path.len = len;
 	path.hash = JsonPathEntryHash(&path, 0);
 
-	/* XXX See if we already saw this path earlier. */
+	/* See if we already saw this path earlier. */
 	stats = hash_search_with_hash_value(ctx->pathshash, &path, path.hash,
 										HASH_ENTER, &found);
 
