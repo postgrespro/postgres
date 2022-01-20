@@ -521,6 +521,9 @@ jsonStatsConvertArray(Datum jsonbValueArray, JsonStatType type, Oid typid,
 	JsonbIteratorToken r;
 	int			nvalues;
 	int			i;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	if (!DatumGetPointer(jsonbValueArray))
 		return PointerGetDatum(NULL);
@@ -578,16 +581,10 @@ jsonStatsConvertArray(Datum jsonbValueArray, JsonStatType type, Oid typid,
 
 	Assert(i == nvalues);
 
-	/*
-	 * FIXME Does this actually work on all 32/64-bit systems? What if typid is
-	 * FLOAT8OID or something? Should look at TypeCache instead, probably.
-	 */
+	get_typlenbyvalalign(typid, &typlen, &typbyval, &typalign);
+
 	return PointerGetDatum(
-			construct_array(values, nvalues,
-							typid,
-							typid == FLOAT4OID ? 4 : -1,
-							typid == FLOAT4OID ? true /* FLOAT4PASSBYVAL */ : false,
-							'i'));
+		construct_array(values, nvalues, typid, typlen, typbyval, typalign));
 }
 
 /*
