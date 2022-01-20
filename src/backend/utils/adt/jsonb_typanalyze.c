@@ -119,8 +119,7 @@ typedef struct JsonScalarStats
  * XXX This seems rather complicated and needs simplification. We're not
  * really using all the various JsonScalarStats bits, there's a lot of
  * duplication (e.g. each JsonScalarStats contains it's own array, which
- * has a copy of data from the one in "jsons"). Some of it is defined as
- * a typedef, but booleans have inline struct.
+ * has a copy of data from the one in "jsons").
  */
 typedef struct JsonValueStats
 {
@@ -134,14 +133,9 @@ typedef struct JsonValueStats
 	JsonScalarStats	lens;		/* stats of object/array lengths */
 	JsonScalarStats	arrlens;	/* stats of array lengths */
 
-	/* stats for booleans */
-	struct
-	{
-		int		ntrue;
-		int		nfalse;
-	}				booleans;
-
 	int				nnulls;		/* number of JSON null values */
+	int				ntrue;		/* number of JSON true values */
+	int				nfalse;		/* number of JSON false values */
 	int				nobjects;	/* number of JSON objects */
 	int				narrays;	/* number of JSON arrays */
 	int				nstrings;	/* number of JSON strings */
@@ -358,9 +352,9 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 
 		case jbvBool:
 			if (jv->val.boolean)
-				vstats->booleans.ntrue++;
+				vstats->ntrue++;
 			else
-				vstats->booleans.nfalse++;
+				vstats->nfalse++;
 			break;
 
 		case jbvString:
@@ -792,8 +786,7 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 								  vstats->jsons.values.count);
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq_boolean",
-						   freq * (vstats->booleans.nfalse +
-								   vstats->booleans.ntrue) /
+						   freq * (vstats->nfalse + vstats->ntrue) /
 								  vstats->jsons.values.count);
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq_string",
