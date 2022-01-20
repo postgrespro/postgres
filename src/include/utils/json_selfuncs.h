@@ -69,8 +69,8 @@ typedef enum JsonStatType
 extern bool jsonStatsInit(JsonStats stats, const VariableStatData *vardata);
 extern void jsonStatsRelease(JsonStats data);
 
-extern JsonPathStats jsonStatsGetPathStatsStr(JsonStats stats,
-												const char *path, int pathlen);
+extern JsonPathStats jsonStatsGetPathByStr(JsonStats stats,
+										   const char *path, int pathlen);
 
 extern JsonPathStats jsonPathStatsGetSubpath(JsonPathStats stats,
 											 const char *subpath);
