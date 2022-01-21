@@ -432,7 +432,9 @@ jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
 
 /*
  * jsonPathStatsGetNextKeyStats
- *		???
+ *		Enumerate all collected object keys.
+ *
+ * This can be useful for estimation of selectivity of jsonpath '.*' operator.
  */
 bool
 jsonPathStatsGetNextKeyStats(JsonPathStats stats, JsonPathStats *pkeystats,
