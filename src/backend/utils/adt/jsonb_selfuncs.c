@@ -116,11 +116,11 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 	data->rel = vardata->rel;
 	data->nullfrac =
 		data->attslot.nnumbers > 0 ? data->attslot.numbers[0] : 0.0;
-	data->values = data->attslot.values;
-	data->nvalues = data->attslot.nvalues;
+	data->pathdatums = data->attslot.values + 1;
+	data->npaths = data->attslot.nvalues - 1;
 
 	/* Extract root path prefix */
-	jb = DatumGetJsonbP(data->values[0]);
+	jb = DatumGetJsonbP(data->attslot.values[0]);
 	if (!JsonbExtractScalar(&jb->root, &prefix) || prefix.type != jbvString)
 	{
 		free_attstatsslot(&data->attslot);
@@ -129,6 +129,15 @@ jsonStatsInit(JsonStats data, const VariableStatData *vardata)
 
 	data->prefix = prefix.val.string.val;
 	data->prefixlen = prefix.val.string.len;
+
+	/* Create path cache, initialze only two fields that acting as flags */
+	data->paths = palloc(sizeof(*data->paths) * data->npaths);
+
+	for (int i = 0; i < data->npaths; i++)
+	{
+		data->paths[i].data = NULL;
+		data->paths[i].path = NULL;
+	}
 
 	return true;
 }
@@ -159,7 +168,6 @@ jsonPathStatsGetSpecialStats(JsonPathStats pstats, JsonPathStatsType type)
 
 	stats = palloc(sizeof(*stats));
 	*stats = *pstats;
-	stats->path = memcpy(palloc(stats->pathlen), stats->path, stats->pathlen);
 	stats->type = type;
 
 	return stats;
@@ -198,6 +206,50 @@ jsonPathStatsGetArrayLengthStats(JsonPathStats pstats)
 }
 
 /*
+ * jsonPathStatsGetPath
+ *		Try to use cached path name or extract it from per-path stats datum.
+ *
+ * Returns true on succces, false on error.
+ */
+static inline bool
+jsonPathStatsGetPath(JsonPathStats stats, Datum pathdatum,
+					 const char **path, int *pathlen)
+{
+	*path = stats->path;
+
+	if (*path)
+		/* use cached path name */
+		*pathlen = stats->pathlen;
+	else
+	{
+		Jsonb	   *jsonb = DatumGetJsonbP(pathdatum);
+		JsonbValue	pathkey;
+		JsonbValue *pathval;
+
+		/* extract path from the statistics represented as jsonb document */
+		JsonValueInitStringWithLen(&pathkey, "path", 4);
+		pathval = findJsonbValueFromContainer(&jsonb->root, JB_FOBJECT, &pathkey);
+
+		if (!pathval || pathval->type != jbvString)
+			return false;	/* XXX invalid stats data, maybe throw error */
+
+		/* cache extracted path name */
+		*path = stats->path = pathval->val.string.val;
+		*pathlen = stats->pathlen = pathval->val.string.len;
+	}
+
+	return true;
+}
+
+/* Context for bsearch()ing paths */
+typedef struct JsonPathStatsSearchContext
+{
+	JsonStats	stats;
+	const char *path;
+	int			pathlen;
+} JsonPathStatsSearchContext;
+
+/*
  * jsonPathStatsCompare
  *		Compare two JsonPathStats structs, so that we can sort them.
  *
@@ -211,24 +263,21 @@ jsonPathStatsGetArrayLengthStats(JsonPathStats pstats)
 static int
 jsonPathStatsCompare(const void *pv1, const void *pv2)
 {
-	JsonbValue	pathkey;
-	JsonbValue *path2;
-	JsonbValue const *path1 = pv1;
-	Jsonb	   *jsonb = DatumGetJsonbP(*(Datum const *) pv2);
+	JsonPathStatsSearchContext const *cxt = pv1;
+	Datum const *pathdatum = (Datum const *) pv2;
+	int			index = pathdatum - cxt->stats->pathdatums;
+	JsonPathStats stats = &cxt->stats->paths[index];
+	const char *path;
+	int			pathlen;
 	int			res;
 
-	/* extract path from the statistics represented as jsonb document */
-	JsonValueInitStringWithLen(&pathkey, "path", 4);
-	path2 = findJsonbValueFromContainer(&jsonb->root, JB_FOBJECT, &pathkey);
-
-	if (!path2 || path2->type != jbvString)
-		return 1;	/* XXX this is sign of invalid stats data */
+	if (!jsonPathStatsGetPath(stats, *pathdatum, &path, &pathlen))
+		return 1;	/* XXX invalid stats data */
 
 	/* compare the shared part first, then compare by length */
-	res = strncmp(path1->val.string.val, path2->val.string.val,
-				  Min(path1->val.string.len, path2->val.string.len));
+	res = strncmp(cxt->path, path, Min(cxt->pathlen, pathlen));
 
-	return res ? res : path1->val.string.len - path2->val.string.len;
+	return res ? res : cxt->pathlen - pathlen;
 }
 
 /*
@@ -240,26 +289,36 @@ jsonPathStatsCompare(const void *pv1, const void *pv2)
  * should handle it by itself.
  */
 static JsonPathStats
-jsonStatsFindPath(JsonStats jsdata, char *path, int pathlen)
+jsonStatsFindPath(JsonStats jsdata, const char *path, int pathlen)
 {
+	JsonPathStatsSearchContext cxt;
 	JsonPathStats stats;
-	JsonbValue	jbvkey;
 	Datum	   *pdatum;
+	int			index;
 
-	JsonValueInitStringWithLen(&jbvkey, path, pathlen);
+	cxt.stats = jsdata;
+	cxt.path = path;
+	cxt.pathlen = pathlen;
 
-	pdatum = bsearch(&jbvkey, jsdata->values + 1, jsdata->nvalues - 1,
-					 sizeof(*jsdata->values), jsonPathStatsCompare);
+	pdatum = bsearch(&cxt, jsdata->pathdatums, jsdata->npaths,
+					 sizeof(*jsdata->pathdatums), jsonPathStatsCompare);
 
 	if (!pdatum)
 		return NULL;
 
-	stats = palloc(sizeof(*stats));
-	stats->datum = pdatum;
-	stats->data = jsdata;
-	stats->path = path;
-	stats->pathlen = pathlen;
-	stats->type = JsonPathStatsValues;
+	index = pdatum - jsdata->pathdatums;
+	stats = &jsdata->paths[index];
+
+	Assert(stats->path);
+	Assert(stats->pathlen == pathlen);
+
+	/* Init all fields if needed (stats->data == NULL means uninitialized) */
+	if (!stats->data)
+	{
+		stats->data = jsdata;
+		stats->datum = pdatum;
+		stats->type = JsonPathStatsValues;
+	}
 
 	return stats;
 }
@@ -346,20 +405,15 @@ JsonPathStats
 jsonPathStatsGetSubpath(JsonPathStats pstats, const char *key)
 {
 	JsonPathStats spstats;
-	char	   *path;
-	int			pathlen;
 	StringInfoData str;
 
 	initStringInfo(&str);
 	appendBinaryStringInfo(&str, pstats->path, pstats->pathlen);
 	jsonPathAppendEntry(&str, key);
 
-	path = str.data;
-	pathlen = str.len;
-
-	spstats = jsonStatsFindPath(pstats->data, path, pathlen);
+	spstats = jsonStatsFindPath(pstats->data, str.data, str.len);
 	if (!spstats)
-		pfree(path);
+		pfree(str.data);
 
 	return spstats;
 }
@@ -458,26 +512,23 @@ jsonPathStatsGetNextSubpathStats(JsonPathStats stats, JsonPathStats *pkeystats,
 								 bool keysOnly)
 {
 	JsonPathStats keystats = *pkeystats;
+	/* compute next index */
 	int			index =
-		(keystats ? keystats->datum : stats->datum) - stats->data->values + 1;
+		(keystats ? keystats->datum : stats->datum) - stats->data->pathdatums + 1;
 
-	for (; index < stats->data->nvalues; index++)
+	if (stats->type != JsonPathStatsValues)
+		return false;	/* length stats doe not have subpaths */
+
+	for (; index < stats->data->npaths; index++)
 	{
-		JsonbValue	pathkey;
-		JsonbValue *jbvpath;
-		Datum	   *pdatum = &stats->data->values[index];
-		Jsonb	   *jb = DatumGetJsonbP(*pdatum);
+		Datum	   *pathdatum = &stats->data->pathdatums[index];
 		const char *path;
 		int			pathlen;
 
-		JsonValueInitStringWithLen(&pathkey, "path", 4);
-		jbvpath = findJsonbValueFromContainer(&jb->root, JB_FOBJECT, &pathkey);
+		keystats = &stats->data->paths[index];
 
-		if (jbvpath->type != jbvString)
+		if (!jsonPathStatsGetPath(keystats, *pathdatum, &path, &pathlen))
 			break;	/* invalid path stats */
-
-		path = jbvpath->val.string.val;
-		pathlen = jbvpath->val.string.len;
 
 		/* Break, if subpath does not start from a desired prefix */
 		if (pathlen <= stats->pathlen ||
@@ -521,14 +572,13 @@ jsonPathStatsGetNextSubpathStats(JsonPathStats stats, JsonPathStats *pkeystats,
 				continue;	/* invalid path */
 		}
 
-		if (!keystats)
-			keystats = palloc(sizeof(*keystats));
-
-		keystats->datum = pdatum;
-		keystats->data = stats->data;
-		keystats->pathlen = pathlen;
-		keystats->path = memcpy(palloc(pathlen), path, pathlen);
-		keystats->type = JsonPathStatsValues;
+		/* Init path stats if needed */
+		if (!stats->data)
+		{
+			keystats->data = stats->data;
+			keystats->datum = pathdatum;
+			keystats->type = JsonPathStatsValues;
+		}
 
 		*pkeystats = keystats;
 
@@ -736,9 +786,9 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 
 	if ((stattype == JsonStatJsonb ||
 		 stattype == JsonStatJsonbWithoutSubpaths) &&
-		jsonAnalyzeBuildSubPathsData(pstats->data->values,
-									 pstats->data->nvalues,
-									 pstats->datum - pstats->data->values,
+		jsonAnalyzeBuildSubPathsData(pstats->data->pathdatums,
+									 pstats->data->npaths,
+									 pstats->datum - pstats->data->pathdatums,
 									 pstats->path,
 									 pstats->pathlen,
 									 stattype == JsonStatJsonb,
@@ -871,7 +921,7 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 	 * If it is the ordinary root path stats, there is no need to transform
 	 * the tuple, it can be simply copied.
 	 */
-	if (pstats->datum == &pstats->data->values[1] &&
+	if (pstats->datum == &pstats->data->pathdatums[0] &&
 		pstats->type == JsonPathStatsValues)
 		return heap_copytuple(pstats->data->statsTuple);
 

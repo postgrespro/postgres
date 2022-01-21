@@ -27,19 +27,6 @@
 #define JSON_PATH_ROOT_ARRAY "$[*]"
 #define JSON_PATH_ROOT_ARRAY_LEN 4
 
-typedef struct JsonStatData
-{
-	AttStatsSlot	attslot;
-	HeapTuple		statsTuple;
-	RelOptInfo	   *rel;
-	Datum		   *values;
-	int				nvalues;
-	float4			nullfrac;
-	const char	   *prefix;
-	int				prefixlen;
-	bool			acl_ok;
-} JsonStatData, *JsonStats;
-
 typedef enum
 {
 	JsonPathStatsValues,
@@ -47,14 +34,34 @@ typedef enum
 	JsonPathStatsArrayLength,
 } JsonPathStatsType;
 
+typedef struct JsonStatData JsonStatData, *JsonStats;
+
+/* Per-path JSON stats */
 typedef struct JsonPathStatsData
 {
-	Datum			   *datum;
-	JsonStats		   	data;
-	char			   *path;
-	int					pathlen;
-	JsonPathStatsType	type;
+	JsonStats	data;			/* pointer to per-column control structure */
+	Datum	   *datum;			/* pointer to JSONB datum with stats data */
+	const char *path;			/* path string, points directly to JSONB data */
+	int			pathlen;		/* path length */
+	JsonPathStatsType type;		/* type of stats (values, lengths etc.) */
 } JsonPathStatsData, *JsonPathStats;
+
+/* Per-column JSON stats */
+struct JsonStatData
+{
+	HeapTuple	statsTuple;		/* original pg_statistic tuple */
+	AttStatsSlot attslot;		/* data extracted from STATISTIC_KIND_JSON
+								 * slot of statsTuple */
+	RelOptInfo *rel;			/* Relation, or NULL if not identifiable */
+	Datum	   *pathdatums;		/* path JSONB datums */
+	JsonPathStatsData *paths;	/* cached paths */
+	int			npaths;			/* number of paths */
+	float4		nullfrac;		/* NULL fraction */
+	const char *prefix;			/* global path prefix which needs to be used
+								 * for searching in pathdatums */
+	int			prefixlen;		/* path prefix length */
+	bool		acl_ok;			/* ACL check is Ok */
+};
 
 typedef enum JsonStatType
 {
