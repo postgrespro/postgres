@@ -930,7 +930,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 	{
 		case JsonbObjectFieldTextOperator:
 			statype = JsonStatText;
-			/* fall through */
+			/* FALLTHROUGH */
 		case JsonbObjectFieldOperator:
 		{
 			if (cnst->consttype != TEXTOID)
@@ -946,7 +946,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 
 		case JsonbArrayElementTextOperator:
 			statype = JsonStatText;
-			/* fall through */
+			/* FALLTHROUGH */
 		case JsonbArrayElementOperator:
 		{
 			if (cnst->consttype != INT4OID)
@@ -963,7 +963,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 
 		case JsonbExtractPathTextOperator:
 			statype = JsonStatText;
-			/* fall through */
+			/* FALLTHROUGH */
 		case JsonbExtractPathOperator:
 		{
 			Datum	   *path;
