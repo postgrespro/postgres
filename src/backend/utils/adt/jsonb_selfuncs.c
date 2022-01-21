@@ -962,7 +962,7 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 
 		case JsonbExtractPathTextOperator:
 			statype = JsonStatText;
-			/* FALLTHROUGHh */
+			/* FALLTHROUGH */
 		case JsonbExtractPathOperator:
 		{
 			Datum	   *path;
