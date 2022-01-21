@@ -292,8 +292,18 @@ jsonStatsGetPathByStr(JsonStats jsdata, const char *subpath, int subpathlen)
 	return stats;
 }
 
-#define jsonStatsGetRootPath(jsdata) \
-		jsonStatsGetPathByStr(jsdata, JSON_PATH_ROOT, JSON_PATH_ROOT_LEN)
+/*
+ * jsonStatsGetRootPath
+ *		Find JSON stats for root prefix path.
+ */
+static JsonPathStats
+jsonStatsGetRootPath(JsonStats jsdata)
+{
+	if (jsdata->nullfrac >= 1.0)
+		return NULL;
+
+	return jsonStatsFindPath(jsdata, jsdata->prefix, jsdata->prefixlen);
+}
 
 #define jsonStatsGetRootArrayPath(jsdata) \
 		jsonStatsGetPathByStr(jsdata, JSON_PATH_ROOT_ARRAY, JSON_PATH_ROOT_ARRAY_LEN)
