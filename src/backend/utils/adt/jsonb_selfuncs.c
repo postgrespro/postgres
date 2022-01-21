@@ -1109,13 +1109,13 @@ static void
 jsonAccumulateSubPathSelectivity(Selectivity subpath_abs_sel,
 								 Selectivity path_freq,
 								 Selectivity *path_relative_sel,
-								 StringInfo pathstr,
+								 bool is_array_accessor,
 								 JsonPathStats path_stats)
 {
 	Selectivity sel = subpath_abs_sel / path_freq;	/* relative selectivity */
 
 	/* XXX Try to take into account array length */
-	if (pathstr->data[pathstr->len - 1] == ']')
+	if (is_array_accessor)
 		sel = 1.0 - pow(1.0 - sel, jsonPathStatsGetAvgArraySize(path_stats));
 
 	/* Accumulate selectivity of subpath into parent path */
@@ -1145,6 +1145,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 		Selectivity	freq;		/* absolute frequence of path */
 		Selectivity	sel;		/* relative selectivity of subpaths */
 		JsonPathStats stats;	/* statistics for the path */
+		bool		is_array_accesor;	/* is it '[*]' ? */
 	}			root,			/* root path entry */
 			   *path = &root;	/* path entry stack */
 	Selectivity	sel;			/* resulting selectivity */
@@ -1152,14 +1153,15 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 	/* Initialize root path string */
 	initStringInfo(&pathstr);
-	appendStringInfo(&pathstr, JSON_PATH_ROOT);
+	appendBinaryStringInfo(&pathstr, stats->prefix, stats->prefixlen);
 
 	/* Initialize root path entry */
 	root.parent = NULL;
 	root.len = pathstr.len;
-	root.stats = jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
+	root.stats = jsonStatsFindPath(stats, pathstr.data, pathstr.len);
 	root.freq = jsonPathStatsGetFreq(root.stats, 0.0);
 	root.sel = 1.0;
+	root.is_array_accesor = pathstr.data[pathstr.len - 1] == ']';
 
 	/* Return 0, if NULL fraction is 1. */
 	if (root.freq <= 0.0)
@@ -1203,6 +1205,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				p->stats = NULL;
 				p->freq = freq;
 				p->sel = 1.0;
+				p->is_array_accesor = false;
 				path = p;
 				break;
 			}
@@ -1215,7 +1218,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 				/* Appeend path string entry for array elements, get stats. */
 				jsonPathAppendEntry(&pathstr, NULL);
-				pstats = jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
+				pstats = jsonStatsFindPath(stats, pathstr.data, pathstr.len);
 				freq = jsonPathStatsGetFreq(pstats, 0.0);
 
 				/* If there are no arrays, return 0 or scalar selectivity */
@@ -1229,6 +1232,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				p->stats = pstats;
 				p->freq = freq;
 				p->sel = 1.0;
+				p->is_array_accesor = true;
 				path = p;
 				break;
 			}
@@ -1248,7 +1252,8 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 				/* Accumulate selectivity into parent path */
 				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
-												 &path->sel, &pathstr,
+												 &path->sel,
+												 path->is_array_accesor,
 												 path->stats);
 				break;
 			}
@@ -1274,7 +1279,7 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				 * same statistics that was extracted in WJB_BEGIN_ARRAY.
 				 */
 				JsonPathStats pstats = r == WJB_ELEM ? path->stats :
-					jsonStatsGetPathByStr(stats, pathstr.data, pathstr.len);
+					jsonStatsFindPath(stats, pathstr.data, pathstr.len);
 				/* Make scalar jsonb datum */
 				Datum		scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
 				/* Absolute selectivity of 'path == scalar' */
@@ -1283,7 +1288,8 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 
 				/* Accumulate selectivity into parent path */
 				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
-												 &path->sel, &pathstr,
+												 &path->sel,
+												 path->is_array_accesor,
 												 path->stats);
 				break;
 			}
