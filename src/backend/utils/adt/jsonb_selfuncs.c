@@ -221,9 +221,8 @@ jsonPathStatsCompare(const void *pv1, const void *pv2)
 	JsonValueInitStringWithLen(&pathkey, "path", 4);
 	path2 = findJsonbValueFromContainer(&jsonb->root, JB_FOBJECT, &pathkey);
 
-	/* XXX Not sure about this? Does empty path mean global stats? */
 	if (!path2 || path2->type != jbvString)
-		return 1;
+		return 1;	/* XXX this is sign of invalid stats data */
 
 	/* compare the shared part first, then compare by length */
 	res = strncmp(path1->val.string.val, path2->val.string.val,
