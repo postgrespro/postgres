@@ -440,14 +440,22 @@ jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
 }
 
 /*
- * jsonPathStatsGetNextKeyStats
- *		Enumerate all collected object keys.
+ * jsonPathStatsGetNextSubpathStats
+ *		Iterate all collected subpaths of a given path.
  *
- * This can be useful for estimation of selectivity of jsonpath '.*' operator.
+ * This function can be useful for estimation of selectivity of jsonpath
+ * '.*' and  '.**' operators.
+ *
+ * The next found subpath is written into *pkeystats, which should be set to
+ * NULL before the first call.
+ *
+ * If keysOnly is true, emit only top-level object-key subpaths.
+ *
+ * Returns false on the end of iteration and true otherwise.
  */
 bool
-jsonPathStatsGetNextKeyStats(JsonPathStats stats, JsonPathStats *pkeystats,
-							 bool keysOnly)
+jsonPathStatsGetNextSubpathStats(JsonPathStats stats, JsonPathStats *pkeystats,
+								 bool keysOnly)
 {
 	JsonPathStats keystats = *pkeystats;
 	int			index =
@@ -457,53 +465,69 @@ jsonPathStatsGetNextKeyStats(JsonPathStats stats, JsonPathStats *pkeystats,
 	{
 		JsonbValue	pathkey;
 		JsonbValue *jbvpath;
-		Jsonb	   *jb = DatumGetJsonbP(stats->data->values[index]);
+		Datum	   *pdatum = &stats->data->values[index];
+		Jsonb	   *jb = DatumGetJsonbP(*pdatum);
+		const char *path;
+		int			pathlen;
 
 		JsonValueInitStringWithLen(&pathkey, "path", 4);
 		jbvpath = findJsonbValueFromContainer(&jb->root, JB_FOBJECT, &pathkey);
 
-		if (jbvpath->type != jbvString ||
-			jbvpath->val.string.len <= stats->pathlen ||
-			memcmp(jbvpath->val.string.val, stats->path, stats->pathlen))
+		if (jbvpath->type != jbvString)
+			break;	/* invalid path stats */
+
+		path = jbvpath->val.string.val;
+		pathlen = jbvpath->val.string.len;
+
+		/* Break, if subpath does not start from a desired prefix */
+		if (pathlen <= stats->pathlen ||
+			memcmp(path, stats->path, stats->pathlen))
 			break;
 
 		if (keysOnly)
 		{
-			const char *c = &jbvpath->val.string.val[stats->pathlen];
+			const char *c = &path[stats->pathlen];
 
 			if (*c == '[')
 			{
-				c++;
-				Assert(*c == '*');
-				c++;
-				Assert(*c == ']');
+				Assert(c[1] == '*' && c[2] == ']');
 
-				if (keysOnly || jbvpath->val.string.len > stats->pathlen + 2)
+#if 0	/* TODO add separate flag for requesting top-level array accessors */
+				/* skip if it is not last key in the path */
+				if (pathlen > stats->pathlen + 3)
+#endif
+					continue;	/* skip array accessors */
+			}
+			else if (*c == '.')
+			{
+				/* find end of '."key"' */
+				const char *pathend = path + pathlen;
+
+				if (++c >= pathend || *c != '"')
+					break;		/* invalid path */
+
+				while (++c <= pathend && *c != '"')
+					if (*c == '\\')	/* handle escaped chars */
+						c++;
+
+				if (c > pathend)
+					break;		/* invalid path */
+
+				/* skip if it is not last key in the path */
+				if (c < pathend)
 					continue;
 			}
 			else
-			{
-				Assert(*c == '.');
-				c++;
-				Assert(*c == '"');
-
-				while (*++c != '"')
-					if (*c == '\\')
-						c++;
-
-				if (c - jbvpath->val.string.val < jbvpath->val.string.len - 1)
-					continue;
-			}
+				continue;	/* invalid path */
 		}
 
 		if (!keystats)
 			keystats = palloc(sizeof(*keystats));
 
-		keystats->datum = &stats->data->values[index];
+		keystats->datum = pdatum;
 		keystats->data = stats->data;
-		keystats->pathlen = jbvpath->val.string.len;
-		keystats->path = memcpy(palloc(keystats->pathlen),
-								jbvpath->val.string.val, keystats->pathlen);
+		keystats->pathlen = pathlen;
+		keystats->path = memcpy(palloc(pathlen), path, pathlen);
 		keystats->type = JsonPathStatsValues;
 
 		*pkeystats = keystats;
