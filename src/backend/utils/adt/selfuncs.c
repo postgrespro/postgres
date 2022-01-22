@@ -4922,25 +4922,23 @@ ReleaseDummy(HeapTuple tuple)
  *		Try to derive optimizer statistics for the operator expression using
  *		operator's oprstat function.
  *
- * XXX Not sure why this returns bool - we ignore the return value anyway. We
- * might as well return the calculated vardata (or NULL).
- *
- * XXX Not sure what to do about recursion - there can be another OpExpr in
- * one of the arguments, and we should call this recursively from the oprstat
- * procedure. But that's not possible, because it's marked as static.
+ * There can be another OpExpr in one of the arguments, and it will be called
+ * recursively from the oprstat procedure through the following chain:
+ * get_restriction_variable() => examine_variable() =>
+ * examine_operator_expression().
  */
-static bool
+static void
 examine_operator_expression(PlannerInfo *root, OpExpr *opexpr, int varRelid,
 							VariableStatData *vardata)
 {
 	RegProcedure oprstat = get_oprstat(opexpr->opno);
 
-	return OidIsValid(oprstat) &&
-		DatumGetBool(OidFunctionCall4(oprstat,
-									  PointerGetDatum(root),
-									  PointerGetDatum(opexpr),
-									  Int32GetDatum(varRelid),
-									  PointerGetDatum(vardata)));
+	if (OidIsValid(oprstat))
+		OidFunctionCall4(oprstat,
+						 PointerGetDatum(root),
+						 PointerGetDatum(opexpr),
+						 Int32GetDatum(varRelid),
+						 PointerGetDatum(vardata));
 }
 
 /*
@@ -5365,8 +5363,9 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 		 * operator expression (OpExpr). We do this last because it may be quite
 		 * expensive, and it's unclear how accurate the statistics will be.
 		 *
-		 * XXX Shouldn't this put more restrictions on the OpExpr? E.g. that
-		 * one of the arguments has to be a Const or something?
+		 * More restrictions on the OpExpr (e.g. that one of the arguments
+		 * has to be a Const or something) can be put by the operator itself
+		 * in its oprstat function.
 		 */
 		if (!vardata->statsTuple && IsA(basenode, OpExpr))
 			examine_operator_expression(root, (OpExpr *) basenode, varRelid,
