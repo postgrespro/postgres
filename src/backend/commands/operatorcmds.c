@@ -52,12 +52,7 @@
 
 static Oid	ValidateRestrictionEstimator(List *restrictionName);
 static Oid	ValidateJoinEstimator(List *joinName);
-
-/*
- * XXX Maybe not the right name, because "estimator" implies we're calculating
- * selectivity. But we're actually deriving statistics for an expression.
- */
-static Oid	ValidateStatisticsEstimator(List *joinName);
+static Oid	ValidateStatisticsDerivator(List *joinName);
 
 /*
  * DefineOperator
@@ -139,8 +134,7 @@ DefineOperator(List *names, List *parameters)
 			restrictionName = defGetQualifiedName(defel);
 		else if (strcmp(defel->defname, "join") == 0)
 			joinName = defGetQualifiedName(defel);
-		/* XXX perhaps full "statistics" wording would be better */
-		else if (strcmp(defel->defname, "stats") == 0)
+		else if (strcmp(defel->defname, "statistics") == 0)
 			statisticsName = defGetQualifiedName(defel);
 		else if (strcmp(defel->defname, "hashes") == 0)
 			canHash = defGetBoolean(defel);
@@ -258,7 +252,7 @@ DefineOperator(List *names, List *parameters)
 	else
 		joinOid = InvalidOid;
 	if (statisticsName)
-		statisticsOid = ValidateStatisticsEstimator(statisticsName);
+		statisticsOid = ValidateStatisticsDerivator(statisticsName);
 	else
 		statisticsOid = InvalidOid;
 
@@ -378,7 +372,7 @@ ValidateJoinEstimator(List *joinName)
  * correct signature and we have the permissions to attach it to an operator.
  */
 static Oid
-ValidateStatisticsEstimator(List *statName)
+ValidateStatisticsDerivator(List *statName)
 {
 	Oid			typeId[4];
 	Oid			statOid;
@@ -392,11 +386,11 @@ ValidateStatisticsEstimator(List *statName)
 	statOid = LookupFuncName(statName, 4, typeId, false);
 
 	/* statistics estimators must return void */
-	if (get_func_rettype(statOid) != BOOLOID)
+	if (get_func_rettype(statOid) != VOIDOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("statistics estimator function %s must return type %s",
-						NameListToString(statName), "boolean")));
+						NameListToString(statName), "void")));
 
 	/* Require EXECUTE rights for the estimator */
 	aclresult = pg_proc_aclcheck(statOid, GetUserId(), ACL_EXECUTE);
@@ -555,7 +549,7 @@ AlterOperator(AlterOperatorStmt *stmt)
 	else
 		joinOid = InvalidOid;
 	if (statName)
-		statOid = ValidateStatisticsEstimator(statName);
+		statOid = ValidateStatisticsDerivator(statName);
 	else
 		statOid = InvalidOid;
 
