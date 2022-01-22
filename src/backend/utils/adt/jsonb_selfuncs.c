@@ -3,7 +3,7 @@
  * jsonb_selfuncs.c
  *	  Functions for selectivity estimation of jsonb operators
  *
- * Copyright (c) 2016, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/jsonb_selfuncs.c

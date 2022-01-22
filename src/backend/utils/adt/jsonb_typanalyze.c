@@ -3,7 +3,7 @@
  * jsonb_typanalyze.c
  *	  Functions for gathering statistics from jsonb columns
  *
- * Copyright (c) 2016, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  * Functions in this module are used to analyze contents of JSONB columns
  * and build optimizer statistics. In principle we extract paths from all
