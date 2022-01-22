@@ -153,19 +153,19 @@ jsonStatsRelease(JsonStats data)
 }
 
 /*
- * jsonPathStatsGetSpecialStats
- *		Extract statistics of given type for JSON path.
- *
- * XXX This does not really extract any stats, it merely allocates the struct?
+ * jsonPathStatsAllocSpecialStats
+ *		Allocate a copy of JsonPathStats for accessing special (length etc.)
+ *		stats for a given JSON path.
  */
 static JsonPathStats
-jsonPathStatsGetSpecialStats(JsonPathStats pstats, JsonPathStatsType type)
+jsonPathStatsAllocSpecialStats(JsonPathStats pstats, JsonPathStatsType type)
 {
 	JsonPathStats stats;
 
 	if (!pstats)
 		return NULL;
 
+	/* copy and replace stats type */
 	stats = palloc(sizeof(*stats));
 	*stats = *pstats;
 	stats->type = type;
@@ -174,35 +174,39 @@ jsonPathStatsGetSpecialStats(JsonPathStats pstats, JsonPathStatsType type)
 }
 
 /*
- * jsonPathStatsGetLengthStats
- *		Extract statistics of lengths (for arrays or objects) for the path.
+ * jsonPathStatsGetArrayLengthStats
+ *		Extract statistics of array lengths for the path.
  */
 JsonPathStats
-jsonPathStatsGetLengthStats(JsonPathStats pstats)
+jsonPathStatsGetArrayLengthStats(JsonPathStats pstats)
 {
 	/*
-	 * The length statistics is relevant only for values that are objects or
-	 * arrays. So if we observed no such values, we know there can't be such
+	 * The array length statistics is relevant only for values that are arrays.
+	 * So if we observed no such values, we know there can't be such
 	 * statistics and so we simply return NULL.
 	 */
-	if (jsonPathStatsGetTypeFreq(pstats, jbvObject, 0.0) <= 0.0 &&
-		jsonPathStatsGetTypeFreq(pstats, jbvArray, 0.0) <= 0.0)
+	if (jsonPathStatsGetTypeFreq(pstats, jbvArray, 0.0) <= 0.0)
 		return NULL;
 
-	return jsonPathStatsGetSpecialStats(pstats, JsonPathStatsLength);
+	return jsonPathStatsAllocSpecialStats(pstats, JsonPathStatsArrayLength);
 }
 
 /*
- * jsonPathStatsGetArrayLengthStats
- *		Extract statistics of lengths for arrays.
- *
- * XXX Why doesn't this do jsonPathStatsGetTypeFreq check similar to what
- * jsonPathStatsGetLengthStats does?
+ * jsonPathStatsGetObjectLengthStats
+ *		Extract statistics of object length for the path.
  */
-static JsonPathStats
-jsonPathStatsGetArrayLengthStats(JsonPathStats pstats)
+JsonPathStats
+jsonPathStatsGetObjectLengthStats(JsonPathStats pstats)
 {
-	return jsonPathStatsGetSpecialStats(pstats, JsonPathStatsArrayLength);
+	/*
+	 * The object length statistics is relevant only for values that are arrays.
+	 * So if we observed no such values, we know there can't be such
+	 * statistics and so we simply return NULL.
+	 */
+	if (jsonPathStatsGetTypeFreq(pstats, jbvObject, 0.0) <= 0.0)
+		return NULL;
+
+	return jsonPathStatsAllocSpecialStats(pstats, JsonPathStatsObjectLength);
 }
 
 /*
@@ -474,15 +478,20 @@ jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
 		else
 		{
 			/* Find array index stats */
-			float4	arrfreq;
-
 			/* FIXME consider object key "index" also */
-			pstats = jsonPathStatsGetSubpath(pstats, NULL);
-			sel *= jsonPathStatsGetArrayIndexSelectivity(pstats, index);
-			arrfreq = jsonPathStatsGetFreq(pstats, 0.0);
+			JsonPathStats arrstats = jsonPathStatsGetSubpath(pstats, NULL);
 
-			if (arrfreq > 0.0)
-				sel /= arrfreq;
+			if (arrstats)
+			{
+				float4		arrfreq = jsonPathStatsGetFreq(pstats, 0.0);
+
+				sel *= jsonPathStatsGetArrayIndexSelectivity(pstats, index);
+
+				if (arrfreq > 0.0)
+					sel /= arrfreq;
+			}
+
+			pstats = arrstats;
 		}
 
 		pfree(key);
@@ -702,7 +711,8 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		case JsonStatJsonb:
 		case JsonStatJsonbWithoutSubpaths:
 			key = pstats->type == JsonPathStatsArrayLength ? "array_length" :
-				  pstats->type == JsonPathStatsLength ? "length" : "json";
+				  pstats->type == JsonPathStatsObjectLength ? "object_length" :
+				  "json";
 			type = JSONBOID;
 			eqop = JsonbEqOperator;
 			ltop = JsonbLtOperator;
@@ -846,30 +856,24 @@ jsonPathStatsGetTypeFreq(JsonPathStats pstats, JsonbValueType type,
 	/*
 	 * When dealing with (object/array) length stats, we only really care about
 	 * objects and arrays.
+	 *
+	 * Lengths are always numeric, so simply return 0 if requested frequency
+	 * of non-numeric values.
 	 */
-	if (pstats->type == JsonPathStatsLength)
-	{
-		/*
-		 * Array/object length is always numeric, so simply return 0 if
-		 * requested non-numeric frequency.
-		 */
-		if (type != jbvNumeric)
-			return 0.0;
-
-		return jsonPathStatsGetFloat(pstats, "freq_array", defaultfreq) +
-			   jsonPathStatsGetFloat(pstats, "freq_object", defaultfreq);
-	}
-
 	if (pstats->type == JsonPathStatsArrayLength)
 	{
-		/*
-		 * Array length is always numeric, so simply return 0 if requested
-		 * non-numeric frequency.
-		 */
 		if (type != jbvNumeric)
 			return 0.0;
 
-		return jsonPathStatsGetFreq(pstats, defaultfreq);
+		return jsonPathStatsGetFloat(pstats, "freq_array", defaultfreq);
+	}
+
+	if (pstats->type == JsonPathStatsObjectLength)
+	{
+		if (type != jbvNumeric)
+			return 0.0;
+
+		return jsonPathStatsGetFloat(pstats, "freq_object", defaultfreq);
 	}
 
 	/* Which JSON type are we interested in? Pick the right freq_type key. */
@@ -955,18 +959,20 @@ static HeapTuple
 jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 index)
 {
 	/* Extract statistics for root array elements */
-	JsonPathStats pstats = jsonStatsGetRootArrayPath(jsdata);
+	JsonPathStats arrstats = jsonStatsGetRootArrayPath(jsdata);
+	JsonPathStats rootstats;
 	Selectivity	index_sel;
 
-	if (!pstats)
+	if (!arrstats)
 		return NULL;
 
 	/* Compute relative selectivity of 'EXISTS($[index])' */
-	index_sel = jsonPathStatsGetArrayIndexSelectivity(pstats, index);
-	index_sel /= jsonPathStatsGetFreq(pstats, 0.0);
+	rootstats = jsonStatsGetRootPath(jsdata);
+	index_sel = jsonPathStatsGetArrayIndexSelectivity(rootstats, index);
+	index_sel /= jsonPathStatsGetFreq(arrstats, 0.0);
 
 	/* Form pg_statistics tuple, taking into account array index selectivity */
-	return jsonPathStatsFormTuple(pstats, type, 1.0 - index_sel);
+	return jsonPathStatsFormTuple(arrstats, type, 1.0 - index_sel);
 }
 
 /*
@@ -974,10 +980,12 @@ jsonStatsGetArrayIndexStatsTuple(JsonStats jsdata, JsonStatType type, int32 inde
  *		Return frequency of a path (fraction of documents containing it).
  */
 static float4
-jsonStatsGetPathFreq(JsonStats jsdata, Datum *path, int pathlen)
+jsonStatsGetPathFreq(JsonStats jsdata, Datum *path, int pathlen,
+					 bool try_array_indexes)
 {
 	float4		nullfrac;
-	JsonPathStats pstats = jsonStatsGetPath(jsdata, path, pathlen, &nullfrac);
+	JsonPathStats pstats = jsonStatsGetPath(jsdata, path, pathlen,
+											try_array_indexes, &nullfrac);
 	float4		freq = (1.0 - nullfrac) * jsonPathStatsGetFreq(pstats, 0.0);
 
 	CLAMP_PROBABILITY(freq);
@@ -1192,14 +1200,14 @@ static void
 jsonAccumulateSubPathSelectivity(Selectivity subpath_abs_sel,
 								 Selectivity path_freq,
 								 Selectivity *path_relative_sel,
-								 bool is_array_accessor,
-								 JsonPathStats path_stats)
+								 JsonPathStats array_path_stats)
 {
 	Selectivity sel = subpath_abs_sel / path_freq;	/* relative selectivity */
 
 	/* XXX Try to take into account array length */
-	if (is_array_accessor)
-		sel = 1.0 - pow(1.0 - sel, jsonPathStatsGetAvgArraySize(path_stats));
+	if (array_path_stats)
+		sel = 1.0 - pow(1.0 - sel,
+						jsonPathStatsGetAvgArraySize(array_path_stats));
 
 	/* Accumulate selectivity of subpath into parent path */
 	*path_relative_sel *= sel;
@@ -1299,6 +1307,14 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				JsonPathStats pstats;
 				Selectivity freq;
 
+				/*
+				 * First, find stats for the parent path if needed, it will be
+				 * used in jsonAccumulateSubPathSelectivity().
+				 */
+				if (!path->stats)
+					path->stats = jsonStatsFindPath(stats, pathstr.data,
+													pathstr.len);
+
 				/* Appeend path string entry for array elements, get stats. */
 				jsonPathAppendEntry(&pathstr, NULL);
 				pstats = jsonStatsFindPath(stats, pathstr.data, pathstr.len);
@@ -1336,8 +1352,8 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 				/* Accumulate selectivity into parent path */
 				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
 												 &path->sel,
-												 path->is_array_accesor,
-												 path->stats);
+												 path->is_array_accesor ?
+												 path->parent->stats : NULL);
 				break;
 			}
 
@@ -1358,22 +1374,28 @@ jsonSelectivityContains(JsonStats stats, Jsonb *jb)
 			case WJB_ELEM:
 			{
 				/*
-				 * Extract statistics for path.  Arrays elements shares the
+				 * Extract statistics for a path.  Array elements share the
 				 * same statistics that was extracted in WJB_BEGIN_ARRAY.
 				 */
 				JsonPathStats pstats = r == WJB_ELEM ? path->stats :
 					jsonStatsFindPath(stats, pathstr.data, pathstr.len);
-				/* Make scalar jsonb datum */
-				Datum		scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
-				/* Absolute selectivity of 'path == scalar' */
-				Selectivity abs_sel = jsonSelectivity(pstats, scalar,
-													  JsonbEqOperator);
+				Selectivity abs_sel;	/* Absolute selectivity of 'path == scalar' */
+
+				if (pstats)
+				{
+					/* Make scalar jsonb datum and compute selectivity */
+					Datum		scalar = JsonbPGetDatum(JsonbValueToJsonb(&v));
+
+					abs_sel = jsonSelectivity(pstats, scalar, JsonbEqOperator);
+				}
+				else
+					abs_sel = 0.0;
 
 				/* Accumulate selectivity into parent path */
 				jsonAccumulateSubPathSelectivity(abs_sel, path->freq,
 												 &path->sel,
-												 path->is_array_accesor,
-												 path->stats);
+												 path->is_array_accesor ?
+												 path->parent->stats : NULL);
 				break;
 			}
 
@@ -1417,7 +1439,7 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 	arrstats = jsonStatsGetRootArrayPath(stats);
 	arraysel = jsonSelectivity(arrstats, jbkey, JsonbEqOperator);
 	arraysel = 1.0 - pow(1.0 - arraysel,
-						 jsonPathStatsGetAvgArraySize(arrstats));
+						 jsonPathStatsGetAvgArraySize(rootstats));
 
 	sel = keysel + scalarsel + arraysel;
 	CLAMP_PROBABILITY(sel);
