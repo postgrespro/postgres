@@ -4,7 +4,7 @@
  *	  JSON cost estimation functions.
  *
  *
- * Portions Copyright (c) 2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *    src/include/utils/json_selfuncs.h
