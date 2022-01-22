@@ -455,7 +455,8 @@ jsonPathStatsGetArrayIndexSelectivity(JsonPathStats pstats, int index)
  * 'path' is an array of text datums of length 'pathlen' (can be zero).
  */
 static JsonPathStats
-jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
+jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen,
+				 bool try_arrays_indexes, float4 *nullfrac)
 {
 	JsonPathStats pstats = jsonStatsGetRootPath(jsdata);
 	Selectivity	sel = 1.0;
@@ -465,6 +466,14 @@ jsonStatsGetPath(JsonStats jsdata, Datum *path, int pathlen, float4 *nullfrac)
 		char	   *key = TextDatumGetCString(path[i]);
 		char	   *tail;
 		int			index;
+
+		if (!try_arrays_indexes)
+		{
+			/* Find object key stats */
+			pstats = jsonPathStatsGetSubpath(pstats, key);
+			pfree(key);
+			continue;
+		}
 
 		/* Try to interpret path entry as integer array index */
 		errno = 0;
@@ -939,14 +948,15 @@ jsonPathStatsFormTuple(JsonPathStats pstats, JsonStatType type, float4 nullfrac)
 
 /*
  * jsonStatsGetPathTuple
- *		Extract JSON statistics for a path and form pg_statistics tuple.
+ *		Extract JSON statistics for a text[] path and form pg_statistics tuple.
  */
 static HeapTuple
 jsonStatsGetPathTuple(JsonStats jsdata, JsonStatType type,
-					  Datum *path, int pathlen)
+					  Datum *path, int pathlen, bool try_arrays_indexes)
 {
 	float4			nullfrac;
-	JsonPathStats	pstats = jsonStatsGetPath(jsdata, path, pathlen, &nullfrac);
+	JsonPathStats	pstats = jsonStatsGetPath(jsdata, path, pathlen,
+											  try_arrays_indexes, &nullfrac);
 
 	return jsonPathStatsFormTuple(pstats, type, nullfrac);
 }
@@ -1030,8 +1040,9 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 				return false;
 			}
 
-			resdata->statsTuple =
-				jsonStatsGetPathTuple(&jsdata, statype, &cnst->constvalue, 1);
+			resdata->statsTuple = jsonStatsGetPathTuple(&jsdata, statype,
+														&cnst->constvalue, 1,
+														false);
 			break;
 		}
 
@@ -1081,8 +1092,9 @@ jsonbStatsVarOpConst(Oid opid, VariableStatData *resdata,
 			}
 
 			if (!have_nulls)
-				resdata->statsTuple =
-					jsonStatsGetPathTuple(&jsdata, statype, path, pathlen);
+				resdata->statsTuple = jsonStatsGetPathTuple(&jsdata, statype,
+															path, pathlen,
+															true);
 
 			pfree(path);
 			pfree(nulls);
@@ -1431,7 +1443,7 @@ jsonSelectivityExists(JsonStats stats, Datum key)
 
 	jbkey = JsonbPGetDatum(JsonbValueToJsonb(&jbvkey));
 
-	keysel = jsonStatsGetPathFreq(stats, &key, 1);
+	keysel = jsonStatsGetPathFreq(stats, &key, 1, false);
 
 	rootstats = jsonStatsGetRootPath(stats);
 	scalarsel = jsonSelectivity(rootstats, jbkey, JsonbEqOperator);
