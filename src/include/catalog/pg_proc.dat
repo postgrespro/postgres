@@ -11755,7 +11755,7 @@
   proname => 'jsonb_sel', provolatile => 's', prorettype => 'float8',
   proargtypes => 'internal oid internal int4', prosrc => 'jsonb_sel' },
 { oid => '8528', descr => 'jsonb statsistics estimation',
-  proname => 'jsonb_stats', provolatile => 's', prorettype => 'bool',
+  proname => 'jsonb_stats', provolatile => 's', prorettype => 'void',
   proargtypes => 'internal internal int4 internal', prosrc => 'jsonb_stats' },
 
 ]

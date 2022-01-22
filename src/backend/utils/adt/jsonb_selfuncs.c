@@ -1011,7 +1011,6 @@ jsonb_stats(PG_FUNCTION_ARGS)
 	VariableStatData *resdata	= (VariableStatData *) PG_GETARG_POINTER(3);
 	VariableStatData vardata;
 	Node	   *constexpr;
-	bool		result;
 	bool		varonleft;
 
 	/* should only be called for OpExpr expressions */
@@ -1020,16 +1019,16 @@ jsonb_stats(PG_FUNCTION_ARGS)
 	/* Is the expression simple enough? (Var op Const) or similar? */
 	if (!get_restriction_variable(root, opexpr->args, varRelid,
 								  &vardata, &constexpr, &varonleft))
-		return false;
+		PG_RETURN_VOID();
 
 	/* XXX Could we also get varonleft=false in useful cases? */
-	result = IsA(constexpr, Const) && varonleft &&
+	if (IsA(constexpr, Const) && varonleft)
 		jsonbStatsVarOpConst(opexpr->opno, resdata, &vardata,
 							 (Const *) constexpr);
 
 	ReleaseVariableStats(vardata);
 
-	return result;
+	PG_RETURN_VOID();
 }
 
 /*
