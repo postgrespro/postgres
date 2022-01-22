@@ -30,8 +30,8 @@
 typedef enum
 {
 	JsonPathStatsValues,
-	JsonPathStatsLength,
 	JsonPathStatsArrayLength,
+	JsonPathStatsObjectLength
 } JsonPathStatsType;
 
 typedef struct JsonStatData JsonStatData, *JsonStats;
@@ -87,7 +87,8 @@ extern bool jsonPathStatsGetNextSubpathStats(JsonPathStats stats,
 											 JsonPathStats *keystats,
 											 bool keysOnly);
 
-extern JsonPathStats jsonPathStatsGetLengthStats(JsonPathStats pstats);
+extern JsonPathStats jsonPathStatsGetArrayLengthStats(JsonPathStats pstats);
+extern JsonPathStats jsonPathStatsGetObjectLengthStats(JsonPathStats pstats);
 
 extern float4 jsonPathStatsGetFreq(JsonPathStats pstats, float4 defaultfreq);
 
