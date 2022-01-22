@@ -694,7 +694,9 @@ jsonStatsConvertArray(Datum jsonbValueArray, JsonStatType type, Oid typid,
  * jsonPathStatsExtractData
  *		Extract pg_statistics values from statistics for a single path.
  *
- *
+ * Extract ordinary MCV, Histogram, Correlation slots for a requested stats
+ * type. If requested stats for JSONB, include also transformed JSON slot for
+ * a path and possibly for its subpaths.
  */
 static bool
 jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
@@ -715,6 +717,12 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 
 	nullfrac = 1.0 - (1.0 - pstats->data->nullfrac) * (1.0 - nullfrac);
 
+	/*
+	 * Depending on requested statistics type, select:
+	 *	- stavalues data type
+	 *	- corresponding eq/lt operators
+	 *	- JSONB field, containing stats slots for this statistics type
+	 */
 	switch (stattype)
 	{
 		case JsonStatJsonb:
@@ -750,6 +758,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 			break;
 	}
 
+	/* Extract object containing slots */
 	data = jsonGetField(*pstats->datum, key);
 
 	if (!DatumGetPointer(data))
@@ -768,6 +777,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 
 	statdata->nullfrac += (1.0 - statdata->nullfrac) * nullfrac;
 
+	/* Include MCV slot if exists */
 	if (DatumGetPointer(mcv))
 	{
 		slot->kind = STATISTIC_KIND_MCV;
@@ -780,6 +790,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		slot++;
 	}
 
+	/* Include Histogram slot if exists */
 	if (DatumGetPointer(hst))
 	{
 		slot->kind = STATISTIC_KIND_HISTOGRAM;
@@ -791,6 +802,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		slot++;
 	}
 
+	/* Include Correlation slot if exists */
 	if (DatumGetPointer(corr))
 	{
 		Datum		correlation = Float4GetDatum(jsonGetFloat4(corr, 0));
@@ -803,6 +815,7 @@ jsonPathStatsExtractData(JsonPathStats pstats, JsonStatType stattype,
 		slot++;
 	}
 
+	/* Include JSON statistics for a given path and possibly for its subpaths */
 	if ((stattype == JsonStatJsonb ||
 		 stattype == JsonStatJsonbWithoutSubpaths) &&
 		jsonAnalyzeBuildSubPathsData(pstats->data->pathdatums,
