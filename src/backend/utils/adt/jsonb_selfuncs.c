@@ -1190,8 +1190,10 @@ jsonSelectivity(JsonPathStats stats, Datum scalar, Oid operator)
 		sel = var_eq_const(&vardata, operator, InvalidOid, scalar, false, true, false);
 	else
 		sel = scalarineqsel(NULL, operator,
+							/* is it greater or greater-or-equal? */
 							operator == JsonbGtOperator ||
 							operator == JsonbGeOperator,
+							/* is it equality? */
 							operator == JsonbLeOperator ||
 							operator == JsonbGeOperator,
 							InvalidOid,
