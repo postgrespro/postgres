@@ -779,7 +779,7 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 {
 	const JsonValueStats *vstats = &pstats->vstats;
 	float4				freq = pstats->freq;
-	bool				full = !!pstats->path.parent;
+	bool				fullstats = true;	/* pstats->path.parent != NULL */
 	JsonbValue			val;
 	JsonbValue		   *jbv;
 	JsonbParseState	   *ps = NULL;
@@ -828,7 +828,7 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 		pushJsonbKeyValueFloat(&ps, &val, "avg_array_length",
 							   (float4) vstats->narrelems / vstats->narrays);
 
-	if (full)
+	if (fullstats)
 	{
 #ifdef JSON_ANALYZE_SCALARS
 		jsonAnalyzeMakeScalarStats(&ps, "string", &vstats->strings.stats);
