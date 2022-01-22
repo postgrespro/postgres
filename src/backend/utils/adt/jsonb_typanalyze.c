@@ -136,8 +136,8 @@ typedef struct JsonValueStats
 	JsonScalarStats	numerics;	/* stats for JSON numerics */
 #endif
 
-	JsonScalarStats	lens;		/* stats of object/array lengths */
 	JsonScalarStats	arrlens;	/* stats of array lengths */
+	JsonScalarStats	objlens;	/* stats of object lengths */
 
 	int				nnulls;		/* number of JSON null values */
 	int				ntrue;		/* number of JSON true values */
@@ -146,6 +146,9 @@ typedef struct JsonValueStats
 	int				narrays;	/* number of JSON arrays */
 	int				nstrings;	/* number of JSON strings */
 	int				nnumerics;	/* number of JSON numerics */
+
+	int64			narrelems;	/* total number of array elements
+								 * (for avg. array length) */
 } JsonValueStats;
 
 /* Main structure for analyzed JSON path  */
@@ -377,20 +380,20 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 		case jbvBinary:
 			if (JsonContainerIsObject(jv->val.binary.data))
 			{
-				uint32 size = JsonContainerSize(jv->val.binary.data);
+				uint32		size = JsonContainerSize(jv->val.binary.data);
 
 				value = DatumGetInt32(size);
 				vstats->nobjects++;
-				JsonValuesAppend(&vstats->lens.values, value, ctx->target);
+				JsonValuesAppend(&vstats->objlens.values, value, ctx->target);
 			}
 			else if (JsonContainerIsArray(jv->val.binary.data))
 			{
-				uint32 size = JsonContainerSize(jv->val.binary.data);
+				uint32		size = JsonContainerSize(jv->val.binary.data);
 
 				value = DatumGetInt32(size);
 				vstats->narrays++;
 				JsonValuesAppend(&vstats->arrlens.values, value, ctx->target);
-				JsonValuesAppend(&vstats->lens.values, value, ctx->target);
+				vstats->narrelems += size;
 			}
 			break;
 
@@ -812,24 +815,18 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 								  vstats->jsons.values.count);
 
 	/*
-	 * XXX not sure why we keep length and array length stats at this level.
-	 * Aren't those covered by the per-column stats? We certainly have
-	 * frequencies for array elements etc.
+	 * We keep array length stats here for queries like jsonpath '$.size() > 5'.
+	 * Object lengths stats can be useful for other query lanuages.
 	 */
-	if (pstats->vstats.lens.values.count)
-		jsonAnalyzeMakeScalarStats(&ps, "length", &vstats->lens.stats);
+	if (vstats->arrlens.values.count)
+		jsonAnalyzeMakeScalarStats(&ps, "array_length", &vstats->arrlens.stats);
 
-	if (JsonPathEntryIsArray(&pstats->path))
-	{
-		JsonPathAnlStats *parent = (JsonPathAnlStats *) pstats->path.parent;
+	if (vstats->objlens.values.count)
+		jsonAnalyzeMakeScalarStats(&ps, "object_length", &vstats->objlens.stats);
 
+	if (vstats->narrays)
 		pushJsonbKeyValueFloat(&ps, &val, "avg_array_length",
-							   (float4) vstats->jsons.values.count /
-										parent->vstats.narrays);
-
-		jsonAnalyzeMakeScalarStats(&ps, "array_length",
-									&parent->vstats.arrlens.stats);
-	}
+							   (float4) vstats->narrelems / vstats->narrays);
 
 	if (full)
 	{
@@ -895,11 +892,11 @@ jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats)
 	 * Lengths and array lengths.  We divide counts by the total number of json
 	 * values to compute correct nullfrac (i.e. not all jsons have lengths).
 	 */
-	jsonAnalyzePathValues(ctx, &vstats->lens, INT4OID,
-						  pstats->freq * vstats->lens.values.count /
-										 vstats->jsons.values.count);
 	jsonAnalyzePathValues(ctx, &vstats->arrlens, INT4OID,
 						  pstats->freq * vstats->arrlens.values.count /
+										 vstats->jsons.values.count);
+	jsonAnalyzePathValues(ctx, &vstats->objlens, INT4OID,
+						  pstats->freq * vstats->objlens.values.count /
 										 vstats->jsons.values.count);
 
 #ifdef JSON_ANALYZE_SCALARS
