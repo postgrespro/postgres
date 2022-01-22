@@ -403,7 +403,6 @@ extern bool JsonbDeepContains(JsonbIterator **val,
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
 extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 										 uint64 *hash, uint64 seed);
-extern bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res);
 
 /* jsonb.c support functions */
 extern char *JsonbToCString(StringInfo out, JsonbContainer *in,
