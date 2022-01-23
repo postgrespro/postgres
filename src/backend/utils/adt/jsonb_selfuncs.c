@@ -570,7 +570,7 @@ jsonPathStatsGetNextSubpathStats(JsonPathStats stats, JsonPathStats *pkeystats,
 			else if (*c == '.')
 			{
 				/* find end of '."key"' */
-				const char *pathend = path + pathlen;
+				const char *pathend = path + pathlen - 1;
 
 				if (++c >= pathend || *c != '"')
 					break;		/* invalid path */
@@ -591,7 +591,7 @@ jsonPathStatsGetNextSubpathStats(JsonPathStats stats, JsonPathStats *pkeystats,
 		}
 
 		/* Init path stats if needed */
-		if (!stats->data)
+		if (!keystats->data)
 		{
 			keystats->data = stats->data;
 			keystats->datum = pathdatum;
