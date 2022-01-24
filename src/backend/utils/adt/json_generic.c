@@ -387,31 +387,3 @@ JsonCopyFlat(JsonContainer *jc)
 
 	return res;
 }
-
-JsonValue *
-JsonContainerExtractKeys(JsonContainer *jsc)
-{
-	JsonIterator	   *it;
-	JsonbParseState	   *state = NULL;
-	JsonValue		   *res = NULL;
-	JsonValue			val;
-	JsonIteratorToken	tok;
-
-	Assert(JsonContainerIsObject(jsc));
-
-	it = JsonIteratorInit(jsc);
-
-	while ((tok = JsonIteratorNext(&it, &val, false)) != WJB_DONE)
-	{
-		res = pushJsonbValue(&state, tok, tok < WJB_BEGIN_ARRAY ? &val : NULL);
-
-		if (tok == WJB_KEY)
-		{
-			tok = JsonIteratorNext(&it, &val, true);
-			Assert(tok == WJB_VALUE);
-			pushJsonbValueScalar(&state, tok, &val);
-		}
-	}
-
-	return res;
-}
