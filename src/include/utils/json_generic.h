@@ -135,14 +135,17 @@ typedef struct Json
 
 #define JsonValueIsScalar(jsval)	IsAJsonbScalar(jsval)
 
+#define JsonbIterator JsonIterator
+#define JsonbIteratorInit JsonIteratorInit
+#define JsonbIteratorNext JsonIteratorNext
+
 #ifdef JSONB_UTIL_C
 #define JsonbValueToJsonb JsonValueToJsonb
 #else
 #define Jsonb Json
-#define JsonbIterator JsonIterator
+
 #define JsonbContainer JsonContainer
-#define JsonbIteratorInit JsonIteratorInit
-#define JsonbIteratorNext JsonIteratorNext
+
 #define JsonbValueToJsonb JsonValueToJson
 
 #undef JB_ROOT_COUNT

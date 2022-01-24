@@ -53,7 +53,7 @@ struct JsonbParseState
 #endif
 };
 
-struct JsonbIterator
+typedef struct jsonbIterator
 {
 	JsonIterator	ji;
 
@@ -82,7 +82,7 @@ struct JsonbIterator
 
 	/* Private state */
 	JsonbIterState state;
-};
+} jsonbIterator;
 
 static void fillJsonbValue(const JsonbContainer *container, int index,
 						   char *base_addr, uint32 offset,
@@ -98,7 +98,7 @@ static bool convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbVal
 static void copyToBuffer(StringInfo buffer, int offset, const char *data, int len);
 static short padBufferToInt(StringInfo buffer);
 
-static JsonbIterator *iteratorFromContainer(JsonContainer *container, JsonbIterator *parent);
+static jsonbIterator *iteratorFromContainer(JsonContainer *container, jsonbIterator *parent);
 static JsonbParseState *pushState(JsonbParseState **pstate);
 static void appendKey(JsonbParseState *pstate, const JsonbValue *string);
 static void appendValue(JsonbParseState *pstate, const JsonbValue *scalarVal);
@@ -250,8 +250,8 @@ compareJsonbContainers(JsonContainer *a, JsonContainer *b)
 			   *itb;
 	int			res = 0;
 
-	ita = JsonIteratorInit(a);
-	itb = JsonIteratorInit(b);
+	ita = JsonbIteratorInit(a);
+	itb = JsonbIteratorInit(b);
 
 	do
 	{
@@ -260,8 +260,8 @@ compareJsonbContainers(JsonContainer *a, JsonContainer *b)
 		JsonbIteratorToken ra,
 					rb;
 
-		ra = JsonIteratorNext(&ita, &va, false);
-		rb = JsonIteratorNext(&itb, &vb, false);
+		ra = JsonbIteratorNext(&ita, &va, false);
+		rb = JsonbIteratorNext(&itb, &vb, false);
 
 		if (ra == rb)
 		{
@@ -751,27 +751,27 @@ pushJsonbValue(JsonbParseState **pstate, JsonbIteratorToken seq,
 	}
 
 	/* unpack the binary and add each piece to the pstate */
-	it = JsonIteratorInit(jbval->val.binary.data);
+	it = JsonbIteratorInit(jbval->val.binary.data);
 
 	if (JsonContainerIsScalar(jbval->val.binary.data) && *pstate)
 	{
-		tok = JsonIteratorNext(&it, &v, true);
+		tok = JsonbIteratorNext(&it, &v, true);
 		Assert(tok == WJB_BEGIN_ARRAY);
 		Assert(v.type == jbvArray && v.val.array.rawScalar);
 
-		tok = JsonIteratorNext(&it, &v, true);
+		tok = JsonbIteratorNext(&it, &v, true);
 		Assert(tok == WJB_ELEM);
 
 		res = pushJsonbValueScalar(pstate, seq, &v);
 
-		tok = JsonIteratorNext(&it, &v, true);
+		tok = JsonbIteratorNext(&it, &v, true);
 		Assert(tok == WJB_END_ARRAY);
 		Assert(it == NULL);
 
 		return res;
 	}
 
-	while ((tok = JsonIteratorNext(&it, &v, false)) != WJB_DONE)
+	while ((tok = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		res = pushJsonbValueScalar(pstate, tok,
 								   tok < WJB_BEGIN_ARRAY ||
 								   (tok == WJB_BEGIN_ARRAY &&
@@ -1021,10 +1021,10 @@ appendElement(JsonbParseState *pstate, const JsonbValue *scalarVal)
  * WJB_END_OBJECT, on the assumption that it's only useful to access values
  * when recursing in.
  */
-JsonbIteratorToken
-JsonbIteratorNext(JsonIterator **jsit, JsonbValue *val, bool skipNested)
+static JsonbIteratorToken
+jsonbIteratorNext(JsonIterator **jsit, JsonbValue *val, bool skipNested)
 {
-	JsonbIterator **it = (JsonbIterator **) jsit;
+	jsonbIterator **it = (jsonbIterator **) jsit;
 
 	if (*it == NULL)
 		return WJB_DONE;
@@ -1064,7 +1064,7 @@ recurse:
 				 * independently tracks iteration progress at its level of
 				 * nesting).
 				 */
-				*it = (JsonbIterator *)
+				*it = (jsonbIterator *)
 						JsonIteratorFreeAndGetParent((JsonIterator *) *it);
 				return WJB_END_ARRAY;
 			}
@@ -1118,7 +1118,7 @@ recurse:
 				 * (which independently tracks iteration progress at its level
 				 * of nesting).
 				 */
-				*it = (JsonbIterator *)
+				*it = (jsonbIterator *)
 						JsonIteratorFreeAndGetParent((JsonIterator *) *it);
 				return WJB_END_OBJECT;
 			}
@@ -1168,30 +1168,30 @@ recurse:
 	return -1;
 }
 
-static JsonbIterator *
-iteratorFromContainer(JsonContainer *container, JsonbIterator *parent)
+static jsonbIterator *
+iteratorFromContainer(JsonContainer *container, jsonbIterator *parent)
 {
-	JsonbIterator *it = (JsonbIterator *) JsonIteratorInit(container);
+	jsonbIterator *it = (jsonbIterator *) JsonbIteratorInit(container);
 	it->ji.parent = &parent->ji;
 	return it;
 }
 
 /*
- * Given a JsonbContainer, expand to JsonbIterator to iterate over items
+ * Given a JsonbContainer, expand to jsonbIterator to iterate over items
  * fully expanded to in-memory representation for manipulation.
  *
- * See JsonbIteratorNext() for notes on memory management.
+ * See jsonbIteratorNext() for notes on memory management.
  */
 static JsonIterator *
-JsonbIteratorInit(JsonContainer *cont)
+jsonbIteratorInit(JsonContainer *cont)
 {
 	const JsonbContainer *container = cont->data;
-	JsonbIterator *it;
+	jsonbIterator *it;
 
-	it = palloc0(sizeof(JsonbIterator));
+	it = palloc0(sizeof(jsonbIterator));
 	it->ji.container = cont;
 	it->ji.parent = NULL;
-	it->ji.next = JsonbIteratorNext;
+	it->ji.next = jsonbIteratorNext;
 	it->container = container;
 	it->nElems = container->header & JB_CMASK;
 
@@ -1252,8 +1252,8 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 	 */
 	check_stack_depth();
 
-	rval = JsonIteratorNext(val, &vval, false);
-	rcont = JsonIteratorNext(mContained, &vcontained, false);
+	rval = JsonbIteratorNext(val, &vval, false);
+	rcont = JsonbIteratorNext(mContained, &vcontained, false);
 
 	if (rval != rcont)
 	{
@@ -1288,7 +1288,7 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 			JsonbValue *lhsVal; /* lhsVal is from pair in lhs object */
 			JsonbValue	lhsValBuf;
 
-			rcont = JsonIteratorNext(mContained, &vcontained, false);
+			rcont = JsonbIteratorNext(mContained, &vcontained, false);
 
 			/*
 			 * When we get through caller's rhs "is it contained within?"
@@ -1313,7 +1313,7 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 			 * ...at this stage it is apparent that there is at least a key
 			 * match for this rhs pair.
 			 */
-			rcont = JsonIteratorNext(mContained, &vcontained, true);
+			rcont = JsonbIteratorNext(mContained, &vcontained, true);
 
 			Assert(rcont == WJB_VALUE);
 
@@ -1339,8 +1339,8 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 				Assert(lhsVal->type == jbvBinary);
 				Assert(vcontained.type == jbvBinary);
 
-				nestval = JsonIteratorInit(lhsVal->val.binary.data);
-				nestContained = JsonIteratorInit(vcontained.val.binary.data);
+				nestval = JsonbIteratorInit(lhsVal->val.binary.data);
+				nestContained = JsonbIteratorInit(vcontained.val.binary.data);
 
 				/*
 				 * Match "value" side of rhs datum object's pair recursively.
@@ -1391,7 +1391,7 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 		/* Work through rhs "is it contained within?" array */
 		for (;;)
 		{
-			rcont = JsonIteratorNext(mContained, &vcontained, true);
+			rcont = JsonbIteratorNext(mContained, &vcontained, true);
 
 			/*
 			 * When we get through caller's rhs "is it contained within?"
@@ -1428,7 +1428,7 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 					for (i = 0; i < nLhsElems; i++)
 					{
 						/* Store all lhs elements in temp array */
-						rcont = JsonIteratorNext(val, &vval, true);
+						rcont = JsonbIteratorNext(val, &vval, true);
 						Assert(rcont == WJB_ELEM);
 
 						if (vval.type == jbvBinary)
@@ -1451,8 +1451,8 @@ JsonbDeepContains(JsonIterator **val, JsonIterator **mContained)
 							   *nestContained;
 					bool		contains;
 
-					nestval = JsonIteratorInit(lhsConts[i].val.binary.data);
-					nestContained = JsonIteratorInit(vcontained.val.binary.data);
+					nestval = JsonbIteratorInit(lhsConts[i].val.binary.data);
+					nestContained = JsonbIteratorInit(vcontained.val.binary.data);
 
 					contains = JsonbDeepContains(&nestval, &nestContained);
 
@@ -2229,7 +2229,7 @@ JsonContainerOps
 jsonbContainerOps =
 {
 	jsonbInit,
-	JsonbIteratorInit,
+	jsonbIteratorInit,
 	jsonbFindKeyInObject,
 	jsonbFindValueInArray,
 	jsonbGetArrayElement,
