@@ -284,8 +284,6 @@ extern int JsonCompareContainers(JsonContainer *a, JsonContainer *b);
 
 extern bool JsonbDeepContains(JsonContainer *val, JsonContainer *mContained);
 
-extern JsonValue *JsonContainerExtractKeys(JsonContainer *jsc);
-
 /* jsonb.c support functions */
 extern JsonValue *JsonValueFromCString(char *json, int len, Node *escontext /* XXX SQL/JSON bool unique_keys */);
 
