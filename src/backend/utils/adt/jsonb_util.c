@@ -13,8 +13,6 @@
  */
 #include "postgres.h"
 
-#define JSONB_UTIL_C
-
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
@@ -25,7 +23,7 @@
 #include "utils/datetime.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
-#include "utils/json_generic.h"
+#include "utils/jsonb_internals.h"
 #include "utils/memutils.h"
 #include "utils/varlena.h"
 
@@ -33,13 +31,13 @@
  * Maximum number of elements in an array (or key/value pairs in an object).
  * This is limited by two things: the size of the JEntry array must fit
  * in MaxAllocSize, and the number of elements (or pairs) must fit in the bits
- * reserved for that in the JsonbContainer.header field.
+ * reserved for that in the JsonbContainerHeader.header field.
  *
  * (The total size of an array's or object's elements is also limited by
  * JENTRY_OFFLENMASK, but we're not concerned about that here.)
  */
-#define JSONB_MAX_ELEMS (Min(MaxAllocSize / sizeof(JsonbValue), JB_CMASK))
-#define JSONB_MAX_PAIRS (Min(MaxAllocSize / sizeof(JsonbPair), JB_CMASK))
+#define JSONB_MAX_ELEMS (Min(MaxAllocSize / sizeof(JsonbValue), JBC_CMASK))
+#define JSONB_MAX_PAIRS (Min(MaxAllocSize / sizeof(JsonbPair), JBC_CMASK))
 
 /* Conversion state used when parsing Jsonb from text, or for type coercion */
 struct JsonbParseState
@@ -54,7 +52,7 @@ typedef struct jsonbIterator
 	JsonIterator	ji;
 
 	/* Container being iterated */
-	const JsonbContainer *container;
+	const JsonbContainerHeader *container;
 
 	uint32		nElems;			/* Number of elements in children array (will
 								 * be nPairs for objects) */
@@ -80,7 +78,7 @@ typedef struct jsonbIterator
 	JsonbIterState state;
 } jsonbIterator;
 
-static void fillJsonbValue(const JsonbContainer *container, int index,
+static void fillJsonbValue(const JsonbContainerHeader *container, int index,
 						   char *base_addr, uint32 offset,
 						   JsonbValue *result);
 static int	compareJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
@@ -104,7 +102,7 @@ static void uniqueifyJsonbObject(JsonbValue *object);
 static JsonbValue *pushSingleScalarJsonbValue(JsonbParseState **pstate,
 											  const JsonbValue *jbval,
 											  bool unpackBinary);
-static void jsonbInitContainer(JsonContainerData *jc, JsonbContainer *jbc, int len);
+static void jsonbInitContainer(JsonContainerData *jc, JsonbContainerHeader *jbc, int len);
 
 JsonValue *
 JsonValueUnpackBinary(const JsonValue *jbv)
@@ -180,7 +178,7 @@ JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
  * by index within the container's JEntry array.
  */
 static uint32
-getJsonbOffset(const JsonbContainer *jc, int index)
+getJsonbOffset(const JsonbContainerHeader *jc, int index)
 {
 	uint32		offset = 0;
 	int			i;
@@ -205,7 +203,7 @@ getJsonbOffset(const JsonbContainer *jc, int index)
  * The node is identified by index within the container's JEntry array.
  */
 static uint32
-getJsonbLength(const JsonbContainer *jc, int index)
+getJsonbLength(const JsonbContainerHeader *jc, int index)
 {
 	uint32		off;
 	uint32		len;
@@ -376,7 +374,7 @@ compareJsonbContainers(JsonContainer *a, JsonContainer *b)
 
 typedef struct JsonbArrayIterator
 {
-	const JsonbContainer *container;
+	const JsonbContainerHeader *container;
 	char			   *base_addr;
 	int					index;
 	int					count;
@@ -384,11 +382,11 @@ typedef struct JsonbArrayIterator
 } JsonbArrayIterator;
 
 static void
-JsonbArrayIteratorInit(JsonbArrayIterator *it, const JsonbContainer *container)
+JsonbArrayIteratorInit(JsonbArrayIterator *it, const JsonbContainerHeader *container)
 {
 	it->container = container;
 	it->index = 0;
-	it->count = (container->header & JB_CMASK);
+	it->count = (container->header & JBC_CMASK);
 	it->offset = 0;
 	it->base_addr = (char *) (container->children + it->count);
 }
@@ -428,7 +426,7 @@ JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i)
 static JsonbValue *
 jsonbFindValueInArray(JsonContainer *jsc, const JsonbValue *key)
 {
-	const JsonbContainer *container = jsc->data;
+	const JsonbContainerHeader *container = jsc->data;
 	JsonbArrayIterator	it;
 	JsonbValue		   *result = palloc(sizeof(JsonbValue));
 
@@ -507,7 +505,7 @@ static JsonbValue *
 jsonbFindKeyInObject(JsonContainer *jsc, const char *keyVal, int keyLen,
 					 JsonValue *res)
 {
-	const JsonbContainer *container = jsc->data;
+	const JsonbContainerHeader *container = jsc->data;
 	const JEntry *children = container->children;
 	int			count = JsonContainerSize(jsc);
 	char	   *baseAddr;
@@ -600,7 +598,7 @@ jsonbGetArrayElement(JsonContainer *jsc, uint32 i)
  * expanded.
  */
 static void
-fillJsonbValue(const JsonbContainer *container, int index,
+fillJsonbValue(const JsonbContainerHeader *container, int index,
 			   char *base_addr, uint32 offset,
 			   JsonbValue *result)
 {
@@ -639,7 +637,7 @@ fillJsonbValue(const JsonbContainer *container, int index,
 		result->val.binary.data = JsonContainerAlloc();
 		jsonbInitContainer((JsonContainerData *) result->val.binary.data,
 				/* Remove alignment padding from data pointer and length */
-						   (JsonbContainer *)(base_addr + INTALIGN(offset)),
+						   (JsonbContainerHeader *)(base_addr + INTALIGN(offset)),
 						   getJsonbLength(container, index) -
 								(INTALIGN(offset) - offset));
 	}
@@ -1171,7 +1169,7 @@ iteratorFromContainer(JsonContainer *container, jsonbIterator *parent)
 }
 
 /*
- * Given a JsonbContainer, expand to jsonbIterator to iterate over items
+ * Given a JsonContainer, expand to jsonbIterator to iterate over items
  * fully expanded to in-memory representation for manipulation.
  *
  * See jsonbIteratorNext() for notes on memory management.
@@ -1179,7 +1177,7 @@ iteratorFromContainer(JsonContainer *container, jsonbIterator *parent)
 static JsonIterator *
 jsonbIteratorInit(JsonContainer *cont)
 {
-	const JsonbContainer *container = cont->data;
+	const JsonbContainerHeader *container = cont->data;
 	jsonbIterator *it;
 
 	it = palloc0(sizeof(jsonbIterator));
@@ -1187,24 +1185,24 @@ jsonbIteratorInit(JsonContainer *cont)
 	it->ji.parent = NULL;
 	it->ji.next = jsonbIteratorNext;
 	it->container = container;
-	it->nElems = container->header & JB_CMASK;
+	it->nElems = container->header & JBC_CMASK;
 
 	/* Array starts just after header */
 	it->children = container->children;
 
-	switch (container->header & (JB_FARRAY | JB_FOBJECT))
+	switch (container->header & (JBC_FARRAY | JBC_FOBJECT))
 	{
-		case JB_FARRAY:
+		case JBC_FARRAY:
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry);
-			it->isScalar = (container->header & JB_FSCALAR) != 0;
+			it->isScalar = (container->header & JBC_FSCALAR) != 0;
 			/* This is either a "raw scalar", or an array */
 			Assert(!it->isScalar || it->nElems == 1);
 
 			it->state = JBI_ARRAY_START;
 			break;
 
-		case JB_FOBJECT:
+		case JBC_FOBJECT:
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry) * 2;
 			it->state = JBI_OBJECT_START;
@@ -1794,12 +1792,12 @@ convertJsonbArray(StringInfo buffer, JEntry *pheader, const JsonbValue *val, int
 	 * Construct the header Jentry and store it in the beginning of the
 	 * variable-length payload.
 	 */
-	header = nElems | JB_FARRAY;
+	header = nElems | JBC_FARRAY;
 	if (val->val.array.rawScalar)
 	{
 		Assert(nElems == 1);
 		Assert(level == 0);
-		header |= JB_FSCALAR;
+		header |= JBC_FSCALAR;
 	}
 
 	appendToBuffer(buffer, (char *) &header, sizeof(uint32));
@@ -1880,7 +1878,7 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, in
 	 * Construct the header Jentry and store it in the beginning of the
 	 * variable-length payload.
 	 */
-	header = nPairs | JB_FOBJECT;
+	header = nPairs | JBC_FOBJECT;
 	appendToBuffer(buffer, (char *) &header, sizeof(uint32));
 
 	/* Reserve space for the JEntries of the keys and values. */
@@ -2166,21 +2164,21 @@ uniqueifyJsonbObject(JsonbValue *object)
 
 
 static void
-jsonbInitContainer(JsonContainerData *jc, JsonbContainer *jbc, int len)
+jsonbInitContainer(JsonContainerData *jc, JsonbContainerHeader *jbc, int len)
 {
 	jc->ops = &jsonbContainerOps;
 	jc->data = jbc;
 	jc->len = len;
-	jc->size = jbc->header & JB_CMASK;
-	jc->type = jbc->header & JB_FOBJECT ? jbvObject :
-			   jbc->header & JB_FSCALAR ? jbvArray | jbvScalar :
-										  jbvArray;
+	jc->size = jbc->header & JBC_CMASK;
+	jc->type = jbc->header & JBC_FOBJECT ? jbvObject :
+			   jbc->header & JBC_FSCALAR ? jbvArray | jbvScalar :
+										   jbvArray;
 }
 
 static void
 jsonbInit(JsonContainerData *jc, Datum value)
 {
-	Jsonb  *jb = (Jsonb *) DatumGetPointer(value);
+	JsonbDatum *jb = (JsonbDatum *) DatumGetPointer(value);
 	jsonbInitContainer(jc, &jb->root, VARSIZE_ANY_EXHDR(jb));
 }
 

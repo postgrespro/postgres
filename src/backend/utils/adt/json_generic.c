@@ -12,7 +12,7 @@
 
 #include "miscadmin.h"
 #include "utils/builtins.h"
-#include "utils/json_generic.h"
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 
 static Json *JsonExpand(Json *tmp, Datum value, bool freeValue,
