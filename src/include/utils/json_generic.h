@@ -13,8 +13,6 @@
 #ifndef UTILS_JSON_GENERIC_H
 #define UTILS_JSON_GENERIC_H
 
-#define JSON_GENERIC
-
 #include "postgres.h"
 #include "lib/stringinfo.h"
 #include "utils/jsonb.h"
@@ -79,6 +77,10 @@ typedef struct Json
 	bool		is_json;		/* json or jsonb */
 } Json;
 
+typedef Json Jsonb;
+typedef JsonContainer JsonbContainer;
+
+
 #define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
 #define JsonFlattenToJsonbDatum(json) \
@@ -116,11 +118,6 @@ typedef struct Json
 #define JsonbIteratorNext JsonIteratorNext
 
 #define JsonbValueToJsonb JsonValueToJson
-
-#ifndef JSONB_UTIL_C
-#define Jsonb Json
-#define JsonbContainer JsonContainer
-#endif
 
 #define JB_ROOT_COUNT(json)		JsonContainerSize(JsonRoot(json))
 #define JB_ROOT_IS_SCALAR(json)	JsonContainerIsScalar(JsonRoot(json))
