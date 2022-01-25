@@ -81,51 +81,32 @@ typedef struct Json
 
 #define JsonIsTemporary(json)		((json)->obj.isTemporary)
 
-#ifndef JSONXOID
-# define JSONXOID JSONBOID
-#endif
-
-#ifndef JsonxContainerOps
-# define JsonxContainerOps			(&jsonbContainerOps)
-#endif
-
 #define JsonFlattenToJsonbDatum(json) \
 		PointerGetDatum(JsonFlatten(json, JsonbEncode, &jsonbContainerOps))
 
 #undef JsonbPGetDatum
 #define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(json)
 
-#ifndef JsonxPGetDatum
-# define JsonxPGetDatum(json)		JsonbPGetDatum(json)
-#endif
-
-#define JsonGetDatum(json)			JsonxPGetDatum(json)
-
 #undef DatumGetJsonbP
 #define DatumGetJsonbP(datum)		DatumGetJson(datum, &jsonbContainerOps, NULL)
 #define DatumGetJsontP(datum)		DatumGetJson(datum, &jsontContainerOps, NULL)
-#define DatumGetJsonxP(datum)		DatumGetJson(datum, JsonxContainerOps, NULL)
-#define DatumGetJsonxTmp(datum,tmp)	DatumGetJson(datum, JsonxContainerOps, tmp)
 
 #undef DatumGetJsonbPCopy
 #define DatumGetJsonbPCopy(datum)	DatumGetJsonbP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
 #define DatumGetJsontPCopy(datum)	DatumGetJsontP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
-#define DatumGetJsonxPCopy(datum)	DatumGetJsonxP(PointerGetDatum(PG_DETOAST_DATUM_COPY(datum)))
 
 #undef PG_RETURN_JSONB_P
-#define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonGetDatum(x))
+#define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonbPGetDatum(x))
 #define PG_RETURN_JSONT_P(x)		PG_RETURN_DATUM(JsontPGetDatum(x))
 
-#define PG_GETARG_JSONX_TMP(n, tmp)	DatumGetJsonxTmp(PG_GETARG_DATUM(n), tmp)
-
 #undef	PG_GETARG_JSONB_P
-#define PG_GETARG_JSONB_P(n)		PG_GETARG_JSONX_TMP(n, alloca(sizeof(Json))) /* FIXME conditional alloca() */
+#define PG_GETARG_JSONB_P(n)		DatumGetJson(PG_GETARG_DATUM(n), &jsonbContainerOps, alloca(sizeof(Json))) /* FIXME conditional alloca() */
 #define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #define PG_FREE_IF_COPY_JSONB(json, n) JsonFree(json)
 
 #undef	PG_GETARG_JSONB_P_COPY
-#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonxPCopy(PG_GETARG_DATUM(x))
+#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
 
 
 #define JsonRoot(json)				(&(json)->root)
