@@ -301,12 +301,6 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 #define JsonbToCString(out, in, estimated_len) \
 		JsonToCStringExt(out, in, estimated_len)
 
-extern JsonValue   *jsonFindKeyInObject(JsonContainer *obj, const char *key, int len);
-extern JsonValue   *jsonFindLastKeyInObject(JsonContainer *obj, const char *key, int len);
-extern JsonValue   *jsonFindValueInArray(JsonContainer *array, const JsonValue *elem);
-extern uint32		jsonGetArraySize(JsonContainer *array);
-extern JsonValue   *jsonGetArrayElement(JsonContainer *array, uint32 index);
-
 extern bool JsonValueScalarEquals(const JsonValue *aScalar,
 								  const JsonValue *bScalar);
 
