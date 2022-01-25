@@ -68,17 +68,6 @@ typedef enum
 #define JGINFLAG_HASHED 0x10	/* OR'd into flag if value was hashed */
 #define JGIN_MAXLENGTH	125		/* max length of text part before hashing */
 
-/* Convenience macros */
-#define DatumGetJsonbP(d)	((Jsonb *) PG_DETOAST_DATUM(d))
-#define DatumGetJsonbPCopy(d)	((Jsonb *) PG_DETOAST_DATUM_COPY(d))
-#define JsonbPGetDatum(p)	PointerGetDatum(p)
-#define PG_GETARG_JSONB_P(x)	DatumGetJsonbP(PG_GETARG_DATUM(x))
-#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
-#define PG_RETURN_JSONB_P(x)	PG_RETURN_DATUM(JsonbPGetDatum(x))
-
-#define JsonbRoot(jsonb)	(&(jsonb)->root)
-#define JsonbGetSize(jsonb)	VARSIZE(jsonb)
-
 typedef struct JsonbPair JsonbPair;
 typedef struct JsonbValue JsonbValue;
 
@@ -222,16 +211,6 @@ typedef struct
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	JsonbContainer root;
 } Jsonb;
-
-#ifdef JSONB_UTIL_C
-/* convenience macros for accessing the root container in a Jsonb datum */
-#define JB_HEADER(jbp_)			(((JsonbContainer *) VARDATA(jbp_))->header)
-#define JB_ROOT_COUNT(jbp_)		(*(uint32 *) VARDATA(jbp_) & JB_CMASK)
-#define JB_ROOT_IS_SCALAR(jbp_) ((*(uint32 *) VARDATA(jbp_) & JB_FSCALAR) != 0)
-#define JB_ROOT_IS_OBJECT(jbp_) ((*(uint32 *) VARDATA(jbp_) & JB_FOBJECT) != 0)
-#define JB_ROOT_IS_ARRAY(jbp_)	((*(uint32 *) VARDATA(jbp_) & JB_FARRAY) != 0)
-#endif
-
 
 typedef enum jbvType
 {
