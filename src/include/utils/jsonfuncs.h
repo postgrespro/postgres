@@ -16,7 +16,6 @@
 
 #include "common/jsonapi.h"
 #include "utils/jsonb.h"
-#include "utils/json_generic.h"
 
 /*
  * Flag types for iterate_json(b)_values to specify what elements from a

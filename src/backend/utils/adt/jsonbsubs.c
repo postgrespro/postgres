@@ -21,7 +21,6 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_expr.h"
 #include "utils/jsonb.h"
-#include "utils/json_generic.h"
 #include "utils/jsonfuncs.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"

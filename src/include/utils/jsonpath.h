@@ -18,7 +18,6 @@
 #include "nodes/pg_list.h"
 #include "utils/jsonb.h"
 #include "utils/jsonfuncs.h"
-#include "utils/json_generic.h"
 
 typedef struct
 {
