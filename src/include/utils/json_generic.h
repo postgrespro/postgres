@@ -97,11 +97,9 @@ typedef struct Json
 
 #undef PG_RETURN_JSONB_P
 #define PG_RETURN_JSONB_P(x)		PG_RETURN_DATUM(JsonbPGetDatum(x))
-#define PG_RETURN_JSONT_P(x)		PG_RETURN_DATUM(JsontPGetDatum(x))
 
 #undef	PG_GETARG_JSONB_P
 #define PG_GETARG_JSONB_P(n)		DatumGetJson(PG_GETARG_DATUM(n), &jsonbContainerOps, alloca(sizeof(Json))) /* FIXME conditional alloca() */
-#define PG_GETARG_JSONT_P(n)		DatumGetJsontP(PG_GETARG_DATUM(n))
 
 #define PG_FREE_IF_COPY_JSONB(json, n) JsonFree(json)
 
@@ -313,6 +311,5 @@ extern int lengthCompareJsonbString(const char *val1, int len1,
 									const char *val2, int len2);
 
 extern JsonContainerOps jsonbContainerOps;
-extern JsonContainerOps jsontContainerOps;
 
 #endif /* UTILS_JSON_GENERIC_H */
