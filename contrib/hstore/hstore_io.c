@@ -1473,7 +1473,7 @@ hstore_to_jsonb(PG_FUNCTION_ARGS)
 
 	res = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	PG_RETURN_JSONB_VALUE_P(res);
 }
 
 PG_FUNCTION_INFO_V1(hstore_to_jsonb_loose);
@@ -1549,5 +1549,5 @@ hstore_to_jsonb_loose(PG_FUNCTION_ARGS)
 
 	res = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(res));
+	PG_RETURN_JSONB_VALUE_P(res);
 }

@@ -435,7 +435,7 @@ jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz)
 	v = lfirst(c);
 	funcctx->user_fctx = list_delete_first(found);
 
-	SRF_RETURN_NEXT(funcctx, JsonbPGetDatum(JsonbValueToJsonb(v)));
+	SRF_RETURN_NEXT(funcctx, JsonValueToJsonbDatum(v));
 }
 
 Datum
@@ -466,7 +466,7 @@ jsonb_path_query_array_internal(FunctionCallInfo fcinfo, bool tz)
 
 	(void) executeJsonPath(jp, vars, jb, !silent, &found, tz);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(wrapItemsInArray(&found)));
+	PG_RETURN_JSONB_VALUE_P(wrapItemsInArray(&found));
 }
 
 Datum
@@ -498,7 +498,7 @@ jsonb_path_query_first_internal(FunctionCallInfo fcinfo, bool tz)
 	(void) executeJsonPath(jp, vars, jb, !silent, &found, tz);
 
 	if (JsonValueListLength(&found) >= 1)
-		PG_RETURN_JSONB_P(JsonbValueToJsonb(JsonValueListHead(&found)));
+		PG_RETURN_JSONB_VALUE_P(JsonValueListHead(&found));
 	else
 		PG_RETURN_NULL();
 }

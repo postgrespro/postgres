@@ -289,7 +289,6 @@ plperl_to_jsonb(PG_FUNCTION_ARGS)
 	JsonbParseState *jsonb_state = NULL;
 	SV		   *in = (SV *) PG_GETARG_POINTER(0);
 	JsonbValue *out = SV_to_JsonbValue(in, &jsonb_state, true);
-	Jsonb	   *result = JsonbValueToJsonb(out);
 
-	PG_RETURN_JSONB_P(result);
+	PG_RETURN_JSONB_VALUE_P(out);
 }
