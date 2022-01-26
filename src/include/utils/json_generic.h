@@ -218,12 +218,6 @@ JsonIteratorFree(JsonIterator *it)
 		it = JsonIteratorFreeAndGetParent(it);
 }
 
-static inline Json *
-JsonGetNonTemporary(Json *json)
-{
-	return JsonIsTemporary(json) ? JsonCopyTemporary(json) : json;
-}
-
 extern Json *JsonValueToJson(JsonValue *val);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
