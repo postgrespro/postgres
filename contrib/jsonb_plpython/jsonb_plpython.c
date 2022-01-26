@@ -461,7 +461,7 @@ plpython_to_jsonb(PG_FUNCTION_ARGS)
 
 	obj = (PyObject *) PG_GETARG_POINTER(0);
 	out = PLyObject_ToJsonbValue(obj, &jsonb_state, true);
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(out));
+	PG_RETURN_JSONB_VALUE_P(out);
 }
 
 /*
