@@ -279,7 +279,7 @@ JsonValueFromCString(char *json, int len)
 static inline Datum
 jsonb_from_cstring(char *json, int len)
 {
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(JsonValueFromCString(json, len)));
+	PG_RETURN_JSONB_VALUE_P(JsonValueFromCString(json, len));
 }
 
 static void
@@ -1108,7 +1108,7 @@ to_jsonb(PG_FUNCTION_ARGS)
 
 	datum_to_jsonb(val, false, &result, tcategory, outfuncoid, false);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1158,7 +1158,7 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1174,7 +1174,7 @@ jsonb_build_object_noargs(PG_FUNCTION_ARGS)
 	(void) pushJsonbValue(&result.parseState, WJB_BEGIN_OBJECT, NULL);
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1205,7 +1205,7 @@ jsonb_build_array(PG_FUNCTION_ARGS)
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1221,7 +1221,7 @@ jsonb_build_array_noargs(PG_FUNCTION_ARGS)
 	(void) pushJsonbValue(&result.parseState, WJB_BEGIN_ARRAY, NULL);
 	result.res = pushJsonbValue(&result.parseState, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 
@@ -1325,7 +1325,7 @@ jsonb_object(PG_FUNCTION_ARGS)
 close_object:
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1422,7 +1422,7 @@ jsonb_object_two_arg(PG_FUNCTION_ARGS)
 close_object:
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(result.res));
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 
@@ -1552,7 +1552,6 @@ jsonb_agg_finalfn(PG_FUNCTION_ARGS)
 {
 	JsonbAggState *arg;
 	JsonbInState result;
-	Jsonb	   *out;
 
 	/* cannot be called directly because of internal-type argument */
 	Assert(AggCheckCallContext(fcinfo, NULL));
@@ -1574,9 +1573,7 @@ jsonb_agg_finalfn(PG_FUNCTION_ARGS)
 	result.res = pushJsonbValue(&result.parseState,
 								WJB_END_ARRAY, NULL);
 
-	out = JsonbValueToJsonb(result.res);
-
-	PG_RETURN_JSONB_P(out);
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 /*
@@ -1783,7 +1780,6 @@ jsonb_object_agg_finalfn(PG_FUNCTION_ARGS)
 {
 	JsonbAggState *arg;
 	JsonbInState result;
-	Jsonb	   *out;
 
 	/* cannot be called directly because of internal-type argument */
 	Assert(AggCheckCallContext(fcinfo, NULL));
@@ -1806,9 +1802,7 @@ jsonb_object_agg_finalfn(PG_FUNCTION_ARGS)
 	result.res = pushJsonbValue(&result.parseState,
 								WJB_END_OBJECT, NULL);
 
-	out = JsonbValueToJsonb(result.res);
-
-	PG_RETURN_JSONB_P(out);
+	PG_RETURN_JSONB_VALUE_P(result.res);
 }
 
 
