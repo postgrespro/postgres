@@ -1503,9 +1503,8 @@ jsonb_get_element(Jsonb *jb, Datum *path, int npath, bool *isnull, bool as_text)
 	{
 		if (as_text)
 		{
-			return PointerGetDatum(cstring_to_text(JsonbToCString(NULL,
-																  container,
-																  JsonbGetSize(jb))));
+			return PointerGetDatum(cstring_to_text(JsonToCStringExt(NULL, container,
+																	JsonbGetSize(jb))));
 		}
 		else
 		{
@@ -1772,8 +1771,7 @@ JsonbValueAsText(JsonbValue *v)
 				StringInfoData jtext;
 
 				initStringInfo(&jtext);
-				(void) JsonbToCString(&jtext, v->val.binary.data,
-									  v->val.binary.data->len);
+				(void) JsonToCString(v->val.binary.data, &jtext);
 
 				return cstring_to_text_with_len(jtext.data, jtext.len);
 			}
@@ -3042,7 +3040,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			 */
 			Jsonb	   *jsonb = JsonbValueToJsonb(jbv);
 
-			str = JsonbToCString(NULL, &jsonb->root, -1);
+			str = JsonToCString(&jsonb->root, NULL);
 		}
 		else if (jbv->type == jbvString)	/* quotes are stripped */
 			str = pnstrdup(jbv->val.string.val, jbv->val.string.len);
@@ -3052,8 +3050,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			str = DatumGetCString(DirectFunctionCall1(numeric_out,
 													  PointerGetDatum(jbv->val.numeric)));
 		else if (jbv->type == jbvBinary)
-			str = JsonbToCString(NULL, jbv->val.binary.data,
-								 jbv->val.binary.data->len);
+			str = JsonToCString(jbv->val.binary.data, NULL);
 		else
 			elog(ERROR, "unrecognized jsonb type: %d", (int) jbv->type);
 	}
