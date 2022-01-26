@@ -262,7 +262,7 @@ extern char *JsonbToCStringRaw(StringInfo out, JsonContainer *in,
 extern char *JsonbToCStringIndent(StringInfo out, JsonContainer *in,
 					 int estimated_len);
 
-#define JsonToCString(jc)	JsonToCStringExt(NULL, jc, (jc)->len)
+#define JsonToCString(jc, buf)	((jc)->ops->toString(buf, jc, (jc)->len))
 
 #define JsonToCStringExt(out, in, estimated_len) \
 	((*(in)->ops->toString)(out, in, estimated_len))
