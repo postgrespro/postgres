@@ -258,6 +258,29 @@ JsonValueInitBinary(JsonValue *val, JsonContainer *cont)
 	return val;
 }
 
+static inline JsonValue *
+JsonValueInitObject(JsonValue *val, int nPairs, int nPairsAllocated)
+{
+	val->type = jbvObject;
+	val->val.object.nPairs = nPairs;
+	val->val.object.pairs = nPairsAllocated ?
+							palloc(sizeof(JsonPair) * nPairsAllocated) : NULL;
+
+	return val;
+}
+
+static inline JsonValue *
+JsonValueInitArray(JsonValue *val, int nElems, int nElemsAllocated,
+				   bool rawScalar)
+{
+	val->type = jbvArray;
+	val->val.array.nElems = nElems;
+	val->val.array.elems = nElemsAllocated ?
+							palloc(sizeof(JsonValue) * nElemsAllocated) : NULL;
+	val->val.array.rawScalar = rawScalar;
+	return val;
+}
+
 extern Json *JsonValueToJson(JsonValue *val);
 extern Datum JsonbValueToOrigJsonbDatum(JsonValue *val, Json *origjs);
 extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
