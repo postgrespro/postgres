@@ -2961,7 +2961,6 @@ jsonbzIteratorInit(JsonContainer *jc)
 	return jsonbIteratorInitExt(jc, jbc, cjb);
 }
 
-#define JSONB_FREE_ITERATORS
 #ifdef JSONB_FREE_ITERATORS
 static struct
 {
@@ -3003,20 +3002,20 @@ jsonbzInitFromDetoastIterator(JsonContainerData *jc, DetoastIterator iter)
 #endif
 }
 
+#ifdef JSONB_FREE_ITERATORS
 void
 jsonbInitIterators(void)
 {
-#ifdef JSONB_FREE_ITERATORS
 	jsonb_detoast_iterators = palloc(sizeof(*jsonb_detoast_iterators));
 	jsonb_detoast_iterators->mcxt = CurrentMemoryContext;
 	jsonb_detoast_iterators->iterators = NIL;
-#endif
 }
+#endif
 
+#ifdef JSONB_FREE_ITERATORS
 void
 jsonbFreeIterators(void)
 {
-#ifdef JSONB_FREE_ITERATORS
 	ListCell *lc;
 
 	if (jsonb_detoast_iterators)
@@ -3031,20 +3030,28 @@ jsonbFreeIterators(void)
 		pfree(jsonb_detoast_iterators);
 		jsonb_detoast_iterators = NULL;
 	}
-#endif
 }
+#endif
 
+#ifdef JSONB_FREE_ITERATORS
 MemoryContext
 jsonbGetIteratorContext(void)
 {
 	return jsonb_detoast_iterators ? jsonb_detoast_iterators->mcxt : NULL;
 }
+#endif
 
 void
 jsonbRegisterIterator(GenericDetoastIterator iter)
 {
+#ifndef JSONB_FREE_ITERATORS
+	//iter->free_callback.func = iter->free;
+	iter->free_callback.arg = iter;
+	MemoryContextRegisterResetCallback(CurrentMemoryContext, &iter->free_callback);
+#else
 	if (jsonb_detoast_iterators)
 		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
+#endif
 }
 
 static void
@@ -3079,6 +3086,8 @@ jsonbzInit(JsonContainerData *jc, Datum value)
 		jsonbRegisterIterator(&iter->gen);
 		MemoryContextSwitchTo(oldcxt);
 	}
+#else
+	jsonbRegisterIterator(&iter->gen);
 #endif
 
 	jsonbzInitFromDetoastIterator(jc, iter);
@@ -3172,6 +3181,8 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 		jsonbRegisterIterator(&iter->gen);
 		MemoryContextSwitchTo(oldcxt);
 	}
+# else
+	jsonbRegisterIterator(&iter->gen);
 # endif
 #endif
 
