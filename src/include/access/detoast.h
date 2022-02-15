@@ -95,7 +95,7 @@ typedef struct FetchDatumIteratorData *FetchDatumIterator;
 
 typedef struct GenericDetoastIteratorData
 {
-	void (*free)(void *iter);
+	MemoryContextCallback free_callback;
 } GenericDetoastIteratorData, *GenericDetoastIterator;
 
 typedef struct DetoastIteratorData

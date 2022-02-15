@@ -226,9 +226,15 @@ extern bool jsonb_sort_field_values;		/* GUC */
 extern bool jsonb_partial_decompression;	/* GUC */
 extern bool jsonb_partial_detoast;			/* GUC */
 
+//#define JSONB_FREE_ITERATORS
+#ifdef JSONB_FREE_ITERATORS
 extern void jsonbInitIterators(void);
 extern void jsonbFreeIterators(void);
 extern MemoryContext jsonbGetIteratorContext(void);
+#else
+# define jsonbInitIterators() ((void) 0)
+# define jsonbFreeIterators() ((void) 0)
+#endif
 extern void jsonbRegisterIterator(GenericDetoastIterator iter);
 
 #endif							/* __JSONB_H__ */

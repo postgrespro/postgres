@@ -42,7 +42,7 @@ create_detoast_iterator(struct varlena *attr)
 		iter = (DetoastIterator) palloc0(sizeof(DetoastIteratorData));
 		iter->done = false;
 		iter->nrefs = 1;
-		iter->gen.free = (void (*)(void *)) free_detoast_iterator;
+		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator;
 
 		/* This is an externally stored datum --- initialize fetch datum iterator */
 		iter->fetch_datum_iterator = fetch_iter = create_fetch_datum_iterator(attr);
@@ -87,7 +87,7 @@ create_detoast_iterator(struct varlena *attr)
 		iter = (DetoastIterator) palloc0(sizeof(DetoastIteratorData));
 		iter->done = false;
 		iter->nrefs = 1;
-		iter->gen.free = (void (*)(void *)) free_detoast_iterator;
+		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator;
 
 		iter->fetch_datum_iterator = palloc0(sizeof(*iter->fetch_datum_iterator));
 		iter->fetch_datum_iterator->buf = buf = create_toast_buffer(VARSIZE_ANY(attr), true);
