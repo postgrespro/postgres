@@ -121,7 +121,8 @@ DatumGetJson(Datum value, JsonContainerOps *ops, Json *tmp)
 {
 	Json	   *json = JsonExpandDatum(value, ops, tmp);
 
-	JsonInit(json);
+	//JsonInit(json);
+	json->root.ops->init(&json->root, json->obj.value);
 
 	return json;
 }
