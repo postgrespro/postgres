@@ -128,7 +128,7 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 		void	   *res;
 
 		JsonValueInitBinary(&bin, jc);
-		res = jc->ops->encode(&bin, ops);
+		res = jc->ops->encode(&bin, ops, jc->toasterid);
 
 		if (res)
 			return res;

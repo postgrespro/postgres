@@ -166,7 +166,9 @@ JsonbValueToOrigJsonbDatum(JsonValue *val, Json *orig_json)
 	if (val->type != jbvBinary &&
 		JsonRoot(orig_json)->ops->encode)
 	{
-		void	   *res = JsonRoot(orig_json)->ops->encode(val, &jsonbContainerOps);
+		void	   *res =
+			JsonRoot(orig_json)->ops->encode(val, &jsonbContainerOps,
+											 JsonRoot(orig_json)->toasterid);
 
 		if (res)
 			return PointerGetDatum(res);
