@@ -92,10 +92,10 @@ typedef JsonContainer JsonbContainer;
 		PointerGetDatum(JsonFlatten(json, JsonbEncode, &jsonbContainerOps))
 
 #define JsonValueToJsonbDatum(jv) \
-	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps, NULL))
+	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps, NULL, NULL))
 
 #define JsonValueToJsonbDatumSafe(jv, escontext) \
-	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps, escontext))
+	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps, NULL, escontext))
 
 #define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(json)
 
@@ -299,7 +299,7 @@ extern void *JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 								  Node *escontext);
 
 extern void *JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
-							  JsonContainerOps *ops, Node *escontext);
+							  JsonContainerOps *ops, void *cxt, Node *escontext);
 extern void *JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt, Node *escontext);
 
 static inline void *
@@ -311,7 +311,7 @@ JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
 extern bool JsonbEncode(StringInfo, const JsonValue *, void *cxt, Node *escontext);
 
 #define JsonValueToJsonbSafe(val, escontext) \
-		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps, escontext)
+		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps, NULL, escontext)
 
 #define JsonValueToJsonb(val) \
 		JsonValueToJsonbSafe(val, NULL)

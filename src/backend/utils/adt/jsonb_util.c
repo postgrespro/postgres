@@ -167,7 +167,7 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
  */
 void *
 JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
-				 JsonContainerOps *ops, Node *escontext)
+				 JsonContainerOps *ops, void *cxt, Node *escontext)
 {
 	if (val->type == jbvBinary)
 		return JsonContainerFlatten(val->val.binary.data, encoder, ops, val, escontext);
@@ -183,7 +183,7 @@ JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
 		Assert(val->type == jbvObject || val->type == jbvArray);
 	}
 
-	return JsonEncode(val, encoder, NULL, escontext);
+	return JsonEncode(val, encoder, cxt, escontext);
 }
 
 /*
