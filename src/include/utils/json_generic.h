@@ -93,7 +93,7 @@ typedef JsonContainer JsonbContainer;
 		PointerGetDatum(JsonFlatten(json, JsonbEncode, &jsonbContainerOps))
 
 #define JsonValueToJsonbDatum(jv) \
-	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps))
+	PointerGetDatum(JsonValueFlatten(jv, JsonbEncode, &jsonbContainerOps, NULL))
 
 #define JsonbPGetDatum(json)		JsonFlattenToJsonbDatum(json)
 
@@ -292,7 +292,7 @@ extern void *JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 								  JsonContainerOps *ops, const JsonValue *binary);
 
 extern void *JsonValueFlatten(const JsonValue *val, JsonValueEncoder encoder,
-							  JsonContainerOps *ops);
+							  JsonContainerOps *ops, void *cxt);
 extern void *JsonEncode(const JsonbValue *val, JsonValueEncoder encoder, void *cxt);
 
 static inline void *
@@ -304,7 +304,7 @@ JsonFlatten(Json *json, JsonValueEncoder encoder, JsonContainerOps *ops)
 extern void JsonbEncode(StringInfo, const JsonValue *, void *cxt);
 
 #define JsonValueToJsonb(val) \
-		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps)
+		JsonValueFlatten(val, JsonbEncode, &jsonbContainerOps, NULL)
 
 extern int lengthCompareJsonbStringValue(const void *a, const void *b);
 extern int lengthCompareJsonbString(const char *val1, int len1,
