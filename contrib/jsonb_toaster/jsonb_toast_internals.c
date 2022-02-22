@@ -1102,6 +1102,8 @@ fetch_datum_decompress_chunk(JsonxFetchDatumIterator iter, int32 maxoffset)
 	new_limit = iter->compressed_chunk.dst_buf.limit -
 				iter->compressed_chunk.dst_buf.buf;
 
+	//elog(INFO, "decompress from %8d to %8d\n", chunk_offset + old_limit, chunk_offset + new_limit);
+
 	fetch_datum_iterator_set_bits(iter, chunk_offset + old_limit,
 								  chunk_offset + new_limit - 1);
 
@@ -1420,6 +1422,8 @@ jsonx_fetch_datum_iterate(JsonxFetchDatumIterator iter, int32 maxoffset)
 	 */
 	if (chunk_is_compressed)
 	{
+		//elog(INFO, "iterate %8d to %d\n", residx, maxoffset);
+
 		if (maxoffset < 0)
 			maxoffset = residx + chunksize;
 
@@ -1458,6 +1462,8 @@ jsonx_fetch_datum_iterate_to(JsonxFetchDatumIterator iter, int32 chunkno, int32 
 	{
 		int32		chunk_offset = iter->compressed_chunk.offset;
 		int32		chunk_next = chunk_offset + iter->compressed_chunk.size;
+
+		//elog(INFO, "iterate_to from %8d to %8d\n", chunkno, maxoffset);
 
 		if (chunkno >= chunk_offset && chunkno < chunk_next)
 		{
