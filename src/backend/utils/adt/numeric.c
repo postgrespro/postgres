@@ -745,6 +745,7 @@ numeric_in(PG_FUNCTION_ARGS)
 Datum
 numeric_out(PG_FUNCTION_ARGS)
 {
+	Assert(!VARATT_IS_COMPRESSED(PG_GETARG_DATUM(0)));
 	Numeric		num = PG_GETARG_NUMERIC(0);
 	NumericVar	x;
 	char	   *str;
