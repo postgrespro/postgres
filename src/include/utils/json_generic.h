@@ -64,7 +64,7 @@ struct JsonContainerOps
 								int estimated_len);
 	JsonContainer  *(*copy)(JsonContainer *jc);
 	void			(*free)(JsonContainer *jc);
-	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops);
+	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops, Oid toasterid);
 };
 
 typedef struct CompressedObject
