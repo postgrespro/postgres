@@ -93,8 +93,14 @@ typedef struct FetchDatumIteratorData
 
 typedef struct FetchDatumIteratorData *FetchDatumIterator;
 
+typedef struct GenericDetoastIteratorData
+{
+	void (*free)(void *iter);
+} GenericDetoastIteratorData, *GenericDetoastIterator;
+
 typedef struct DetoastIteratorData
 {
+	GenericDetoastIteratorData gen;
 	ToastBuffer 		*buf;
 	FetchDatumIterator	fetch_datum_iterator;
 	int					nrefs;

@@ -3026,12 +3026,29 @@ jsonbFreeIterators(void)
 	if (jsonb_detoast_iterators)
 	{
 		foreach(lc, jsonb_detoast_iterators->iterators)
-			free_detoast_iterator(lfirst(lc));
+		{
+			GenericDetoastIterator iter = lfirst(lc);
+
+			iter->free(iter);
+		}
 
 		pfree(jsonb_detoast_iterators);
 		jsonb_detoast_iterators = NULL;
 	}
 #endif
+}
+
+MemoryContext
+jsonbGetIteratorContext(void)
+{
+	return jsonb_detoast_iterators ? jsonb_detoast_iterators->mcxt : NULL;
+}
+
+void
+jsonbRegisterIterator(GenericDetoastIterator iter)
+{
+	if (jsonb_detoast_iterators)
+		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
 }
 
 static void
@@ -3063,7 +3080,7 @@ jsonbzInit(JsonContainerData *jc, Datum value)
 #ifdef JSONB_FREE_ITERATORS
 	if (jsonb_detoast_iterators)
 	{
-		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
+		jsonbRegisterIterator(&iter->gen);
 		MemoryContextSwitchTo(oldcxt);
 	}
 #endif
@@ -3156,7 +3173,7 @@ DatumGetJsonbPC(Datum datum, Json *tmp, bool copy)
 # ifdef JSONB_FREE_ITERATORS
 	if (jsonb_detoast_iterators)
 	{
-		jsonb_detoast_iterators->iterators = lappend(jsonb_detoast_iterators->iterators, iter);
+		jsonbRegisterIterator(&iter->gen);
 		MemoryContextSwitchTo(oldcxt);
 	}
 # endif
