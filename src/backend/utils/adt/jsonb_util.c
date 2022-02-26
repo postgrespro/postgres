@@ -2190,4 +2190,5 @@ jsonbContainerOps =
 	NULL,
 	JsonbToCStringRaw,
 	JsonCopyFlat,
+	NULL,
 };
