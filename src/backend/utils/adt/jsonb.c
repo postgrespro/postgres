@@ -135,6 +135,8 @@ jsonb_out(PG_FUNCTION_ARGS)
 
 	out = JsonToCString(JsonbRoot(jb), NULL);
 
+	PG_FREE_IF_COPY_JSONB(jb, 0);
+
 	PG_RETURN_CSTRING(out);
 }
 
