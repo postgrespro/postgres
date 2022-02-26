@@ -204,6 +204,16 @@ JsonContainerFlatten(JsonContainer *jc, JsonValueEncoder encoder,
 		return out;
 	}
 
+#if 0 /* FIXME */
+	if (ops == &jsonbContainerOps && jc->ops == &jsonbzContainerOps)
+	{
+		JsonbToastedContainerPointer jbcptr;
+
+		if (JsonContainerIsToasted(jc, &jbcptr))
+			return jsonbMakeToastPointer(&jbcptr.ptr);
+	}
+#endif
+
 	if (binary)
 		Assert(binary->type == jbvBinary);
 	else
