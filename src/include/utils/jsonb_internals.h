@@ -121,6 +121,8 @@ typedef uint32 JEntry;
  */
 #define JB_OFFSET_STRIDE		32
 
+typedef uint32 JsonbContainerHdr;
+
 /*
  * A jsonb array or object node, within a Jsonb Datum.
  *
@@ -133,8 +135,8 @@ typedef uint32 JEntry;
  */
 typedef struct JsonbContainerHeader
 {
-	uint32		header;			/* number of elements or key/value pairs, and
-								 * flags */
+	JsonbContainerHdr header;	/* number of elements or key/value
+								 * pairs, and flags */
 	JEntry		children[FLEXIBLE_ARRAY_MEMBER];
 
 	/* the data for each child node follows. */
