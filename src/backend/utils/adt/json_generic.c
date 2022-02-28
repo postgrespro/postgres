@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "access/toasterapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
@@ -101,9 +102,24 @@ JsonExpandDatum(Datum value, JsonContainerOps *ops, Json *tmp)
 Json *
 DatumGetJson(Datum value, JsonContainerOps *ops, Json *tmp)
 {
-	Json	   *json = JsonExpandDatum(value, ops, tmp);
+	Json	   *json;
 
-	//JsonInit(json);
+	if (VARATT_IS_CUSTOM(value))
+	{
+		Oid			toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
+		JsonToastRoutine *routine = toaster->get_vtable(toasterid);
+
+		if (routine->magic == JSON_TOASTER_MAGIC)
+		{
+			json = JsonExpand(tmp, value, false, routine->ops);
+			routine->ops->init(JsonRoot(json), value);
+
+			return json;
+		}
+	}
+
+	json = JsonExpandDatum(value, ops, tmp);
 	json->root.ops->init(&json->root, json->obj.value);
 
 	return json;

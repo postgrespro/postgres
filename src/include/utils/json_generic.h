@@ -318,4 +318,12 @@ extern int lengthCompareJsonbString(const char *val1, int len1,
 
 extern JsonContainerOps jsonbContainerOps;
 
+#define JSON_TOASTER_MAGIC 0x20211223
+
+typedef struct JsonToastRoutine
+{
+	uint32		magic;
+	JsonContainerOps *ops;
+} JsonToastRoutine;
+
 #endif /* UTILS_JSON_GENERIC_H */
