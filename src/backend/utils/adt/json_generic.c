@@ -69,6 +69,24 @@ JsonToJsonValue(Json *json, JsonValue *jv)
 	return JsonValueInitBinary(jv, &json->root);
 }
 
+static void
+JsonInit(Json *json)
+{
+	const void *data = DatumGetPointer(json->obj.value);
+	struct varlena *detoasted_data;
+
+	Assert(JsonContainerDataPtr(&json->root) || data);
+
+	if (JsonContainerDataPtr(&json->root) || !data) /* FIXME */
+		return;
+
+	detoasted_data = PG_DETOAST_DATUM(json->obj.value);
+	json->obj.value = PointerGetDatum(detoasted_data);
+	json->obj.freeValue |= data != detoasted_data;
+
+	json->root.ops->init(&json->root, json->obj.value);
+}
+
 static Json *
 JsonExpand(Json *tmp, Datum value, bool freeValue, JsonContainerOps *ops)
 {
