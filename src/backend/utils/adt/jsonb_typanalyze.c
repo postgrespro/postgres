@@ -1389,6 +1389,9 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	JsonPathEntry **paths;
 	Jsonb	  **pstats;
 	int			npaths;
+	int			root_analyzed_cnt;
+	int			root_null_cnt;
+	double		root_total_width;
 
 	jsonAnalyzeInit(&ctx, stats, fetchfunc, samplerows, totalrows,
 					false /* FIXME make GUC or simply remove */);
@@ -1402,6 +1405,10 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	{
 		/* Collect all values of all paths */
 		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true, NULL);
+
+		root_analyzed_cnt = ctx.analyzed_cnt;
+		root_null_cnt = ctx.null_cnt;
+		root_total_width = ctx.total_width;
 
 		/*
 		 * Now that we're done with processing the documents, we sort the paths
@@ -1454,6 +1461,10 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		pstats = MemoryContextAlloc(oldcxt, sizeof(*pstats) * npaths);
 		stack = MemoryContextAlloc(oldcxt, sizeof(*stack) * (ctx.maxdepth + 1));
 
+		root_analyzed_cnt = ctx.analyzed_cnt;
+		root_null_cnt = ctx.null_cnt;
+		root_total_width = ctx.total_width;
+
 		/*
 		 * Next, process each path independently to save memory (we don't want
 		 * to accumulate all values for all paths, with a lot of duplicities).
@@ -1499,7 +1510,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	}
 
 	/* We can only compute real stats if we found some non-null values. */
-	if (ctx.null_cnt >= samplerows)
+	if (root_null_cnt >= samplerows)
 	{
 		/* We found only nulls; assume the column is entirely null */
 		stats->stats_valid = true;
@@ -1507,15 +1518,15 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		stats->stawidth = 0;		/* "unknown" */
 		stats->stadistinct = 0.0;	/* "unknown" */
 	}
-	else if (!ctx.analyzed_cnt)
+	else if (!root_analyzed_cnt)
 	{
-		int	nonnull_cnt = samplerows - ctx.null_cnt;
+		int	nonnull_cnt = samplerows - root_null_cnt;
 
 		/* We found some non-null values, but they were all too wide */
 		stats->stats_valid = true;
 		/* Do the simple null-frac and width stats */
-		stats->stanullfrac = (double) ctx.null_cnt / (double) samplerows;
-		stats->stawidth = ctx.total_width / (double) nonnull_cnt;
+		stats->stanullfrac = (double) root_null_cnt / (double) samplerows;
+		stats->stawidth = root_total_width / (double) nonnull_cnt;
 		/* Assume all too-wide values are distinct, so it's a unique column */
 		stats->stadistinct = -1.0 * (1.0 - stats->stanullfrac);
 	}
