@@ -786,7 +786,7 @@ jsonAnalyzePathFetch(VacAttrStatsP stats, int rownum, bool *isnull)
  */
 static void
 jsonAnalyzePathValues(JsonAnalyzeContext *ctx, JsonScalarStats *sstats,
-					  Oid typid, double freq)
+					  Oid typid, double freq, bool use_anl_context)
 {
 	JsonValues			   *values = &sstats->values;
 	VacAttrStats		   *stats = &sstats->stats;
@@ -805,7 +805,7 @@ jsonAnalyzePathValues(JsonAnalyzeContext *ctx, JsonScalarStats *sstats,
 	stats->attrtypid = typid;
 	stats->attrtypmod = -1;
 	stats->attrtype = &type;
-	stats->anl_context = ctx->stats->anl_context;
+	stats->anl_context = use_anl_context ? ctx->stats->anl_context : CurrentMemoryContext;
 
 	stats->exprvals = values->buf;
 
@@ -1064,7 +1064,9 @@ jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 	jsonAnalyzeCalcPathFreq(ctx, pstats, parent_stats);
 
 	/* values combining all object types */
-	jsonAnalyzePathValues(ctx, &vstats->jsons, JSONBOID, pstats->freq);
+	jsonAnalyzePathValues(ctx, &vstats->jsons, JSONBOID, pstats->freq,
+						  /* store root stats in analyze context */
+						  !parent_stats);
 
 	/*
 	 * Lengths and array lengths.  We divide counts by the total number of json
@@ -1072,15 +1074,15 @@ jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 	 */
 	jsonAnalyzePathValues(ctx, &vstats->arrlens, INT4OID,
 						  pstats->freq * vstats->arrlens.values.count /
-										 vstats->jsons.values.count);
+						  vstats->jsons.values.count, false);
 	jsonAnalyzePathValues(ctx, &vstats->objlens, INT4OID,
 						  pstats->freq * vstats->objlens.values.count /
-										 vstats->jsons.values.count);
+						  vstats->jsons.values.count, false);
 
 #ifdef JSON_ANALYZE_SCALARS
 	/* stats for values of string/numeric types only */
-	jsonAnalyzePathValues(ctx, &vstats->strings, TEXTOID, pstats->freq);
-	jsonAnalyzePathValues(ctx, &vstats->numerics, NUMERICOID, pstats->freq);
+	jsonAnalyzePathValues(ctx, &vstats->strings, TEXTOID, pstats->freq, false);
+	jsonAnalyzePathValues(ctx, &vstats->numerics, NUMERICOID, pstats->freq, false);
 #endif
 
 	/* Build jsonb with path stats */
