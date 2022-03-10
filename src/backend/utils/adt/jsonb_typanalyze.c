@@ -1058,7 +1058,6 @@ static Jsonb *
 jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 				JsonPathParentStats *parent_stats)
 {
-	MemoryContext		oldcxt;
 	JsonValueStats	   *vstats = &pstats->vstats;
 	Jsonb			   *stats;
 
@@ -1084,11 +1083,12 @@ jsonAnalyzePath(JsonAnalyzeContext *ctx, JsonPathAnlStats *pstats,
 	jsonAnalyzePathValues(ctx, &vstats->numerics, NUMERICOID, pstats->freq);
 #endif
 
-	oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
+	/* Build jsonb with path stats */
 	stats = jsonAnalyzeBuildPathStats(pstats);
-	MemoryContextSwitchTo(oldcxt);
 
-	return stats;
+	/* Copy stats to non-temporary context */
+	return memcpy(MemoryContextAlloc(ctx->stats->anl_context, VARSIZE(stats)),
+				  stats, VARSIZE(stats));
 }
 
 /*
