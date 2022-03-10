@@ -153,6 +153,25 @@ typedef struct JsonValueStats
 								 * (for avg. array length) */
 } JsonValueStats;
 
+typedef struct JsonPathDocBitmap
+{
+	bool		is_list;
+	int			size;
+	int			allocated;
+	union
+	{
+		int32	   *list;
+		uint8	   *bitmap;
+	}			data;
+} JsonPathDocBitmap;
+
+/* JSON path and list of documents containing it */
+typedef struct JsonPathAnlDocs
+{
+	JsonPathEntry path;
+	JsonPathDocBitmap bitmap;
+} JsonPathAnlDocs;
+
 /* Main structure for analyzed JSON path  */
 typedef struct JsonPathAnlStats
 {
@@ -181,6 +200,7 @@ typedef struct JsonAnalyzeContext
 	double					totalrows;
 	double					total_width;
 	int						samplerows;
+	int						current_rownum;
 	int						target;
 	int						null_cnt;
 	int						analyzed_cnt;
@@ -225,6 +245,131 @@ JsonPathEntryHash(const void *key, Size keysize)
 		DatumGetUInt32(hash_any((const unsigned char *) path->entry, path->len));
 
 	return hash;
+}
+
+static void
+jsonStatsBitmapInit(JsonPathDocBitmap *bitmap)
+{
+	memset(bitmap, 0, sizeof(*bitmap));
+	bitmap->is_list = true;
+}
+
+static void
+jsonStatsBitmapAdd(JsonAnalyzeContext *cxt, JsonPathDocBitmap *bitmap, int doc)
+{
+	/* Use more compact list representation if not too many bits set */
+	if (bitmap->is_list)
+	{
+		int		   *list = bitmap->data.list;
+
+#if 1	/* Enable list representation */
+		if (bitmap->size > 0 && list[bitmap->size - 1] == doc)
+			return;
+
+		if (bitmap->size < cxt->samplerows / sizeof(list[0]) / 8)
+		{
+			if (bitmap->size >= bitmap->allocated)
+			{
+				MemoryContext oldcxt = MemoryContextSwitchTo(cxt->mcxt);
+
+				if (bitmap->allocated)
+				{
+					bitmap->allocated *= 2;
+					list = repalloc(list, sizeof(list[0]) * bitmap->allocated);
+				}
+				else
+				{
+					bitmap->allocated = 8;
+					list = palloc(sizeof(list[0]) * bitmap->allocated);
+				}
+
+				bitmap->data.list = list;
+
+				MemoryContextSwitchTo(oldcxt);
+			}
+
+			list[bitmap->size++] = doc;
+			return;
+		}
+#endif
+		/* convert list to bitmap */
+		bitmap->allocated = (cxt->samplerows + 7) / 8;
+		bitmap->data.bitmap = MemoryContextAllocZero(cxt->mcxt, bitmap->allocated);
+		bitmap->is_list = false;
+
+		if (list)
+		{
+			for (int i = 0; i < bitmap->size; i++)
+			{
+				int			d = list[i];
+
+				bitmap->data.bitmap[d / 8] |= (1 << (d % 8));
+			}
+
+			pfree(list);
+		}
+	}
+
+	/* set bit in bitmap */
+	if (doc < cxt->samplerows &&
+		!(bitmap->data.bitmap[doc / 8] & (1 << (doc % 8))))
+	{
+		bitmap->data.bitmap[doc / 8] |= (1 << (doc % 8));
+		bitmap->size++;
+	}
+}
+
+static bool
+jsonStatsBitmapNext(JsonPathDocBitmap *bitmap, int *pbit)
+{
+	uint8	   *bmp = bitmap->data.bitmap;
+	uint8	   *pb;
+	uint8	   *pb_end = &bmp[bitmap->allocated];
+	int			bit = *pbit;
+
+	Assert(!bitmap->is_list);
+
+	if (bit < 0)
+	{
+		pb = bmp;
+		bit = 0;
+	}
+	else
+	{
+		++bit;
+		pb = &bmp[bit / 8];
+		bit %= 8;
+	}
+
+	for (; pb < pb_end; pb++, bit = 0)
+	{
+		uint8		b;
+
+		/* Skip zero bytes */
+		if (!bit)
+		{
+			while (!*pb)
+			{
+				if (++pb >= pb_end)
+					return false;
+			}
+		}
+
+		b = *pb;
+
+		/* Skip zero bits */
+		while (bit < 8 && !(b & (1 << bit)))
+			bit++;
+
+		if (bit >= 8)
+			continue;	/* Non-zero bit not found, go to next byte */
+
+		/* Output next non-zero bit */
+		*pbit = (pb - bmp) * 8 + bit;
+		return true;
+	}
+
+	return false;
 }
 
 static void
@@ -295,6 +440,8 @@ jsonAnalyzeAddPath(JsonAnalyzeContext *ctx, JsonPathEntry *parent,
 
 		if (ctx->single_pass)
 			jsonStatsAnlInit((JsonPathAnlStats *) stats);
+		else
+			jsonStatsBitmapInit(&((JsonPathAnlDocs *) stats)->bitmap);
 
 		stats->depth = parent->depth + 1;
 
@@ -437,6 +584,7 @@ jsonAnalyzeCollectPaths(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 	JsonbIterator	   *it;
 	JsonbIteratorToken	tok;
 	JsonPathEntry	   *stats = &ctx->root->path;
+	int					doc = ctx->current_rownum;
 	bool				collect_values = (bool)(intptr_t) param;
 	bool				scalar = false;
 
@@ -502,6 +650,10 @@ jsonAnalyzeCollectPaths(JsonAnalyzeContext *ctx, Jsonb *jb, void *param)
 					jsonAnalyzeJsonValue(ctx,
 										 &((JsonPathAnlStats *) stats)->vstats,
 										 &jv);
+				else if (stats != &ctx->root->path)
+					jsonStatsBitmapAdd(ctx,
+									   &((JsonPathAnlDocs *) stats)->bitmap,
+									   doc);
 
 				/*
 				 * Manually recurse into container by creating child iterator.
@@ -1124,7 +1276,7 @@ jsonAnalyzeInit(JsonAnalyzeContext *ctx, VacAttrStats *stats,
 
 	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(JsonPathEntry);
-	hash_ctl.entrysize = ctx->single_pass ? sizeof(JsonPathAnlStats) : sizeof(JsonPathEntry);
+	hash_ctl.entrysize = ctx->single_pass ? sizeof(JsonPathAnlStats) : sizeof(JsonPathAnlDocs);
 	hash_ctl.hash = JsonPathEntryHash;
 	hash_ctl.match = JsonPathEntryMatch;
 	hash_ctl.hcxt = ctx->mcxt;
@@ -1146,24 +1298,23 @@ jsonAnalyzeInit(JsonAnalyzeContext *ctx, VacAttrStats *stats,
 static void
 jsonAnalyzePass(JsonAnalyzeContext *ctx,
 				void (*analyzefunc)(JsonAnalyzeContext *, Jsonb *, void *),
-				void *analyzearg)
+				void *analyzearg,
+				JsonPathDocBitmap *bitmap)
 {
-	int	row_num;
-
 	MemoryContext	tmpcxt = AllocSetContextCreate(CurrentMemoryContext,
 												"Json Analyze Pass Context",
 												ALLOCSET_DEFAULT_MINSIZE,
 												ALLOCSET_DEFAULT_INITSIZE,
 												ALLOCSET_DEFAULT_MAXSIZE);
-
 	MemoryContext	oldcxt = MemoryContextSwitchTo(tmpcxt);
+	int			row_num = -1;
 
 	ctx->null_cnt = 0;
 	ctx->analyzed_cnt = 0;
 	ctx->total_width = 0;
 
-	/* Loop over the arrays. */
-	for (row_num = 0; row_num < ctx->samplerows; row_num++)
+	/* Loop over the jsonbs. */
+	for (int i = 0; i < (bitmap ? bitmap->size : ctx->samplerows); i++)
 	{
 		Datum		value;
 		Jsonb	   *jb;
@@ -1171,6 +1322,16 @@ jsonAnalyzePass(JsonAnalyzeContext *ctx,
 		bool		isnull;
 
 		vacuum_delay_point();
+
+		if (bitmap)
+		{
+			if (bitmap->is_list)
+				row_num = bitmap->data.list[i];
+			else if (!jsonStatsBitmapNext(bitmap, &row_num))
+				break;
+		}
+		else
+			row_num = i;
 
 		value = ctx->fetchfunc(ctx->stats, row_num, &isnull);
 
@@ -1197,6 +1358,7 @@ jsonAnalyzePass(JsonAnalyzeContext *ctx,
 
 		MemoryContextSwitchTo(oldcxt);
 
+		ctx->current_rownum = row_num;
 		analyzefunc(ctx, jb, analyzearg);
 
 		oldcxt = MemoryContextSwitchTo(tmpcxt);
@@ -1229,7 +1391,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	if (ctx.single_pass)
 	{
 		/* Collect all values of all paths */
-		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true);
+		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) true, NULL);
 
 		/*
 		 * Now that we're done with processing the documents, we sort the paths
@@ -1277,7 +1439,7 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		oldcxt = MemoryContextSwitchTo(tmpcxt);
 
 		/* Collect all paths first without accumulating any Values, sort them */
-		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) false);
+		jsonAnalyzePass(&ctx, jsonAnalyzeCollectPaths, (void *)(intptr_t) false, NULL);
 		paths = jsonAnalyzeSortPaths(&ctx, &npaths);
 		pstats = MemoryContextAlloc(oldcxt, sizeof(*pstats) * npaths);
 		stack = MemoryContextAlloc(oldcxt, sizeof(*stack) * (ctx.maxdepth + 1));
@@ -1306,7 +1468,10 @@ compute_json_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			elog(DEBUG1, "analyzing json path (%d/%d) %s",
 				 i + 1, npaths, path->pathstr);
 
-			jsonAnalyzePass(&ctx, jsonAnalyzeCollectPath, astats);
+			jsonAnalyzePass(&ctx, jsonAnalyzeCollectPath, astats,
+							/* root has no bitmap */
+							i > 0 ? &((JsonPathAnlDocs *) path)->bitmap : NULL);
+
 			pstats[i] = jsonAnalyzePath(&ctx, astats,
 										path->depth ? &stack[path->depth - 1] : NULL);
 
