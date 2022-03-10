@@ -492,9 +492,11 @@ static inline void
 jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 					 JsonbValue *jv)
 {
-	JsonbValue		   *jbv;
-	JsonbValue			jbvtmp;
-	Datum				value;
+	JsonbValue *jbv;
+	JsonbValue	jbvtmp;
+	Jsonb	   *jb;
+	Datum		value;
+	MemoryContext oldcxt = NULL;
 
 	/* XXX if analyzing only scalar values, make containers empty */
 	if (ctx->scalarsOnly && jv->type == jbvBinary)
@@ -510,9 +512,17 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 	else
 		jbv = jv;
 
+	jb = JsonbValueToJsonb(jbv);
+
+	if (ctx->single_pass)
+	{
+		oldcxt = MemoryContextSwitchTo(ctx->stats->anl_context);
+		jb = memcpy(palloc(VARSIZE(jb)), jb, VARSIZE(jb));
+	}
+
 	/* always add it to the "global" JSON stats, shared by all types */
 	JsonValuesAppend(&vstats->jsons.values,
-					 JsonbPGetDatum(JsonbValueToJsonb(jbv)),
+					 JsonbPGetDatum(jb),
 					 ctx->target);
 
 	/* also update the type-specific counters */
@@ -571,6 +581,9 @@ jsonAnalyzeJsonValue(JsonAnalyzeContext *ctx, JsonValueStats *vstats,
 			elog(ERROR, "invalid scalar json value type %d", jv->type);
 			break;
 	}
+
+	if (ctx->single_pass)
+		MemoryContextSwitchTo(oldcxt);
 }
 
 /*
@@ -1366,12 +1379,15 @@ jsonAnalyzePass(JsonAnalyzeContext *ctx,
 
 		jb = DatumGetJsonbP(value);
 
-		MemoryContextSwitchTo(oldcxt);
+		if (!ctx->single_pass)
+			MemoryContextSwitchTo(oldcxt);
 
 		ctx->current_rownum = row_num;
 		analyzefunc(ctx, jb, analyzearg);
 
-		oldcxt = MemoryContextSwitchTo(tmpcxt);
+		if (!ctx->single_pass)
+			oldcxt = MemoryContextSwitchTo(tmpcxt);
+
 		MemoryContextReset(tmpcxt);
 	}
 
