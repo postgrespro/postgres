@@ -945,6 +945,14 @@ jsonAnalyzeMakeScalarStats(JsonbParseState **ps, const char *name,
 	return pushJsonbValue(ps, WJB_END_OBJECT, NULL);
 }
 
+static void
+pushJsonbKeyValueFloatNonZero(JsonbParseState **ps, JsonbValue *jbv,
+							  const char *field, double val)
+{
+	if (val != 0.0)
+		pushJsonbKeyValueFloat(ps, jbv, field, val);
+}
+
 /*
  * jsonAnalyzeBuildPathStats
  *		Serialize statistics for a particular json path.
@@ -968,28 +976,28 @@ jsonAnalyzeBuildPathStats(JsonPathAnlStats *pstats)
 
 	pushJsonbKeyValueFloat(&ps, &val, "freq", freq);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_null",
-						   freq * vstats->nnulls /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_null",
+								  freq * vstats->nnulls /
 								  vstats->jsons.values.count);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_boolean",
-						   freq * (vstats->nfalse + vstats->ntrue) /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_boolean",
+								  freq * (vstats->nfalse + vstats->ntrue) /
 								  vstats->jsons.values.count);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_string",
-						   freq * vstats->nstrings /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_string",
+								  freq * vstats->nstrings /
 								  vstats->jsons.values.count);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_numeric",
-						   freq * vstats->nnumerics /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_numeric",
+								  freq * vstats->nnumerics /
 								  vstats->jsons.values.count);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_array",
-						   freq * vstats->narrays /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_array",
+								  freq * vstats->narrays /
 								  vstats->jsons.values.count);
 
-	pushJsonbKeyValueFloat(&ps, &val, "freq_object",
-						   freq * vstats->nobjects /
+	pushJsonbKeyValueFloatNonZero(&ps, &val, "freq_object",
+								  freq * vstats->nobjects /
 								  vstats->jsons.values.count);
 
 	/*
