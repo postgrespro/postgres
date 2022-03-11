@@ -1,0 +1,5 @@
+# bytea_toaster extension
+comment = 'bytea_toaster - appendable bytea toaster'
+default_version = '1.0'
+module_pathname = '$libdir/bytea_toaster'
+relocatable = true
