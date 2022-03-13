@@ -1211,7 +1211,7 @@ static const pgsql_thing_t words_after_create[] = {
 																			 * TABLE ... */
 	{"TEXT SEARCH", NULL, NULL, NULL},
 	{"TOASTER", NULL, NULL, NULL},
-	{"TRANSFORM", NULL, NULL, NULL, THING_NO_ALTER},
+	{"TRANSFORM", NULL, NULL, NULL, NULL, THING_NO_ALTER},
 	{"TRIGGER", "SELECT pg_catalog.quote_ident(tgname) FROM pg_catalog.pg_trigger WHERE substring(pg_catalog.quote_ident(tgname),1,%d)='%s' AND NOT tgisinternal"},
 	{"TYPE", NULL, NULL, &Query_for_list_of_datatypes},
 	{"UNIQUE", NULL, NULL, NULL, NULL, THING_NO_DROP | THING_NO_ALTER}, /* for CREATE UNIQUE

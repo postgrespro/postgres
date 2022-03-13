@@ -3523,7 +3523,7 @@ columnDef:	ColId Typename opt_column_storage opt_column_compression create_gener
 					n->collOid = InvalidOid;
 					n->fdwoptions = $5;
 					SplitColQualList($6, &n->constraints, &n->collClause,
-									 yyscanner);
+									 &n->toaster, yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
 				}
