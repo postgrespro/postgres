@@ -28,9 +28,6 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
-static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
-static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
-
 static void
 toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
 						   Oid valueid, HeapTuple ttup, int32 *seqno,
