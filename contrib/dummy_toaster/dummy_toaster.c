@@ -103,27 +103,15 @@ dummyDelete(Datum value, bool is_speculative)
 bool
 dummyToasterValidate(Oid toasteroid)
 {
-<<<<<<< HEAD
 	bool result = true;
 	return result;
 }
 
-<<<<<<< HEAD
-	memcpy(VARATT_CUSTOM_GET_DATA(result), &result_data, VARATT_DUMMY_HDRSZ);
-
-	if (pdata)
-		*pdata = VARATT_CUSTOM_GET_DATA(result) + VARATT_DUMMY_HDRSZ;
-
-	return result;
-=======
-	TsrRoutine  *tsr = makeNode(TsrRoutine);
-
-	PG_RETURN_POINTER(tsr);
->>>>>>>  use validateToster call
+static void
+dummyToastInit(Relation rel, Datum reloptions, LOCKMODE lockmode,
+				 bool check, Oid OIDOldToast)
+{
 }
-*/
-=======
->>>>>>> Dummy toaster and default through new API
 
 Datum
 dummy_toaster_handler(PG_FUNCTION_ARGS)
@@ -134,12 +122,8 @@ dummy_toaster_handler(PG_FUNCTION_ARGS)
 	tsrroutine->update_toast = NULL;
 	tsrroutine->copy_toast = NULL;
 	tsrroutine->detoast = dummyDetoast;
-<<<<<<< HEAD
-	tsrroutine->get_vtable = dummyGetVtable;
-=======
 	tsrroutine->deltoast = dummyDelete;
 	tsrroutine->get_vtable = NULL;
->>>>>>> dummy_toaster works
 	tsrroutine->toastervalidate = dummyToasterValidate;
 	PG_RETURN_POINTER(tsrroutine);
 }
