@@ -97,7 +97,7 @@ dummyDelete(Datum value, bool is_speculative)
 
 /*
  * Dummy Validate, always returns True
- * 
+ *
  */
 
 bool
