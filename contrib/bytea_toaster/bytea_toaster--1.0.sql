@@ -11,4 +11,3 @@ LANGUAGE C;
 CREATE TOASTER bytea_toaster  HANDLER bytea_toaster_handler;
 
 COMMENT ON TOASTER bytea_toaster IS 'bytea_toaster is a appendable bytea toaster';
-
