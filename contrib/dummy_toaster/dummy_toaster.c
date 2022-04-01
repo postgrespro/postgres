@@ -93,8 +93,6 @@ dummyToast(Relation toast_rel, Oid toasterid,
 static void
 dummyDelete(Datum value, bool is_speculative)
 {
-	bool result = true;
-	return result;
 }
 
 static void
