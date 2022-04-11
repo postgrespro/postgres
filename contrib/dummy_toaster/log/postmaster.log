@@ -1,0 +1,19 @@
+2022-04-11 21:16:47.421 MSK postmaster[31399] LOG:  starting PostgreSQL 15devel on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0, 64-bit
+2022-04-11 21:16:47.422 MSK postmaster[31399] LOG:  listening on Unix socket "/tmp/pg_regress-8mIdQu/.s.PGSQL.51696"
+2022-04-11 21:16:47.424 MSK startup[31411] LOG:  database system was shut down at 2022-04-11 21:16:47 MSK
+2022-04-11 21:16:47.426 MSK postmaster[31399] LOG:  database system is ready to accept connections
+2022-04-11 21:16:48.426 MSK checkpointer[31409] LOG:  checkpoint starting: immediate force wait flush-all
+2022-04-11 21:16:48.428 MSK checkpointer[31409] LOG:  checkpoint complete: wrote 6 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.002 s; sync files=0, longest=0.000 s, average=0.000 s; distance=1 kB, estimate=1 kB
+2022-04-11 21:16:48.453 MSK checkpointer[31409] LOG:  checkpoint starting: immediate force wait
+2022-04-11 21:16:48.454 MSK checkpointer[31409] LOG:  checkpoint complete: wrote 0 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=1 kB
+2022-04-11 21:16:48.470 MSK client backend[31609] pg_regress/dummy_toaster ERROR:  multiple TOASTER clauses not allowed
+2022-04-11 21:16:48.470 MSK client backend[31609] pg_regress/dummy_toaster STATEMENT:  CREATE TABLE tst_failed (
+		t text TOASTER dummy_toaster TOASTER dummy_toaster
+	);
+2022-04-11 21:16:48.502 MSK postmaster[31399] LOG:  received fast shutdown request
+2022-04-11 21:16:48.502 MSK postmaster[31399] LOG:  aborting any active transactions
+2022-04-11 21:16:48.503 MSK postmaster[31399] LOG:  background worker "logical replication launcher" (PID 31415) exited with exit code 1
+2022-04-11 21:16:48.503 MSK checkpointer[31409] LOG:  shutting down
+2022-04-11 21:16:48.503 MSK checkpointer[31409] LOG:  checkpoint starting: shutdown immediate
+2022-04-11 21:16:48.506 MSK checkpointer[31409] LOG:  checkpoint complete: wrote 49 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.001 s, total=0.004 s; sync files=0, longest=0.000 s, average=0.000 s; distance=169 kB, estimate=169 kB
+2022-04-11 21:16:48.511 MSK postmaster[31399] LOG:  database system is shut down
