@@ -57,6 +57,7 @@
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_ts_config.h"
@@ -188,7 +189,8 @@ static const Oid object_classes[] = {
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
-	TransformRelationId			/* OCLASS_TRANSFORM */
+	TransformRelationId,		/* OCLASS_TRANSFORM */
+	ToasterRelationId			/* OCLASS_TOASTER */
 };
 
 /*
@@ -1514,6 +1516,9 @@ doDeletion(const ObjectAddress *object, int flags)
 			DropObjectById(object);
 			break;
 
+		case OCLASS_TOASTER:
+			elog(ERROR, "toaster cannot be deleted by doDeletion");
+			break;
 			/*
 			 * These global object types are not supported here.
 			 */
@@ -2966,6 +2971,9 @@ getObjectClass(const ObjectAddress *object)
 
 		case TransformRelationId:
 			return OCLASS_TRANSFORM;
+
+		case ToasterRelationId:
+			return OCLASS_TOASTER;
 	}
 
 	/* shouldn't get here */

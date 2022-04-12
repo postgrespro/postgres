@@ -49,6 +49,7 @@ typedef enum
 	DO_OPFAMILY,
 	DO_COLLATION,
 	DO_CONVERSION,
+	DO_TOASTER,
 	DO_TABLE,
 	DO_TABLE_ATTACH,
 	DO_ATTRDEF,
@@ -329,6 +330,7 @@ typedef struct _tableInfo
 	int		   *atttypmod;		/* type-specific type modifiers */
 	int		   *attstattarget;	/* attribute statistics targets */
 	char	   *attstorage;		/* attribute storage scheme */
+	Oid		   *atttoaster;		/* attribute toaster */
 	char	   *typstorage;		/* type storage scheme */
 	bool	   *attisdropped;	/* true if attr is dropped; don't dump it */
 	char	   *attidentity;
@@ -665,6 +667,15 @@ typedef struct _SubscriptionInfo
 } SubscriptionInfo;
 
 /*
+ * The ToasterInfo struct is used to represent toaster
+ */
+typedef struct _ToasterInfo
+{
+	DumpableObject dobj;
+	char	   *tsrhandler;
+} ToasterInfo;
+
+/*
  *	common utility functions
  */
 
@@ -685,6 +696,7 @@ extern TypeInfo *findTypeByOid(Oid oid);
 extern FuncInfo *findFuncByOid(Oid oid);
 extern OprInfo *findOprByOid(Oid oid);
 extern CollInfo *findCollationByOid(Oid oid);
+extern ToasterInfo *findToasterByOid(Oid oid);
 extern NamespaceInfo *findNamespaceByOid(Oid oid);
 extern ExtensionInfo *findExtensionByOid(Oid oid);
 extern PublicationInfo *findPublicationByOid(Oid oid);
@@ -746,5 +758,6 @@ extern void getPublicationNamespaces(Archive *fout);
 extern void getPublicationTables(Archive *fout, TableInfo tblinfo[],
 								 int numTables);
 extern void getSubscriptions(Archive *fout);
+extern ToasterInfo *getToasters(Archive *fout, int *numToasters);
 
 #endif							/* PG_DUMP_H */

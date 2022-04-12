@@ -143,6 +143,11 @@ extern Oid	get_table_am_oid(const char *amname, bool missing_ok);
 extern Oid	get_am_oid(const char *amname, bool missing_ok);
 extern char *get_am_name(Oid amOid);
 
+/* commands/toastercmds.c */
+extern ObjectAddress CreateToaster(CreateToasterStmt *stmt);
+extern Oid get_toaster_oid(const char *tsrname, bool missing_ok);
+extern char *get_toaster_name(Oid tsrOid);
+
 /* support routines in commands/define.c */
 
 extern char *defGetString(DefElem *def);

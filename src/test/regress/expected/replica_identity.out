@@ -153,13 +153,13 @@ SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
 (1 row)
 
 \d+ test_replica_identity
-                                                Table "public.test_replica_identity"
- Column |  Type   | Collation | Nullable |                      Default                      | Storage  | Stats target | Description 
---------+---------+-----------+----------+---------------------------------------------------+----------+--------------+-------------
- id     | integer |           | not null | nextval('test_replica_identity_id_seq'::regclass) | plain    |              | 
- keya   | text    |           | not null |                                                   | extended |              | 
- keyb   | text    |           | not null |                                                   | extended |              | 
- nonkey | text    |           |          |                                                   | extended |              | 
+                                                       Table "public.test_replica_identity"
+ Column |  Type   | Collation | Nullable |                      Default                      | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+---------------------------------------------------+----------+------------+--------------+-------------
+ id     | integer |           | not null | nextval('test_replica_identity_id_seq'::regclass) | plain    |            |              | 
+ keya   | text    |           | not null |                                                   | extended | deftoaster |              | 
+ keyb   | text    |           | not null |                                                   | extended | deftoaster |              | 
+ nonkey | text    |           |          |                                                   | extended | deftoaster |              | 
 Indexes:
     "test_replica_identity_pkey" PRIMARY KEY, btree (id)
     "test_replica_identity_expr" UNIQUE, btree (keya, keyb, (3))
