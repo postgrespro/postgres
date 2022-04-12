@@ -3587,6 +3587,7 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_ROLE:
 					case OBJECT_RULE:
 					case OBJECT_TABCONSTRAINT:
+					case OBJECT_TOASTER:
 					case OBJECT_TRANSFORM:
 					case OBJECT_TRIGGER:
 					case OBJECT_TSPARSER:
@@ -3726,6 +3727,7 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_PUBLICATION_NAMESPACE:
 					case OBJECT_PUBLICATION_REL:
 					case OBJECT_ROLE:
+					case OBJECT_TOASTER:
 					case OBJECT_TRANSFORM:
 					case OBJECT_TSPARSER:
 					case OBJECT_TSTEMPLATE:

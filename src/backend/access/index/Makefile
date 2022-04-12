@@ -16,6 +16,7 @@ OBJS = \
 	amapi.o \
 	amvalidate.o \
 	genam.o \
-	indexam.o
+	indexam.o \
+	toasterapi.o
 
 include $(top_srcdir)/src/backend/common.mk
