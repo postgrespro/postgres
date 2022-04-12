@@ -20,6 +20,7 @@
 
 #include "catalog/genbki.h"
 #include "catalog/pg_toaster_d.h"
+#include "utils/relcache.h"
 
 /* ----------------
  *		pg_toaster definition.  cpp turns this into
@@ -46,5 +47,17 @@ typedef FormData_pg_toaster *Form_pg_toaster;
 
 DECLARE_UNIQUE_INDEX(pg_toaster_name_index, 9862, ToasterNameIndexId, on pg_toaster using btree(tsrname name_ops));
 DECLARE_UNIQUE_INDEX_PKEY(pg_toaster_oid_index, 9863, ToasterOidIndexId, on pg_toaster using btree(oid oid_ops));
+/*
+Datum genericDetoast(Relation toast_rel,
+	Datum toast_ptr,
+	int offset, int length);
+Datum genericToast(Relation toast_rel,
+		Datum newvalue, Datum oldvalue,
+		int max_inline_size);
+void *
+genericGetVtable(Datum toast_ptr);
+Datum genericDeleteToast(Relation rel, Datum toast_ptr);
+bool genericToasterValidate(Oid toasteroid);
+*/
 
 #endif							/* PG_TOASTER_H */

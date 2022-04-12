@@ -22,10 +22,10 @@
 
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/tupconvert.h"
 #include "executor/tstoreReceiver.h"
-
+#include "access/toast_helper.h"
 
 typedef struct
 {

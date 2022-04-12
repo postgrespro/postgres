@@ -1,19 +1,23 @@
-2022-04-12 18:31:12.376 MSK postmaster[31609] LOG:  starting PostgreSQL 15devel on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0, 64-bit
-2022-04-12 18:31:12.376 MSK postmaster[31609] LOG:  listening on Unix socket "/tmp/pg_regress-oFsiPC/.s.PGSQL.51696"
-2022-04-12 18:31:12.378 MSK startup[31614] LOG:  database system was shut down at 2022-04-12 18:31:12 MSK
-2022-04-12 18:31:12.379 MSK postmaster[31609] LOG:  database system is ready to accept connections
-2022-04-12 18:31:13.384 MSK checkpointer[31612] LOG:  checkpoint starting: immediate force wait flush-all
-2022-04-12 18:31:13.385 MSK checkpointer[31612] LOG:  checkpoint complete: wrote 6 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.002 s; sync files=0, longest=0.000 s, average=0.000 s; distance=1 kB, estimate=1 kB
-2022-04-12 18:31:13.431 MSK checkpointer[31612] LOG:  checkpoint starting: immediate force wait
-2022-04-12 18:31:13.432 MSK checkpointer[31612] LOG:  checkpoint complete: wrote 0 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=1 kB
-2022-04-12 18:31:13.444 MSK client backend[31773] pg_regress/dummy_toaster ERROR:  multiple TOASTER clauses not allowed
-2022-04-12 18:31:13.444 MSK client backend[31773] pg_regress/dummy_toaster STATEMENT:  CREATE TABLE tst_failed (
+2022-04-12 22:25:38.670 MSK postmaster[25808] LOG:  starting PostgreSQL 15devel on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0, 64-bit
+2022-04-12 22:25:38.670 MSK postmaster[25808] LOG:  listening on Unix socket "/tmp/pg_regress-hctl1p/.s.PGSQL.51696"
+2022-04-12 22:25:38.671 MSK startup[25813] LOG:  database system was shut down at 2022-04-12 22:25:38 MSK
+2022-04-12 22:25:38.672 MSK postmaster[25808] LOG:  database system is ready to accept connections
+2022-04-12 22:25:39.682 MSK checkpointer[25811] LOG:  checkpoint starting: immediate force wait flush-all
+2022-04-12 22:25:39.683 MSK checkpointer[25811] LOG:  checkpoint complete: wrote 6 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=1 kB, estimate=1 kB
+2022-04-12 22:25:39.696 MSK checkpointer[25811] LOG:  checkpoint starting: immediate force wait
+2022-04-12 22:25:39.697 MSK checkpointer[25811] LOG:  checkpoint complete: wrote 0 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=1 kB
+2022-04-12 22:25:39.706 MSK client backend[25825] pg_regress/dummy_toaster ERROR:  multiple TOASTER clauses not allowed
+2022-04-12 22:25:39.706 MSK client backend[25825] pg_regress/dummy_toaster STATEMENT:  CREATE TABLE tst_failed (
 		t text TOASTER dummy_toaster TOASTER dummy_toaster
 	);
-2022-04-12 18:31:13.477 MSK postmaster[31609] LOG:  received fast shutdown request
-2022-04-12 18:31:13.477 MSK postmaster[31609] LOG:  aborting any active transactions
-2022-04-12 18:31:13.477 MSK postmaster[31609] LOG:  background worker "logical replication launcher" (PID 31618) exited with exit code 1
-2022-04-12 18:31:13.478 MSK checkpointer[31612] LOG:  shutting down
-2022-04-12 18:31:13.478 MSK checkpointer[31612] LOG:  checkpoint starting: shutdown immediate
-2022-04-12 18:31:13.480 MSK checkpointer[31612] LOG:  checkpoint complete: wrote 49 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.003 s; sync files=0, longest=0.000 s, average=0.000 s; distance=169 kB, estimate=169 kB
-2022-04-12 18:31:13.485 MSK postmaster[31609] LOG:  database system is shut down
+2022-04-12 22:25:39.722 MSK client backend[25825] pg_regress/dummy_toaster ERROR:  Data <2000> size exceeds MAX_DUMMY_CHUNK_SIZE <1024>
+2022-04-12 22:25:39.722 MSK client backend[25825] pg_regress/dummy_toaster STATEMENT:  update tst3 set t = repeat('c', 2000)::text;
+2022-04-12 22:25:39.723 MSK client backend[25825] pg_regress/dummy_toaster ERROR:  Data <2000> size exceeds MAX_DUMMY_CHUNK_SIZE <1024>
+2022-04-12 22:25:39.723 MSK client backend[25825] pg_regress/dummy_toaster STATEMENT:  update tst3 set f = repeat('d', 2000)::text;
+2022-04-12 22:25:39.728 MSK postmaster[25808] LOG:  received fast shutdown request
+2022-04-12 22:25:39.728 MSK postmaster[25808] LOG:  aborting any active transactions
+2022-04-12 22:25:39.729 MSK postmaster[25808] LOG:  background worker "logical replication launcher" (PID 25817) exited with exit code 1
+2022-04-12 22:25:39.729 MSK checkpointer[25811] LOG:  shutting down
+2022-04-12 22:25:39.729 MSK checkpointer[25811] LOG:  checkpoint starting: shutdown immediate
+2022-04-12 22:25:39.731 MSK checkpointer[25811] LOG:  checkpoint complete: wrote 121 buffers (0.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.002 s; sync files=0, longest=0.000 s, average=0.000 s; distance=579 kB, estimate=579 kB
+2022-04-12 22:25:39.733 MSK postmaster[25808] LOG:  database system is shut down
