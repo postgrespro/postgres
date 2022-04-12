@@ -23,6 +23,7 @@
 #include "access/toast_compression.h"
 #include "access/tupdesc_details.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "miscadmin.h"
@@ -31,6 +32,7 @@
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/resowner_private.h"
+#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 
@@ -445,6 +447,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 			return false;
 		if (attr1->attstorage != attr2->attstorage)
 			return false;
+		if (attr1->atttoaster != attr2->atttoaster)
+			return false;
 		if (attr1->attcompression != attr2->attcompression)
 			return false;
 		if (attr1->attnotnull != attr2->attnotnull)
@@ -642,6 +646,8 @@ TupleDescInitEntry(TupleDesc desc,
 	att->attbyval = typeForm->typbyval;
 	att->attalign = typeForm->typalign;
 	att->attstorage = typeForm->typstorage;
+	att->atttoaster = TypeIsToastable(oidtypeid) ?
+		DEFAULT_TOASTER_OID : InvalidOid;
 	att->attcompression = InvalidCompressionMethod;
 	att->attcollation = typeForm->typcollation;
 
@@ -708,6 +714,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 			att->attbyval = false;
 			att->attalign = TYPALIGN_INT;
 			att->attstorage = TYPSTORAGE_EXTENDED;
+			att->atttoaster = DEFAULT_TOASTER_OID;
 			att->attcompression = InvalidCompressionMethod;
 			att->attcollation = DEFAULT_COLLATION_OID;
 			break;
@@ -717,6 +724,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 			att->attbyval = true;
 			att->attalign = TYPALIGN_CHAR;
 			att->attstorage = TYPSTORAGE_PLAIN;
+			att->atttoaster = DEFAULT_TOASTER_OID;
 			att->attcompression = InvalidCompressionMethod;
 			att->attcollation = InvalidOid;
 			break;
@@ -726,6 +734,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 			att->attbyval = true;
 			att->attalign = TYPALIGN_INT;
 			att->attstorage = TYPSTORAGE_PLAIN;
+			att->atttoaster = DEFAULT_TOASTER_OID;
 			att->attcompression = InvalidCompressionMethod;
 			att->attcollation = InvalidOid;
 			break;
@@ -735,6 +744,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 			att->attbyval = FLOAT8PASSBYVAL;
 			att->attalign = TYPALIGN_DOUBLE;
 			att->attstorage = TYPSTORAGE_PLAIN;
+			att->atttoaster = DEFAULT_TOASTER_OID;
 			att->attcompression = InvalidCompressionMethod;
 			att->attcollation = InvalidOid;
 			break;

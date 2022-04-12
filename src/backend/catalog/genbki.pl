@@ -192,6 +192,9 @@ my $C_COLLATION_OID =
   Catalog::FindDefinedSymbolFromData($catalog_data{pg_collation},
 	'C_COLLATION_OID');
 
+my $DEFAULT_TOASTER_OID =
+  Catalog::FindDefinedSymbolFromData($catalog_data{pg_toaster},
+									'DEFAULT_TOASTER_OID');
 
 # Fill in pg_class.relnatts by looking at the referenced catalog's schema.
 # This is ugly but there's no better place; Catalog::AddDefaultValues
@@ -916,11 +919,13 @@ sub morph_row_for_pgattr
 	# Copy the type data from pg_type, and add some type-dependent items
 	my $type = $types{$atttype};
 
-	$row->{atttypid}   = $type->{oid};
-	$row->{attlen}     = $type->{typlen};
-	$row->{attbyval}   = $type->{typbyval};
-	$row->{attalign}   = $type->{typalign};
-	$row->{attstorage} = $type->{typstorage};
+	$row->{atttypid}       = $type->{oid};
+	$row->{attlen}         = $type->{typlen};
+	$row->{attbyval}       = $type->{typbyval};
+	$row->{attalign}       = $type->{typalign};
+	$row->{attstorage}     = $type->{typstorage};
+	$row->{atttoaster}     =
+		($row->{attstorage} ne 'p' ) ?  $DEFAULT_TOASTER_OID : 0;
 
 	# set attndims if it's an array type
 	$row->{attndims} = $type->{typcategory} eq 'A' ? '1' : '0';
