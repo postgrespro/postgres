@@ -49,5 +49,12 @@ typedef struct ClosestMatchState
 extern void initClosestMatch(ClosestMatchState *state, const char *source, int max_d);
 extern void updateClosestMatch(ClosestMatchState *state, const char *candidate);
 extern const char *getClosestMatch(ClosestMatchState *state);
+#define BYTEA_TOASTER_MAGIC    0xb17ea757
+
+typedef struct ByteaToastRoutine
+{
+       int32           magic;
+       Datum     (*append)(Datum val1, Datum val2);
+} ByteaToastRoutine;
 
 #endif

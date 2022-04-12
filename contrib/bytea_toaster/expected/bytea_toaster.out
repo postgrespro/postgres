@@ -1,0 +1,220 @@
+CREATE EXTENSION bytea_toaster;
+CREATE TABLE tst_failed (
+	t jsonb TOASTER bytea_toaster
+);
+CREATE TABLE tst1 (
+	t bytea TOASTER bytea_toaster
+);
+CREATE TABLE tst2 (
+	t bytea
+);
+ALTER TABLE tst2 ALTER COLUMN t SET TOASTER bytea_toaster;
+CREATE TABLE test_bytea_append (id int, a bytea STORAGE EXTERNAL);
+ALTER TABLE test_bytea_append ALTER a SET TOASTER bytea_toaster;
+INSERT INTO test_bytea_append SELECT i, repeat('a', 10000)::bytea FROM generate_series(1, 10) i;
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SAVEPOINT p1;
+UPDATE test_bytea_append SET a = a || repeat('b', 3000)::bytea;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 12990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |          convert_from           
+----+--------+---------------------------------
+  1 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  2 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  3 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  4 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  5 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  6 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  7 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  8 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  9 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+ 10 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+(10 rows)
+
+SAVEPOINT p2;
+UPDATE test_bytea_append SET a = a || repeat('c', 2000)::bytea;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 12990, 20) ||  substr(a, 14990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |                    convert_from                     
+----+--------+-----------------------------------------------------
+  1 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  2 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  3 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  4 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  5 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  6 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  7 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  8 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  9 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+ 10 |  15000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+(10 rows)
+
+ROLLBACK TO SAVEPOINT p2;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 12990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |          convert_from           
+----+--------+---------------------------------
+  1 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  2 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  3 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  4 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  5 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  6 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  7 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  8 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  9 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+ 10 |  13000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+(10 rows)
+
+UPDATE test_bytea_append SET a = a || repeat('d', 4000)::bytea;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 12990, 20) || substr(a, 16990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |                    convert_from                     
+----+--------+-----------------------------------------------------
+  1 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  2 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  3 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  4 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  5 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  6 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  7 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  8 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+  9 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+ 10 |  17000 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbdddddddddddddddddddd
+(10 rows)
+
+ROLLBACK TO SAVEPOINT p1;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 12990, 20), 'UTF8') FROM test_bytea_append;
+ id | length | convert_from 
+----+--------+--------------
+  1 |  10000 | aaaaaaaaaaa
+  2 |  10000 | aaaaaaaaaaa
+  3 |  10000 | aaaaaaaaaaa
+  4 |  10000 | aaaaaaaaaaa
+  5 |  10000 | aaaaaaaaaaa
+  6 |  10000 | aaaaaaaaaaa
+  7 |  10000 | aaaaaaaaaaa
+  8 |  10000 | aaaaaaaaaaa
+  9 |  10000 | aaaaaaaaaaa
+ 10 |  10000 | aaaaaaaaaaa
+(10 rows)
+
+UPDATE test_bytea_append SET a = a || repeat('e', 5000)::bytea;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 14990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |          convert_from           
+----+--------+---------------------------------
+  1 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  2 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  3 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  4 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  5 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  6 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  7 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  8 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  9 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+ 10 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+(10 rows)
+
+COMMIT;
+SELECT id, length(convert_from(a, 'UTF8')), convert_from(substr(a, 9990, 20) || substr(a, 14990, 20), 'UTF8') FROM test_bytea_append;
+ id | length |          convert_from           
+----+--------+---------------------------------
+  1 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  2 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  3 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  4 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  5 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  6 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  7 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  8 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+  9 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+ 10 |  15000 | aaaaaaaaaaaeeeeeeeeeeeeeeeeeeee
+(10 rows)
+
+UPDATE test_bytea_append SET a = NULL;
+TRUNCATE test_bytea_append;
+INSERT INTO test_bytea_append SELECT i, repeat('a', 10000)::bytea FROM generate_series(1, 10) i;
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+UPDATE test_bytea_append SET a = a || repeat('b', 3000)::bytea;
+SELECT id, convert_from(substr(a, 9990, 20) || substr(a, 12990, 20), 'UTF8') FROM test_bytea_append;
+ id |          convert_from           
+----+---------------------------------
+  1 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  2 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  3 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  4 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  5 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  6 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  7 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  8 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+  9 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+ 10 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+(10 rows)
+
+UPDATE test_bytea_append SET a = a || repeat('c', 2000)::bytea;
+SELECT id, convert_from(substr(a, 9990, 20) || substr(a, 12990, 20) || substr(a, 14990, 20), 'UTF8') FROM test_bytea_append;
+ id |                    convert_from                     
+----+-----------------------------------------------------
+  1 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  2 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  3 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  4 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  5 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  6 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  7 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  8 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+  9 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+ 10 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+(10 rows)
+
+UPDATE test_bytea_append SET a = a || repeat('d', 4000)::bytea;
+SELECT id, convert_from(substr(a, 9990, 20) || substr(a, 12990, 20) || substr(a, 14990, 20) || substr(a, 18990, 20), 'UTF8') FROM test_bytea_append;
+ id |                              convert_from                               
+----+-------------------------------------------------------------------------
+  1 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  2 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  3 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  4 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  5 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  6 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  7 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  8 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+  9 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+ 10 | aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+(10 rows)
+
+CREATE FUNCTION test_bytea_append_func() RETURNS void AS
+$$
+DECLARE
+  a0 bytea;
+  a1 bytea;
+  a2 bytea;
+  a3 bytea;
+BEGIN
+  TRUNCATE test_bytea_append;
+  INSERT INTO test_bytea_append SELECT i, repeat('a', 10000)::bytea FROM generate_series(1, 10) i;
+  SELECT a INTO a0 FROM test_bytea_append LIMIT 1;
+
+  UPDATE test_bytea_append SET a = a || repeat('b', 3000)::bytea;
+  SELECT a INTO a1 FROM test_bytea_append LIMIT 1;
+
+  UPDATE test_bytea_append SET a = a || repeat('c', 2000)::bytea;
+  SELECT a INTO a2 FROM test_bytea_append LIMIT 1;
+
+  UPDATE test_bytea_append SET a = a || repeat('d', 4000)::bytea;
+  SELECT a INTO a3 FROM test_bytea_append LIMIT 1;
+
+  RAISE NOTICE '%', convert_from(substr(a0, 9990, 20), 'UTF8');
+  RAISE NOTICE '%', convert_from(substr(a1, 9990, 20) || substr(a1, 12990, 20), 'UTF8');
+  RAISE NOTICE '%', convert_from(substr(a2, 9990, 20) || substr(a2, 12990, 20) || substr(a2, 14990, 20), 'UTF8');
+  RAISE NOTICE '%', convert_from(substr(a3, 9990, 20) || substr(a3, 12990, 20) || substr(a3, 14990, 20) || substr(a3, 18990, 20), 'UTF8');
+END;
+$$ LANGUAGE plpgsql;
+SELECT test_bytea_append_func();
+NOTICE:  aaaaaaaaaaa
+NOTICE:  aaaaaaaaaaabbbbbbbbbbbbbbbbbbbb
+NOTICE:  aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbcccccccccccccccccccc
+NOTICE:  aaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccdddddddddddddddddddd
+ test_bytea_append_func 
+------------------------
+ 
+(1 row)
+
+COMMIT;
+DROP TABLE test_bytea_append;
