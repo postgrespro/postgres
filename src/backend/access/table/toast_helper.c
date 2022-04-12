@@ -366,9 +366,7 @@ toast_delete_external_datum(Datum value, bool is_speculative)
 	if (toasterid != InvalidOid)
 	{
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-
 		toaster->deltoast(value, is_speculative);
-		/*toast_delete_datum(value, false);*/
 	}
 }
 
@@ -1038,8 +1036,8 @@ fetch_toast_slice(Relation toastrel, Oid valueid,
 					   int32 sliceoffset, int32 slicelength,
 					   struct varlena *result)
 {
-	toast_fetch_toast_slice( toastrel, valueid, 
+	toast_fetch_toast_slice( toastrel, valueid,
 					   attr, attrsize,
 					   sliceoffset, slicelength,
-					   result);
+					   result, 0, NULL, NULL);
 }
