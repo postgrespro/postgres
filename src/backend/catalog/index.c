@@ -51,6 +51,7 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
@@ -351,6 +352,7 @@ ConstructTupleDescriptor(Relation heapRelation,
 			to->attalign = from->attalign;
 			to->attstorage = from->attstorage;
 			to->attcompression = from->attcompression;
+			to->atttoaster = from->atttoaster;
 		}
 		else
 		{
@@ -469,6 +471,8 @@ ConstructTupleDescriptor(Relation heapRelation,
 			to->attstorage = typeTup->typstorage;
 			/* As above, use the default compression method in this case */
 			to->attcompression = InvalidCompressionMethod;
+			to->atttoaster = (TypeIsToastable(keyType)) ?
+				DEFAULT_TOASTER_OID : InvalidOid;
 
 			ReleaseSysCache(tuple);
 		}
