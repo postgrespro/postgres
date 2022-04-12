@@ -3608,10 +3608,10 @@ create trigger parenttrig after insert on child
 for each row execute procedure f();
 alter trigger parenttrig on parent rename to anothertrig;
 \d+ child
-                                   Table "public.child"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           |          |         | plain   |              | 
+                                        Table "public.child"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ a      | integer |           |          |         | plain   |         |              | 
 Triggers:
     parenttrig AFTER INSERT ON child FOR EACH ROW EXECUTE FUNCTION f()
 Inherits: parent

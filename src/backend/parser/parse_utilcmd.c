@@ -1042,6 +1042,7 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 		def->is_not_null = attribute->attnotnull;
 		def->is_from_type = false;
 		def->storage = 0;
+		def->toaster = NULL;
 		def->raw_default = NULL;
 		def->cooked_default = NULL;
 		def->collClause = NULL;
@@ -1483,6 +1484,7 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 		n->is_not_null = false;
 		n->is_from_type = true;
 		n->storage = 0;
+		n->toaster = NULL;
 		n->raw_default = NULL;
 		n->cooked_default = NULL;
 		n->collClause = NULL;

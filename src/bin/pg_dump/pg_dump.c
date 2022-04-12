@@ -52,6 +52,7 @@
 #include "catalog/pg_largeobject_metadata_d.h"
 #include "catalog/pg_proc_d.h"
 #include "catalog/pg_subscription.h"
+#include "catalog/pg_toaster_d.h"
 #include "catalog/pg_trigger_d.h"
 #include "catalog/pg_type_d.h"
 #include "common/connect.h"
@@ -291,6 +292,7 @@ static void dumpPublication(Archive *fout, const PublicationInfo *pubinfo);
 static void dumpPublicationTable(Archive *fout, const PublicationRelInfo *pubrinfo);
 static void dumpSubscription(Archive *fout, const SubscriptionInfo *subinfo);
 static void dumpDatabase(Archive *fout);
+static void dumpToaster(Archive *fout, const ToasterInfo *tsrinfo);
 static void dumpDatabaseConfig(Archive *AH, PQExpBuffer outbuf,
 							   const char *dbname, Oid dboid);
 static void dumpEncoding(Archive *AH);
@@ -1903,6 +1905,31 @@ selectDumpableAccessMethod(AccessMethodInfo *method, Archive *fout)
 
 	/*
 	 * This would be DUMP_COMPONENT_ACL for from-initdb access methods, but
+	 * they do not support ACLs currently.
+	 */
+	if (method->dobj.catId.oid <= (Oid) g_last_builtin_oid)
+		method->dobj.dump = DUMP_COMPONENT_NONE;
+	else
+		method->dobj.dump = fout->dopt->include_everything ?
+			DUMP_COMPONENT_ALL : DUMP_COMPONENT_NONE;
+}
+
+/*
+ * selectDumpableToaster: policy-setting subroutine
+ *		Mark an toaster as to be dumped or not
+ *
+ * Toaster do not belong to any particular namespace.  To identify
+ * built-in toasters, we must resort to checking whether the
+ * method's OID is in the range reserved for initdb.
+ */
+static void
+selectDumpableToaster(ToasterInfo *method, Archive *fout)
+{
+	if (checkExtensionMembership(&method->dobj, fout))
+		return;					/* extension membership overrides all else */
+
+	/*
+	 * This would be DUMP_COMPONENT_ACL for from-initdb toaster, but
 	 * they do not support ACLs currently.
 	 */
 	if (method->dobj.catId.oid <= (Oid) g_last_builtin_oid)
@@ -4714,6 +4741,59 @@ dumpSubscription(Archive *fout, const SubscriptionInfo *subinfo)
 	destroyPQExpBuffer(delq);
 	destroyPQExpBuffer(query);
 	free(qsubname);
+}
+
+/*
+ * dumpToaster
+ *	  write out a single toaster definition
+ */
+static void
+dumpToaster(Archive *fout, const ToasterInfo *tsrinfo)
+{
+	DumpOptions *dopt = fout->dopt;
+	PQExpBuffer q;
+	PQExpBuffer delq;
+	char	   *qtsrname;
+
+	/* Do nothing in data-only dump */
+	if (dopt->dataOnly)
+		return;
+
+	q = createPQExpBuffer();
+	delq = createPQExpBuffer();
+
+	qtsrname = pg_strdup(fmtId(tsrinfo->dobj.name));
+
+	appendPQExpBuffer(q, "CREATE TOASTER %s ", qtsrname);
+
+	appendPQExpBuffer(q, "HANDLER %s;\n", tsrinfo->tsrhandler);
+
+	/*
+	 * Toaster could not be dropped
+	 * appendPQExpBuffer(delq, "DROP TOASTER %s;\n",
+	 *				  qtsrname);
+	 */
+	if (dopt->binary_upgrade)
+		binary_upgrade_extension_member(q, &tsrinfo->dobj,
+										"TOASTER", qtsrname, NULL);
+
+	if (tsrinfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+		ArchiveEntry(fout, tsrinfo->dobj.catId, tsrinfo->dobj.dumpId,
+					 ARCHIVE_OPTS(.tag = tsrinfo->dobj.name,
+								  .description = "TOASTER",
+								  .section = SECTION_PRE_DATA,
+								  .createStmt = q->data,
+								  .dropStmt = delq->data));
+
+	/* Dump Access Method Comments */
+	if (tsrinfo->dobj.dump & DUMP_COMPONENT_COMMENT)
+		dumpComment(fout, "TOASTER", qtsrname,
+					NULL, "",
+					tsrinfo->dobj.catId, 0, tsrinfo->dobj.dumpId);
+
+	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(delq);
+	free(qtsrname);
 }
 
 /*
@@ -8185,6 +8265,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	int			i_atttypmod;
 	int			i_attstattarget;
 	int			i_attstorage;
+	int			i_atttoaster;
 	int			i_typstorage;
 	int			i_attidentity;
 	int			i_attgenerated;
@@ -8255,6 +8336,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 						 "a.atttypmod,\n"
 						 "a.attstattarget,\n"
 						 "a.attstorage,\n"
+						 "a.atttoaster,\n"
 						 "t.typstorage,\n"
 						 "a.attnotnull,\n"
 						 "a.atthasdef,\n"
@@ -8323,6 +8405,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	i_atttypmod = PQfnumber(res, "atttypmod");
 	i_attstattarget = PQfnumber(res, "attstattarget");
 	i_attstorage = PQfnumber(res, "attstorage");
+	i_atttoaster = PQfnumber(res, "atttoaster");
 	i_typstorage = PQfnumber(res, "typstorage");
 	i_attidentity = PQfnumber(res, "attidentity");
 	i_attgenerated = PQfnumber(res, "attgenerated");
@@ -8384,6 +8467,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		tbinfo->atttypmod = (int *) pg_malloc(numatts * sizeof(int));
 		tbinfo->attstattarget = (int *) pg_malloc(numatts * sizeof(int));
 		tbinfo->attstorage = (char *) pg_malloc(numatts * sizeof(char));
+		tbinfo->atttoaster = (Oid *) pg_malloc(numatts * sizeof(Oid));
 		tbinfo->typstorage = (char *) pg_malloc(numatts * sizeof(char));
 		tbinfo->attidentity = (char *) pg_malloc(numatts * sizeof(char));
 		tbinfo->attgenerated = (char *) pg_malloc(numatts * sizeof(char));
@@ -8411,6 +8495,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 			tbinfo->atttypmod[j] = atoi(PQgetvalue(res, r, i_atttypmod));
 			tbinfo->attstattarget[j] = atoi(PQgetvalue(res, r, i_attstattarget));
 			tbinfo->attstorage[j] = *(PQgetvalue(res, r, i_attstorage));
+			tbinfo->atttoaster[j] = atooid(PQgetvalue(res, r, i_atttoaster));
 			tbinfo->typstorage[j] = *(PQgetvalue(res, r, i_typstorage));
 			tbinfo->attidentity[j] = *(PQgetvalue(res, r, i_attidentity));
 			tbinfo->attgenerated[j] = *(PQgetvalue(res, r, i_attgenerated));
@@ -9489,6 +9574,73 @@ getAdditionalACLs(Archive *fout)
 }
 
 /*
+ * getToasters:
+ *	  read all user-defined toasters in the system catalogs and return
+ *	  them in the ToasterInfo* structure
+ *
+ *	numAccessMethods is set to the number of access methods read in
+ */
+ToasterInfo *
+getToasters(Archive *fout, int *numToasters)
+{
+	PGresult   *res;
+	int			ntups;
+	int			i;
+	PQExpBuffer query;
+	ToasterInfo *tsrinfo;
+	int			i_tableoid;
+	int			i_oid;
+	int			i_tsrname;
+	int			i_tsrhandler;
+
+	/* Before 9.6, there are no user-defined access methods */
+	if (fout->remoteVersion < 150000)
+	{
+		*numToasters = 0;
+		return NULL;
+	}
+
+	query = createPQExpBuffer();
+
+	/* Select all toasters from pg_toaster table */
+	appendPQExpBufferStr(query, "SELECT tableoid, oid, tsrname, "
+						 "tsrhandler::pg_catalog.regproc AS tsrhandler "
+						 "FROM pg_toaster");
+
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	ntups = PQntuples(res);
+	*numToasters = ntups;
+
+	tsrinfo = (ToasterInfo *) pg_malloc(ntups * sizeof(ToasterInfo));
+
+	i_tableoid = PQfnumber(res, "tableoid");
+	i_oid = PQfnumber(res, "oid");
+	i_tsrname = PQfnumber(res, "tsrname");
+	i_tsrhandler = PQfnumber(res, "tsrhandler");
+
+	for (i = 0; i < ntups; i++)
+	{
+		tsrinfo[i].dobj.objType = DO_TOASTER;
+		tsrinfo[i].dobj.catId.tableoid = atooid(PQgetvalue(res, i, i_tableoid));
+		tsrinfo[i].dobj.catId.oid = atooid(PQgetvalue(res, i, i_oid));
+		AssignDumpId(&tsrinfo[i].dobj);
+		tsrinfo[i].dobj.name = pg_strdup(PQgetvalue(res, i, i_tsrname));
+		tsrinfo[i].dobj.namespace = NULL;
+		tsrinfo[i].tsrhandler = pg_strdup(PQgetvalue(res, i, i_tsrhandler));
+
+		/* Decide whether we want to dump it */
+		selectDumpableToaster(&(tsrinfo[i]), fout);
+	}
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+
+	return tsrinfo;
+}
+
+/*
  * dumpCommentExtended --
  *
  * This routine is used to dump any comments associated with the
@@ -10059,6 +10211,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 			break;
 		case DO_SUBSCRIPTION:
 			dumpSubscription(fout, (const SubscriptionInfo *) dobj);
+			break;
+		case DO_TOASTER:
+			dumpToaster(fout, (const ToasterInfo *) dobj);
 			break;
 		case DO_PRE_DATA_BOUNDARY:
 		case DO_POST_DATA_BOUNDARY:
@@ -15807,6 +15962,22 @@ dumpTableSchema(Archive *fout, const TableInfo *tbinfo)
 									  storage);
 			}
 
+			/* check toastability of type, not column! */
+			if (tbinfo->typstorage[j] != TYPSTORAGE_PLAIN &&
+				tbinfo->atttoaster[j] != DEFAULT_TOASTER_OID)
+			{
+				ToasterInfo   *tsr;
+
+				tsr = findToasterByOid(tbinfo->atttoaster[j]);
+				if (tsr)
+					appendPQExpBuffer(q, "ALTER TABLE %s ALTER COLUMN %s SET TOASTER %s;\n",
+									  qualrelname,
+									  fmtId(tbinfo->attnames[j]),
+									  tsr->dobj.name);
+			}
+
+
+
 			/*
 			 * Dump per-column compression, if it's been set.
 			 */
@@ -17989,6 +18160,7 @@ addBoundaryDependencies(DumpableObject **dobjs, int numObjs,
 			case DO_FOREIGN_SERVER:
 			case DO_TRANSFORM:
 			case DO_LARGE_OBJECT:
+			case DO_TOASTER:
 				/* Pre-data objects: must come before the pre-data boundary */
 				addObjectDependency(preDataBound, dobj->dumpId);
 				break;

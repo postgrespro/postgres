@@ -65,6 +65,7 @@ catalog_headers = [
   'pg_publication_rel.h',
   'pg_subscription.h',
   'pg_subscription_rel.h',
+  'pg_toaster.h',
 ]
 
 bki_data = [
@@ -92,6 +93,7 @@ bki_data = [
   'pg_ts_parser.dat',
   'pg_ts_template.dat',
   'pg_type.dat',
+  'pg_toaster.dat',
 ]
 bki_data_f = files(bki_data)
 

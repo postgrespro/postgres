@@ -44,6 +44,7 @@ backend_sources += files(
   'tablespace.c',
   'trigger.c',
   'tsearchcmds.c',
+  'toastercmds.c',
   'typecmds.c',
   'user.c',
   'vacuum.c',

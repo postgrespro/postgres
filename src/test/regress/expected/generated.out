@@ -289,12 +289,12 @@ ERROR:  column "b" inherits from generated column but specifies identity
 CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS (a * 22) STORED) INHERITS (gtest1);  -- ok, overrides parent
 NOTICE:  merging column "b" with inherited definition
 \d+ gtestx
-                                                Table "public.gtestx"
- Column |  Type   | Collation | Nullable |               Default               | Storage | Stats target | Description 
---------+---------+-----------+----------+-------------------------------------+---------+--------------+-------------
- a      | integer |           | not null |                                     | plain   |              | 
- b      | integer |           |          | generated always as (a * 22) stored | plain   |              | 
- x      | integer |           |          |                                     | plain   |              | 
+                                                     Table "public.gtestx"
+ Column |  Type   | Collation | Nullable |               Default               | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+-------------------------------------+---------+---------+--------------+-------------
+ a      | integer |           | not null |                                     | plain   |         |              | 
+ b      | integer |           |          | generated always as (a * 22) stored | plain   |         |              | 
+ x      | integer |           |          |                                     | plain   |         |              | 
 Inherits: gtest1
 
 CREATE TABLE gtestxx_1 (a int NOT NULL, b int);

@@ -350,10 +350,10 @@ Indexes:
 Number of partitions: 2 (Use \d+ to list them.)
 
 \d+ testschema.part
-                           Partitioned table "testschema.part"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           |          |         | plain   |              | 
+                                Partitioned table "testschema.part"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ a      | integer |           |          |         | plain   |         |              | 
 Partition key: LIST (a)
 Indexes:
     "part_a_idx" btree (a), tablespace "regress_tblspace"
@@ -370,10 +370,10 @@ Indexes:
     "part1_a_idx" btree (a), tablespace "regress_tblspace"
 
 \d+ testschema.part1
-                                 Table "testschema.part1"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           |          |         | plain   |              | 
+                                      Table "testschema.part1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ a      | integer |           |          |         | plain   |         |              | 
 Partition of: testschema.part FOR VALUES IN (1)
 Partition constraint: ((a IS NOT NULL) AND (a = 1))
 Indexes:

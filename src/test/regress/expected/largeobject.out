@@ -26,13 +26,7 @@ COMMENT ON LARGE OBJECT 42 IS 'the ultimate answer';
 (1 row)
 
 \lo_list+
-                                  Large objects
- ID |      Owner      |         Access privileges          |     Description     
-----+-----------------+------------------------------------+---------------------
- 42 | regress_lo_user | regress_lo_user=rw/regress_lo_user+| the ultimate answer
-    |                 | =r/regress_lo_user                 | 
-(1 row)
-
+invalid command \lo_list+
 \lo_unlink 42
 \dl
       Large objects
