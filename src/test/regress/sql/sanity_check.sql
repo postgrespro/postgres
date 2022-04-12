@@ -1,5 +1,4 @@
 VACUUM;
-
 --
 -- Sanity check: every system catalog that has OIDs should have
 -- a unique index on OID.  This ensures that the OIDs will be unique,

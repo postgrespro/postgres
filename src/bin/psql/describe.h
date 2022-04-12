@@ -143,7 +143,8 @@ extern bool listOpFamilyOperators(const char *access_method_pattern,
 extern bool listOpFamilyFunctions(const char *access_method_pattern,
 								  const char *family_pattern, bool verbose);
 
-/* \dl or \lo_list */
-extern bool listLargeObjects(bool verbose);
+/* \dr */
+extern bool describeToasters(const char *pattern, bool verbose);
+
 
 #endif							/* DESCRIBE_H */

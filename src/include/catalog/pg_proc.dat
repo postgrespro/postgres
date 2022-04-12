@@ -7508,6 +7508,13 @@
   proname => 'table_am_handler_in', proisstrict => 'f',
   prorettype => 'table_am_handler', proargtypes => 'cstring',
   prosrc => 'table_am_handler_in' },
+{ oid => '8889', descr => 'I/O',
+  proname => 'toaster_handler_out', prorettype => 'cstring',
+  proargtypes => 'toaster_handler', prosrc => 'toaster_handler_out' },
+{ oid => '8890', descr => 'I/O',
+  proname => 'toaster_handler_in', proisstrict => 'f',
+  prorettype => 'toaster_handler', proargtypes => 'cstring',
+  prosrc => 'toaster_handler_in' },
 { oid => '268', descr => 'I/O',
   proname => 'table_am_handler_out', prorettype => 'cstring',
   proargtypes => 'table_am_handler', prosrc => 'table_am_handler_out' },
@@ -11890,5 +11897,10 @@
   proname => 'brin_minmax_multi_summary_send', provolatile => 's',
   prorettype => 'bytea', proargtypes => 'pg_brin_minmax_multi_summary',
   prosrc => 'brin_minmax_multi_summary_send' },
+
+{ oid => '8893', descr => 'default toaster handler',
+  proname => 'default_toaster_handler', provolatile => 'v',
+  prorettype => 'toaster_handler', proargtypes => 'internal',
+  prosrc => 'default_toaster_handler' },
 
 ]

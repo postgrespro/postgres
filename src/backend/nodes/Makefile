@@ -49,6 +49,7 @@ node_headers = \
 	access/sdir.h \
 	access/tableam.h \
 	access/tsmapi.h \
+	access/toasterapi.h \
 	commands/event_trigger.h \
 	commands/trigger.h \
 	executor/tuptable.h \
