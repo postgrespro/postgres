@@ -28,9 +28,20 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
-static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
-static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+static void
+toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
+						   Oid valueid, HeapTuple ttup, int32 *seqno,
+						   char **chunkdata, int *chunksize);
 
+static void
+toast_write_slice(Relation toastrel, Relation *toastidxs,
+				  int num_indexes, int validIndex,
+				  Oid valueid, int32 value_size, int32 slice_offset,
+				  int32 slice_length, char *slice_data,
+				  int options,
+				  void *chunk_header, int chunk_header_size,
+				  ToastChunkVisibilityCheck visibility_check,
+				  void *visibility_cxt);
 
 /* ----------
  * toast_save_datum -
@@ -45,28 +56,14 @@ static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
  * ----------
  */
 Datum
-toast_save_datum(Relation rel, Datum value,
-				 struct varlena *oldexternal, int options)
+toast_save_datum_ext(Relation rel, Datum value,
+					 struct varlena *oldexternal, int options,
+					 void *chunk_header, int chunk_header_size)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
-	HeapTuple	toasttup;
-	TupleDesc	toasttupDesc;
-	Datum		t_values[3];
-	bool		t_isnull[3];
-	CommandId	mycid = GetCurrentCommandId(true);
 	struct varlena *result;
 	struct varatt_external toast_pointer;
-	union
-	{
-		struct varlena hdr;
-		/* this is to make the union big enough for a chunk: */
-		char		data[TOAST_MAX_CHUNK_SIZE + VARHDRSZ];
-		/* ensure union is aligned well enough: */
-		int32		align_it;
-	}			chunk_data;
-	int32		chunk_size;
-	int32		chunk_seq = 0;
 	char	   *data_p;
 	int32		data_todo;
 	Pointer		dval = DatumGetPointer(value);
@@ -81,7 +78,6 @@ toast_save_datum(Relation rel, Datum value,
 	 * additional columns besides OID.
 	 */
 	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
-	toasttupDesc = toastrel->rd_att;
 
 	/* Open all the toast indexes and look for the valid one */
 	validIndex = toast_open_indexes(toastrel,
@@ -218,73 +214,10 @@ toast_save_datum(Relation rel, Datum value,
 		}
 	}
 
-	/*
-	 * Initialize constant parts of the tuple data
-	 */
-	t_values[0] = ObjectIdGetDatum(toast_pointer.va_valueid);
-	t_values[2] = PointerGetDatum(&chunk_data);
-	t_isnull[0] = false;
-	t_isnull[1] = false;
-	t_isnull[2] = false;
-
-	/*
-	 * Split up the item into chunks
-	 */
-	while (data_todo > 0)
-	{
-		int			i;
-
-		CHECK_FOR_INTERRUPTS();
-
-		/*
-		 * Calculate the size of this chunk
-		 */
-		chunk_size = Min(TOAST_MAX_CHUNK_SIZE, data_todo);
-
-		/*
-		 * Build a tuple and store it
-		 */
-		t_values[1] = Int32GetDatum(chunk_seq++);
-		SET_VARSIZE(&chunk_data, chunk_size + VARHDRSZ);
-		memcpy(VARDATA(&chunk_data), data_p, chunk_size);
-		toasttup = heap_form_tuple(toasttupDesc, t_values, t_isnull);
-
-		heap_insert(toastrel, toasttup, mycid, options, NULL);
-
-		/*
-		 * Create the index entry.  We cheat a little here by not using
-		 * FormIndexDatum: this relies on the knowledge that the index columns
-		 * are the same as the initial columns of the table for all the
-		 * indexes.  We also cheat by not providing an IndexInfo: this is okay
-		 * for now because btree doesn't need one, but we might have to be
-		 * more honest someday.
-		 *
-		 * Note also that there had better not be any user-created index on
-		 * the TOAST table, since we don't bother to update anything else.
-		 */
-		for (i = 0; i < num_indexes; i++)
-		{
-			/* Only index relations marked as ready can be updated */
-			if (toastidxs[i]->rd_index->indisready)
-				index_insert(toastidxs[i], t_values, t_isnull,
-							 &(toasttup->t_self),
-							 toastrel,
-							 toastidxs[i]->rd_index->indisunique ?
-							 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
-							 false, NULL);
-		}
-
-		/*
-		 * Free memory
-		 */
-		heap_freetuple(toasttup);
-
-		/*
-		 * Move on to next chunk
-		 */
-		data_todo -= chunk_size;
-		data_p += chunk_size;
-	}
+	toast_write_slice(toastrel, toastidxs, num_indexes, validIndex,
+					  toast_pointer.va_valueid, 0, 0, data_todo, data_p,
+					  options, chunk_header, chunk_header_size,
+					  NULL, NULL);
 
 	/*
 	 * Done - close toast relation and its indexes but keep the lock until
@@ -303,6 +236,14 @@ toast_save_datum(Relation rel, Datum value,
 
 	return PointerGetDatum(result);
 }
+
+Datum
+toast_save_datum(Relation rel, Datum value,
+				 struct varlena *oldexternal, int options)
+{
+	return toast_save_datum_ext(rel, value, oldexternal, options, NULL, 0);
+}
+
 
 /* ----------
  * toast_delete_datum -
@@ -386,7 +327,7 @@ toast_delete_datum(Datum value, bool is_speculative)
  *	toast rows with that ID; see notes for GetNewOidWithIndex().
  * ----------
  */
-static bool
+bool
 toastrel_valueid_exists(Relation toastrel, Oid valueid)
 {
 	bool		result = false;
@@ -434,7 +375,7 @@ toastrel_valueid_exists(Relation toastrel, Oid valueid)
  *	As above, but work from toast rel's OID not an open relation
  * ----------
  */
-static bool
+bool
 toastid_valueid_exists(Oid toastrelid, Oid valueid)
 {
 	bool		result;
@@ -491,7 +432,8 @@ toast_fetch_datum(struct varlena *attr)
 
 	/* Fetch all chunks */
 	toast_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
-									 attr, attrsize, 0, attrsize, result);
+							attr, attrsize, 0, attrsize, result, 0,
+							NULL, NULL);
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
@@ -571,13 +513,67 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	/* Fetch all chunks */
 	toast_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
-									 attr, attrsize, sliceoffset, slicelength,
-									 result);
+							attr, attrsize, sliceoffset, slicelength,
+							result, 0, NULL, NULL);
 
 	/* Close toast table */
 	table_close(toastrel, AccessShareLock);
 
 	return result;
+}
+
+static void
+process_toast_chunk(Relation toastrel, Oid valueid, struct varlena *result,
+					int chunk_data_size, int attrsize, int chunksize,
+					char *chunkdata, int curchunk, int expectedchunk,
+					int startchunk, int endchunk, int totalchunks,
+					int32 sliceoffset, int32 slicelength)
+{
+	int32		expected_size;
+	int32		chcpystrt;
+	int32		chcpyend;
+
+	/*
+	 * Some checks on the data we've found
+	 */
+	if (curchunk != expectedchunk)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("unexpected chunk number %d (expected %d) for toast value %u in %s",
+								 curchunk, expectedchunk, valueid,
+								 RelationGetRelationName(toastrel))));
+	if (curchunk > endchunk)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("unexpected chunk number %d (out of range %d..%d) for toast value %u in %s",
+								 curchunk,
+								 startchunk, endchunk, valueid,
+								 RelationGetRelationName(toastrel))));
+	expected_size = curchunk < totalchunks - 1 ? chunk_data_size
+		: attrsize - ((totalchunks - 1) * chunk_data_size);
+	Assert(chunksize == expected_size);
+	if (chunksize != expected_size)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg_internal("unexpected chunk size %d (expected %d) in chunk %d of %d for toast value %u in %s",
+								 chunksize, expected_size,
+								 curchunk, totalchunks, valueid,
+								 RelationGetRelationName(toastrel))));
+
+	/*
+	 * Copy the data into proper place in our result
+	 */
+	chcpystrt = 0;
+	chcpyend = chunksize - 1;
+	if (curchunk == startchunk)
+		chcpystrt = sliceoffset % chunk_data_size;
+	if (curchunk == endchunk)
+		chcpyend = (sliceoffset + slicelength - 1) % chunk_data_size;
+
+	memcpy(VARDATA(result) +
+		   (curchunk * chunk_data_size - sliceoffset) + chcpystrt,
+		   chunkdata + chcpystrt,
+		   (chcpyend - chcpystrt) + 1);
 }
 
 /*
@@ -592,9 +588,11 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
  */
 void
 toast_fetch_toast_slice(Relation toastrel, Oid valueid,
-					   struct varlena *attr, int32 attrsize,
-					   int32 sliceoffset, int32 slicelength,
-					   struct varlena *result)
+						struct varlena *attr, int32 attrsize,
+						int32 sliceoffset, int32 slicelength,
+						struct varlena *result, int32 header_size,
+						ToastChunkVisibilityCheck visibility_check,
+						void *visibility_cxt)
 {
 	Relation   *toastidxs;
 	ScanKeyData toastkey[3];
@@ -603,12 +601,16 @@ toast_fetch_toast_slice(Relation toastrel, Oid valueid,
 	SysScanDesc toastscan;
 	HeapTuple	ttup;
 	int32		expectedchunk;
-	int32		totalchunks = ((attrsize - 1) / TOAST_MAX_CHUNK_SIZE) + 1;
+	int32		totalchunks;
 	int			startchunk;
 	int			endchunk;
 	int			num_indexes;
 	int			validIndex;
 	SnapshotData SnapshotToast;
+	Size		chunk_data_size = TOAST_MAX_CHUNK_SIZE - header_size;
+	bool		versioned = header_size != 0;
+
+	totalchunks = ((attrsize - 1) / chunk_data_size) + 1;
 
 	/* Look for the valid index of toast relation */
 	validIndex = toast_open_indexes(toastrel,
@@ -616,8 +618,8 @@ toast_fetch_toast_slice(Relation toastrel, Oid valueid,
 									&toastidxs,
 									&num_indexes);
 
-	startchunk = sliceoffset / TOAST_MAX_CHUNK_SIZE;
-	endchunk = (sliceoffset + slicelength - 1) / TOAST_MAX_CHUNK_SIZE;
+	startchunk = sliceoffset / chunk_data_size;
+	endchunk = (sliceoffset + slicelength - 1) / chunk_data_size;
 	Assert(endchunk <= totalchunks);
 
 	/* Set up a scan key to fetch from the index. */
@@ -676,9 +678,6 @@ toast_fetch_toast_slice(Relation toastrel, Oid valueid,
 		bool		isnull;
 		char	   *chunkdata;
 		int32		chunksize;
-		int32		expected_size;
-		int32		chcpystrt;
-		int32		chcpyend;
 
 		/*
 		 * Have a chunk, extract the sequence number and the data
@@ -707,48 +706,72 @@ toast_fetch_toast_slice(Relation toastrel, Oid valueid,
 			chunkdata = NULL;
 		}
 
-		/*
-		 * Some checks on the data we've found
-		 */
-		if (curchunk != expectedchunk)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk number %d (expected %d) for toast value %u in %s",
-									 curchunk, expectedchunk, valueid,
-									 RelationGetRelationName(toastrel))));
-		if (curchunk > endchunk)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk number %d (out of range %d..%d) for toast value %u in %s",
-									 curchunk,
-									 startchunk, endchunk, valueid,
-									 RelationGetRelationName(toastrel))));
-		expected_size = curchunk < totalchunks - 1 ? TOAST_MAX_CHUNK_SIZE
-			: attrsize - ((totalchunks - 1) * TOAST_MAX_CHUNK_SIZE);
-		if (chunksize != expected_size)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk size %d (expected %d) in chunk %d of %d for toast value %u in %s",
-									 chunksize, expected_size,
-									 curchunk, totalchunks, valueid,
-									 RelationGetRelationName(toastrel))));
+		if (versioned)
+		{
+			/* Skip aborted chunks */
+			if (!HeapTupleHeaderXminCommitted(ttup->t_data))
+			{
+				TransactionId xmin = HeapTupleHeaderGetXmin(ttup->t_data);
 
-		/*
-		 * Copy the data into proper place in our result
-		 */
-		chcpystrt = 0;
-		chcpyend = chunksize - 1;
-		if (curchunk == startchunk)
-			chcpystrt = sliceoffset % TOAST_MAX_CHUNK_SIZE;
-		if (curchunk == endchunk)
-			chcpyend = (sliceoffset + slicelength - 1) % TOAST_MAX_CHUNK_SIZE;
+				Assert(!HeapTupleHeaderXminInvalid(ttup->t_data));
 
-		memcpy(VARDATA(result) +
-			   (curchunk * TOAST_MAX_CHUNK_SIZE - sliceoffset) + chcpystrt,
-			   chunkdata + chcpystrt,
-			   (chcpyend - chcpystrt) + 1);
+				if (TransactionIdDidAbort(xmin))
+					continue;
+			}
+
+			if (curchunk != expectedchunk)
+			{
+				char	   *chunkdata_ver = NULL;
+				int32		chunksize_ver = 0;
+
+				if (!visibility_check(visibility_cxt, &chunkdata_ver, &chunksize_ver, NULL))
+					ereport(ERROR,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							 errmsg_internal("missing chunk number %d for toast value %u in %s",
+											 expectedchunk, valueid,
+											 RelationGetRelationName(toastrel))));
+
+				chunkdata_ver += header_size;
+				chunksize_ver -= header_size;
+
+				process_toast_chunk(toastrel, valueid, result, chunk_data_size, attrsize,
+									chunksize_ver, chunkdata_ver, expectedchunk,
+									expectedchunk, startchunk, endchunk, totalchunks,
+									sliceoffset, slicelength);
+				expectedchunk++;
+			}
+
+			if (curchunk != expectedchunk)
+				continue;
+
+			if (!visibility_check(visibility_cxt, &chunkdata, &chunksize, NULL))
+				continue;
+		}
+
+		process_toast_chunk(toastrel, valueid, result, chunk_data_size, attrsize,
+							chunksize, chunkdata, curchunk,
+							expectedchunk, startchunk, endchunk, totalchunks,
+							sliceoffset, slicelength);
 
 		expectedchunk++;
+	}
+
+	if (versioned)
+	{
+		char	   *chunkdata_ver = NULL;
+		int32		chunksize_ver = 0;
+
+		if (visibility_check(visibility_cxt, &chunkdata_ver, &chunksize_ver, NULL))
+		{
+			chunkdata_ver += header_size;
+			chunksize_ver -= header_size;
+
+			process_toast_chunk(toastrel, valueid, result, chunk_data_size, attrsize,
+								chunksize_ver, chunkdata_ver, expectedchunk,
+								expectedchunk, startchunk, endchunk, totalchunks,
+								sliceoffset, slicelength);
+			expectedchunk++;
+		}
 	}
 
 	/*
@@ -764,4 +787,350 @@ toast_fetch_toast_slice(Relation toastrel, Oid valueid,
 	/* End scan and close indexes. */
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, AccessShareLock);
+}
+
+void
+toast_update_datum(Datum value,
+				   void *slice_data, int slice_offset, int slice_length,
+				   void *chunk_header, int chunk_header_size,
+				   ToastChunkVisibilityCheck visibility_check,
+				   void *visibility_cxt, int options)
+{
+	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
+	struct varatt_external toast_pointer;
+	Relation	toastrel;
+	Relation   *toastidxs;
+	int			num_indexes;
+	int			validIndex;
+
+	Assert(VARATT_IS_EXTERNAL_ONDISK(attr));
+
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+	/* Open the toast relation and its indexes */
+	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+
+	/* Fetch valid relation used for process */
+	validIndex = toast_open_indexes(toastrel,
+									RowExclusiveLock,
+									&toastidxs,
+									&num_indexes);
+
+	toast_write_slice(toastrel, toastidxs, num_indexes, validIndex,
+					  toast_pointer.va_valueid,
+					  VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer),
+					  slice_offset, slice_length, slice_data,
+					  options, chunk_header, chunk_header_size,
+					  visibility_check, visibility_cxt);
+
+	toast_close_indexes(toastidxs, num_indexes, NoLock);
+	table_close(toastrel, NoLock);
+}
+
+static void *
+toast_fetch_old_chunk(Relation toastrel, SysScanDesc toastscan, Oid valueid,
+					  int32 expected_chunk_seq, int32 last_old_chunk_seq,
+					  ToastChunkVisibilityCheck visibility_check,
+					  void *visibility_cxt,
+					  int32 *p_old_chunk_size, ItemPointer old_tid)
+{
+	for (;;)
+	{
+		HeapTuple	old_toasttup;
+		char	   *old_chunk_data;
+		int32		old_chunk_seq;
+		int32		old_chunk_data_size;
+
+		old_toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection);
+
+		if (old_toasttup)
+		{
+			/* Skip aborted chunks */
+			if (!HeapTupleHeaderXminCommitted(old_toasttup->t_data))
+			{
+				TransactionId xmin = HeapTupleHeaderGetXmin(old_toasttup->t_data);
+
+				Assert(!HeapTupleHeaderXminInvalid(old_toasttup->t_data));
+
+				if (TransactionIdDidAbort(xmin))
+					continue;
+			}
+
+			toast_extract_chunk_fields(toastrel, toastrel->rd_att,
+									   valueid, old_toasttup,
+									   &old_chunk_seq,
+									   &old_chunk_data,
+									   &old_chunk_data_size);
+		}
+
+		if (!old_toasttup || old_chunk_seq != expected_chunk_seq)
+		{
+			/*
+			 * All versions of the current chunk were processed,
+			 * select a visible one and use it.
+			 */
+			char	   *chunkdata = NULL;
+
+			if (!visibility_check(visibility_cxt, &chunkdata,
+								  p_old_chunk_size, old_tid))
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg_internal("missing chunk number %d for toast value %u in %s",
+										 expected_chunk_seq, valueid,
+										 RelationGetRelationName(toastrel))));
+
+			if (old_toasttup ?
+				old_chunk_seq != expected_chunk_seq + 1 :
+				expected_chunk_seq != last_old_chunk_seq)
+				ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg_internal("missing chunk number %d for toast value %u in %s",
+									 expected_chunk_seq + 1, valueid,
+									 RelationGetRelationName(toastrel))));
+
+			return chunkdata;
+		}
+
+		visibility_check(visibility_cxt,
+						 &old_chunk_data,
+						 &old_chunk_data_size,
+						 &old_toasttup->t_self);
+	}
+}
+
+static void
+toast_write_slice(Relation toastrel, Relation *toastidxs,
+				  int num_indexes, int validIndex,
+				  Oid valueid, int32 value_size, int32 slice_offset,
+				  int32 slice_length, char *slice_data, int options,
+				  void *chunk_header, int chunk_header_size,
+				  ToastChunkVisibilityCheck visibility_check,
+				  void *visibility_cxt)
+{
+	CommandId	mycid = GetCurrentCommandId(true);
+	TupleDesc	toasttupDesc = toastrel->rd_att;
+	union
+	{
+		struct varlena hdr;
+		/* this is to make the union big enough for a chunk: */
+		char		data[TOAST_MAX_CHUNK_SIZE + VARHDRSZ];
+		/* ensure union is aligned well enough: */
+		int32		align_it;
+	}			chunk_data;
+	int32		max_chunks_size = TOAST_MAX_CHUNK_SIZE - chunk_header_size;
+	int32		chunk_size;
+	int32		chunk_seq = slice_offset / max_chunks_size;
+	int32		chunk_offset = chunk_seq * max_chunks_size;
+	int32		last_old_chunk_seq = (value_size - 1) / max_chunks_size;
+	Datum		t_values[3];
+	bool		t_isnull[3];
+
+	ScanKeyData toastkey[2];
+	SysScanDesc toastscan = NULL;
+	SnapshotData SnapshotToast;
+
+	if (chunk_offset < value_size)
+	{
+		/*
+		 * Setup a scan key to find chunks with matching va_valueid
+		 */
+		ScanKeyInit(&toastkey[0],
+					(AttrNumber) 1,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(valueid));
+
+		ScanKeyInit(&toastkey[1],
+					(AttrNumber) 2,
+					BTGreaterEqualStrategyNumber, F_INT4GE,
+					Int32GetDatum(chunk_seq));
+
+		/*
+		 * Find all the chunks.  (We don't actually care whether we see them in
+		 * sequence or not, but since we've already locked the index we might as
+		 * well use systable_beginscan_ordered.)
+		 */
+		init_toast_snapshot(&SnapshotToast);
+		toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
+											   &SnapshotToast, 2, toastkey);
+	}
+
+	/*
+	 * Initialize constant parts of the tuple data
+	 */
+	t_values[0] = ObjectIdGetDatum(valueid);
+	t_values[2] = PointerGetDatum(&chunk_data);
+	t_isnull[0] = false;
+	t_isnull[1] = false;
+	t_isnull[2] = false;
+
+	/*
+	 * Split up the item into chunks
+	 */
+	while (slice_length > 0)
+	{
+		HeapTuple	toasttup;
+		ItemPointerData old_tid = {0};
+		int32		old_chunk_size = chunk_offset >= value_size ? 0 :
+			Min(max_chunks_size, value_size - chunk_offset);
+		int32		chunk_slice_start = slice_offset <= chunk_offset ?
+			0 : slice_offset - chunk_offset;
+		int32		copied_slice_size =
+			Min(max_chunks_size - chunk_slice_start, slice_length);
+		bool		rewrite_chunk =
+			(slice_offset > chunk_offset &&
+			 slice_offset < chunk_offset + max_chunks_size) ||
+			slice_length < old_chunk_size;
+		bool		is_update = toastscan && chunk_seq <= last_old_chunk_seq;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/* Fetch old tuple and copy its data */
+		if (is_update)
+		{
+			int32		old_chunk_size_hdr;
+			void	   *old_chunk_data =
+				toast_fetch_old_chunk(toastrel, toastscan, valueid,
+									  chunk_seq, last_old_chunk_seq,
+									  visibility_check, visibility_cxt,
+									  &old_chunk_size_hdr,
+									  &old_tid);
+
+			Assert(old_chunk_size == old_chunk_size_hdr - chunk_header_size);
+
+			if (rewrite_chunk)
+				memcpy(VARDATA(&chunk_data), old_chunk_data, old_chunk_size_hdr);
+		}
+
+		/*
+		 * Calculate the size of this chunk
+		 */
+		copied_slice_size = Min(max_chunks_size - chunk_slice_start, slice_length);
+		chunk_size = Max(old_chunk_size, chunk_slice_start + copied_slice_size);
+
+		/*
+		 * Build a tuple and store it
+		 */
+		t_values[1] = Int32GetDatum(chunk_seq++);
+		SET_VARSIZE(&chunk_data, chunk_size + chunk_header_size + VARHDRSZ);
+		if (chunk_header_size > 0)
+			memcpy(VARDATA(&chunk_data), chunk_header, chunk_header_size);
+		memcpy(VARDATA(&chunk_data) + chunk_slice_start + chunk_header_size, slice_data, copied_slice_size);
+		toasttup = heap_form_tuple(toasttupDesc, t_values, t_isnull);
+
+		if (is_update)
+		{
+			TM_Result	result;
+			TM_FailureData tmfd;
+			LockTupleMode lockmode;
+
+			result = heap_update(toastrel, &old_tid, toasttup,
+								 mycid, InvalidSnapshot,
+								 true, /* wait for commit */
+								 &tmfd, &lockmode);
+
+			switch (result)
+			{
+				case TM_Ok:
+					/* done successfully */
+					break;
+
+				case TM_SelfModified:
+					elog(ERROR, "TOAST tuple already updated by self");
+					break;
+
+				case TM_Updated:
+					elog(ERROR, "TOAST tuple concurrently updated");
+					break;
+
+				case TM_Deleted:
+					elog(ERROR, "TOAST tuple concurrently deleted");
+					break;
+
+				default:
+					elog(ERROR, "unrecognized heap_update status: %u", result);
+					break;
+			}
+		}
+		else
+			heap_insert(toastrel, toasttup, mycid, options, NULL);
+
+
+		if (!HeapTupleIsHeapOnly(toasttup))
+		/*
+		 * Create the index entry.  We cheat a little here by not using
+		 * FormIndexDatum: this relies on the knowledge that the index columns
+		 * are the same as the initial columns of the table for all the
+		 * indexes.  We also cheat by not providing an IndexInfo: this is okay
+		 * for now because btree doesn't need one, but we might have to be
+		 * more honest someday.
+		 *
+		 * Note also that there had better not be any user-created index on
+		 * the TOAST table, since we don't bother to update anything else.
+		 */
+		for (int i = 0; i < num_indexes; i++)
+		{
+			/* Only index relations marked as ready can be updated */
+			if (toastidxs[i]->rd_index->indisready)
+				index_insert(toastidxs[i], t_values, t_isnull,
+							 &(toasttup->t_self),
+							 toastrel,
+							 toastidxs[i]->rd_index->indisunique ?
+							 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
+							 false, NULL);
+		}
+
+		/*
+		 * Free memory
+		 */
+		heap_freetuple(toasttup);
+
+		/*
+		 * Move on to next chunk
+		 */
+		chunk_offset += chunk_size;
+		slice_length -= copied_slice_size;
+		slice_data += copied_slice_size;
+	}
+
+	if (toastscan)
+		systable_endscan_ordered(toastscan);
+}
+
+static void
+toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
+						   Oid valueid, HeapTuple ttup, int32 *seqno,
+						   char **chunkdata, int *chunksize)
+{
+	Pointer		chunk;
+	bool		isnull;
+
+	/*
+	 * Have a chunk, extract the sequence number and the data
+	 */
+	*seqno = DatumGetInt32(fastgetattr(ttup, 2, toasttupDesc, &isnull));
+	Assert(!isnull);
+
+	chunk = DatumGetPointer(fastgetattr(ttup, 3, toasttupDesc, &isnull));
+	Assert(!isnull);
+
+	if (!VARATT_IS_EXTENDED(chunk))
+	{
+		*chunksize = VARSIZE(chunk) - VARHDRSZ;
+		*chunkdata = VARDATA(chunk);
+	}
+	else if (VARATT_IS_SHORT(chunk))
+	{
+		/* could happen due to heap_form_tuple doing its thing */
+		*chunksize = VARSIZE_SHORT(chunk) - VARHDRSZ_SHORT;
+		*chunkdata = VARDATA_SHORT(chunk);
+	}
+	else
+	{
+		/* should never happen */
+		elog(ERROR, "found toasted toast chunk for toast value %u in %s",
+			 valueid, RelationGetRelationName(toastrel));
+		*chunksize = 0;		/* keep compiler quiet */
+		*chunkdata = NULL;
+	}
 }
