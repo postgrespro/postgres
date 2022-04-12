@@ -267,7 +267,7 @@ do_lo_unlink(const char *loid_arg)
  * do_lo_list()
  *
  * Show all large objects in database with comments
- */
++ */
 bool
 do_lo_list(void)
 {
