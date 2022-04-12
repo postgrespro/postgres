@@ -14,14 +14,14 @@
  */
 #include "postgres.h"
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "commands/vacuum.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-
+#include "access/toast_helper.h"
 
 /*
  * To avoid consuming too much memory, IO and CPU load during analysis, and/or

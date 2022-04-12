@@ -17,7 +17,7 @@
 #include <lz4.h>
 #endif
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/toast_compression.h"
 #include "common/pg_lzcompress.h"
 #include "fmgr.h"
