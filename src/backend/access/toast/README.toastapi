@@ -29,7 +29,63 @@ How Pluggable TOAST Works
 - Toaster can use any knowledge of data structure and workflow
 - Same data could be TOASTed with different Toasters
 
-II. SQL Syntax and System Catalog
+II. Pluggable TOAST API
+Pluggable TOAST proposes and open API allowing to develop and plug in
+custom Toasters for table column and data types. Toaster could process
+TOASTed data using knowledge about internal data structure and workflow.
+
+Toasters could use any storage, advanced compression, encryption, and
+other functionality internally, without awaring TAM that calls Toaster.
+
+Any custom Toaster should have a handler and pre-defined method set.
+Toaster header must defined according to toastapi.h and several mandatory
+methods must be implemented to be able to toast and detoast data.
+
+Also, TOAST API has one very important and powerful method - "get_vtable".
+This method is responsible for API extensibility - it allows passing
+outside Toaster any specific functions a developer wants to be available
+to outer interfaces, like "append" function for bytea datatype which
+appends bytea value without creating an intermediate copy, JSON
+container-specific functions, compression algorythms, etc.
+
+Toaster method description:
+1) toast_init   - function responsible for initializing TOAST,
+        i.e. create TOAST table and other preventive actions;
+2) toast 		    - (!) mandatory function, TOASTs incoming value -
+        actual external storage is done here. Toast pointer is returned
+        instead of untoasted data. Is impemented in Generic (default)
+        Toaster;
+3) update_toast - update existing TOASTed value. Generic (default) TOAST
+        does not implement Update, it can only do full detoast, mark old
+        TOAST tuple as dead, and toast and store an updated value;
+4) copy_toast 	- create copy of the TOASTed value;
+5) detoast 	    - (!) mandatory function, recovers toasted data from
+        external storage into original data (regular varlena);
+6) deltoast 	  - delete TOASTed value from TOAST table;
+7) get_vtable 	- returns virtual functions table - structure
+        containing pointers to functions extending pre-defined
+        function set;
+8) toastervalidate - (!) mandatory function, validates Toaster
+        for given data or data type;
+
+Please note: functions highlighted with "(!)" are mandatory and
+must be implemented. Other functions are optional.
+
+An example of get_vtable extended method set:
+static void *
+bytea_toaster_vtable(Datum toast_ptr)
+{
+	ByteaToastRoutine *routine = palloc0(sizeof(*routine));
+
+	routine->magic = BYTEA_TOASTER_MAGIC;
+	routine->append = bytea_toaster_append;
+
+	return routine;
+}
+
+
+
+III. SQL Syntax and System Catalog
 
 Pluggable TOAST introduces new entity into system catalog - PG_TOASTER
 table where all Toasters reside:
@@ -57,7 +113,7 @@ explicitly it is done as with custom Toasters:
 
 ALTER TABLE t ALTER COLUMN c SET TOASTER deftoaster;
 
-III. SQL Syntax Example
+IV. SQL Syntax Example
 
 SQL definition of new Toaster Extension:
 
@@ -106,7 +162,7 @@ Access method: heap
 ...
 
 
-IV. Dummy Toaster
+V. Dummy Toaster
 
 For the sake of developers eager to develop their own Custom
 Toasters we provide DUMMY TOASTER extension which is simple
@@ -206,7 +262,7 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
 (1 row)
 
 
-V. Source Changes
+VI. Source Changes
 
 Changed sources:
 src/include/access/toasterapi.h
@@ -401,7 +457,6 @@ Strategies explanation (from comments):
  Finally we store attributes of type MAIN externally.  At this point we
  increase the target tuple size, so that MAIN attributes aren't stored
  externally unless really necessary.
-<<<
 
 VI. Tests
 
