@@ -17,9 +17,7 @@
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 #include "utils/rel.h"
-#include "access/toasterapi.h"
 #include "access/table.h"
-#include "access/tableam.h"
 #include "common/int.h"
 #include "common/pg_lzcompress.h"
 #include "utils/expandeddatum.h"
@@ -52,10 +50,19 @@ typedef struct toast_compress_header
 	} while (0)
 
 /* extern Datum toast_compress_datum(Datum value, char cmethod); */
+extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
+extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
 extern void toast_delete_datum(Datum value, bool is_speculative);
 extern Datum toast_save_datum(Relation rel, Datum value,
 							  struct varlena *oldexternal, int options);
+extern Datum toast_save_datum_ext(Relation rel, Datum value,
+								  struct varlena *oldexternal, int options,
+								  void *chunk_header, int chunk_header_size);
+
+typedef bool (*ToastChunkVisibilityCheck)(void *cxt, char **chunkdata,
+										  int32 *chunksize,
+										  ItemPointer tid);
 
 extern struct varlena *toast_fetch_datum(struct varlena *attr);
 extern struct varlena *toast_fetch_datum_slice(struct varlena *attr,
@@ -63,13 +70,18 @@ extern struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 slicelength);
 
 extern void
-toast_fetch_toast_slice(Relation toastrel, Oid valueid, 
-					   struct varlena *attr, int32 attrsize,
-					   int32 sliceoffset, int32 slicelength,
-					   struct varlena *result);
+toast_fetch_toast_slice(Relation toastrel, Oid valueid,
+						struct varlena *attr, int32 attrsize,
+						int32 sliceoffset, int32 slicelength,
+						struct varlena *result, int32 header_size,
+						ToastChunkVisibilityCheck visibility_check,
+						void *visibility_cxt);
 
-/*
-extern Size toast_datum_size(Datum value);
-extern Size toast_raw_datum_size(Datum value);
-*/
+extern void
+toast_update_datum(Datum value,
+				   void *slice_data, int slice_offset, int slice_length,
+				   void *chunk_header, int chunk_header_size,
+				   ToastChunkVisibilityCheck visibility_check,
+				   void *visibility_cxt, int options);
+
 #endif							/* TOAST_INTERNALS_H */
