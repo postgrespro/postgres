@@ -1,0 +1,621 @@
+Pluggable TOAST
+
+I. What is Pluggable TOAST
+
+TOAST is slicing and storing an oversized value externally to Tuple.
+Currently TOAST is a part of Heap AM (Core). Not extensible, has
+same strategy for all datatypes, and not effective for structured
+data (json) or data required special workflow (bytea).
+
+Pluggable TOAST propose storing a value outside Tuple, with means
+and storage depending on a specific entity incapsulating all storage
+mechanics and hiding it from Table AM which calls it - thi entity we
+are calling Toaster. Advantages over standard standard TOAST - detached
+from Heap AM, has extensible TOAST API allowing plugging in custom
+Toasters.
+
+In short:
+How TOAST Works
+- When tuple size exceeds some internal limit Heap decides to TOAST
+  large attributes;
+- Attribute is stored in TOAST relation. Attribute value is replaced
+  with Toast Pointer containing TOAST relation OID and value ID in
+  TOAST table;
+- 4 strategies depending on storage type;
+- TOAST does not know anything about data being TOASTed;
+
+How Pluggable TOAST Works
+- When tuple size exceeds some internal limit Heap decides to TOAST
+  large attributes. As an option we suggest special flag to force
+  value to be TOASTed despite of its size;
+- Table AM searches for implementation of TOAST according to OID
+  assigned to table's column (the Toaster).
+- Attribute is replaced with Custom Toast Pointer created by specific
+  Toaster. Custom TOAST Pointer contains information required by
+  specific Toaster to retrieve TOASTed data - Toaster OID, etc;
+- TOAST and storage details are hidden from AM behind the Toaster;
+- Toaster can use any knowledge of data structure and workflow;
+- Same data could be TOASTed with different Toasters;
+
+II. Pluggable TOAST API
+
+Pluggable TOAST proposes an open API allowing to develop and plug in
+custom Toasters for table column and data types. Toaster could process
+TOASTed data using knowledge about internal data structure and workflow.
+
+Toasters could use any storage, advanced compression, encryption, and
+other functionality internally, without awaring TAM that calls Toaster.
+
+Custom Toaster should be defined and included as an PostgreSQL Extension
+via standard PostgreSQL Extension mechanics.
+
+Any custom Toaster should have a handler and pre-defined method set.
+Toaster header must be defined according to toastapi.h and must have
+several mandatory methods to be implemented to toast and detoast
+(store and retrieve) data.
+
+TOAST API interface is defined with TsrRoutine structure with pre-defined
+set of methods (check toasterapi.h):
+typedef struct TsrRoutine
+{
+   NodeTag type;
+   /* interface functions */
+   toast_init init;
+   toast_function toast;
+   update_toast_function update_toast;
+   copy_toast_function copy_toast;
+   detoast_function detoast;
+   del_toast_function deltoast;
+   get_vtable_function get_vtable;
+   toastervalidate_function toastervalidate;
+} TsrRoutine;
+
+TOAST API method description:
+
+void toast_init(Relation rel, Datum reloptions, LOCKMODE lockmode, bool check, Oid OIDOldToast);
+- function responsible for initializing TOAST, i.e. create TOAST table and other preventive actions.
+Input parameters were taken alike create_toast_table function. Does not return a value.
+
+Input:
+Relation rel            - original relation TOAST storage should be connected to;
+Datum reloptions        - reloptions column for TOAST table if needed;
+LOCKMODE lockmode       - lock mode
+bool check              - lock mode check request
+Oid OIDOldToast         - old TOAST relation OID
+Output:
+void
+
+Datum toast_function(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue, int max_inline_size, int options);
+- (!) mandatory function, TOASTs incoming value - actual external storage is done here. Returns TOAST pointer
+referencing original value that was TOASTed. Is impemented in Generic (default) Toaster.
+
+Input:
+Relation toast_rel      - TOAST relation OID to use for storage;
+Oid toasterid           - Toaster OID (maybe excessive, but we have to make sure)
+Datum value             - original value to be TOASTed;
+Datum oldvalue          - TOASTed value in old TOAST table for rewrite case;
+int max_inline_size     - maximum chunk size that could be stored directly in TOAST pointer;
+int options             - TOAST options
+Output:
+Datum - TOAST pointer structure referencing value stored externally. This TOAST pointer is stored in original
+table instead of original data.
+
+Datum update_toast_function(Oid toasterid, Datum value, Datum oldvalue, int options);
+- Updates existing value that was TOASTed with the new one. Returns TOAST pointer referencing updated value.
+
+Input:
+Oid toasterid           - Toaster OID (maybe excessive, but we have to make sure)
+Datum value             - TOAST pointer to value to be updated;
+Datum oldvalue          - TOAST pointer to new value;
+int options             - TOAST options
+Output:
+Datum - TOAST pointer structure referencing updated value.
+
+Datum copy_toast_function(Relation toast_rel, Oid toasterid, Datum newvalue, int options);
+- Creates copy of TOASTed value. Returns created TOAST pointer.
+
+Input:
+Relation toast_rel      - TOAST relation OID to use for storage;
+Oid toasterid           - Toaster OID (maybe excessive, but we have to make sure)
+Datum newvalue          - TOASTed value to be copied;
+int options             - TOAST options
+Output:
+Datum - TOAST pointer structure referencing value stored externally. This TOAST pointer is stored in given
+TOAST table instead of original data.
+
+Datum detoast_function(Relation toast_rel, Datum toast_ptr, int offset, int length);
+- (!) mandatory function, recovers toasted data from external storage into original data (regular varlena).
+Returns original value as Datum casted from varlena.
+
+Input:
+Relation toast_rel      - TOAST relation OID to recover value from;
+Datum toast_ptr         - TOAST pointer referencing TOASTed value to recover;
+int offset              - Data offset in original value if we have to recover not all value but slice;
+int length              - Slice length to recover;
+Output:
+Datum - original value recovered from TOAST table. For regular use must be of varlena type, but casting to
+Datum allows to return pointer to any kind of structure.
+
+void del_toast_function(Datum value, bool is_speculative);
+- Deletes TOASTed value from TOAST storage. Does not return a value.
+Input:
+Datum value             - TOASTed value to delete;
+bool is_speculative     - flag for tuple inserted by the same command that deletes it;
+Output:
+void
+
+void * get_vtable_function(Datum toast_ptr);
+- returns virtual functions table - structure containing pointers to functions extending pre-defined
+function set. See III for more datailed virtual functions table explanation.
+
+Input:
+Datum value             - TOASTed value to delete;
+bool is_speculative     - flag for tuple inserted by the same command that deletes it;
+Output:
+void
+
+bool toastervalidate_function(Oid typeoid, char storage, char compression, Oid amoid, bool false_ok);
+- validates given data type for current Toaster.
+
+Input:
+Oid typeoid             - Data type OID to validate;
+char storage            - STORAGE parameter from table column, see SET STORAGE;
+char compression        - COMPRESSION parameter from table column, see SET COMPRESSION;
+Oid amoid               - Access method OID - is provided for future use, in case of some other AM is used
+                        instead of Heap;
+bool false_ok           - Sets validation method behavior in case of validation has not passed - should it
+                        fail or just return false;
+Output:
+bool - is passed type valid for current Toaster (true) or not (false). Generic Toaster should always
+return true because it must TOAST any TOASTable datatype.
+
+Please note: functions highlighted with "(!)" are mandatory and
+must be implemented. Other functions are optional.
+
+Also, TOAST API has one very important and powerful method - "get_vtable".
+This method is responsible for API extensibility - it allows passing
+outside of the Toaster any specific functions a developer wants to be
+available to outer interfaces, like detoast iterators, JSON container
+specific functions, compression algorythms, etc - it is explained in III.
+
+III. Pluggable TOAST Extension
+
+An important part of the Pluggable TOAST API is its extensibility.
+TOAST API provides an interface for using user-defined functions
+in addition to pre-defined TOAST API functions set.
+
+In addition to pre-defined functions like toast, detoast, etc.,
+TOAST API provides special function "get_vtable":
+
+typedef void * (*get_vtable_function) (Datum toast_ptr);
+
+This function is intended to return virtual table of user-defined
+functions which could be used by developer, for example adding
+iterators to the default Toaster.
+
+An example of get_vtable extended method set:
+/* Virtual functions table in Generic Toaster */
+static void *
+generic_toaster_vtable(Datum toast_ptr)
+{
+	GenericToastRoutine *routine = palloc0(sizeof(*routine));
+
+	routine->iterator_init = generic_iterator_init;
+        routine->detoast_next = generic_detoast_iterate;
+
+	return routine;
+}
+
+Datum
+default_toaster_handler(PG_FUNCTION_ARGS)
+{
+	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
+
+        ...
+	tsrroutine->get_vtable = generic_toaster_vtable;
+        ...
+
+	PG_RETURN_POINTER(tsrroutine);
+}
+
+
+/* Using virtual functions table */
+TsrRoutine *toaster = SearchTsrCache(DEFAULT_TOASTER_OID);
+GenericToastRoutine *r = (GenericToastRoutine *) toaster->get_vtable(PointerGetDatum(attr));
+r->iterator_init(...);
+r->detoast_next(...);
+
+IV. System Catalog Changes
+
+Pluggable TOAST extends pg_attribute system table with column
+"atttoaster" of type OID to store Toaster OID assigned to table
+column:
+
+=# \d pg_attribute
+               Table "pg_catalog.pg_attribute"
+     Column     |   Type    | Collation | Nullable | Default
+----------------+-----------+-----------+----------+---------
+ attrelid       | oid       |           | not null |
+ attname        | name      |           | not null |
+...
+ attstorage     | "char"    |           | not null |
+ atttoaster     | oid       |           | not null |
+ attcompression | "char"    |           | not null |
+...
+
+By default "atttoaster" is assigned with DEFAULT_TOASTER_OID
+(default, or generic Toaster). When new Toaster is assigned
+to table column atttoaster value is assigned with corresponding
+Toaster ID. atttoaster value is used to search Toaster for
+TOASTing value inserted or updated.
+
+When TOASTed value is updated it is deTOASTed using Toaster
+OID stored in TOAST pointer and then TOASTed using OID from
+atttoaster attribute.
+
+Pluggable TOAST introduces new entity into system catalog -
+PG_TOASTER table where all Toasters reside:
+
+select * from PG_TOASTER;
+  oid  |    tsrname    |       tsrhandler
+-------+---------------+-------------------------
+  9864 | deftoaster    | default_toaster_handler
+(1 rows)
+
+Where tsrname is the name of the Toaster used in SQL queries and
+tsrhandler is Toaster handler function defined by developer.
+
+V. SQL Syntax Example
+
+Pluggable TOAST extends SQL syntax:
+1) For CREATE TABLE -
+CREATE TABLE t ( c <type> STORAGE external TOASTER <t1> );
+2) ALTER TABLE ALTER COLUMN
+ALTER TABLE t ALTER COLUMN c SET TOASTER <t1>;
+where <t1> is toaster name registered in PG_TOASTER table.
+Please note that for custom Toasters STORAGE must be explicitly stated
+as EXTERNAL.
+Default toaster has toaster name "deftoaster", and it is applied
+implicitly if not stated otherwise. But if you want to use it
+explicitly it is done as with custom Toasters:
+
+ALTER TABLE t ALTER COLUMN c SET TOASTER deftoaster;
+
+Syntax usage example:
+
+SQL definition of new Toaster Extension:
+
+CREATE FUNCTION custom_toaster_handler(internal)
+RETURNS toaster_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+CREATE TOASTER custom_toaster HANDLER custom_toaster_handler;
+
+SQL –  install custom Toaster:
+
+CREATE EXTENSION custom_toaster;
+select * from pg_toaster;
+  oid  |    tsrname     |       tsrhandler
+-------+----------------+-------------------------
+  9864 | deftoaster     | default_toaster_handler
+ 32772 | custom_toaster | custom_toaster_handler
+
+Usage example:
+
+CREATE TABLE tst1 (
+    c1 text STORAGE plain,
+    c2 text STORAGE external TOASTER custom_toaster,
+    id int4
+);
+ALTER TABLE tst1 ALTER COLUMN c1 SET TOASTER custom_toaster;
+=# \d+ tst1
+ Column |  Type   | Collation | Nullable | Default | Storage  |  Toaster       |...
+--------+---------+-----------+----------+---------+----------+----------------+...
+ c1     | text    |           |          |         | plain    | deftoaster     |...
+ c2     | text    |           |          |         | external | custom_toaster |...
+ id     | integer |           |          |         | plain    |                |...
+Access method: heap
+
+VI. Dummy Toaster
+
+For the sake of developers eager to develop their own Custom
+Toasters we provide DUMMY TOASTER extension which is simple
+Toaster that does nothing with the data passed to it except
+checking data length and emitting error message if data size
+exceeds hardcoded limit of 1024 bytes.
+
+Usage example:
+
+CREATE EXTENSION dummy_toaster;
+
+select * from PG_TOASTER;
+  oid  |    tsrname    |       tsrhandler
+-------+---------------+-------------------------
+  9864 | deftoaster    | default_toaster_handler
+ 16386 | dummy_toaster | dummy_toaster_handler
+(2 rows)
+
+CREATE TABLE tst_failed (
+   t text TOASTER dummy_toaster TOASTER dummy_toaster
+);
+ERROR:  multiple TOASTER clauses not allowed
+CREATE TABLE tst1 (
+   f text STORAGE plain,
+   t text STORAGE external TOASTER dummy_toaster,
+   l int
+);
+SELECT  setseed(0);
+ setseed
+---------
+
+(1 row)
+
+INSERT INTO tst1
+   SELECT repeat('a', 2000)::text as f, t.t as t, length(t.t) as l FROM
+   (SELECT
+      repeat(random()::text, (20+30*random())::int) as t
+      FROM
+      generate_series(1, 32) as  i) as t;
+SELECT length(t), l, length(t) = l FROM tst1 ORDER BY 1, 3;
+ length |  l  | ?column?
+--------+-----+----------
+    391 | 391 | t
+    414 | 414 | t
+    437 | 437 | t
+    442 | 442 | t
+    448 | 448 | t
+    450 | 450 | t
+    540 | 540 | t
+    540 | 540 | t
+    551 | 551 | t
+    558 | 558 | t
+    594 | 594 | t
+    612 | 612 | t
+    630 | 630 | t
+    646 | 646 | t
+    648 | 648 | t
+    648 | 648 | t
+    665 | 665 | t
+    666 | 666 | t
+    684 | 684 | t
+    702 | 702 | t
+    738 | 738 | t
+    738 | 738 | t
+    741 | 741 | t
+    756 | 756 | t
+    756 | 756 | t
+    774 | 774 | t
+    792 | 792 | t
+    798 | 798 | t
+    833 | 833 | t
+    836 | 836 | t
+    855 | 855 | t
+    882 | 882 | t
+(32 rows)
+
+SELECT attnum, attname, atttypid, attstorage, tsrname
+FROM pg_attribute, pg_toaster t
+WHERE attrelid = 'tst1'::regclass and attnum>0 and t.oid = atttoaster
+ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |    tsrname
+--------+---------+----------+------------+---------------
+      1 | f       |       25 | p          | deftoaster
+      2 | t       |       25 | e          | dummy_toaster
+(2 rows)
+
+CREATE TABLE tst2 (
+t text
+);
+SELECT attnum, attname, atttypid, attstorage, tsrname
+FROM pg_attribute, pg_toaster t
+WHERE attrelid = 'tst2'::regclass and attnum>0 and t.oid = atttoaster
+ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |  tsrname
+--------+---------+----------+------------+------------
+      1 | t       |       25 | x          | deftoaster
+(1 row)
+
+VII. Source Changes
+
+Changed sources:
+src/include/access/toasterapi.h
+src/backend/access/index/toasterapi.c
+src/include/catalog/pg_toaster.h
+src/include/access/detoast.h
+src/backend/access/common/detoast.c
+src/include/postgres.h
+src/backend/access/common/toast_internals.c
+src/backend/access/heap/heaptoast.c
+
+contrib/dummy_toaster/dummy_toaster.c
+
+1) src/include/access/toasterapi.h
+Definition of TOAST API macros, set of methods to implement and
+TsrRoutine (analogous to Table AM Routine) structure, to pass
+Toaster's methods to caller.
+Method set consists of:
+	toast_init 	- function used to initialize TOAST,
+        i.e. create TOAST table and other preventive actions;
+	toast 		- (!) mandatory function, TOAST incoming value
+        (Datum) implementation;
+	update_toast 	- update existing TOASTed value. Generic
+        (default) TOAST does not implement Update, it can only
+        do full detoast, mark old TOAST tuple as dead, and toast
+        and store an updated value;
+	copy_toast 	- create copy of the TOASTed value;
+	detoast 	- (!) mandatory function, detoast value or it's
+        slice of given length;
+	deltoast 	- delete TOASTed value from TOAST table;
+	get_vtable 	- returns virtual functions table - structure
+        containing pointers to functions extending pre-defined
+        function set;
+	toastervalidate - (!) mandatory function, validates Toaster
+        for given data;
+
+Please note: functions highlighted with "(!)" are mandatory and
+must be implemented. Other functions are optional.
+
+Toaster search methods used for lookup also defined here
+GetTsrRoutine - calls Toaster handler and returs it for further use
+GetTsrRoutineByOid - used in search and validate methods
+SearchTsrCache - searches cached Toaster routines by Toaster OID
+    and returns one if found (fast lookup)
+validateToaster - used in tablecmds.c to validate Toaster OID
+Implemented in
+2) src/backend/access/index/toasterapi.c
+
+3) src/include/catalog/pg_toaster.h
+Definition of system catalog pg_toaster table. All TOASTers reside here.
+TOASTers are available via Toaster OID (from C) or Toaster name (from SQL).
+
+4) src/include/access/detoast.h - deleted in Toast Snapshot commit
+Headers for higher-lever Detoast functions used in Heap AM, from where
+Toaster methods are called. Specific to internals of Heap AM, not affected
+by TOAST API.
+Implemented in
+5) src/backend/access/common/detoast.c - deleted in Toast Snapshot commit
+
+6) src/include/postgres.h
+Here resides definition of TOAST Pointer structures, old (External)
+and new (Custom).
+Custom TOAST Pointer uses 16 bit alignment, and contains fields mandatory
+for Toaster lookup (Toaster OID), Executor checks (va_rawsize), and tail with
+variable length for custom data (va_toasterdata) with it's length
+(va_toasterdatalen). Variable part of Custom TOAST pointer could contain any
+other data, structures and so on, required by Toaster implementation.
+
+New structure definition:
+typedef struct varatt_custom
+{
+uint16 va_toasterdatalen;/* total size of toast pointer, < BLCKSZ */
+uint32align16 va_rawsize; /* Original data size (includes header) */
+uint32align16 va_toasterid; /* Toaster ID, actually Oid */
+char va_toasterdata[FLEXIBLE_ARRAY_MEMBER]; /* Custom toaster data */
+} varatt_custom;
+
+For comparision, old (External) TOAST Pointer:
+typedef struct varatt_external
+{
+	int32		va_rawsize;		/* Original data size (includes header) */
+	uint32		va_extinfo;		/* External saved size (without header) and
+								 * compression method */
+	Oid			va_valueid;		/* Unique ID of value within TOAST table */
+	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
+}			varatt_external;
+is not aligned.
+
+TOAST pointer is a sub-structure of varlena with Vartag byte (varattrib_1b_e):
+
+/* TOAST pointers are a subset of varattrib_1b with an identifying tag byte */
+typedef struct
+{
+uint8 va_header; /* Always 0x80 or 0x01 */
+uint8 va_tag; /* Type of datum */
+char va_data[FLEXIBLE_ARRAY_MEMBER]; /* Type-specific data */
+} varattrib_1b_e;
+
+When casting from varlena structure Custom TOAST pointer is recognized from
+External by value of field "va_tag":
+
+typedef enum vartag_external
+{
+VARTAG_INDIRECT = 1,
+VARTAG_EXPANDED_RO = 2,
+VARTAG_EXPANDED_RW = 3,
+VARTAG_CUSTOM = 4, /* New tag for CUSTOM pointers */
+VARTAG_ONDISK = 18,
+} vartag_external;
+
+So, like External TOAST pointers Custom ones have the same set of macros
+to use in development, defined in postgres.h.
+VARHDRSZ_EXTERNAL - external TOAST pointer header size;
+VARHDRSZ_CUSTOM - custom TOAST pointer header size;
+VARATT_CUSTOM_GET_TOASTPOINTER(PTR) - get TOAST pointer from varlena;
+VARATT_CUSTOM_GET_TOASTERID(PTR) - retrieve Toaster OID from custom TOAST pointer;
+VARATT_CUSTOM_SET_TOASTERID(PTR, V) - set Toaster OID in custom TOAST pointer;
+VARATT_CUSTOM_GET_DATA_RAW_SIZE(PTR) - get full TOASTed data size;
+VARATT_CUSTOM_SET_DATA_RAW_SIZE(PTR, V) - set full TOASTed data size;
+VARATT_CUSTOM_GET_DATA_SIZE(PTR) - get custom TOAST pointer variable tail size;
+VARATT_CUSTOM_SET_DATA_SIZE(PTR, V) - set custom TOAST pointer variable tail size;
+VARATT_CUSTOM_GET_DATA(PTR) - set custom TOAST pointer variable data section;
+VARATT_CUSTOM_SIZE(datalen) - get custom TOAST pointer header size + (datalen);
+VARSIZE_CUSTOM(PTR) - calculate given custom TOAST pointer size;
+
+5) src/backend/access/common/toast_internals.c
+Here are internal functions currently used by Toasters, implementing storing
+and fetching data. Current Toasters implementations use Heap AM, but due to
+all storage mechanics is hidden from TAM that calls Toaster any Toaster could
+implement different storage techniques, with different AMs, and could even
+implement independent storage. The examples of different storage implementations
+within existing AM are Default Toaster implementation without usage of indexes
+and large objects toaster to store LOBs without limitations of pg_largeobject
+functionality.
+
+7) src/backend/access/heap/heaptoast.c
+Heap-specific definitions for external and compressed storage of variable size
+attributes. Insert, update and fetch. heap_toast_insert_or_update method contains
+Heap AM TOAST data storage strategies, deciding if TOAST will be used to store
+external and extended data according to overall Tuple size.
+Strategies explanation (from comments):
+>>>
+ Compress and/or save external until data fits into target length
+
+	1: Inline compress attributes with attstorage EXTENDED, and store very
+	   large attributes with attstorage EXTENDED or EXTERNAL external
+	   immediately
+	2: Store attributes with attstorage EXTENDED or EXTERNAL external
+	3: Inline compress attributes with attstorage MAIN
+	4: Store attributes with attstorage MAIN external
+
+ Look for attributes with attstorage EXTENDED to compress.  Also find
+ large attributes with attstorage EXTENDED or EXTERNAL, and store them
+ external.
+
+ Attempt to compress it inline, if it has attstorage EXTENDED
+ otherwise has attstorage EXTERNAL, ignore on subsequent compression
+ passes
+
+ If this value is by itself more than maxDataLen (after compression
+ if any), push it out to the toast table immediately, if possible.
+ This avoids uselessly compressing other fields in the common case
+ where we have one long field and several short ones.
+
+ Second we look for attributes of attstorage EXTENDED or EXTERNAL that
+ are still inline, and make them external.  But skip this if there's no
+ toast table to push them to.
+
+ Round 3 - this time we take attributes with storage MAIN into
+ compression
+
+ Finally we store attributes of type MAIN externally.  At this point we
+ increase the target tuple size, so that MAIN attributes aren't stored
+ externally unless really necessary.
+
+VIII. Tests
+
+Functional Tests
+
+Regular regression tests are fully suitable for testing Default (Generic)
+Toaster, no special tests are needed because it replaces standard TOAST mechanics.
+
+Performance Tests
+
+To test TOAST API overhead over master (current) TOAST implementation the
+following test was used:
+
+        /* CREATE TABLE test_toast_p (id int, jb jsonb); */
+        select pg_column_size(jb ) into t_size FROM test_toast_p WHERE id = k;
+		StartTime := clock_timestamp();
+        /* One of the three following queries was ised in separate cycle, to
+         * test INSERT, UPDATE and SELECT operations execution time, on master
+         * and patched versions */
+        INSERT into test_toast_p values (k,  repeat('a', i*j));
+        UPDATE test_toast_p set jb = repeat('b', pg_column_size(jb)+1) where id=k;
+        PERFORM jb from test_toast_p where id=k;
+
+        EndTime := clock_timestamp();
+        Delta := 1000 * ( extract(epoch from EndTime) - extract(epoch from StartTime) );
+
+Tests shew that TOAST API does not have any overhead in means of performance over
+standard implementation.

@@ -983,6 +983,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TABCONSTRAINT:
 		case OBJECT_TABLE:
+		case OBJECT_TOASTER:
 		case OBJECT_TRANSFORM:
 		case OBJECT_TRIGGER:
 		case OBJECT_TSCONFIGURATION:
@@ -1057,6 +1058,7 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
+		case OCLASS_TOASTER:
 			return true;
 
 			/*
@@ -2078,6 +2080,7 @@ stringify_grant_objtype(ObjectType objtype)
 		case OBJECT_STATISTIC_EXT:
 		case OBJECT_SUBSCRIPTION:
 		case OBJECT_TABCONSTRAINT:
+		case OBJECT_TOASTER:
 		case OBJECT_TRANSFORM:
 		case OBJECT_TRIGGER:
 		case OBJECT_TSCONFIGURATION:
@@ -2162,6 +2165,7 @@ stringify_adefprivs_objtype(ObjectType objtype)
 		case OBJECT_STATISTIC_EXT:
 		case OBJECT_SUBSCRIPTION:
 		case OBJECT_TABCONSTRAINT:
+		case OBJECT_TOASTER:
 		case OBJECT_TRANSFORM:
 		case OBJECT_TRIGGER:
 		case OBJECT_TSCONFIGURATION:

@@ -3,4 +3,5 @@ backend_sources += files(
   'amvalidate.c',
   'genam.c',
   'indexam.c',
+  'toasterapi.c',
 )
