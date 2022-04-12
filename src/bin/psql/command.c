@@ -818,7 +818,7 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 				success = describeRoles(pattern, show_verbose, show_system);
 				break;
 			case 'l':
-				success = listLargeObjects(show_verbose);
+				success = do_lo_list();
 				break;
 			case 'L':
 				success = listLanguages(pattern, show_verbose, show_system);
@@ -877,6 +877,8 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 					if (pattern2)
 						free(pattern2);
 				}
+				else if (cmd[2] == '+' || cmd[2] == '\0')
+					success = describeToasters(pattern, show_verbose);
 				else
 					status = PSQL_CMD_UNKNOWN;
 				break;
@@ -1970,9 +1972,7 @@ exec_command_lo(PsqlScanState scan_state, bool active_branch, const char *cmd)
 		}
 
 		else if (strcmp(cmd + 3, "list") == 0)
-			success = listLargeObjects(false);
-		else if (strcmp(cmd + 3, "list+") == 0)
-			success = listLargeObjects(true);
+			success = do_lo_list();
 
 		else if (strcmp(cmd + 3, "unlink") == 0)
 		{

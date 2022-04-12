@@ -213,6 +213,7 @@ static RangeVar *makeRangeVarFromQualifiedName(char *name, List *rels,
 											   core_yyscan_t yyscanner);
 static void SplitColQualList(List *qualList,
 							 List **constraintList, CollateClause **collClause,
+							 char **toaster_name,
 							 core_yyscan_t yyscanner);
 static void processCASbits(int cas_bits, int location, const char *constrType,
 			   bool *deferrable, bool *initdeferred, bool *not_valid,
@@ -321,6 +322,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		CreateMatViewStmt RefreshMatViewStmt CreateAmStmt
 		CreatePublicationStmt AlterPublicationStmt
 		CreateSubscriptionStmt AlterSubscriptionStmt DropSubscriptionStmt
+		CreateToasterStmt
 
 %type <node>	select_no_parens select_with_parens select_clause
 				simple_select values_clause
@@ -734,7 +736,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	SUBSCRIPTION SUBSTRING SUPPORT SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
-	TIES TIME TIMESTAMP TO TRAILING TRANSACTION TRANSFORM
+	TIES TIME TIMESTAMP TO TOASTER TRAILING TRANSACTION TRANSFORM
 	TREAT TRIGGER TRIM TRUE_P
 	TRUNCATE TRUSTED TYPE_P TYPES_P
 
@@ -990,6 +992,7 @@ stmt:
 			| CreateSubscriptionStmt
 			| CreateStatsStmt
 			| CreateTableSpaceStmt
+			| CreateToasterStmt
 			| CreateTransformStmt
 			| CreateTrigStmt
 			| CreateEventTrigStmt
@@ -2257,6 +2260,15 @@ alter_table_cmd:
 					n->name = $3;
 					$$ = (Node *)n;
 				}
+			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET TOASTER <toaster_name> */
+			| ALTER opt_column ColId SET TOASTER name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetToaster;
+					n->name = $3;
+					n->def = (Node *) makeString($6);
+					$$ = (Node *)n;
+				}
 			/* ALTER TABLE <name> ALTER [COLUMN] <colname> DROP EXPRESSION */
 			| ALTER opt_column ColId DROP EXPRESSION
 				{
@@ -3511,7 +3523,7 @@ columnDef:	ColId Typename opt_column_storage opt_column_compression create_gener
 					n->collOid = InvalidOid;
 					n->fdwoptions = $5;
 					SplitColQualList($6, &n->constraints, &n->collClause,
-									 yyscanner);
+									 &n->toaster, yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
 				}
@@ -3531,7 +3543,7 @@ columnOptions:	ColId ColQualList
 					n->cooked_default = NULL;
 					n->collOid = InvalidOid;
 					SplitColQualList($2, &n->constraints, &n->collClause,
-									 yyscanner);
+									 &n->toaster, yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
 				}
@@ -3549,7 +3561,7 @@ columnOptions:	ColId ColQualList
 					n->cooked_default = NULL;
 					n->collOid = InvalidOid;
 					SplitColQualList($4, &n->constraints, &n->collClause,
-									 yyscanner);
+									 &n->toaster, yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
 				}
@@ -3566,7 +3578,7 @@ opt_column_compression:
 		;
 
 opt_column_storage:
-			STORAGE	name							{ $$ = $2; }
+			STORAGE	ColId							{ $$ = $2; }
 			| /*EMPTY*/								{ $$ = NULL; }
 		;
 
@@ -3597,6 +3609,15 @@ ColConstraint:
 					n->collname = $2;
 					n->location = @1;
 					$$ = (Node *) n;
+				}
+			| TOASTER name
+				{
+					/*
+					 * Note: the toaster name is momentarily included in
+					 * the list built by ColQualList, but we split it out
+					 * again in SplitColQualList.
+					 */
+					$$ = (Node *) makeString($2);
 				}
 		;
 
@@ -4893,6 +4914,15 @@ AlterExtensionContentsStmt:
 					n->object = (Node *) $6;
 					$$ = (Node *)n;
 				}
+			| ALTER EXTENSION name add_drop TOASTER name
+				{
+					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
+					n->extname = $3;
+					n->action = $4;
+					n->objtype = OBJECT_TOASTER;
+					n->object = (Node *) makeString($6);
+					$$ = (Node *)n;
+				}
 			| ALTER EXTENSION name add_drop TRANSFORM FOR Typename LANGUAGE name
 				{
 					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
@@ -5453,6 +5483,32 @@ CreateAmStmt: CREATE ACCESS METHOD name TYPE_P am_type HANDLER handler_name
 am_type:
 			INDEX			{ $$ = AMTYPE_INDEX; }
 		|	TABLE			{ $$ = AMTYPE_TABLE; }
+		;
+
+/*****************************************************************************
+ *
+ *		QUERY:
+ *				CREATE TOASTER name HANDLER	handler_name
+ *
+ *****************************************************************************/
+
+CreateToasterStmt:
+	CREATE TOASTER IF_P NOT EXISTS name HANDLER handler_name
+		{
+			CreateToasterStmt *n = makeNode(CreateToasterStmt);
+			n->if_not_exists = true;
+			n->tsrname = $6;
+			n->handler_name = $8;
+			$$ = (Node *) n;
+		}
+	| CREATE TOASTER name HANDLER handler_name
+		{
+			CreateToasterStmt *n = makeNode(CreateToasterStmt);
+			n->tsrname = $3;
+			n->handler_name = $5;
+			n->if_not_exists = false;
+			$$ = (Node *) n;
+		}
 		;
 
 /*****************************************************************************
@@ -6543,6 +6599,14 @@ CommentStmt:
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_COLUMN;
 					n->object = (Node *) $4;
+					n->comment = $6;
+					$$ = (Node *) n;
+				}
+			| COMMENT ON TOASTER name IS comment_text
+				{
+					CommentStmt *n = makeNode(CommentStmt);
+					n->objtype = OBJECT_TOASTER;
+					n->object = (Node *) makeString($4);
 					n->comment = $6;
 					$$ = (Node *) n;
 				}
@@ -10622,7 +10686,7 @@ CreateDomainStmt:
 					n->domainname = $3;
 					n->typeName = $5;
 					SplitColQualList($6, &n->constraints, &n->collClause,
-									 yyscanner);
+									 NULL /* toaster is not allowed*/, yyscanner);
 					$$ = (Node *)n;
 				}
 		;
@@ -15946,6 +16010,7 @@ unreserved_keyword:
 			| TEMPORARY
 			| TEXT_P
 			| TIES
+			| TOASTER
 			| TRANSACTION
 			| TRANSFORM
 			| TRIGGER
@@ -16543,6 +16608,7 @@ bare_label_keyword:
 			| TIES
 			| TIME
 			| TIMESTAMP
+			| TOASTER
 			| TRAILING
 			| TRANSACTION
 			| TRANSFORM
@@ -17331,6 +17397,7 @@ makeRangeVarFromQualifiedName(char *name, List *namelist, int location,
 static void
 SplitColQualList(List *qualList,
 				 List **constraintList, CollateClause **collClause,
+				 char **toaster,
 				 core_yyscan_t yyscanner)
 {
 	ListCell   *cell;
@@ -17345,7 +17412,7 @@ SplitColQualList(List *qualList,
 			/* keep it in list */
 			continue;
 		}
-		if (IsA(n, CollateClause))
+		else if (IsA(n, CollateClause))
 		{
 			CollateClause *c = (CollateClause *) n;
 
@@ -17355,6 +17422,21 @@ SplitColQualList(List *qualList,
 						 errmsg("multiple COLLATE clauses not allowed"),
 						 parser_errposition(c->location)));
 			*collClause = c;
+		}
+		else if (IsA(n, String))
+		{
+			String	*toaster_name = (String*) n;
+
+			if (toaster == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("TOASTER clause not allowed")));
+
+			if (*toaster)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("multiple TOASTER clauses not allowed")));
+			*toaster = strVal(toaster_name);
 		}
 		else
 			elog(ERROR, "unexpected node type %d", (int) n->type);
