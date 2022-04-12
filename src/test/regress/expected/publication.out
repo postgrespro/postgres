@@ -148,11 +148,11 @@ SELECT pubname, puballtables FROM pg_publication WHERE pubname = 'testpub_forall
 (1 row)
 
 \d+ testpub_tbl2
-                                                Table "public.testpub_tbl2"
- Column |  Type   | Collation | Nullable |                 Default                  | Storage  | Stats target | Description 
---------+---------+-----------+----------+------------------------------------------+----------+--------------+-------------
- id     | integer |           | not null | nextval('testpub_tbl2_id_seq'::regclass) | plain    |              | 
- data   | text    |           |          |                                          | extended |              | 
+                                                       Table "public.testpub_tbl2"
+ Column |  Type   | Collation | Nullable |                 Default                  | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+------------------------------------------+----------+------------+--------------+-------------
+ id     | integer |           | not null | nextval('testpub_tbl2_id_seq'::regclass) | plain    |            |              | 
+ data   | text    |           |          |                                          | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl2_pkey" PRIMARY KEY, btree (id)
 Publications:
@@ -1046,22 +1046,22 @@ ALTER PUBLICATION testpub_default SET TABLE testpub_tbl1;
 ALTER PUBLICATION testpub_default ADD TABLE pub_test.testpub_nopk;
 ALTER PUBLICATION testpib_ins_trunct ADD TABLE pub_test.testpub_nopk, testpub_tbl1;
 \d+ pub_test.testpub_nopk
-                              Table "pub_test.testpub_nopk"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- foo    | integer |           |          |         | plain   |              | 
- bar    | integer |           |          |         | plain   |              | 
+                                   Table "pub_test.testpub_nopk"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ foo    | integer |           |          |         | plain   |         |              | 
+ bar    | integer |           |          |         | plain   |         |              | 
 Publications:
     "testpib_ins_trunct"
     "testpub_default"
     "testpub_fortbl"
 
 \d+ testpub_tbl1
-                                                Table "public.testpub_tbl1"
- Column |  Type   | Collation | Nullable |                 Default                  | Storage  | Stats target | Description 
---------+---------+-----------+----------+------------------------------------------+----------+--------------+-------------
- id     | integer |           | not null | nextval('testpub_tbl1_id_seq'::regclass) | plain    |              | 
- data   | text    |           |          |                                          | extended |              | 
+                                                       Table "public.testpub_tbl1"
+ Column |  Type   | Collation | Nullable |                 Default                  | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+------------------------------------------+----------+------------+--------------+-------------
+ id     | integer |           | not null | nextval('testpub_tbl1_id_seq'::regclass) | plain    |            |              | 
+ data   | text    |           |          |                                          | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl1_pkey" PRIMARY KEY, btree (id)
 Publications:
@@ -1083,11 +1083,11 @@ ALTER PUBLICATION testpub_default DROP TABLE testpub_tbl1, pub_test.testpub_nopk
 ALTER PUBLICATION testpub_default DROP TABLE pub_test.testpub_nopk;
 ERROR:  relation "testpub_nopk" is not part of the publication
 \d+ testpub_tbl1
-                                                Table "public.testpub_tbl1"
- Column |  Type   | Collation | Nullable |                 Default                  | Storage  | Stats target | Description 
---------+---------+-----------+----------+------------------------------------------+----------+--------------+-------------
- id     | integer |           | not null | nextval('testpub_tbl1_id_seq'::regclass) | plain    |              | 
- data   | text    |           |          |                                          | extended |              | 
+                                                       Table "public.testpub_tbl1"
+ Column |  Type   | Collation | Nullable |                 Default                  | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+------------------------------------------+----------+------------+--------------+-------------
+ id     | integer |           | not null | nextval('testpub_tbl1_id_seq'::regclass) | plain    |            |              | 
+ data   | text    |           |          |                                          | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl1_pkey" PRIMARY KEY, btree (id)
 Publications:
