@@ -590,6 +590,67 @@ tuple would otherwise be too big.
 
 </sect2>
 
+<sect2 id="storage-toasterapi">
+ <title>Toaster API</title>
+
+<para>
+Currently, it is possible to develop and assign custom toaster functions, which could
+implement different functionality, use other storage strategies and access methods.
+This API consists of toast handler header routine and toaster module that implements
+main functions defined in Toaster routine.
+All toasters are registere in <structname>pg_toaster</structname> table.
+</para>
+
+<para>
+Toaster API header routine defines main Toast functions that must be implemented by
+any custome Toaster:
+typedef struct TsrRoutine
+{
+	NodeTag		type;
+
+	/* interface functions */
+	toast_init init;
+	toast_function toast;
+	update_toast_function update_toast;
+	copy_toast_function copy_toast;
+	detoast_function detoast;
+	del_toast_function deltoast;
+	get_vtable_function get_vtable;
+	toastervalidate_function toastervalidate;
+} TsrRoutine;
+
+Custom toaster functions must implement at least methods
+toast
+detoast
+
+For data storage custom toasters user structure VARATT_CUSTOM
+typedef struct varatt_custom
+{
+	int32		va_placeholder;	/* Placeholder for 2 bits to differ old toast pointer from new */
+	Oid			va_toasterid;	/* ID of TOAST handler from PG_TOASTER table */
+	char		va_toasterdata[FLEXIBLE_ARRAY_MEMBER];	/* Custom toaster data */
+} varatt_custom;
+</para>
+
+<para>
+Toast functions are added as an extension module, and must be attached to database
+accordingly. An example os custom Toaster is provided as DUMMY_TOASTER module:
+CREATE EXTENSION dummy_toaster;
+
+Extension header should contain the following information:
+CREATE FUNCTION dummy_toaster_handler(internal)
+RETURNS toaster_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+
+CREATE TOASTER dummy_toaster  HANDLER dummy_toaster_handler;
+
+COMMENT ON TOASTER dummy_toaster IS 'dummy_toaster is a dummy toaster';
+</para>
+
+</sect2>
+
 </sect1>
 
 <sect1 id="storage-fsm">
