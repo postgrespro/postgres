@@ -262,6 +262,8 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	attr->tai_colflags |= TOASTCOL_IGNORE;
 	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
 							  options);
+	if (*value == old_value)
+		return;
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
