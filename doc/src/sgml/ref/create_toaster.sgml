@@ -1,0 +1,132 @@
+<!--
+doc/src/sgml/ref/create_toaster.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="sql-createtoaster">
+ <indexterm zone="sql-createtoaster">
+  <primary>CREATE TOASTER</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE TOASTER</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE TOASTER</refname>
+  <refpurpose>define a new toaster</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE TOASTER [ IF NOT EXISTS ] <replaceable class="parameter">toaster_name</replaceable> HANDLER <replaceable class="parameter">handler_name</replaceable>
+
+</synopsis>
+
+ </refsynopsisdiv>
+
+ <refsect1 id="sql-createtoaster-description">
+  <title>Description</title>
+
+  <para>
+   <command>CREATE TOASTER</command> will attach already defined handler <replaceable class="parameter">handler_name</replaceable>
+   function to a toaster with name <replaceable class="parameter">toaster_name</replaceable>
+   in the current database. This function will be used for toasting and de-toasting
+   values in toasted columns for tables where this toaster is set in <literal>CREATE TABLE
+   ...TOASTER <replaceable class="parameter">toaster_name</replaceable>...</literal> or
+   <literal>ALTER TABLE ALTER COLUMN ... SET TOASTER <replaceable class="parameter">toaster_name</replaceable>...</literal>
+   command. New OID is assigned to a <replaceable class="parameter">toaster_name</replaceable> automatically.
+  </para>
+
+  <para>
+   To be able to create a table, you must have <literal>USAGE</literal>
+   privilege on all column types or the type in the <literal>OF</literal>
+   clause, respectively.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+
+   <varlistentry>
+    <term><literal>IF NOT EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if a toaster with the same name already exists.
+      A notice is issued in this case.  Note that there is no guarantee that
+      the existing toaster is anything like the one that would have been
+      created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">toaster_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the toaster table to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">handler_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of toast functions handler procedure. Must be reigstered before
+      using with <literal>CREATE FUNCTION</literal> command, example:
+        CREATE FUNCTION dummy_toaster_handler(internal)
+        RETURNS toaster_handler
+        AS 'MODULE_PATHNAME'
+        LANGUAGE C;
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+
+ <refsect1 id="sql-createtoaster-examples">
+  <title>Examples</title>
+
+  <para>
+   Create toaster <structname>dummy_toaster</structname> with handler
+   <structname>dummy_toaster_handler</structname>:
+
+<programlisting>
+CREATE FUNCTION dummy_toaster_handler(internal)
+RETURNS toaster_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+
+CREATE TOASTER dummy_toaster  HANDLER dummy_toaster_handler;
+
+COMMENT ON TOASTER dummy_toaster IS 'dummy_toaster is a dummy toaster';
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1 id="sql-createtable-compatibility" xreflabel="Compatibility">
+  <title>Compatibility</title>
+
+  <para>
+   The <command>CREATE TABLE</command> command does not conform to the
+   <acronym>SQL</acronym>.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="sql-storage"/></member>
+   <member><xref linkend="sql-createtable"/></member>
+   <member><xref linkend="sql-createtableas"/></member>
+   <member><xref linkend="sql-altertable"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

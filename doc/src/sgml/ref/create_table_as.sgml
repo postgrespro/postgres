@@ -22,7 +22,7 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXISTS ] <replaceable>table_name</replaceable>
-    [ (<replaceable>column_name</replaceable> [, ...] ) ]
+    [ (<replaceable>column_name</replaceable> [ STORAGE external TOASTER <replaceable>toaster_name</replaceable> ] [, ...] ) ]
     [ USING <replaceable class="parameter">method</replaceable> ]
     [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) | WITHOUT OIDS ]
     [ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } ]
@@ -121,6 +121,8 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
      <para>
       The name of a column in the new table.  If column names are not
       provided, they are taken from the output column names of the query.
+      Toaster could be assigned to toastable column with expression
+      <literal>STORAGE external TOASTER <replaceable>toaster_name</replaceable></literal>
      </para>
     </listitem>
    </varlistentry>

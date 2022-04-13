@@ -90,6 +90,7 @@ Complete list of usable sgml source files in this directory.
 <!ENTITY createTable        SYSTEM "create_table.sgml">
 <!ENTITY createTableAs      SYSTEM "create_table_as.sgml">
 <!ENTITY createTableSpace   SYSTEM "create_tablespace.sgml">
+<!ENTITY createToaster      SYSTEM "create_toaster.sgml">
 <!ENTITY createTransform    SYSTEM "create_transform.sgml">
 <!ENTITY createTrigger      SYSTEM "create_trigger.sgml">
 <!ENTITY createTSConfig     SYSTEM "create_tsconfig.sgml">

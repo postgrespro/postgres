@@ -22,7 +22,7 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXISTS ] <replaceable class="parameter">table_name</replaceable> ( [
-  { <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> [ STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT } ] [ COMPRESSION <replaceable>compression_method</replaceable> ] [ COLLATE <replaceable>collation</replaceable> ] [ <replaceable class="parameter">column_constraint</replaceable> [ ... ] ]
+  { <replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">data_type</replaceable> [ STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT } ] [ TOASTER <replaceable>compression_method</replaceable> ] [ COMPRESSION <replaceable>compression_method</replaceable> ] [ COLLATE <replaceable>collation</replaceable> ] [ <replaceable class="parameter">column_constraint</replaceable> [ ... ] ]
     | <replaceable>table_constraint</replaceable>
     | LIKE <replaceable>source_table</replaceable> [ <replaceable>like_option</replaceable> ... ] }
     [, ... ]
@@ -321,6 +321,18 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       Use of <literal>EXTERNAL</literal> will make substring operations on
       very large <type>text</type> and <type>bytea</type> values run faster,
       at the penalty of increased storage space.
+      See <xref linkend="storage-toast"/> for more information.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="sql-createtable-parms-toaster">
+    <term> <literal>SET TOASTER <replaceable class="parameter">toaster_name</replaceable></literal></term>
+    <listitem>
+     <para>
+      This form sets the toaster function for toastable column. This function
+      must implement how toastable data is stored, and fetched. Also, toast
+      function could compress data and use different access methods.
       See <xref linkend="storage-toast"/> for more information.
      </para>
     </listitem>

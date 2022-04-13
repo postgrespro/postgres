@@ -590,6 +590,263 @@ tuple would otherwise be too big.
 
 </sect2>
 
+<sect2 id="storage-toasterapi">
+ <title>Pluggable TOAST API</title>
+
+<para>
+Pluggable TOAST proposes an open API allowing to develop and plug in
+custom TOAST mechanics for table column and data types as a new entity - the Toaster.
+Toaster could process TOASTed data using knowledge about internal data structure and workflow.
+</para>
+
+<para>
+Toasters could use any storage, advanced compression, encryption, and
+other functionality internally, without awaring TAM that calls Toaster.
+</para>
+
+<para>
+Pluggable TOAST allows extending TOAST functionality with storing external data in a way
+different to existing TOAST mechanics.
+Custom TOAST modules are included as extensions and are assigned to a table's column.
+TOAST API hides TOAST mechanics from Table AM which calls it. TOAST API itself is an
+interface with pre-defined set of functions which must be implemented by any custom TOAST
+module allowing Postgres to search it and call uniformly, without knowing details of its
+implementation.
+</para>
+
+<para>
+All custom TOAST modules are registered in <structname>pg_toaster</structname> table.
+</para>
+
+<para>
+How Pluggable TOAST Works
+- When tuple size exceeds some internal limit Heap decides to TOAST
+  large attributes. As an option we suggest special flag to force
+  value to be TOASTed despite of its size;
+- Table AM searches for implementation of TOAST according to OID
+  assigned to table's column (the Toaster).
+- Attribute is replaced with Custom Toast Pointer created by specific
+  Toaster. Custom TOAST Pointer contains information required by
+  specific Toaster to retrieve TOASTed data - Toaster OID, etc;
+- TOAST and storage details are hidden from AM behind the Toaster;
+- Toaster can use any knowledge of data structure and workflow;
+- Same data could be TOASTed with different Toasters;
+</para>
+
+<para>
+Custom Toaster should be defined and included as an PostgreSQL Extension via standard PostgreSQL Extension mechanics.
+Any custom Toaster should have a handler and pre-defined method set.
+Toaster header must be defined according to toastapi.h and must have several mandatory methods to be implemented to toast and detoast (store and retrieve) data.
+</para>
+
+<para>
+Pluggable TOAST API header routine defines main Toast functions that must be implemented by
+any custom Toaster:
+typedef struct TsrRoutine
+{
+NodeTag type;
+/* interface functions */
+toast_init init;
+toast_function toast;
+update_toast_function update_toast;
+copy_toast_function copy_toast;
+detoast_function detoast;
+del_toast_function deltoast;
+get_vtable_function get_vtable;
+toastervalidate_function toastervalidate;
+} TsrRoutine;
+</para>
+
+<para>
+Handler function is registered with extension and provides external interface as a set of pre-defined functions:
+Datum default_toaster_handler(PG_FUNCTION_ARGS)
+{
+	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
+	tsrroutine->init = custom_toast_init;
+	tsrroutine->toast = custom_toast;
+	tsrroutine->detoast = custom_detoast;
+	tsrroutine->deltoast = custom_delete_toast;
+	tsrroutine->update_toast = custom_update_toast;
+	tsrroutine->copy_toast = custom_copy_toast;
+	tsrroutine->get_vtable = custom_get_vtable;
+	tsrroutine->reconstruct = custom_toast_reconstruct;
+	tsrroutine->toastervalidate = custom_toast_validate;
+	PG_RETURN_POINTER(tsrroutine);
+}
+Implementation have mandatory and optional functions and may provide additional extension to mandatory interface (see get_vtable).
+</para>
+
+<para>
+Pluggable TOAST API interface description:
+<table id="toast-api-table">
+  <title>TOAST API Functions</title>
+    <tgroup cols="1">
+     <thead>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        Function
+       </para>
+       <para>
+        Description
+       </para></entry>
+      </row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>init</function> ( <parameter>rel</parameter> <type>Relation</type>, <parameter>toasterid</parameter> <type>Oid</type>, <parameter>toastindexoid</parameter> <type>Oid</type>, <parameter>reloptions</parameter> <type>Datum</type>,  <parameter>lockmode</parameter> <type>LOCKMODE</type>, <parameter>check</parameter> <type>bool</type>, <parameter>OIDOldToast</parameter> <type>Oid</type> )
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+        Toaster initialization. Initial TOAST table creation and other startup preparations.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>toast</function> ( <parameter>toast_rel</parameter> <type>Relation</type>, <parameter>toasterid</parameter> <type>Oid</type>, <parameter>value</parameter> <type>Datum</type>, <parameter>oldvalue</parameter> <type>Datum</type>, <parameter>max_inline_size</parameter> <type>int</type>, <parameter>options</parameter> <type>int</type> )
+        <returnvalue>Datum</returnvalue>
+       </para>
+       <para>
+        TOAST data. Store data <parameter>value</parameter> out-of-line (externally) and return TOAST Pointer (special kind of reference to out-of-line value) instead of original value. Mandatory.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>update_toast</function> ( <parameter>toast_rel</parameter> <type>Relation</type>, <parameter>toasterid</parameter> <type>Oid</type>, <parameter>newvalue</parameter> <type>Datum</type>, <parameter>oldvalue</parameter> <type>Datum</type>, <parameter>options</parameter> <type>int</type> )
+        <returnvalue>Datum</returnvalue>
+       </para>
+       <para>
+        Updates TOASTed value. Returns new TOAST pointer.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>copy_toast</function> ( <parameter>toast_rel</parameter> <type>Relation</type>, <parameter>toasterid</parameter> <type>Oid</type>, <parameter>newvalue</parameter> <type>Datum</type>, <parameter>options</parameter> <type>int</type> )
+        <returnvalue>Datum</returnvalue>
+       </para>
+       <para>
+        Returns copy of the TOASTed value. Usable for INSERT AS SELECT command, etc.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>detoast</function> ( <parameter>toast_ptr</parameter> <type>Datum</type>, <parameter>offset</parameter> <type>int</type>, <parameter>length</parameter> <type>int</type> )
+        <returnvalue>Datum</returnvalue>
+       </para>
+       <para>
+        Retrieves original value from external storage and returns it as Datum. Mandatory.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>del_toast</function> ( <parameter>rel</parameter> <type>Relation</type>, <parameter>newvalue</parameter> <type>Datum</type>, <parameter>is_speculative</parameter> <type>bool</type> )
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+        Deletes TOASTed value referenced by TOAST pointer given as Datum.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>get_vtable</function> ( <parameter>toast_ptr</parameter> <type>Datum</type> )
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+        Returns Vaitual Functions Table for given Toaster - see below.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>toastervalidate</function> ( <parameter>typeoid</parameter> <type>Oid</type>, <parameter>storage</parameter> <type>char</type>, <parameter>compression</parameter> <type>char</type>, <parameter>amoid</parameter> <type>Oid</type>, <parameter>false_ok</parameter> <type>bool</type> )
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Validates Toaster for given data type, storage and compression options. Mandatory.
+       </para></entry>
+      </row>
+
+     </tbody>
+  </tgroup>
+ </table>
+</para>
+
+<para>
+Virtual Functions Table API Extension
+Sometimes pre-defined function set is not enough and developer could desire
+to provide some more functions ouside custom Toaster, for example, detoast
+iterators, functions for working with internal data representation like JSONb
+container operations, etc.
+An important part of the Pluggable TOAST API is its extensibility.
+TOAST API provides an interface for using user-defined functions
+in addition to pre-defined TOAST API functions set which is special function
+returning a table of user-defined functions:
+typedef void * (*get_vtable_function) (Datum toast_ptr);
+An example of vurtual functions table usage:
+/* Virtual functions table definition in Custom Toaster */
+static void * custom_toaster_vtable(Datum toast_ptr)
+{
+	CustomToastRoutine *routine = palloc0(sizeof(*routine));
+	routine->iterator_init = custom_iterator_init;
+  routine->detoast_next = custom_detoast_iterate;
+	return routine;
+}
+Datum
+custom_toaster_handler(PG_FUNCTION_ARGS)
+{
+	TsrRoutine *tsrroutine = makeNode(TsrRoutine);
+        ...
+	tsrroutine->get_vtable = custom_toaster_vtable;
+        ...
+	PG_RETURN_POINTER(tsrroutine);
+}
+/* Using virtual functions table in user code */
+TsrRoutine *toaster = SearchTsrCache(custom_toaster_oid);
+CustomToastRoutine *r = (CustomToastRoutine *) toaster->get_vtable(PointerGetDatum(attr));
+r->iterator_init(...);
+r->detoast_next(...);
+</para>
+
+<para>
+Pluggable TOAST Syntax extension
+Custom Toaster creation:
+CREATE TOASTER <replaceable class="parameter">toaster_name</replaceable> HANDLER <replaceable class="parameter">toaster_handler_function_name</replaceable>;
+Assign Toaster to table column during CREATE TABLE:
+CREATE TABLE <replaceable class="parameter">name</replaceable> (<replaceable class="parameter">column_name</replaceable> <replaceable class="parameter">type</replaceable> STORAGE EXTERNAL TOASTER <replaceable class="parameter">toaster_name</replaceable>);
+Assign Toaster to existing table column (ALTER TABLE):
+ALTER TABLE <replaceable class="parameter">name</replaceable> ALTER COLUMN <replaceable class="parameter">column_name</replaceable> SET TOASTER <replaceable class="parameter">toaster_name</replaceable>;
+Please note that custom Toasters could be assigned only to External
+storage type.
+</para>
+
+<para>
+Custom TOAST functions are added as an extension module, and must be attached to database
+accordingly. An example os custom Toaster is provided as contrib DUMMY_TOASTER module:
+CREATE EXTENSION dummy_toaster;
+</para>
+
+<para>
+Extension header should contain the following information:
+CREATE FUNCTION dummy_toaster_handler(internal)
+RETURNS toaster_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+</para>
+
+<para>
+CREATE TOASTER dummy_toaster HANDLER dummy_toaster_handler;
+COMMENT ON TOASTER dummy_toaster IS 'dummy_toaster is a dummy toaster';
+</para>
+
+</sect2>
+
 </sect1>
 
 <sect1 id="storage-fsm">
