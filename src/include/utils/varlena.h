@@ -38,4 +38,12 @@ extern text *replace_text_regexp(text *src_text, text *pattern_text,
 								 int cflags, Oid collation,
 								 int search_start, int n);
 
+#define BYTEA_TOASTER_MAGIC	0xb17ea757
+
+typedef struct ByteaToastRoutine
+{
+	int32		magic;
+	Datum	  (*append)(Datum val1, Datum val2);
+} ByteaToastRoutine;
+
 #endif
