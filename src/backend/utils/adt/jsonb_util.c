@@ -2389,9 +2389,11 @@ convertJsonbBinary(StringInfo buffer, JEntry *pheader, const JsonbValue *val,
 
 		return true;
 	}
+#if 0 /* XXX jsonv */
 	else if (jc->ops == &jsonvContainerOps && !JsonContainerIsScalar(jc))
 		convertJsonbValue(buffer, pheader,
 						  (const JsonValue *) JsonContainerDataPtr(jc), level);
+#endif
 	else
 		return convertJsonbValue(buffer, pheader, JsonValueUnpackBinary(val), level, escontext);
 }
@@ -2653,7 +2655,7 @@ jsonbzInitContainer(JsonContainerData *jc, CompressedJsonb *cjb,
 	JsonbContainerHdr header = pheader ? *pheader : jbc->header;
 
 	*(CompressedJsonb *) &jc->_data = *cjb;
-	((CompressedJsonb *) &jc->_data)->header = header;
+/*	((CompressedJsonb *) &jc->_data)->header = header; */
 
 	jc->ops = &jsonbzContainerOps;
 	jc->len = len;
