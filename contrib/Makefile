@@ -24,6 +24,7 @@ SUBDIRS = \
 		earthdistance	\
 		file_fdw	\
 		fuzzystrmatch	\
+		jsonb_toaster	\
 		hstore		\
 		intagg		\
 		intarray	\
