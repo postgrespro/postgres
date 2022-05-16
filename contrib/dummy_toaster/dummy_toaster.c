@@ -130,8 +130,9 @@ dummyDelete(Datum value, bool is_speculative)
  * Dummy Validate, always returns True
  *
  */
-bool
-dummyToasterValidate(Oid toasteroid)
+static bool
+dummyToasterValidate(Oid typeoid, char storage, char compression,
+					 Oid amoid, bool false_ok)
 {
 	bool result = true;
 	return result;
