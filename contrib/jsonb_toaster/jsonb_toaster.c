@@ -2532,8 +2532,8 @@ jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod)
 		if (JsonContainerContainsToasted(jc))
 		{
 			//Json	   *js = DatumGetJson(PointerGetDatum(jb), &jsonxContainerOps, NULL);
-			Json		jsbuf;
-			Json	   *js = JsonExpand(&jsbuf, PointerGetDatum(jb), false, &jsonxContainerOps);
+			char	   *jsbuf = alloca(JsonAllocSize(jsonxContainerOps.data_size)); /* XXX */
+			Json	   *js = JsonExpand((Json *) jsbuf, PointerGetDatum(jb), false, &jsonxContainerOps);
 
 			jsonxInit(JsonRoot(js), PointerGetDatum(jb));
 
@@ -2764,8 +2764,8 @@ jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, ch
 #endif
 	{
 		//Json	   *js = DatumGetJson(PointerGetDatum(jb), &jsonxContainerOps, NULL);
-		Json		jsbuf;
-		Json	   *js = JsonExpand(&jsbuf, PointerGetDatum(jb), false, &jsonxContainerOps);
+		char	   *jsbuf = alloca(JsonAllocSize(jsonxContainerOps.data_size)); /* XXX */
+		Json	   *js = JsonExpand((Json *) jsbuf, PointerGetDatum(jb), false, &jsonxContainerOps);
 
 		jsonxInit(JsonRoot(js), PointerGetDatum(jb));
 
