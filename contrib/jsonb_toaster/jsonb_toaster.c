@@ -2786,12 +2786,44 @@ jsonb_toaster_validate(Oid typeoid, char storage, char compression,
 	return ok;
 }
 
+static Datum
+jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
+							Datum new_val, Json *new_js,
+							int max_inline_size, int options)
+{
+
+	Datum compressed_val = (Datum) 0;
+
+	if (VARATT_IS_CUSTOM(new_val))
+	{
+		/* Convert custom-TOASTed jsonb to plain jsonb */
+		JsonbValue jbv;
+
+		JsonValueInitBinary(&jbv, JsonRoot(new_js));
+
+		new_val = PointerGetDatum(JsonEncode(&jbv, JsonbEncode, NULL));
+	}
+
+	if (!VARATT_IS_COMPRESSED(new_val))
+	{
+		compressed_val = toast_compress_datum(new_val, cmethod);
+
+		if (compressed_val == (Datum) 0)
+			compressed_val = new_val;
+	}
+
+	if (VARSIZE_ANY(compressed_val) <= max_inline_size)
+		return compressed_val;
+
+	return jsonx_toast_save_datum_ext(rel, toasterid, compressed_val,
+									  NULL, options, NULL, false);
+}
+
 static struct varlena *
 jsonb_toaster_toast(Relation rel, Oid toasterid,
 					Datum new_val, Datum old_val,
 					int max_inline_size, int options)
 {
-
 	Json	   *new_js;
 	Datum		res;
 	char		cmethod = TOAST_PGLZ_COMPRESSION;
@@ -2803,17 +2835,10 @@ jsonb_toaster_toast(Relation rel, Oid toasterid,
 	res = jsonb_toaster_save(rel, toasterid, new_js, max_inline_size, cmethod);
 
 	if (res == (Datum) 0)
-	{
-		Datum compressed_val = (Datum) 0;
-
-		if (!VARATT_IS_COMPRESSED(new_val))
-			compressed_val = toast_compress_datum(new_val, cmethod);
-
-		if (compressed_val == (Datum) 0)
-			compressed_val = new_val;
-
-		res = jsonx_toast_save_datum_ext(rel, toasterid, compressed_val, NULL, options, NULL, false);
-	}
+		/* Fallback to default TOAST */
+		res = jsonb_toaster_default_toast(rel, toasterid, cmethod,
+										  new_val, new_js,
+										  max_inline_size, options);
 
 	res = res == (Datum) 0 ? new_val : res;
 
