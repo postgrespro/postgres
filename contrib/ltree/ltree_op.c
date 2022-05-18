@@ -188,7 +188,7 @@ ltree_risparent(PG_FUNCTION_ARGS)
 }
 
 
-static ltree *
+ltree *
 inner_subltree(ltree *t, int32 startpos, int32 endpos)
 {
 	char	   *start = NULL,
@@ -200,7 +200,8 @@ inner_subltree(ltree *t, int32 startpos, int32 endpos)
 	if (startpos < 0 || endpos < 0 || startpos >= t->numlevel || startpos > endpos)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid positions")));
+				 errmsg("invalid positions %d:%d of %d",
+						startpos, endpos, t->numlevel)));
 
 	if (endpos > t->numlevel)
 		endpos = t->numlevel;

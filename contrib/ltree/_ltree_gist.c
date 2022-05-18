@@ -499,6 +499,33 @@ _arrq_cons(ltree_gist *key, ArrayType *_query, int siglen)
 	return false;
 }
 
+static bool
+_arrq_overlap(PG_FUNCTION_ARGS, ltree_gist *key, ArrayType *_query)
+{
+	ltree	*query = (ltree *) ARR_DATA_PTR(_query);
+	int		 num = ArrayGetNItems(ARR_NDIM(_query), ARR_DIMS(_query));
+	int		 siglen = LTREE_GET_ASIGLEN();
+
+	if (ARR_NDIM(_query) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("array must be one-dimensional")));
+	if (array_contains_nulls(_query))
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not contain nulls")));
+
+	while (num > 0)
+	{
+		if (gist_te(key, query, siglen))
+			return true;
+		num--;
+		query = (ltree *) NEXTVAL(query);
+	}
+
+	return false;
+}
+
 Datum
 _ltree_consistent(PG_FUNCTION_ARGS)
 {
@@ -532,6 +559,9 @@ _ltree_consistent(PG_FUNCTION_ARGS)
 		case 16:
 		case 17:
 			res = _arrq_cons(key, (ArrayType *) query, siglen);
+			break;
+		case 1:
+			res = _arrq_overlap(fcinfo, key, (ArrayType *) query);
 			break;
 		default:
 			/* internal error */
