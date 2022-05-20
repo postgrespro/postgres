@@ -22,6 +22,7 @@
 #define JSONX_POINTER_DIRECT_TIDS			0x20000000
 #define JSONX_POINTER_DIRECT_TIDS_COMP		0x30000000
 #define JSONX_POINTER_COMPRESSED_CHUNKS		0x40000000
+#define JSONX_POINTER_DIFF					0x50000000
 
 #define JSONX_CUSTOM_PTR_HEADER_SIZE		(INTALIGN(VARATT_CUSTOM_SIZE(0)) + sizeof(uint32))
 
@@ -78,7 +79,16 @@ typedef struct JsonxDetoastIteratorData
 {
 	GenericDetoastIteratorData gen;
 	ToastBuffer 		*buf;
+	ToastBuffer 		*orig_buf;
 	JsonxFetchDatumIterator	fetch_datum_iterator;
+	struct
+	{
+		const char *data;
+		const char *inline_data;
+		int32		inline_size;
+		int32		size;
+		int32		offset;
+	}					diff;
 	int					nrefs;
 	void			   *decompression_state;
 	ToastCompressionId	compression_method;
