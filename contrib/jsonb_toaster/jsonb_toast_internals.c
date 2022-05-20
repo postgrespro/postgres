@@ -35,6 +35,12 @@
 #include "utils/snapmgr.h"
 #include "utils/jsonb.h"
 
+typedef struct varatt_external_diff
+{
+	int32		va_diff_offset;
+	char		va_diff_data[FLEXIBLE_ARRAY_MEMBER];
+} varatt_external_diff;
+
 char *
 jsonxWriteCustomToastPointerHeader(char *ptr, Oid toasterid, uint32 header,
 								   int datalen, int rawsize)
@@ -935,6 +941,7 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 								  uint32 header, char *inline_data, int inline_size)
 {
 	JsonxFetchDatumIterator iter;
+	uint32		type = header & JSONX_POINTER_TYPE_MASK;
 
 	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
 		elog(ERROR, "create_fetch_datum_iterator shouldn't be called for non-ondisk datums");
@@ -949,19 +956,19 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 	iter->toasterid = toasterid;
 	iter->chunk_tids_inline_size = inline_size;
 
-	if (inline_size <= 0)
+	if (inline_size <= 0 || type == JSONX_POINTER_DIFF)
 	{
 		iter->nchunk_tids = 0;
 		iter->chunk_tids = NULL;
 		iter->compressed_chunk_tids = NULL;
-		iter->compressed_chunks = (header & JSONX_POINTER_TYPE_MASK) == JSONX_POINTER_COMPRESSED_CHUNKS;
+		iter->compressed_chunks = type == JSONX_POINTER_COMPRESSED_CHUNKS;
 	}
 	else
 	{
 		iter->nchunk_tids = header & ~JSONX_POINTER_TYPE_MASK;
 		iter->compressed_chunks = false;
 
-		if ((header & JSONX_POINTER_TYPE_MASK) == JSONX_POINTER_DIRECT_TIDS_COMP)
+		if (type == JSONX_POINTER_DIRECT_TIDS_COMP)
 		{
 			iter->chunk_tids = palloc0(sizeof(ItemPointerData) * iter->nchunk_tids);
 			iter->compressed_chunk_tids = (char *) inline_data;
@@ -1503,6 +1510,9 @@ jsonx_fetch_datum_iterate_to(JsonxFetchDatumIterator iter, int32 chunkno, int32 
 static void
 jsonx_free_detoast_iterator_internal(JsonxDetoastIterator iter)
 {
+	if (iter->orig_buf && iter->orig_buf != iter->buf)
+		free_toast_buffer(iter->orig_buf);
+
 	if (iter->compressed && iter->buf)
 	{
 		free_toast_buffer(iter->buf);
@@ -1554,9 +1564,10 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 	if (VARATT_IS_CUSTOM(attr))
 	{
 		uint32		header = JSONX_CUSTOM_PTR_GET_HEADER(attr);
+		uint32		type = header & JSONX_POINTER_TYPE_MASK;
 		char	   *data = (char *) JSONX_CUSTOM_PTR_GET_DATA(attr);
-		char	   *inlineData;
-		uint32		inlineSize;
+		char	   *inline_data;
+		uint32		inline_size;
 
 		if (!VARATT_IS_EXTERNAL_ONDISK(data))
 			return NULL;
@@ -1568,13 +1579,13 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 		iter->nrefs = 1;
 		iter->gen.free_callback.func = (void (*)(void *)) jsonx_free_detoast_iterator_internal;
 
-		inlineData = data + TOAST_POINTER_SIZE;
-		inlineSize = JSONX_CUSTOM_PTR_GET_DATA_SIZE(attr) - TOAST_POINTER_SIZE;
+		inline_data = data + TOAST_POINTER_SIZE;
+		inline_size = JSONX_CUSTOM_PTR_GET_DATA_SIZE(attr) - TOAST_POINTER_SIZE;
 
 		iter->fetch_datum_iterator =
 			jsonx_create_fetch_datum_iterator((struct varlena *) data,
 											  VARATT_CUSTOM_GET_TOASTERID(attr),
-											  header, inlineData, inlineSize);
+											  header, inline_data, inline_size);
 
 		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
@@ -1583,6 +1594,11 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 
 			/* prepare buffer to received decompressed data */
 			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
+
+			if (type == JSONX_POINTER_DIFF)
+				iter->orig_buf = create_toast_buffer(toast_pointer.va_rawsize, false);
+			else
+				iter->orig_buf = iter->buf;
 		}
 		else
 		{
@@ -1590,7 +1606,18 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 			iter->compression_method = TOAST_INVALID_COMPRESSION_ID;
 
 			/* point the buffer directly at the raw data */
-			iter->buf = iter->fetch_datum_iterator->buf;
+			iter->buf = iter->orig_buf = iter->fetch_datum_iterator->buf;
+		}
+
+		if (type == JSONX_POINTER_DIFF)
+		{
+			varatt_external_diff *diff = (varatt_external_diff *) inline_data;
+
+			iter->diff.inline_data = inline_data;
+			iter->diff.inline_size = inline_size;
+			iter->diff.size = inline_size - offsetof(varatt_external_diff, va_diff_data);
+			iter->diff.offset = diff->va_diff_offset;
+			iter->diff.data = diff->va_diff_data;	/* FIXME MemoryContext */
 		}
 
 		return iter;
@@ -1605,7 +1632,8 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 		iter->gen.free_callback.func = (void (*)(void *)) jsonx_free_detoast_iterator_internal;
 
 		/* This is an externally stored datum --- initialize fetch datum iterator */
-		iter->fetch_datum_iterator = fetch_iter = jsonx_create_fetch_datum_iterator(attr, InvalidOid, JSONX_PLAIN_JSONB, NULL, 0);
+		iter->fetch_datum_iterator = fetch_iter =
+			jsonx_create_fetch_datum_iterator(attr, InvalidOid, JSONX_PLAIN_JSONB, NULL, 0);
 		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
 		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
@@ -1614,7 +1642,7 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
 
 			/* prepare buffer to received decompressed data */
-			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
+			iter->buf = iter->orig_buf = create_toast_buffer(toast_pointer.va_rawsize, false);
 		}
 		else
 		{
@@ -1622,7 +1650,7 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 			iter->compression_method = TOAST_INVALID_COMPRESSION_ID;
 
 			/* point the buffer directly at the raw data */
-			iter->buf = fetch_iter->buf;
+			iter->buf = iter->orig_buf = fetch_iter->buf;
 		}
 		return iter;
 	}
@@ -1660,7 +1688,7 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 		buf->limit = (char *) buf->capacity;
 
 		/* prepare buffer to received decompressed data */
-		iter->buf = create_toast_buffer(TOAST_COMPRESS_EXTSIZE(attr) + VARHDRSZ, false);
+		iter->buf = iter->orig_buf = create_toast_buffer(TOAST_COMPRESS_EXTSIZE(attr) + VARHDRSZ, false);
 
 		return iter;
 	}
@@ -1669,10 +1697,61 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 		return NULL;
 }
 
+static void
+toast_apply_diff_internal(struct varlena *result, const char *diff_data,
+						  int32 diff_offset, int32 diff_length,
+						  int32 slice_offset, int32 slice_length)
+{
+	if (diff_offset >= slice_offset)
+	{
+		if (diff_offset < slice_offset + slice_length)
+			memcpy((char *) result /*VARDATA(result)*/ + diff_offset,
+				   diff_data,
+				   Min(diff_length, slice_offset + slice_length - diff_offset));
+	}
+	else
+	{
+		if (slice_offset < diff_offset + diff_length)
+			memcpy((char *) result /*VARDATA(result)*/ + slice_offset,
+				   diff_data + slice_offset - diff_offset,
+				   Min(slice_length, diff_offset + diff_length - slice_offset));
+	}
+}
+
+#if 0
+static void
+toast_apply_diff(struct varlena *attr, struct varlena *result,
+				 int32 sliceoffset, int32 slicelength)
+{
+	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
+	{
+		struct varatt_external_versioned toast_pointer;
+		struct varatt_external_diff diff;
+		const char *inline_data = VARDATA_EXTERNAL_INLINE(attr);
+		/* Must copy to access aligned fields */
+		int32		inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
+		int32		attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
+		Size		data_offset = offsetof(varatt_external_diff, va_diff_data);
+		Size		diff_size = inline_size - data_offset;
+		const char *diff_data = inline_data + data_offset;
+
+		memcpy(&diff, inline_data, data_offset);
+
+		if (slicelength < 0)
+			slicelength = attrsize - sliceoffset;
+
+		toast_apply_diff_internal(result, diff_data,
+								  diff.va_diff_offset, diff_size,
+								  sliceoffset, slicelength);
+	}
+}
+#endif
+
 void
 jsonx_detoast_iterate(JsonxDetoastIterator detoast_iter, const char *destend)
 {
 	JsonxFetchDatumIterator fetch_iter = detoast_iter->fetch_datum_iterator;
+	const char *old_limit = detoast_iter->buf->limit;
 
 	Assert(detoast_iter != NULL && !detoast_iter->done);
 
@@ -1692,10 +1771,40 @@ jsonx_detoast_iterate(JsonxDetoastIterator detoast_iter, const char *destend)
 		jsonx_fetch_datum_iterate(fetch_iter, -1);
 
 	if (detoast_iter->compressed)
-		toast_decompress_iterate(fetch_iter->buf, detoast_iter->buf,
+		toast_decompress_iterate(fetch_iter->buf, detoast_iter->orig_buf,
 								 detoast_iter->compression_method,
 								 &detoast_iter->decompression_state,
-								 destend);
+								 detoast_iter->orig_buf->buf + (destend - detoast_iter->buf->buf));
+
+	if (detoast_iter->diff.data)
+	{
+		int32		slice_offset;
+		int32		slice_length;
+
+		/* copy original data to output buffer */
+		if (detoast_iter->compressed)
+		{
+			int		dst_limit = detoast_iter->buf->limit - detoast_iter->buf->buf;
+			int		src_limit = detoast_iter->orig_buf->limit - detoast_iter->orig_buf->buf;
+
+			if (dst_limit < src_limit)
+			{
+				memcpy(detoast_iter->buf->limit,
+					   detoast_iter->orig_buf->buf + dst_limit,
+					   src_limit - dst_limit);
+				detoast_iter->buf->limit += src_limit - dst_limit;
+			}
+		}
+
+		slice_offset = old_limit - detoast_iter->buf->buf;
+		slice_length = detoast_iter->buf->limit - old_limit;
+
+		toast_apply_diff_internal((struct varlena *) detoast_iter->buf->buf,
+								  detoast_iter->diff.data,
+								  detoast_iter->diff.offset,
+								  detoast_iter->diff.size,
+								  slice_offset, slice_length);
+	}
 
 	if (detoast_iter->buf->limit == detoast_iter->buf->capacity)
 	{

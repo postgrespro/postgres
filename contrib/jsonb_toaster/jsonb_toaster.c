@@ -166,7 +166,7 @@ typedef struct jsonbIterator
 static void jsonxFillValue(const JsonbContainerHeader *container,
 						   Oid toasterid, int index,
 						   char *base_addr, uint32 offset,
-						   JsonbValue *result);
+						   JsonbValue *result, JsonFieldPtr *ptr);
 static void convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
 static void convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
 static void convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
@@ -186,7 +186,9 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonx *cjb,
 											const JsonbContainerHeader *container,
 											Oid toasterid,
 											int index, char *base_addr,
-											uint32 offset, JsonValue *result);
+											uint32 offset,
+											JsonValue *result,
+											JsonFieldPtr *ptr);
 static JsonbContainerHeader *jsonxzDecompress(JsonContainer *jc);
 static void jsonxzDecompressTo(CompressedJsonx *cjb, Size offset);
 static bool JsonContainerIsToasted(JsonContainer *jc,
@@ -290,7 +292,7 @@ JsonbArrayIteratorNext(JsonbArrayIterator *it, JsonbValue *result)
 		return false;
 
 	jsonxFillValue(it->container, it->toasterid, it->index,
-				   it->base_addr, it->offset, result);
+				   it->base_addr, it->offset, result, NULL);
 
 	JBE_ADVANCE_OFFSET(it->offset, it->container->children[it->index]);
 
@@ -300,7 +302,8 @@ JsonbArrayIteratorNext(JsonbArrayIterator *it, JsonbValue *result)
 }
 
 static JsonbValue *
-JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i)
+JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i,
+						 JsonFieldPtr *ptr)
 {
 	JsonbValue *result;
 
@@ -311,7 +314,7 @@ JsonbArrayIteratorGetIth(JsonbArrayIterator *it, uint32 i)
 
 	jsonxFillValue(it->container, it->toasterid, i, it->base_addr,
 				   getJsonbOffset(it->container, i),
-				   result);
+				   result, ptr);
 
 	return result;
 }
@@ -371,7 +374,8 @@ initKVMap(JsonbKVMap *kvmap, void *pentries, int field_count, bool sorted)
  */
 static JsonbValue *
 jsonxFindKeyInObject(JsonContainer *jsc,
-					 const char *keyVal, int keyLen, JsonbValue *res)
+					 const char *keyVal, int keyLen, JsonbValue *res,
+					 JsonFieldPtr *ptr)
 {
 	const JsonbContainerHeader *container = JsonContainerDataPtr(jsc);
 	const JEntry *children = container->children;
@@ -421,7 +425,7 @@ jsonxFindKeyInObject(JsonContainer *jsc,
 
 			jsonxFillValue(container, jsc->toasterid, index, baseAddr,
 						   getJsonbOffset(container, index),
-						   res);
+						   res, ptr);
 
 			return res;
 		}
@@ -444,7 +448,7 @@ jsonxFindKeyInObject(JsonContainer *jsc,
  * Returns palloc()'d copy of the value, or NULL if it does not exist.
  */
 static JsonbValue *
-jsonxGetArrayElement(JsonContainer *jsc, uint32 i)
+jsonxGetArrayElement(JsonContainer *jsc, uint32 i, JsonFieldPtr *ptr)
 {
 	JsonbArrayIterator	it;
 
@@ -453,7 +457,7 @@ jsonxGetArrayElement(JsonContainer *jsc, uint32 i)
 
 	JsonbArrayIteratorInit(&it, jsc);
 
-	return JsonbArrayIteratorGetIth(&it, i);
+	return JsonbArrayIteratorGetIth(&it, i, ptr);
 }
 
 /*
@@ -471,33 +475,43 @@ jsonxGetArrayElement(JsonContainer *jsc, uint32 i)
 static void
 jsonxFillValue(const JsonbContainerHeader *container, Oid toasterid, int index,
 			   char *base_addr, uint32 offset,
-			   JsonbValue *result)
+			   JsonbValue *result, JsonFieldPtr *ptr)
 {
 	JEntry		entry = container->children[index];
+	uint32		length;
 
 	if (JBE_ISNULL(entry))
 	{
+		length = 0;
 		result->type = jbvNull;
 	}
 	else if (JBE_ISSTRING(entry))
 	{
+		length = getJsonbLength(container, index);
+
 		result->type = jbvString;
 		result->val.string.val = base_addr + offset;
-		result->val.string.len = getJsonbLength(container, index);
+		result->val.string.len = length;
 		Assert(result->val.string.len >= 0);
 	}
 	else if (JBE_ISNUMERIC(entry))
 	{
+		length = getJsonbLength(container, index);
+		length -= INTALIGN(offset) - offset; /* FIXME */
+		offset = INTALIGN(offset);
+
 		result->type = jbvNumeric;
-		result->val.numeric = (Numeric) (base_addr + INTALIGN(offset));
+		result->val.numeric = (Numeric) (base_addr + offset);
 	}
 	else if (JBE_ISBOOL_TRUE(entry))
 	{
+		length = 0;
 		result->type = jbvBool;
 		result->val.boolean = true;
 	}
 	else if (JBE_ISBOOL_FALSE(entry))
 	{
+		length = 0;
 		result->type = jbvBool;
 		result->val.boolean = false;
 	}
@@ -505,12 +519,15 @@ jsonxFillValue(const JsonbContainerHeader *container, Oid toasterid, int index,
 	{
 		JsonContainerData *cont = JsonContainerAlloc(&jsonxContainerOps);
 
+		length = getJsonbLength(container, index);
+
+		/* Remove alignment padding from data pointer and length */
+		length -= INTALIGN(offset) - offset;
+		offset = INTALIGN(offset);
+
 		jsonxInitContainer(cont,
-			/* Remove alignment padding from data pointer and length */
-						   (JsonbContainerHeader *)(base_addr + INTALIGN(offset)),
-						   getJsonbLength(container, index) -
-						   (INTALIGN(offset) - offset),
-						   toasterid);
+						   (JsonbContainerHeader *)(base_addr + offset),
+						   length, toasterid);
 
 		JsonValueInitBinary(result, cont);
 	}
@@ -519,6 +536,23 @@ jsonxFillValue(const JsonbContainerHeader *container, Oid toasterid, int index,
 		JsonbToastedContainerPointer *jbcptr = (JsonbToastedContainerPointer *)(base_addr + INTALIGN(offset));
 		struct varlena *toast_ptr = &jbcptr->data;
 		JsonContainerData *cont;
+
+		length = getJsonbLength(container, index);
+
+		/* Remove alignment padding from data pointer and length */
+		length -= INTALIGN(offset) - offset;
+		offset = INTALIGN(offset);
+
+		jbcptr = (JsonbToastedContainerPointer *)(base_addr + INTALIGN(offset));
+		toast_ptr = &jbcptr->data;
+
+		/* FIXME
+		jbcptr_data.ptr = jbcptr->ptr.va_external;
+		jbcptr_data.tail_size = jbcptr->ptr.va_inline_size;
+		jbcptr_data.tail_data = jbcptr->ptr.va_data;
+
+		toast_ptr = jsonbMakeToastPointer(&jbcptr_data);
+		*/
 
 		if (jsonb_partial_decompression)
 		{
@@ -539,6 +573,12 @@ jsonxFillValue(const JsonbContainerHeader *container, Oid toasterid, int index,
 	}
 	else
 		elog(ERROR, "invalid JEntry type: %x", entry);
+
+	if (ptr)
+	{
+		ptr->offset = base_addr + offset - (const char *) container;
+		ptr->length = length;
+	}
 }
 
 /*
@@ -621,7 +661,7 @@ recurse:
 			fillCompressedJsonbValue((*it)->compressed, (*it)->container,
 									 (*it)->toasterid,
 									 (*it)->curIndex, (*it)->dataProper,
-									 (*it)->curDataOffset, val);
+									 (*it)->curDataOffset, val, NULL);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
@@ -676,7 +716,7 @@ recurse:
 				fillCompressedJsonbValue((*it)->compressed, (*it)->container,
 										 (*it)->toasterid,
 										 (*it)->curIndex, (*it)->dataProper,
-										 (*it)->curDataOffset, val);
+										 (*it)->curDataOffset, val, NULL);
 
 				if (val->type != jbvString)
 					elog(ERROR, "unexpected jsonb type as object key");
@@ -699,7 +739,7 @@ recurse:
 									 (*it)->kvmap.entry_size ?
 									 getJsonbOffset((*it)->container, entry_index) :
 									 (*it)->curValueOffset,
-									 val);
+									 val, NULL);
 
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
@@ -1671,17 +1711,20 @@ fillCompressedJsonbValue(CompressedJsonx *cjb,
 						 const JsonbContainerHeader *container,
 						 Oid toasterid, int index,
 						 char *base_addr, uint32 offset,
-						 JsonValue *result)
+						 JsonValue *result, JsonFieldPtr *ptr)
 {
 	JEntry		entry = container->children[index];
-	uint32		len = getJsonbLength(container, index);
 	Size		base_offset;
+	uint32		length;
 
 	if (!cjb)
 	{
-		jsonxFillValue(container, toasterid, index, base_addr, offset, result);
+		jsonxFillValue(container, toasterid, index, base_addr, offset,
+					   result, ptr);
 		return result;
 	}
+
+	length = getJsonbLength(container, index);
 
 	base_offset = base_addr - (char *) cjb->iter->buf->buf;
 
@@ -1694,18 +1737,26 @@ fillCompressedJsonbValue(CompressedJsonx *cjb,
 		//cjb2.iter->nrefs++;
 
 		/* Remove alignment padding from data pointer and length */
-		cjb2.offset = base_offset + INTALIGN(offset);
+		length -= INTALIGN(offset) - offset;
+		offset = INTALIGN(offset);
 
-		len -= INTALIGN(offset) - offset;
+		cjb2.offset = base_offset + offset;
 
 		jsonxzDecompressTo(cjb, cjb2.offset + offsetof(JsonbContainerHeader, children));
-		jsonxzInitContainer(cont, &cjb2, NULL, len);
+		jsonxzInitContainer(cont, &cjb2, NULL, length);
 		JsonValueInitBinary(result, cont);
+
+		if (ptr)
+		{
+			ptr->offset = base_addr + offset - (const char *) container;
+			ptr->length = length;
+		}
 	}
 	else
 	{
-		jsonxzDecompressSlice(cjb, base_offset + offset, len);
-		jsonxFillValue(container, toasterid, index, base_addr, offset, result);
+		jsonxzDecompressSlice(cjb, base_offset + offset, length);
+		jsonxFillValue(container, toasterid, index, base_addr, offset,
+					   result, ptr);
 	}
 
 	return result;
@@ -1714,7 +1765,7 @@ fillCompressedJsonbValue(CompressedJsonx *cjb,
 static JsonbValue *
 findValueInCompressedJsonbObject(CompressedJsonx *cjb, Oid toasterid,
 								 const char *keystr, int keylen,
-								 JsonValue *res)
+								 JsonValue *res, JsonFieldPtr *ptr)
 {
 	JsonbDatum *jb = (JsonbDatum *) cjb->iter->buf->buf;
 	JsonbContainerHeader *container = (JsonbContainerHeader *)((char *) jb + cjb->offset);
@@ -1774,7 +1825,7 @@ findValueInCompressedJsonbObject(CompressedJsonx *cjb, Oid toasterid,
 			return fillCompressedJsonbValue(cjb, container, toasterid,
 											index, base_addr,
 											getJsonbOffset(container, index),
-											res);
+											res, ptr);
 		}
 		else
 		{
@@ -1789,7 +1840,8 @@ findValueInCompressedJsonbObject(CompressedJsonx *cjb, Oid toasterid,
 }
 
 static JsonValue *
-jsonxzFindKeyInObject(JsonContainer *jc, const char *key, int len, JsonValue *res)
+jsonxzFindKeyInObject(JsonContainer *jc, const char *key, int len,
+					  JsonValue *res, JsonFieldPtr *ptr)
 {
 	CompressedJsonx *cjb = jsonxzGetCompressedJsonx(jc);
 #ifdef JSONB_OWN_DETOAST_ITERATOR	/* FIXME */
@@ -1803,7 +1855,7 @@ jsonxzFindKeyInObject(JsonContainer *jc, const char *key, int len, JsonValue *re
 
 		jsonxInitContainer(&jcd, jbc, jc->len, InvalidOid);
 
-		return jsonbFindKeyInObject(&jcd, key, len, res);
+		return jsonbFindKeyInObject(&jcd, key, len, res, ptr);
 	}
 
 	CompressedDatumDecompress(cjb->datum, cjb->offset + offsetof(JsonbContainerHeader, header));
@@ -1811,7 +1863,7 @@ jsonxzFindKeyInObject(JsonContainer *jc, const char *key, int len, JsonValue *re
 	jsonxzDecompressTo(cjb, cjb->offset + offsetof(JsonbContainerHeader, children));
 #endif
 
-	return findValueInCompressedJsonbObject(cjb, jc->toasterid, key, len, res);
+	return findValueInCompressedJsonbObject(cjb, jc->toasterid, key, len, res, ptr);
 }
 
 typedef struct JsonbzArrayIterator
@@ -1857,7 +1909,7 @@ JsonbzArrayIteratorNext(JsonbzArrayIterator *it, JsonValue *result)
 
 	jsonxzDecompressTo(it->cjb, (char *) &jbc->children[it->count] - (char *) jb);
 	fillCompressedJsonbValue(it->cjb, it->container, it->toasterid, it->index, it->base_addr,
-							 it->offset, result);
+							 it->offset, result, NULL);
 
 	JBE_ADVANCE_OFFSET(it->offset, it->container->children[it->index]);
 	it->index++;
@@ -1866,7 +1918,8 @@ JsonbzArrayIteratorNext(JsonbzArrayIterator *it, JsonValue *result)
 }
 
 static JsonValue *
-JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index)
+JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index,
+						  JsonFieldPtr *ptr)
 {
 	const void *jb = it->cjb->iter->buf->buf;
 	const JsonbContainerHeader *jbc = (const JsonbContainerHeader *)((char *) jb + it->cjb->offset);
@@ -1881,7 +1934,7 @@ JsonbzArrayIteratorGetIth(JsonbzArrayIterator *it, uint32 index)
 	return fillCompressedJsonbValue(it->cjb, it->container, it->toasterid,
 									index, it->base_addr,
 									getJsonbOffset(it->container, index),
-									palloc(sizeof(JsonValue)));
+									palloc(sizeof(JsonValue)), ptr);
 }
 
 static JsonValue *
@@ -1905,7 +1958,7 @@ jsonxzFindValueInArray(JsonContainer *jc, const JsonValue *val)
 }
 
 static JsonValue *
-jsonxzGetArrayElement(JsonContainer *jc, uint32 index)
+jsonxzGetArrayElement(JsonContainer *jc, uint32 index, JsonFieldPtr *ptr)
 {
 	CompressedJsonx *cjb = jsonxzGetCompressedJsonx(jc);
 	JsonbzArrayIterator it;
@@ -1915,7 +1968,7 @@ jsonxzGetArrayElement(JsonContainer *jc, uint32 index)
 
 	JsonbzArrayIteratorInit(&it, cjb, jc->toasterid);
 
-	return JsonbzArrayIteratorGetIth(&it, index);
+	return JsonbzArrayIteratorGetIth(&it, index, ptr);
 }
 
 static JsonIterator *

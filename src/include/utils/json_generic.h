@@ -21,6 +21,12 @@ typedef JsonbPair JsonPair;
 typedef JsonbValue JsonValue;
 typedef JsonbIteratorToken JsonIteratorToken;
 
+typedef struct JsonFieldPtr
+{
+	uint32		offset;
+	uint32		length;
+} JsonFieldPtr;
+
 typedef struct JsonContainerOps JsonContainerOps;
 
 typedef struct JsonContainerData
@@ -55,10 +61,13 @@ struct JsonContainerOps
 	JsonIterator   *(*iteratorInit)(JsonContainer *jc);
 	JsonValue	   *(*findKeyInObject)(JsonContainer *object,
 									   const char *key, int len,
-									   JsonValue *res);
+									   JsonValue *res,
+									   JsonFieldPtr *ptr);
 	JsonValue	   *(*findValueInArray)(JsonContainer *array,
 										const JsonValue *value);
-	JsonValue	   *(*getArrayElement)(JsonContainer *array, uint32 index);
+	JsonValue	   *(*getArrayElement)(JsonContainer *array,
+									   uint32 index,
+									   JsonFieldPtr *ptr);
 	uint32			(*getArraySize)(JsonContainer *array);
 	char		   *(*toString)(StringInfo out, JsonContainer *jc,
 								int estimated_len);
@@ -158,6 +167,9 @@ typedef JsonContainer JsonbContainer;
 #define JsonOp3(op, jscontainer, arg1, arg2, arg3) \
 		JsonOp(op, jscontainer)(jscontainer, arg1, arg2, arg3)
 
+#define JsonOp4(op, jscontainer, arg1, arg2, arg3, arg4) \
+		JsonOp(op, jscontainer)(jscontainer, arg1, arg2, arg3, arg4)
+
 #define JsonIteratorInit(jscontainer) \
 		JsonOp0(iteratorInit, jscontainer)
 
@@ -165,10 +177,16 @@ typedef JsonContainer JsonbContainer;
 		JsonOp1(findValueInArray, jscontainer, key)
 
 #define JsonFindKeyInObject(jscontainer, key, len, res) \
-		JsonOp3(findKeyInObject, jscontainer, key, len, res)
+		JsonOp4(findKeyInObject, jscontainer, key, len, res, NULL)
+
+#define JsonFindKeyPtrInObject(jscontainer, key, len, res, ptr) \
+		JsonOp4(findKeyInObject, jscontainer, key, len, res, ptr)
 
 #define JsonGetArrayElement(jscontainer, index) \
-		JsonOp1(getArrayElement, jscontainer, index)
+		JsonOp2(getArrayElement, jscontainer, index, NULL)
+
+#define JsonGetArrayElementPtr(jscontainer, index, ptr) \
+		JsonOp2(getArrayElement, jscontainer, index, ptr)
 
 #define JsonGetArraySize(json) \
 		JsonOp0(getArraySize, json)
