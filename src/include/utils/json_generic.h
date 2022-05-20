@@ -74,6 +74,9 @@ struct JsonContainerOps
 	JsonContainer  *(*copy)(JsonContainer *jc);
 	void			(*free)(JsonContainer *jc);
 	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops, Oid toasterid);
+	Datum			(*setPath)(JsonContainer *js, Datum *path_elems,
+							   bool *path_nulls, int path_len,
+							   JsonValue *newval, int flags);
 };
 
 typedef struct CompressedObject
@@ -170,6 +173,9 @@ typedef JsonContainer JsonbContainer;
 #define JsonOp4(op, jscontainer, arg1, arg2, arg3, arg4) \
 		JsonOp(op, jscontainer)(jscontainer, arg1, arg2, arg3, arg4)
 
+#define JsonOp5(op, jscontainer, arg1, arg2, arg3, arg4, arg5) \
+		JsonOp(op, jscontainer)(jscontainer, arg1, arg2, arg3, arg4, arg5)
+
 #define JsonIteratorInit(jscontainer) \
 		JsonOp0(iteratorInit, jscontainer)
 
@@ -199,6 +205,8 @@ typedef JsonContainer JsonbContainer;
 			(jc)->ops->free(jc); \
 	} while (0)
 
+#define JsonSetPath(jc, path_elems, path_nulls, path_len, newval, flags) \
+		JsonOp5(setPath, jc, path_elems, path_nulls, path_len, newval, flags)
 
 static inline JsonIteratorToken
 JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
@@ -307,6 +315,9 @@ extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
 extern const JsonValue *JsonValueUnwrap(const JsonValue *val, JsonValue *buf);
 extern JsonContainer *JsonCopyFlat(JsonContainer *flatContainer);
 extern JsonValue *JsonExtractScalar(JsonContainer *jc, JsonValue *scalar);
+extern Datum JsonSetPathGeneric(JsonContainer *js, Datum *path_elems,
+								bool *path_nulls, int path_len,
+								JsonValue *newval, int flags);
 
 extern Jsonb *JsonbMakeEmptyArray(void);
 extern Jsonb *JsonbMakeEmptyObject(void);

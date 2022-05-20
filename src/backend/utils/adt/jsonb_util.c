@@ -2582,7 +2582,8 @@ jsonbContainerOps =
 	JsonbToCStringRaw,
 	JsonCopyFlat,
 	NULL,
-	NULL
+	NULL,
+	JsonSetPathGeneric
 };
 
 #ifndef JSONB_DETOAST_ITERATOR
@@ -3173,7 +3174,8 @@ jsonbzContainerOps =
 	JsonbToCStringRaw,
 	JsonCopyFlat,	// FIXME
 	jsonbzFree,
-	NULL
+	NULL,
+	JsonSetPathGeneric
 };
 
 Json *

@@ -4606,6 +4606,23 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
+Datum
+JsonSetPathGeneric(JsonContainer *js,
+				   Datum *path_elems, bool *path_nulls, int path_len,
+				   JsonValue *newval, int flags)
+{
+	JsonbParseState *st = NULL;
+	JsonbIterator *it = JsonbIteratorInit(js);
+	JsonbValue *res;
+
+	res = setPath(&it, path_elems, path_nulls, path_len, &st, 0,
+				  newval, flags);
+
+	Assert(res != NULL);
+
+	return JsonbValueToOrigJsonbDatum2(res, js);
+}
+
 /*
  * SQL function jsonb_set(jsonb, text[], jsonb, boolean)
  */
@@ -4617,12 +4634,10 @@ jsonb_set(PG_FUNCTION_ARGS)
 	Jsonb	   *newjsonb = PG_GETARG_JSONB_P(2);
 	JsonbValue	newval;
 	bool		create = PG_GETARG_BOOL(3);
-	JsonbValue *res = NULL;
+	Datum		res;
 	Datum	   *path_elems;
 	bool	   *path_nulls;
 	int			path_len;
-	JsonbIterator *it;
-	JsonbParseState *st = NULL;
 
 	JsonToJsonValue(newjsonb, &newval);
 
@@ -4644,14 +4659,10 @@ jsonb_set(PG_FUNCTION_ARGS)
 	if (path_len == 0)
 		PG_RETURN_JSONB_P(in);
 
-	it = JsonbIteratorInit(JsonbRoot(in));
+	res = JsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len,
+					  &newval, create ? JB_PATH_CREATE : JB_PATH_REPLACE);
 
-	res = setPath(&it, path_elems, path_nulls, path_len, &st,
-				  0, &newval, create ? JB_PATH_CREATE : JB_PATH_REPLACE);
-
-	Assert(res != NULL);
-
-	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
+	PG_RETURN_DATUM(res);
 }
 
 
