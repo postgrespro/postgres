@@ -2061,6 +2061,14 @@ jsonxzCopy(JsonContainer *jc)
 	return res;
 }
 
+static Datum
+jsonxSetPath(JsonContainer *js, Datum *path_elems,
+			 bool *path_nulls, int path_len,
+			 JsonValue *newval, int flags)
+{
+	return JsonSetPathGeneric(js, path_elems, path_nulls, path_len, newval, flags);
+}
+
 static JsonContainerOps
 jsonxzContainerOps =
 {
@@ -2074,7 +2082,8 @@ jsonxzContainerOps =
 	JsonbToCStringRaw,
 	jsonxzCopy,
 	jsonxzFree,
-	jsonxzEncode
+	jsonxzEncode,
+	jsonxSetPath
 };
 
 static JsonContainerOps
@@ -2090,7 +2099,8 @@ jsonxContainerOps =
 	JsonbToCStringRaw,
 	JsonCopyFlat,
 	NULL,
-	jsonxEncode
+	jsonxEncode,
+	jsonxSetPath
 };
 
 static JsonContainer *
