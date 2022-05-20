@@ -178,7 +178,7 @@ JsonValueToJson(JsonValue *val)
 Datum
 JsonbValueToOrigJsonbDatum(JsonValue *val, Json *orig_json)
 {
-	if (val->type != jbvBinary &&
+	if (val->type != jbvBinary && orig_json &&
 		JsonRoot(orig_json)->ops->encode)
 	{
 		void	   *res =
