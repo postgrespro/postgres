@@ -31,15 +31,10 @@
 #include "miscadmin.h"
 #include "utils/expandeddatum.h"
 #include "utils/fmgroids.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/jsonb.h"
-
-typedef struct varatt_external_diff
-{
-	int32		va_diff_offset;
-	char		va_diff_data[FLEXIBLE_ARRAY_MEMBER];
-} varatt_external_diff;
 
 char *
 jsonxWriteCustomToastPointerHeader(char *ptr, Oid toasterid, uint32 header,
@@ -53,6 +48,14 @@ jsonxWriteCustomToastPointerHeader(char *ptr, Oid toasterid, uint32 header,
 
 	VARATT_CUSTOM_SET_TOASTERID(ptr, toasterid);
 	VARATT_CUSTOM_SET_DATA_RAW_SIZE(ptr, rawsize);
+
+	if (size - hdrsize > VARATT_CUSTOM_MAX_DATA_SIZE)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("atribute length too large")));
+		//elog(ERROR, "custom TOAST pointer data size exceeds maximal size: %d > %d",
+		//	 (int)(size - hdrsize), VARATT_CUSTOM_MAX_DATA_SIZE);
+
 	VARATT_CUSTOM_SET_DATA_SIZE(ptr, size - hdrsize);
 
 	if (aligned_hdrsize != hdrsize)
@@ -136,14 +139,40 @@ jsonx_toast_make_pointer_compressed_chunks(Oid toasterid,
 }
 
 struct varlena *
+jsonx_toast_make_pointer_diff(Oid toasterid,
+							  struct varatt_external *toast_pointer,
+							  int32 diff_offset, int32 diff_len,
+							  const void *diff_data)
+{
+	JsonxPointerDiff *diff;
+	char	   *data;
+	int			datalen =
+		TOAST_POINTER_SIZE + offsetof(JsonxPointerDiff, data) + diff_len;
+
+	struct varlena *result =
+		jsonx_toast_make_custom_pointer(toasterid, JSONX_POINTER_DIFF,
+										datalen, toast_pointer->va_rawsize, &data);
+
+	SET_VARTAG_EXTERNAL(data, VARTAG_ONDISK);
+	memcpy(VARDATA_EXTERNAL(data), toast_pointer, sizeof(*toast_pointer));
+
+	diff = (JsonxPointerDiff *)(data + TOAST_POINTER_SIZE);
+	memcpy(&diff->offset, &diff_offset, sizeof(diff_offset));
+	memcpy(diff->data, diff_data, diff_len);
+
+	return result;
+}
+
+struct varlena *
 jsonxMakeToastPointer(JsonbToastedContainerPointerData *ptr)
 {
-	if (ptr->ntids)
+	if (ptr->ntids || ptr->has_diff)
 	{
 		char	   *data;
-		uint32		header = ptr->ntids | (ptr->compressed_tids ?
-										   JSONX_POINTER_DIRECT_TIDS_COMP :
-										   JSONX_POINTER_DIRECT_TIDS);
+		uint32		header = ptr->has_diff ? JSONX_POINTER_DIFF :
+			ptr->ntids | (ptr->compressed_tids ?
+						  JSONX_POINTER_DIRECT_TIDS_COMP :
+						  JSONX_POINTER_DIRECT_TIDS);
 		struct varlena *custom_ptr =
 			jsonx_toast_make_custom_pointer(ptr->toasterid, header,
 											TOAST_POINTER_SIZE + ptr->tail_size,
@@ -175,14 +204,17 @@ jsonxMakeToastPointer(JsonbToastedContainerPointerData *ptr)
 void
 jsonxWriteToastPointer(StringInfo buffer, JsonbToastedContainerPointerData *ptr)
 {
-	if (ptr->ntids)
+	if (ptr->ntids || ptr->has_diff)
 	{
 		char		custom_ptr[JSONX_CUSTOM_PTR_HEADER_SIZE];
 		char		toast_ptr[TOAST_POINTER_SIZE];
-		uint32		header = ptr->ntids | (ptr->compressed_tids ?
-										   JSONX_POINTER_DIRECT_TIDS_COMP :
-										   JSONX_POINTER_DIRECT_TIDS);
+		uint32		header = ptr->has_diff ?
+			JSONX_POINTER_DIFF :
+			ptr->ntids | (ptr->compressed_tids ?
+						  JSONX_POINTER_DIRECT_TIDS_COMP :
+						  JSONX_POINTER_DIRECT_TIDS);
 
+		Assert(ptr->has_diff ^ ptr->ntids);
 		Assert(!ptr->compressed_chunks);
 
 		jsonxWriteCustomToastPointerHeader(custom_ptr, ptr->toasterid, header,
@@ -241,6 +273,7 @@ jsonxInitToastedContainerPointer(JsonbToastedContainerPointerData *jbcptr,
 	jbcptr->ntids = ntids;
 	jbcptr->compressed_tids = compressed_tids;
 	jbcptr->compressed_chunks = compressed_chunks;
+	jbcptr->has_diff = false;
 	jbcptr->toasterid = toasterid;
 	jbcptr->container_offset = container_offset;
 }
@@ -1611,13 +1644,13 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 
 		if (type == JSONX_POINTER_DIFF)
 		{
-			varatt_external_diff *diff = (varatt_external_diff *) inline_data;
+			JsonxPointerDiff *diff = (JsonxPointerDiff *) inline_data;
 
 			iter->diff.inline_data = inline_data;
 			iter->diff.inline_size = inline_size;
-			iter->diff.size = inline_size - offsetof(varatt_external_diff, va_diff_data);
-			iter->diff.offset = diff->va_diff_offset;
-			iter->diff.data = diff->va_diff_data;	/* FIXME MemoryContext */
+			iter->diff.size = inline_size - offsetof(JsonxPointerDiff, data);
+			iter->diff.offset = diff->offset;
+			iter->diff.data = diff->data;	/* FIXME MemoryContext */
 		}
 
 		return iter;
@@ -1726,12 +1759,12 @@ toast_apply_diff(struct varlena *attr, struct varlena *result,
 	if (VARATT_IS_EXTERNAL_ONDISK_INLINE_DIFF(attr))
 	{
 		struct varatt_external_versioned toast_pointer;
-		struct varatt_external_diff diff;
+		struct JsonxPointerDiff diff;
 		const char *inline_data = VARDATA_EXTERNAL_INLINE(attr);
 		/* Must copy to access aligned fields */
 		int32		inline_size = VARATT_EXTERNAL_INLINE_GET_POINTER(toast_pointer, attr);
 		int32		attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer.va_external);
-		Size		data_offset = offsetof(varatt_external_diff, va_diff_data);
+		Size		data_offset = offsetof(JsonxPointerDiff, data);
 		Size		diff_size = inline_size - data_offset;
 		const char *diff_data = inline_data + data_offset;
 
@@ -1741,7 +1774,7 @@ toast_apply_diff(struct varlena *attr, struct varlena *result,
 			slicelength = attrsize - sliceoffset;
 
 		toast_apply_diff_internal(result, diff_data,
-								  diff.va_diff_offset, diff_size,
+								  diff.offset, diff_size,
 								  sliceoffset, slicelength);
 	}
 }

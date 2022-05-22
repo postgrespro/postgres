@@ -94,7 +94,7 @@ typedef struct uint32align16
 /* varatt_custom uses 16bit aligment */
 typedef struct varatt_custom
 {
-	uint16			va_toasterdatalen;/* total size of toast pointer, < BLCKSZ */
+	uint32align16	va_toasterdatalen;	/* total size of toast pointer, < BLCKSZ */
 	uint32align16	va_rawsize;		/* Original data size (includes header) */
 	uint32align16	va_toasterid;	/* Toaster ID, actually Oid */
 	char		va_toasterdata[FLEXIBLE_ARRAY_MEMBER];	/* Custom toaster data */
@@ -392,16 +392,19 @@ typedef struct
 	(set_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_rawsize, (V)))
 
 #define VARATT_CUSTOM_GET_DATA_SIZE(PTR) \
-	((int32) VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen)
+	((int32) get_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen))
 
 #define VARATT_CUSTOM_SET_DATA_SIZE(PTR, V) \
-	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen = (V))
+	(set_uint32align16(&VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdatalen, (V)))
 
 #define VARATT_CUSTOM_GET_DATA(PTR) \
 	(VARATT_CUSTOM_GET_TOASTPOINTER(PTR)->va_toasterdata)
 
 #define VARATT_CUSTOM_SIZE(datalen) \
 	((Size) VARHDRSZ_EXTERNAL + offsetof(varatt_custom, va_toasterdata) + (datalen))
+
+#define VARATT_CUSTOM_MAX_DATA_SIZE \
+	(MaxAllocSize - VARATT_CUSTOM_SIZE(0))
 
 #define VARSIZE_CUSTOM(PTR)	VARATT_CUSTOM_SIZE(VARATT_CUSTOM_GET_DATA_SIZE(PTR))
 

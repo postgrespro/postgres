@@ -109,7 +109,14 @@ typedef struct JsonbToastedContainerPointerData
 	uint32		ntids;
 	bool		compressed_tids;
 	bool		compressed_chunks;
+	bool		has_diff;
 } JsonbToastedContainerPointerData;
+
+typedef struct JsonxPointerDiff
+{
+	int32		offset;
+	char		data[FLEXIBLE_ARRAY_MEMBER];
+} JsonxPointerDiff;
 
 extern Datum jsonx_toast_save_datum(Relation rel, Datum value,
 									struct varlena *oldexternal,
@@ -130,6 +137,11 @@ extern void jsonx_detoast_iterate_slice(JsonxDetoastIterator detoast_iter,
 
 extern struct varlena *
 jsonx_toast_make_plain_pointer(Oid toasterid, JsonbContainerHeader *jbc, int len);
+
+extern struct varlena *
+jsonx_toast_make_pointer_diff(Oid toasterid, struct varatt_external *ptr,
+							  int32 diff_offset, int32 diff_len,
+							  const void *diff_data);
 
 extern struct varlena *
 jsonx_toast_compress_tids(struct varlena *chunk_tids, int max_size);
