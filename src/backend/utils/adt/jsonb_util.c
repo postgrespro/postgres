@@ -2579,7 +2579,9 @@ jsonbContainerOps =
 	JsonCopyFlat,
 	NULL,
 	NULL,
-	JsonSetPathGeneric
+	JsonSetPathGeneric,
+	JsonSetObjectKeyGeneric,
+	JsonSetArrayElementGeneric
 };
 
 #ifndef JSONB_DETOAST_ITERATOR
@@ -3171,7 +3173,9 @@ jsonbzContainerOps =
 	JsonCopyFlat,	// FIXME
 	jsonbzFree,
 	NULL,
-	JsonSetPathGeneric
+	JsonSetPathGeneric,
+	JsonSetObjectKeyGeneric,
+	JsonSetArrayElementGeneric
 };
 
 Json *
