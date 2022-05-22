@@ -60,11 +60,13 @@ void _PG_init(void);
 #define JBE_ISCONTAINER_PTR(je_)(((je_) & JENTRY_TYPEMASK) == JENTRY_ISCONTAINER_PTR)
 
 #define JBC_TOBJECT_TOASTED		0x10000000	/* object with toasted keys */
+#define JBC_TOBJECT_COMPRESSED	0x60000000	/* object with compressed keys */
 
 #define JB_HEADER(jb) ((jb)->root.header)
 #define JX_HEADER_IS_OBJECT(hdr) (((hdr) & JBC_TMASK) == JBC_TOBJECT || \
 								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_SORTED || \
-								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_TOASTED)
+								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_TOASTED || \
+								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_COMPRESSED)
 #define JX_ROOT_IS_OBJECT(jbp_)	JX_HEADER_IS_OBJECT(JB_HEADER(jbp_))
 
 typedef struct varatt_external JsonbToastPointer;
@@ -195,10 +197,11 @@ static bool JsonContainerIsToasted(JsonContainer *jc,
 								   JsonbToastedContainerPointerData *jbcptr);
 static bool JsonContainerIsCompressed(JsonContainer *jc,
 									  JsonbCompressedContainerData *jbcptr);
-static bool JsonValueContainsToasted(const JsonValue *jv);
-static bool JsonValueIsToasted(JsonValue *jv, JsonbToastedContainerPointerData *jbcptr);
-static bool JsonValueIsCompressed(JsonValue *jv, JsonbCompressedContainerData *jbcptr);
+static bool JsonValueIsToasted(const JsonValue *jv, JsonbToastedContainerPointerData *jbcptr);
+static bool JsonValueIsCompressed(const JsonValue *jv, JsonbCompressedContainerData *jbcptr);
 static bool JsonContainerContainsToasted(JsonContainer *jc);
+static bool JsonContainerContainsToastedOrCompressed(JsonContainer *jc, bool *toasted, bool *compressed);
+static bool JsonValueContainsToastedOrCompressed(const JsonValue *jv, bool *toasted, bool *compressed);
 
 static bool jsonb_toast_fields = true;				/* GUC */
 static bool jsonb_toast_fields_recursively = true;	/* GUC */
@@ -822,6 +825,7 @@ JsonxIteratorInit(JsonContainer *cont, const JsonbContainerHeader *container,
 		case JBC_TOBJECT:
 		case JBC_TOBJECT_SORTED:
 		case JBC_TOBJECT_TOASTED:
+		case JBC_TOBJECT_COMPRESSED:
 			it->dataProper =
 				(char *) it->children + it->nElems * sizeof(JEntry) * 2;
 			it->dataProper = initKVMap(&it->kvmap, it->dataProper, it->nElems,
@@ -902,9 +906,14 @@ JsonxEncode(StringInfoData *buffer, const JsonbValue *val, void *cxt)
 static void *
 jsonxEncode(JsonValue *jv, JsonContainerOps *ops, Oid toasterid)
 {
-	if (ops == &jsonbContainerOps &&
-		JsonValueContainsToasted(jv))
-		return JsonEncode(jv, JsonxEncode, (void *)(intptr_t) toasterid);
+	if (ops == &jsonbContainerOps)
+	{
+		bool		toasted;
+		bool		compressed;
+
+		if (JsonValueContainsToastedOrCompressed(jv, &toasted, &compressed))
+			return JsonEncode(jv, JsonxEncode, (void *)(intptr_t) toasterid);
+	}
 
 	return NULL;
 }
@@ -1204,24 +1213,83 @@ JsonContainerContainsToasted(JsonContainer *jc)
 }
 
 static bool
-JsonValueIsToasted(JsonValue *jv, JsonbToastedContainerPointerData *jbcptr)
+JsonContainerContainsToastedOrCompressed(JsonContainer *jc,
+										 bool *toasted, bool *compressed)
+{
+	if (jc->ops == &jsonxContainerOps)
+	{
+		JsonbContainerHeader *jbc = JsonContainerDataPtr(jc);
+
+		*toasted = (jbc->header & JBC_TMASK) == JBC_TOBJECT_TOASTED;
+		*compressed = (jbc->header & JBC_TMASK) == JBC_TOBJECT_COMPRESSED;
+
+		return *toasted  || *compressed;
+	}
+	else if (jc->ops == &jsonxzContainerOps)
+	{
+		CompressedJsonx *cjb = jsonxzGetCompressedJsonx(jc);
+
+		*toasted = (cjb->header & JBC_TMASK) == JBC_TOBJECT_TOASTED;
+		*compressed = (cjb->header & JBC_TMASK) == JBC_TOBJECT_COMPRESSED;
+
+		return *toasted  || *compressed;
+	}
+#if 0 /* XXX jsonv */
+	else if (jc->ops == &jsonvContainerOps)
+		return JsonValueContainsToastedOrCompressed(JsonContainerDataPtr(jc), toasted, compressed);
+#endif
+	else
+	{
+		*toasted = *compressed = false;
+		return false;	/* XXX other container types */
+	}
+}
+
+static bool
+JsonValueIsToasted(const JsonValue *jv, JsonbToastedContainerPointerData *jbcptr)
 {
 	return jv->type == jbvBinary &&
 		JsonContainerIsToasted(jv->val.binary.data, jbcptr);
 }
 
 static bool
-JsonValueIsCompressed(JsonValue *jv, JsonbCompressedContainerData *jbcptr)
+JsonValueIsCompressed(const JsonValue *jv, JsonbCompressedContainerData *jbcptr)
 {
 	return jv->type == jbvBinary &&
 		JsonContainerIsCompressed(jv->val.binary.data, jbcptr);
 }
 
+static inline bool
+JsonValueContainsToastedOrCompressedAccum(const JsonValue *val,
+										  bool *toasted, bool *compressed)
+{
+	bool		has_toasted;
+	bool		has_compressed;
+
+	*toasted |= JsonValueIsToasted(val, NULL);
+	*compressed |= JsonValueIsCompressed(val, NULL);
+
+	if (*toasted && *compressed)
+		return true;
+
+	if (JsonValueContainsToastedOrCompressed(val, &has_toasted, &has_compressed))
+	{
+		*toasted |= has_toasted;
+		*compressed |= has_compressed;
+	}
+
+	return *toasted && *compressed;
+}
+
 static bool
-JsonValueContainsToasted(const JsonValue *jv)
+JsonValueContainsToastedOrCompressed(const JsonValue *jv,
+									 bool *toasted, bool *compressed)
 {
 	if (jv->type == jbvBinary)
-		return JsonContainerContainsToasted(jv->val.binary.data);
+		return JsonContainerContainsToastedOrCompressed(jv->val.binary.data,
+														toasted, compressed);
+
+	*toasted = *compressed = false;
 
 	if (jv->type == jbvObject)
 	{
@@ -1231,8 +1299,7 @@ JsonValueContainsToasted(const JsonValue *jv)
 		{
 			JsonValue *val = &jv->val.object.pairs[i].value;
 
-			if (JsonValueIsToasted(val, NULL) ||
-				JsonValueContainsToasted(val))
+			if (JsonValueContainsToastedOrCompressedAccum(val, toasted, compressed))
 				return true;
 		}
 	}
@@ -1244,14 +1311,14 @@ JsonValueContainsToasted(const JsonValue *jv)
 		{
 			JsonValue *val = &jv->val.array.elems[i];
 
-			if (JsonValueIsToasted(val, NULL) ||
-				JsonValueContainsToasted(val))
+			if (JsonValueContainsToastedOrCompressedAccum(val, toasted, compressed))
 				return true;
 		}
 	}
 
-	return false;
+	return *toasted || *compressed;
 }
+
 
 static void
 convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, int level)
@@ -1266,6 +1333,7 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, in
 	int			kvmap_entry_size;
 	bool		sorted_values = jsonb_sort_field_values && nPairs > 1;
 	bool		have_toasted_values = false;
+	bool		have_compressed_values = false;
 	struct
 	{
 		int			size;
@@ -1274,11 +1342,8 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, in
 
 	Assert(nPairs >= 0);
 
-	if (JsonValueContainsToasted(val))
-	{
-		have_toasted_values = true;
+	if (JsonValueContainsToastedOrCompressed(val, &have_toasted_values, &have_compressed_values))
 		sorted_values = false;	/* FIXME */
-	}
 
 	values = sorted_values ? palloc(sizeof(*values) * nPairs) : NULL;
 
@@ -1318,7 +1383,8 @@ convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, in
 	 */
 	header = nPairs |
 		(sorted_values ? JBC_TOBJECT_SORTED :
-		have_toasted_values ? JBC_TOBJECT_TOASTED : JBC_TOBJECT);
+		have_toasted_values ? JBC_TOBJECT_TOASTED :
+		have_compressed_values ? JBC_TOBJECT_COMPRESSED : JBC_TOBJECT);
 	appendToBuffer(buffer, (char *) &header, sizeof(uint32));
 
 	/* Reserve space for the JEntries of the keys and values. */
@@ -1617,6 +1683,7 @@ jsonxInitContainerFromHeader(JsonContainerData *jc, JsonbContainerHdr header)
 		case JBC_TOBJECT:
 		case JBC_TOBJECT_SORTED:
 		case JBC_TOBJECT_TOASTED:
+		case JBC_TOBJECT_COMPRESSED:
 			jc->type = jbvObject;
 			break;
 		case JBC_TARRAY:
