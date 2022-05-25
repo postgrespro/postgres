@@ -2089,6 +2089,9 @@ jsonxzInitWithHeader(JsonContainerData *jc, Datum value, JsonbContainerHdr *head
 		oldcxt = MemoryContextSwitchTo(mcxt);
 #endif
 
+	if (!jsonb_partial_detoast && VARATT_IS_EXTERNAL_ONDISK(value))
+		value = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(value)));
+
 	iter = jsonx_create_detoast_iterator((struct varlena *) DatumGetPointer(value));
 
 #ifdef JSONB_FREE_ITERATORS
