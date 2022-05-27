@@ -2662,7 +2662,6 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 		if (!jsonb_toast_fields)
 			goto exit;
 
-
 		Datum value_to_toast;
 		bool compress_chunks;
 
@@ -3143,6 +3142,54 @@ jsonb_toaster_validate(Oid typeoid, char storage, char compression,
 }
 
 static Datum
+jsonb_toaster_toast2(Relation rel, Oid toasterid, Datum val, Datum compressed_val,
+					 int max_inline_size, int options)
+{
+	Datum		toasted_val;
+	bool		compress_chunks = jsonb_compress_chunks;
+
+	if (jsonb_direct_toast && VARSIZE_ANY(compressed_val) / 1900 * 1 + TOAST_POINTER_SIZE + 16 < max_inline_size)
+	{
+		struct varlena *chunks = NULL;
+
+		toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, val, NULL, 0, &chunks, compress_chunks);
+
+		if (!chunks)
+			;
+		else if (VARSIZE_ANY(chunks) <= max_inline_size)
+		{
+			pfree(DatumGetPointer(toasted_val));
+			toasted_val = PointerGetDatum(chunks);
+		}
+		else
+		{
+			if (jsonb_compress_chunk_tids)
+			{
+				struct varlena *compressed_chunks = jsonx_toast_compress_tids(chunks, max_inline_size);
+
+				if (compressed_chunks)
+				{
+					if (VARSIZE_ANY(compressed_chunks) <= max_inline_size)
+					{
+						pfree(DatumGetPointer(toasted_val));
+						toasted_val = PointerGetDatum(compressed_chunks);
+					}
+					else
+						pfree(compressed_chunks);
+				}
+			}
+
+			pfree(chunks);
+		}
+	}
+	else
+		toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, val,
+												 NULL, options, NULL, compress_chunks);
+
+	return toasted_val;
+}
+
+static Datum
 jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 							Datum new_val, Json *new_js,
 							int max_inline_size, int options)
@@ -3170,6 +3217,9 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 
 	if (VARSIZE_ANY(compressed_val) <= max_inline_size)
 		return compressed_val;
+
+	return jsonb_toaster_toast2(rel, toasterid, new_val, compressed_val,
+								max_inline_size, options);
 
 	return jsonx_toast_save_datum_ext(rel, toasterid, compressed_val,
 									  NULL, options, NULL, false);
