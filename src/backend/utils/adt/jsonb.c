@@ -1435,11 +1435,8 @@ close_object:
 	PG_RETURN_POINTER(JsonbValueToJsonb(result.res));
 }
 
-/*
- * jsonb_agg aggregate function
- */
-Datum
-jsonb_agg_transfn(PG_FUNCTION_ARGS)
+static Datum
+jsonb_agg_transfn_worker(FunctionCallInfo fcinfo, bool absent_on_null)
 {
 	MemoryContext oldcontext,
 				aggcontext;
