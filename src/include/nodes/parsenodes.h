@@ -683,12 +683,14 @@ typedef struct ColumnDef
 	bool		is_not_null;	/* NOT NULL constraint specified? */
 	bool		is_from_type;	/* column definition came from table type */
 	char		storage;		/* attstorage setting, or 0 for default */
+	char		*storage_name;	/* attstorage setting name or NULL for default*/
 	Node	   *raw_default;	/* default value (untransformed parse tree) */
 	Node	   *cooked_default; /* default value (transformed expr tree) */
 	char		identity;		/* attidentity setting */
 	RangeVar   *identitySequence;	/* to store identity sequence name for
 									 * ALTER TABLE ... ADD COLUMN */
 	char		generated;		/* attgenerated setting */
+	char	   *toaster;		/* toaster name or NULL for default */
 	CollateClause *collClause;	/* untransformed COLLATE spec, if any */
 	Oid			collOid;		/* collation OID (InvalidOid if not set) */
 	List	   *constraints;	/* other constraints on column */
@@ -2175,6 +2177,7 @@ typedef enum ObjectType
 	OBJECT_TABCONSTRAINT,
 	OBJECT_TABLE,
 	OBJECT_TABLESPACE,
+	OBJECT_TOASTER,
 	OBJECT_TRANSFORM,
 	OBJECT_TRIGGER,
 	OBJECT_TSCONFIGURATION,
@@ -2294,7 +2297,8 @@ typedef enum AlterTableType
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
-	AT_ReAddStatistics			/* internal to commands/tablecmds.c */
+	AT_ReAddStatistics,			/* internal to commands/tablecmds.c */
+	AT_SetToaster				/* alter column set toaster */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -2880,6 +2884,18 @@ typedef struct CreateAmStmt
 	List	   *handler_name;	/* handler function name */
 	char		amtype;			/* type of access method */
 } CreateAmStmt;
+
+/*----------------------
+ *		Create TOASTER Statement
+ *----------------------
+ */
+typedef struct CreateToasterStmt
+{
+	NodeTag		type;
+	char	   *tsrname;			/* toaster name */
+	List	   *handler_name;	/* handler function name */
+	bool		if_not_exists;
+} CreateToasterStmt;
 
 /* ----------------------
  *		Create TRIGGER Statement

@@ -2434,6 +2434,16 @@ _equalCreateAmStmt(const CreateAmStmt *a, const CreateAmStmt *b)
 }
 
 static bool
+_equalCreateToasterStmt(const CreateToasterStmt *a, const CreateToasterStmt *b)
+{
+	COMPARE_STRING_FIELD(tsrname);
+	COMPARE_NODE_FIELD(handler_name);
+	COMPARE_SCALAR_FIELD(if_not_exists);
+
+	return true;
+}
+
+static bool
 _equalCreateTrigStmt(const CreateTrigStmt *a, const CreateTrigStmt *b)
 {
 	COMPARE_SCALAR_FIELD(replace);
@@ -3055,6 +3065,7 @@ _equalColumnDef(const ColumnDef *a, const ColumnDef *b)
 	COMPARE_SCALAR_FIELD(identity);
 	COMPARE_NODE_FIELD(identitySequence);
 	COMPARE_SCALAR_FIELD(generated);
+	COMPARE_STRING_FIELD(toaster);
 	COMPARE_NODE_FIELD(collClause);
 	COMPARE_SCALAR_FIELD(collOid);
 	COMPARE_NODE_FIELD(constraints);
@@ -4119,6 +4130,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreateAmStmt:
 			retval = _equalCreateAmStmt(a, b);
+			break;
+		case T_CreateToasterStmt:
+			retval = _equalCreateToasterStmt(a, b);
 			break;
 		case T_CreateTrigStmt:
 			retval = _equalCreateTrigStmt(a, b);

@@ -104,7 +104,7 @@
  */
 #define att_align_datum(cur_offset, attalign, attlen, attdatum) \
 ( \
-	((attlen) == -1 && VARATT_IS_SHORT(DatumGetPointer(attdatum))) ? \
+	((attlen) == -1 && (!VARATT_IS_CUSTOM(DatumGetPointer(attdatum)) && VARATT_IS_SHORT(DatumGetPointer(attdatum)))) ? \
 	(uintptr_t) (cur_offset) : \
 	att_align_nominal(cur_offset, attalign) \
 )

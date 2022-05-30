@@ -23,6 +23,7 @@
 #include "access/relscan.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
+#include "access/toasterapi.h"
 #include "access/toast_compression.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -44,6 +45,7 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
@@ -348,7 +350,8 @@ static void truncate_check_activity(Relation rel);
 static void RangeVarCallbackForTruncate(const RangeVar *relation,
 										Oid relId, Oid oldRelId, void *arg);
 static List *MergeAttributes(List *schema, List *supers, char relpersistence,
-							 bool is_partition, List **supconstr);
+							 bool is_partition, List **supconstr,
+							 Oid accessMethodId);
 static bool MergeCheckConstraint(List *constraints, char *name, Node *expr);
 static void MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel);
 static void MergeConstraintsIntoExisting(Relation child_rel, Relation parent_rel);
@@ -458,6 +461,8 @@ static ObjectAddress ATExecSetStatistics(Relation rel, const char *colName, int1
 static ObjectAddress ATExecSetOptions(Relation rel, const char *colName,
 									  Node *options, bool isReset, LOCKMODE lockmode);
 static ObjectAddress ATExecSetStorage(Relation rel, const char *colName,
+									  Node *newValue, LOCKMODE lockmode);
+static ObjectAddress ATExecSetToaster(Relation rel, const char *colName,
 									  Node *newValue, LOCKMODE lockmode);
 static void ATPrepDropColumn(List **wqueue, Relation rel, bool recurse, bool recursing,
 							 AlterTableCmd *cmd, LOCKMODE lockmode,
@@ -633,6 +638,7 @@ static void refuseDupeIndexAttach(Relation parentIdx, Relation partIdx,
 static List *GetParentedForeignKeyRefs(Relation partition);
 static void ATDetachCheckNoForeignKeyRefs(Relation partition);
 static char GetAttributeCompression(Oid atttypid, char *compression);
+static char	GetAttributeStorage(const char *storagemode);
 
 
 /* ----------------------------------------------------------------
@@ -849,6 +855,27 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		ofTypeId = InvalidOid;
 
 	/*
+	 * If the statement hasn't specified an access method, but we're defining
+	 * a type of relation that needs one, use the default.
+	 */
+	if (stmt->accessMethod != NULL)
+	{
+		accessMethod = stmt->accessMethod;
+
+		if (partitioned)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("specifying a table access method is not supported on a partitioned table")));
+
+	}
+	else if (RELKIND_HAS_TABLE_AM(relkind))
+		accessMethod = default_table_access_method;
+
+	/* look up the access method, verify it is for a table */
+	if (accessMethod != NULL)
+		accessMethodId = get_table_am_oid(accessMethod, false);
+
+	/*
 	 * Look up inheritance ancestors and generate relation schema, including
 	 * inherited attributes.  (Note that stmt->tableElts is destructively
 	 * modified by MergeAttributes.)
@@ -857,7 +884,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		MergeAttributes(stmt->tableElts, inheritOids,
 						stmt->relation->relpersistence,
 						stmt->partbound != NULL,
-						&old_constraints);
+						&old_constraints, accessMethodId);
 
 	/*
 	 * Create a tuple descriptor from the relation schema.  Note that this
@@ -931,27 +958,39 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		if (colDef->compression)
 			attr->attcompression = GetAttributeCompression(attr->atttypid,
 														   colDef->compression);
-	}
 
-	/*
-	 * If the statement hasn't specified an access method, but we're defining
-	 * a type of relation that needs one, use the default.
-	 */
-	if (stmt->accessMethod != NULL)
-	{
-		accessMethod = stmt->accessMethod;
+		if (colDef->storage_name)
+		{
+			attr->attstorage = GetAttributeStorage(colDef->storage_name);
+			/*
+			 * safety check: do not allow toasted storage modes unless column datatype
+			 * is TOAST-aware.
+			 */
+			if (!(attr->attstorage == TYPSTORAGE_PLAIN ||
+				  TypeIsToastable(attr->atttypid)))
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("column data type %s can only have storage PLAIN",
+								format_type_be(attr->atttypid))));
+		}
 
 		if (partitioned)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("specifying a table access method is not supported on a partitioned table")));
-	}
-	else if (RELKIND_HAS_TABLE_AM(relkind))
-		accessMethod = default_table_access_method;
 
-	/* look up the access method, verify it is for a table */
-	if (accessMethod != NULL)
-		accessMethodId = get_table_am_oid(accessMethod, false);
+		if (colDef->toaster)
+			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
+		else if (TypeIsToastable(attr->atttypid))
+			attr->atttoaster = DEFAULT_TOASTER_OID;
+		else
+			attr->atttoaster = InvalidOid;
+
+		if (OidIsValid(attr->atttoaster))
+			validateToaster(attr->atttoaster, attr->atttypid,
+							attr->attstorage, attr->attcompression,
+							accessMethodId, false);
+	}
 
 	/*
 	 * Create the relation.  Inherited defaults and constraints are passed in
@@ -2311,7 +2350,8 @@ storage_name(char c)
  */
 static List *
 MergeAttributes(List *schema, List *supers, char relpersistence,
-				bool is_partition, List **supconstr)
+				bool is_partition, List **supconstr,
+				Oid accessMethodId)
 {
 	List	   *inhSchema = NIL;
 	List	   *constraints = NIL;
@@ -2600,6 +2640,27 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 								 errdetail("%s versus %s", def->compression, compression)));
 				}
 
+				/* Copy/check toaster parameter */
+				if (def->toaster &&
+					get_toaster_oid(def->toaster, false) != attribute->atttoaster)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("inherited column \"%s\" has a toaster conflict",
+									attributeName),
+							 errdetail("%s versus %s",
+									   (def->toaster),
+									   get_toaster_name(attribute->atttoaster))));
+
+				if (OidIsValid(attribute->atttoaster))
+				{
+					validateToaster(attribute->atttoaster, attribute->atttypid,
+									attribute->attstorage, attribute->attcompression,
+									accessMethodId, false);
+					def->toaster = get_toaster_name(attribute->atttoaster);
+				}
+				else
+					def->toaster = NULL;
+
 				def->inhcount++;
 				/* Merge of NOT NULL constraints = OR 'em together */
 				def->is_not_null |= attribute->attnotnull;
@@ -2627,6 +2688,15 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				def->is_not_null = attribute->attnotnull;
 				def->is_from_type = false;
 				def->storage = attribute->attstorage;
+				if (OidIsValid(attribute->atttoaster))
+				{
+					def->toaster = get_toaster_name(attribute->atttoaster);
+					validateToaster(attribute->atttoaster, attribute->atttypid,
+									attribute->attstorage, attribute->attcompression,
+									accessMethodId, false);
+				}
+				else
+					def->toaster = NULL;
 				def->raw_default = NULL;
 				def->cooked_default = NULL;
 				def->generated = attribute->attgenerated;
@@ -2886,6 +2956,19 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 							 errdetail("%s versus %s",
 									   storage_name(def->storage),
 									   storage_name(newdef->storage))));
+
+				/* Copy toaster parameter */
+				if (def->toaster == NULL)
+					def->toaster = newdef->toaster;
+				else if (newdef->toaster != NULL &&
+						 strcmp(def->toaster, newdef->toaster) != 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("column \"%s\" has a toaster parameter conflict",
+									attributeName),
+							 errdetail("%s versus %s",
+									   def->toaster,
+									   newdef->toaster)));
 
 				/* Copy compression parameter */
 				if (def->compression == NULL)
@@ -4253,6 +4336,7 @@ AlterTableGetLockLevel(List *cmds)
 			case AT_SetIdentity:
 			case AT_DropExpression:
 			case AT_SetCompression:
+			case AT_SetToaster:
 				cmd_lockmode = AccessExclusiveLock;
 				break;
 
@@ -4778,6 +4862,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_DisableRowSecurity:
 		case AT_ForceRowSecurity:
 		case AT_NoForceRowSecurity:
+		case AT_SetToaster:
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
 			/* These commands never recurse */
 			/* No command-specific prep needed */
@@ -5207,6 +5292,10 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab,
 			break;
 		case AT_DetachPartitionFinalize:
 			ATExecDetachPartitionFinalize(rel, ((PartitionCmd *) cmd->def)->name);
+			break;
+		case AT_SetToaster:		/* ALTER COLUMN SET TOASTER */
+			Assert(IsA(cmd->def, String));
+			address = ATExecSetToaster(rel, cmd->name, cmd->def, lockmode);
 			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
@@ -6203,6 +6292,8 @@ alter_table_type_to_string(AlterTableType cmdtype)
 			return "ALTER COLUMN ... DROP IDENTITY";
 		case AT_ReAddStatistics:
 			return NULL;		/* not real grammar */
+		case AT_SetToaster:
+			return "ALTER COLUMN ... SET TOASTER";
 	}
 
 	return NULL;
@@ -6819,9 +6910,38 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	attribute.atttypmod = typmod;
 	attribute.attbyval = tform->typbyval;
 	attribute.attalign = tform->typalign;
-	attribute.attstorage = tform->typstorage;
+	if (colDef->storage_name)
+	{
+		attribute.attstorage = GetAttributeStorage(colDef->storage_name);
+		/*
+		 * safety check: do not allow toasted storage modes unless column datatype
+		 * is TOAST-aware.
+		 */
+		if (!(attribute.attstorage == TYPSTORAGE_PLAIN ||
+			  TypeIsToastable(attribute.atttypid)))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("column data type %s can only have storage PLAIN",
+							format_type_be(attribute.atttypid))));
+	}
+	else
+		attribute.attstorage = tform->typstorage;
+
 	attribute.attcompression = GetAttributeCompression(typeOid,
 													   colDef->compression);
+
+	if (colDef->toaster)
+		attribute.atttoaster = get_toaster_oid(colDef->toaster, false);
+	else if (TypeIsToastable(attribute.atttypid))
+		attribute.atttoaster = DEFAULT_TOASTER_OID;
+	else
+		attribute.atttoaster = InvalidOid;
+
+	if (OidIsValid(attribute.atttoaster))
+		validateToaster(attribute.atttoaster, attribute.atttypid,
+						attribute.attstorage, attribute.attcompression,
+						rel->rd_rel->relam, false);
+
 	attribute.attnotnull = colDef->is_not_null;
 	attribute.atthasdef = false;
 	attribute.atthasmissing = false;
@@ -8201,6 +8321,7 @@ SetIndexStorageProperties(Relation rel, Relation attrelation,
 						  AttrNumber attnum,
 						  bool setstorage, char newstorage,
 						  bool setcompression, char newcompression,
+						  bool settoaster, Oid toasterOid,
 						  LOCKMODE lockmode)
 {
 	ListCell   *lc;
@@ -8241,6 +8362,9 @@ SetIndexStorageProperties(Relation rel, Relation attrelation,
 			if (setcompression)
 				attrtuple->attcompression = newcompression;
 
+			if (settoaster)
+				attrtuple->atttoaster = toasterOid;
+
 			CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 
 			InvokeObjectPostAlterHook(RelationRelationId,
@@ -8262,7 +8386,6 @@ SetIndexStorageProperties(Relation rel, Relation attrelation,
 static ObjectAddress
 ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE lockmode)
 {
-	char	   *storagemode;
 	char		newstorage;
 	Relation	attrelation;
 	HeapTuple	tuple;
@@ -8271,24 +8394,8 @@ ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	ObjectAddress address;
 
 	Assert(IsA(newValue, String));
-	storagemode = strVal(newValue);
 
-	if (pg_strcasecmp(storagemode, "plain") == 0)
-		newstorage = TYPSTORAGE_PLAIN;
-	else if (pg_strcasecmp(storagemode, "external") == 0)
-		newstorage = TYPSTORAGE_EXTERNAL;
-	else if (pg_strcasecmp(storagemode, "extended") == 0)
-		newstorage = TYPSTORAGE_EXTENDED;
-	else if (pg_strcasecmp(storagemode, "main") == 0)
-		newstorage = TYPSTORAGE_MAIN;
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid storage type \"%s\"",
-						storagemode)));
-		newstorage = 0;			/* keep compiler quiet */
-	}
+	newstorage = GetAttributeStorage(strVal(newValue));
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 
@@ -8335,6 +8442,81 @@ ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	SetIndexStorageProperties(rel, attrelation, attnum,
 							  true, newstorage,
 							  false, 0,
+							  false, InvalidOid,
+							  lockmode);
+
+	table_close(attrelation, RowExclusiveLock);
+
+	ObjectAddressSubSet(address, RelationRelationId,
+						RelationGetRelid(rel), attnum);
+	return address;
+}
+
+
+/*
+ * ALTER TABLE ALTER COLUMN SET TOASTER
+ *
+ * Return value is the address of the modified column
+ */
+static ObjectAddress
+ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE lockmode)
+{
+	Oid			newToaster;
+	Relation	attrelation;
+	HeapTuple	tuple;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	ObjectAddress address;
+
+	Assert(IsA(newValue, String));
+
+	newToaster = get_toaster_oid(strVal(newValue), false);
+
+	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+
+	tuple = SearchSysCacheCopyAttName(RelationGetRelid(rel), colName);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						colName, RelationGetRelationName(rel))));
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						colName)));
+
+	attrtuple->atttoaster = newToaster;
+	if (OidIsValid(newToaster))
+		validateToaster(attrtuple->atttoaster, attrtuple->atttypid,
+						attrtuple->attstorage, attrtuple->attcompression,
+						rel->rd_rel->relam, false);
+	else if (TypeIsToastable(attrtuple->atttypid))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("column data type %s should use toaster",
+						format_type_be(attrtuple->atttypid))));
+
+	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
+
+	InvokeObjectPostAlterHook(RelationRelationId,
+							  RelationGetRelid(rel),
+							  attrtuple->attnum);
+
+	heap_freetuple(tuple);
+
+	/*
+	 * Apply the change to indexes as well (only for simple index columns,
+	 * matching behavior of index.c ConstructTupleDescriptor()).
+	 */
+	SetIndexStorageProperties(rel, attrelation, attnum,
+							  false, 0,
+							  false, 0,
+							  true, newToaster,
 							  lockmode);
 
 	table_close(attrelation, RowExclusiveLock);
@@ -12685,6 +12867,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PUBLICATION_REL:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
+			case OCLASS_TOASTER:
 
 				/*
 				 * We don't expect any of these sorts of objects to depend on
@@ -12827,6 +13010,17 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	attTup->attalign = tform->typalign;
 	attTup->attstorage = tform->typstorage;
 	attTup->attcompression = InvalidCompressionMethod;
+
+	/* set default toaster for toastable type */
+	if (tform->typstorage == TYPSTORAGE_PLAIN)
+		attTup->atttoaster = InvalidOid;
+	else
+	{
+		attTup->atttoaster = DEFAULT_TOASTER_OID;
+		validateToaster(attTup->atttoaster, attTup->atttypid,
+						attTup->attstorage, attTup->attcompression,
+						rel->rd_rel->relam, false);
+	}
 
 	ReleaseSysCache(typeTuple);
 
@@ -16212,6 +16406,7 @@ ATExecSetCompression(AlteredTableInfo *tab,
 	SetIndexStorageProperties(rel, attrel, attnum,
 							  false, 0,
 							  true, cmethod,
+							  false, InvalidOid,
 							  lockmode);
 
 	heap_freetuple(tuple);
@@ -19287,4 +19482,25 @@ GetAttributeCompression(Oid atttypid, char *compression)
 				 errmsg("invalid compression method \"%s\"", compression)));
 
 	return cmethod;
+}
+
+static char
+GetAttributeStorage(const char *storagemode)
+{
+	if (pg_strcasecmp(storagemode, "plain") == 0)
+		return TYPSTORAGE_PLAIN;
+	else if (pg_strcasecmp(storagemode, "external") == 0)
+		return TYPSTORAGE_EXTERNAL;
+	else if (pg_strcasecmp(storagemode, "extended") == 0)
+		return TYPSTORAGE_EXTENDED;
+	else if (pg_strcasecmp(storagemode, "main") == 0)
+		return TYPSTORAGE_MAIN;
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid storage type \"%s\"",
+						storagemode)));
+		return 0;			/* keep compiler quiet */
+	}
 }
