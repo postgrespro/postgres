@@ -1976,6 +1976,8 @@ struct config_bool ConfigureNamesBool[] =
 	{
 		{"jsonb_sort_field_values", PGC_USERSET, DEVELOPER_OPTIONS,
 			gettext_noop("Use special binary jsonb format for objects when their field values sorted by length."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
 		},
 		&jsonb_sort_field_values,
 		true,
@@ -1985,6 +1987,8 @@ struct config_bool ConfigureNamesBool[] =
 	{
 		{"jsonb_partial_decompression", PGC_USERSET, DEVELOPER_OPTIONS,
 			gettext_noop("Use partial pglz decompression for jsonb."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
 		},
 		&jsonb_partial_decompression,
 		true,
@@ -1994,6 +1998,8 @@ struct config_bool ConfigureNamesBool[] =
 	{
 		{"jsonb_partial_detoast", PGC_USERSET, DEVELOPER_OPTIONS,
 			gettext_noop("Use partial deTOASTing for jsonb."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
 		},
 		&jsonb_partial_detoast,
 		true,
