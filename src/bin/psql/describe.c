@@ -6880,7 +6880,7 @@ describeToasters(const char *pattern, bool verbose)
 						 "\nFROM pg_catalog.pg_toaster\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
-						  NULL, "tsrname", NULL,
+						  NULL, "tsrname", NULL, NULL, NULL,
 						  NULL);
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1;");

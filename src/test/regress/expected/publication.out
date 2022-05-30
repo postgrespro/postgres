@@ -697,12 +697,12 @@ UPDATE testpub_tbl6 SET a = 1;
 CREATE TABLE testpub_tbl7 (a int primary key, b text, c text);
 ALTER PUBLICATION testpub_fortable ADD TABLE testpub_tbl7 (a, b);
 \d+ testpub_tbl7
-                                Table "public.testpub_tbl7"
- Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
---------+---------+-----------+----------+---------+----------+--------------+-------------
- a      | integer |           | not null |         | plain    |              | 
- b      | text    |           |          |         | extended |              | 
- c      | text    |           |          |         | extended |              | 
+                                      Table "public.testpub_tbl7"
+ Column |  Type   | Collation | Nullable | Default | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+------------+--------------+-------------
+ a      | integer |           | not null |         | plain    |            |              | 
+ b      | text    |           |          |         | extended | deftoaster |              | 
+ c      | text    |           |          |         | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl7_pkey" PRIMARY KEY, btree (a)
 Publications:
@@ -711,12 +711,12 @@ Publications:
 -- ok: the column list is the same, we should skip this table (or at least not fail)
 ALTER PUBLICATION testpub_fortable SET TABLE testpub_tbl7 (a, b);
 \d+ testpub_tbl7
-                                Table "public.testpub_tbl7"
- Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
---------+---------+-----------+----------+---------+----------+--------------+-------------
- a      | integer |           | not null |         | plain    |              | 
- b      | text    |           |          |         | extended |              | 
- c      | text    |           |          |         | extended |              | 
+                                      Table "public.testpub_tbl7"
+ Column |  Type   | Collation | Nullable | Default | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+------------+--------------+-------------
+ a      | integer |           | not null |         | plain    |            |              | 
+ b      | text    |           |          |         | extended | deftoaster |              | 
+ c      | text    |           |          |         | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl7_pkey" PRIMARY KEY, btree (a)
 Publications:
@@ -725,12 +725,12 @@ Publications:
 -- ok: the column list changes, make sure the catalog gets updated
 ALTER PUBLICATION testpub_fortable SET TABLE testpub_tbl7 (a, c);
 \d+ testpub_tbl7
-                                Table "public.testpub_tbl7"
- Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
---------+---------+-----------+----------+---------+----------+--------------+-------------
- a      | integer |           | not null |         | plain    |              | 
- b      | text    |           |          |         | extended |              | 
- c      | text    |           |          |         | extended |              | 
+                                      Table "public.testpub_tbl7"
+ Column |  Type   | Collation | Nullable | Default | Storage  |  Toaster   | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+------------+--------------+-------------
+ a      | integer |           | not null |         | plain    |            |              | 
+ b      | text    |           |          |         | extended | deftoaster |              | 
+ c      | text    |           |          |         | extended | deftoaster |              | 
 Indexes:
     "testpub_tbl7_pkey" PRIMARY KEY, btree (a)
 Publications:
@@ -829,12 +829,12 @@ Tables:
     "public.testpub_tbl_both_filters" (a, c) WHERE (c <> 1)
 
 \d+ testpub_tbl_both_filters
-                         Table "public.testpub_tbl_both_filters"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           | not null |         | plain   |              | 
- b      | integer |           |          |         | plain   |              | 
- c      | integer |           | not null |         | plain   |              | 
+                              Table "public.testpub_tbl_both_filters"
+ Column |  Type   | Collation | Nullable | Default | Storage | Toaster | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |         |              | 
+ b      | integer |           |          |         | plain   |         |              | 
+ c      | integer |           | not null |         | plain   |         |              | 
 Indexes:
     "testpub_tbl_both_filters_pkey" PRIMARY KEY, btree (a, c) REPLICA IDENTITY
 Publications:
