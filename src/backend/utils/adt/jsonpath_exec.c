@@ -737,12 +737,6 @@ executeJsonPath(JsonPath *path, void *vars, JsonPathVarCallback getVar,
 }
 
 static JsonbValue *
-executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
-				  JsonbParseState **ps, JsonbValue *key, JsonbValue *jb,
-				  bool unwrap, bool autowrapped);
-
-
-static JsonbValue *
 pushJsonbKeyValue(JsonbParseState **ps, JsonbValue *key, JsonbValue *value)
 {
 	Assert(value);
@@ -769,11 +763,280 @@ pushJsonbKeyValue(JsonbParseState **ps, JsonbValue *key, JsonbValue *value)
 	return NULL;
 }
 
-static JsonbValue *
-replaceOldValue(JsonPathExecContext *cxt, JsonbParseState **ps,
-				JsonbValue *key, JsonbValue *old_value)
+typedef struct JsonbMutator
 {
-	JsonbValue jbv_null;
+	JsonbParseState **ps;
+	JsonbValue	cur_val;
+	JsonbValue *cur_key;
+	bool		cur_exists;
+	JsonbValueType type;
+} JsonbMutator;
+
+#define JsonbMutatorCurrenExists(it) ((it)->cur_exists)
+#define JsonbMutatorGetCurrent(it)	(&(it)->cur_val)
+#define JsonbMutatorIsObject(it)		(JsonbType(&(it)->cur_val) == jbvObject)
+#define JsonbMutatorIsArray(it)		(JsonbType(&(it)->cur_val) == jbvArray)
+
+typedef struct JsonbObjectMutator
+{
+	JsonbMutator mutator;
+	JsonbIterator *iter;
+	JsonbValue	cur_key;
+} JsonbObjectMutator;
+
+typedef struct JsonbArrayMutator
+{
+	JsonbMutator mutator;
+	JsonbIterator *iter;
+} JsonbArrayMutator;
+
+static void
+JsonbObjectMutatorInsertKey(JsonbObjectMutator *mut, JsonbValue *key, JsonbValue *val)
+{
+	pushJsonbKeyValue(mut->mutator.ps, key, val);
+}
+
+static void
+JsonbMutatorRemoveCurrent(JsonbMutator *mut)
+{
+	mut->cur_exists = false;
+}
+
+static void
+JsonbArrayMutatorInsertElement(JsonbArrayMutator *mut, JsonbValue *val)
+{
+	pushJsonbKeyValue(mut->mutator.ps, NULL, val);
+}
+
+static JsonbObjectMutator *
+JsonbObjectMutatorInit(JsonbContainer *jc, JsonbParseState **ps)
+{
+	JsonbObjectMutator *mut = palloc0(sizeof(*mut));
+
+	mut->mutator.type = jbvObject;
+	mut->mutator.ps = ps;
+	mut->mutator.cur_key = &mut->cur_key;
+	mut->mutator.cur_exists = false;
+	mut->iter = NULL;
+
+	if (jc)
+	{
+		JsonbIteratorToken tok PG_USED_FOR_ASSERTS_ONLY;
+		JsonbValue jbv;
+
+		mut->iter = JsonbIteratorInit(jc);
+		tok = JsonbIteratorNext(&mut->iter, &jbv, true);
+		Assert(tok == WJB_BEGIN_OBJECT);
+	}
+
+	return mut;
+}
+
+static JsonbArrayMutator *
+JsonbArrayMutatorInit(JsonbContainer *jc, JsonbParseState **ps)
+{
+	JsonbArrayMutator *mut = palloc0(sizeof(*mut));
+
+	mut->mutator.type = jbvArray;
+	mut->mutator.ps = ps;
+	mut->mutator.cur_key = NULL;
+	mut->mutator.cur_exists = false;
+	mut->iter = NULL;
+
+	if (jc)
+	{
+		JsonbIteratorToken tok PG_USED_FOR_ASSERTS_ONLY;
+		JsonbValue	jbv;
+
+		mut->iter = JsonbIteratorInit(jc);
+		tok = JsonbIteratorNext(&mut->iter, &jbv, true);
+		Assert(tok == WJB_BEGIN_ARRAY);
+	}
+
+	return mut;
+}
+
+static JsonbMutator *
+JsonbMutatorInit(JsonbValue *jbv, JsonbParseState **ps)
+{
+	JsonbMutator *mutator = palloc0(sizeof(*mutator));
+
+	mutator->ps = ps;
+	mutator->type = JsonbType(jbv);
+	mutator->cur_val = *jbv;
+	mutator->cur_key = NULL;
+	mutator->cur_exists = true;
+
+	return mutator;
+}
+
+static JsonbObjectMutator *
+JsonbObjectMutatorOpen(JsonbMutator *mut)
+{
+	JsonbContainer *jc = mut->cur_exists ? mut->cur_val.val.binary.data : NULL;
+
+	Assert(!mut->cur_exists || mut->cur_val.type == jbvBinary);
+
+	if (mut->cur_key)
+		pushJsonbValue(mut->ps, WJB_KEY, mut->cur_key);
+
+	mut->cur_exists = false;
+
+	pushJsonbValue(mut->ps, WJB_BEGIN_OBJECT, NULL);
+
+	return JsonbObjectMutatorInit(jc, mut->ps);
+}
+
+static JsonbArrayMutator *
+JsonbArrayMutatorOpen(JsonbMutator *mut)
+{
+	JsonbContainer *jc = mut->cur_exists ? mut->cur_val.val.binary.data : NULL;
+
+	if (mut->cur_exists && mut->cur_val.type != jbvBinary)
+	{
+		Assert(mut->cur_val.type != jbvArray);
+		elog(ERROR, "invalid jsonb array value type: %d", mut->cur_val.type);
+	}
+
+	if (mut->cur_key)
+		pushJsonbValue(mut->ps, WJB_KEY, mut->cur_key);
+
+	mut->cur_exists = false;
+
+	pushJsonbValue(mut->ps, WJB_BEGIN_ARRAY, NULL);
+
+	return JsonbArrayMutatorInit(jc, mut->ps);
+}
+
+static bool
+JsonbObjectMutatorNext(JsonbObjectMutator *mut, JsonbValue *key)
+{
+	JsonbIteratorToken tok;
+
+	if (mut->mutator.cur_exists)
+		pushJsonbKeyValue(mut->mutator.ps, &mut->cur_key, &mut->mutator.cur_val);
+
+	tok = JsonbIteratorNext(&mut->iter, &mut->cur_key, true);
+
+	if (tok != WJB_KEY)
+	{
+		Assert(tok == WJB_END_OBJECT);
+		tok = JsonbIteratorNext(&mut->iter, &mut->cur_key, true);
+		Assert(tok == WJB_DONE);
+
+		mut->iter = NULL;
+		mut->mutator.cur_exists = false;
+
+		return false;
+	}
+
+	tok = JsonbIteratorNext(&mut->iter, &mut->mutator.cur_val, true);
+	Assert(tok == WJB_VALUE);
+
+	mut->mutator.cur_exists = true;
+	*key = mut->cur_key;
+
+	return true;
+}
+
+static bool
+JsonbArrayMutatorNext(JsonbArrayMutator *mut)
+{
+	JsonbIteratorToken tok;
+
+	if (mut->mutator.cur_exists)
+		pushJsonbKeyValue(mut->mutator.ps, NULL, &mut->mutator.cur_val);
+
+	tok = JsonbIteratorNext(&mut->iter, &mut->mutator.cur_val, true);
+
+	if (tok != WJB_ELEM)
+	{
+		Assert(tok == WJB_END_ARRAY);
+		tok = JsonbIteratorNext(&mut->iter, &mut->mutator.cur_val, true);
+		Assert(tok == WJB_DONE);
+
+		mut->iter = NULL;
+		mut->mutator.cur_exists = false;
+
+		return false;
+	}
+
+	mut->mutator.cur_exists = true;
+
+	return true;
+}
+
+static bool
+JsonbObjectMutatorFindKey(JsonbObjectMutator *mut, JsonbValue *key)
+{
+	JsonbValue	jbv_key;
+
+	while (JsonbObjectMutatorNext(mut, &jbv_key))
+	{
+		int			cmp = lengthCompareJsonbString(jbv_key.val.string.val,
+												   jbv_key.val.string.len,
+												   key->val.string.val,
+												   key->val.string.len);
+		if (!cmp)
+			return true;
+	}
+
+	mut->cur_key = *key;
+	mut->mutator.cur_exists = false;
+
+	return false;
+}
+
+static void
+JsonbObjectMutatorFindLast(JsonbArrayMutator *mut)
+{
+	while (JsonbArrayMutatorNext(mut))
+		continue;
+}
+
+static JsonbValue *
+JsonbObjectMutatorClose(JsonbObjectMutator *mut)
+{
+	if (mut->mutator.cur_exists)
+	{
+		pushJsonbKeyValue(mut->mutator.ps, &mut->cur_key, &mut->mutator.cur_val);
+		mut->mutator.cur_exists = false;
+	}
+
+	if (mut->iter)
+		while (JsonbObjectMutatorNext(mut, &mut->cur_key))
+			pushJsonbKeyValue(mut->mutator.ps, &mut->cur_key, &mut->mutator.cur_val);
+
+	return pushJsonbValue(mut->mutator.ps, WJB_END_OBJECT, NULL);
+}
+
+static JsonbValue *
+JsonbArrayMutatorClose(JsonbArrayMutator *mut)
+{
+	if (mut->mutator.cur_exists)
+	{
+		pushJsonbKeyValue(mut->mutator.ps, NULL, &mut->mutator.cur_val);
+		mut->mutator.cur_exists = false;
+	}
+
+	if (mut->iter)
+		while (JsonbArrayMutatorNext(mut))
+			pushJsonbKeyValue(mut->mutator.ps, NULL, &mut->mutator.cur_val);
+
+	return pushJsonbValue(mut->mutator.ps, WJB_END_ARRAY, NULL);
+}
+
+static JsonbValue *
+JsonbMutatorReplaceCurrent(JsonbMutator *mutator, JsonbValue *val)
+{
+	mutator->cur_exists = false;
+	return pushJsonbKeyValue(mutator->ps, mutator->cur_key, val);
+}
+
+static JsonbValue *
+replaceOldValue(JsonPathExecContext *cxt, JsonbMutator *mutator)
+{
+	JsonbValue	jbv_null;
 	JsonbValue *new_value = cxt->update.value;
 
 	if (!new_value)
@@ -782,10 +1045,7 @@ replaceOldValue(JsonPathExecContext *cxt, JsonbParseState **ps,
 
 		if (cxt->update.onNull == JSTB_IGNORE)
 		{
-			if (!old_value)
-				return NULL;
-
-			new_value = old_value;
+			return NULL;
 		}
 		else if (cxt->update.onNull == JSTB_NULL)
 		{
@@ -795,63 +1055,47 @@ replaceOldValue(JsonPathExecContext *cxt, JsonbParseState **ps,
 		else
 		{
 			Assert(cxt->update.onNull == JSTB_REMOVE);
+			JsonbMutatorRemoveCurrent(mutator);
 			return NULL;
 		}
 	}
 
-	return pushJsonbKeyValue(ps, key, new_value);
+	return JsonbMutatorReplaceCurrent(mutator, new_value);
 }
 
 static JsonbValue *
-executeUpdateAction(JsonPathExecContext *cxt, JsonbParseState **ps,
-					JsonbValue *key, JsonbValue *old_val, bool autowrapped)
+executeMutateAction(JsonPathExecContext *cxt, JsonbMutator *mutator,
+					bool autowrapped)
 {
-	if (old_val)
+	if (JsonbMutatorCurrenExists(mutator))
 	{
 		cxt->update.missing = false;
 
 		if (cxt->update.op == JSTO_APPEND)
 		{
-			JsonbIterator *it;
-			JsonbIteratorToken tok;
-			JsonbValue jbv;
+			JsonbArrayMutator *mut;
 
-			if (JsonbType(old_val) != jbvArray)
+			if (!JsonbMutatorIsArray(mutator))
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 					 errmsg("argument of %s APPEND is not an array", "JSON_TRANSFORM()")));
 
 			if (!cxt->update.value && cxt->update.onNull == JSTB_IGNORE)
-				return pushJsonbKeyValue(ps, key, old_val);
+				return NULL;
 
-			if (key)
-				pushJsonbValue(ps, WJB_KEY, key);
+			mut = JsonbArrayMutatorOpen(mutator);
 
-			pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
+			JsonbObjectMutatorFindLast(mut);
+			replaceOldValue(cxt, &mut->mutator);
 
-			Assert(old_val->type == jbvBinary);
-
-			it = JsonbIteratorInit(old_val->val.binary.data);
-
-			tok = JsonbIteratorNext(&it, &jbv, true);
-			Assert(tok == WJB_BEGIN_ARRAY);
-
-			while ((tok = JsonbIteratorNext(&it, &jbv, true)) == WJB_ELEM)
-				pushJsonbValue(ps, WJB_ELEM, &jbv);
-
-			Assert(tok == WJB_END_ARRAY);
-			tok = JsonbIteratorNext(&it, &jbv, true);
-			Assert(tok == WJB_DONE);
-
-			replaceOldValue(cxt, ps, NULL, NULL);
-
-			return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+			return JsonbArrayMutatorClose(mut);
 		}
 
-		if (cxt->update.op == JSTO_INSERT && !key && !autowrapped)
+		if (cxt->update.op == JSTO_INSERT && mutator->type == jbvArray && !autowrapped)
 		{
-			replaceOldValue(cxt, ps, NULL, NULL);
-			return pushJsonbKeyValue(ps, NULL, old_val);
+			JsonbArrayMutatorInsertElement((JsonbArrayMutator *) mutator,
+										   cxt->update.value);
+			return NULL;
 		}
 
 		if (cxt->update.onExisting == JSTB_ERROR)
@@ -860,21 +1104,22 @@ executeUpdateAction(JsonPathExecContext *cxt, JsonbParseState **ps,
 					 errmsg("existing value in %s", "JSON_TRANSFORM()")));
 
 		if (cxt->update.onExisting == JSTB_IGNORE)
-			return pushJsonbKeyValue(ps, key, old_val);
+			return NULL;
 
 		if (cxt->update.onExisting == JSTB_REMOVE)
 		{
-			if (!*ps)
+			if (!*mutator->ps)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 						 errmsg("cannor remove root value in %s", "JSON_TRANSFORM()")));
 
+			JsonbMutatorRemoveCurrent(mutator);
 			return NULL;
 		}
 
 		if (cxt->update.onExisting == JSTB_RENAME)
 		{
-			if (!key || autowrapped)
+			if (mutator->type != jbvObject || autowrapped)
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 					 errmsg("invalid path in RENAME operation of %s",
@@ -887,12 +1132,16 @@ executeUpdateAction(JsonPathExecContext *cxt, JsonbParseState **ps,
 					 errmsg("invalid key name value in RENAME operation of %s",
 							"JSON_TRANSFORM()")));
 
-			return pushJsonbKeyValue(ps, cxt->update.value, old_val);
+			JsonbMutatorRemoveCurrent(mutator);
+			JsonbObjectMutatorInsertKey((JsonbObjectMutator *) mutator,
+										cxt->update.value,
+										JsonbMutatorGetCurrent(mutator));
+			return NULL;
 		}
 
 		Assert(cxt->update.onExisting == JSTB_REPLACE);
 
-		return replaceOldValue(cxt, ps, key, old_val);
+		return replaceOldValue(cxt, mutator);
 	}
 	else
 	{
@@ -906,20 +1155,20 @@ executeUpdateAction(JsonPathExecContext *cxt, JsonbParseState **ps,
 		{
 			if (cxt->update.op == JSTO_APPEND)
 			{
+				JsonbArrayMutator *mut;
+
 				if (!cxt->update.value &&
 					cxt->update.onNull == JSTB_IGNORE)
 					return NULL;
 
 				/* create singleton array */
-				if (key)
-					pushJsonbValue(ps, WJB_KEY, key);
+				mut = JsonbArrayMutatorOpen(mutator);
+				replaceOldValue(cxt, mutator);
 
-				pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
-				replaceOldValue(cxt, ps, NULL, NULL);
-				return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+				return JsonbArrayMutatorClose(mut);
 			}
 
-			return replaceOldValue(cxt, ps, key, NULL);
+			return replaceOldValue(cxt, mutator);
 		}
 
 		Assert(cxt->update.onMissing == JSTB_IGNORE);
@@ -945,39 +1194,21 @@ checkIndexInRanges(int32 index, JsonPathArrayRange *ranges, int nranges)
 }
 
 static JsonbValue *
-executeItemUpdateArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
-					   JsonbParseState **ps, JsonbValue *key,
-					   JsonbValue *jb, bool unwrapElements,
-					   JsonPathArrayRange *ranges, int nranges,
-					   int32 max_index)
+mutateItem(JsonPathExecContext *cxt, JsonPathItem *jsp,
+		   JsonbMutator *mutator, bool unwrap, bool autowrapped);
+
+static JsonbValue *
+mutateArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
+			JsonbMutator *jb, bool unwrapElements,
+			JsonPathArrayRange *ranges, int nranges, int32 max_index)
 {
-	JsonbIterator *it;
-	JsonbIteratorToken tok;
-	JsonbValue	jbv;
+	JsonbArrayMutator *mut = JsonbArrayMutatorOpen(jb);
 	int32		index = 0;
 
-	if (jb->type != jbvBinary)
-	{
-		Assert(jb->type != jbvArray);
-		elog(ERROR, "invalid jsonb array value type: %d", jb->type);
-	}
-
-	it = JsonbIteratorInit(jb->val.binary.data);
-
-	tok = JsonbIteratorNext(&it, &jbv, true);
-	Assert(tok == WJB_BEGIN_ARRAY);
-
-	if (key)
-		pushJsonbValue(ps, WJB_KEY, key);
-
-	pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
-
-	while ((tok = JsonbIteratorNext(&it, &jbv, true)) == WJB_ELEM)
+	while (JsonbArrayMutatorNext(mut))
 	{
 		if (!ranges || checkIndexInRanges(index, ranges, nranges))
-			executeItemUpdate(cxt, jsp, ps, NULL, &jbv, unwrapElements, false);
-		else
-			pushJsonbKeyValue(ps, NULL, &jbv);
+			mutateItem(cxt, jsp, &mut->mutator, unwrapElements, false);
 
 		index++;
 	}
@@ -985,22 +1216,20 @@ executeItemUpdateArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	if (!jsp && cxt->update.onMissing == JSTB_CREATE &&
 		(cxt->update.value || cxt->update.onNull == JSTB_NULL))
 	{
-		jbv.type = jbvNull;
+		JsonbValue	jbv_null;
+
+		jbv_null.type = jbvNull;
 
 		for (; index <= max_index; index++)
 		{
 			if (checkIndexInRanges(index, ranges, nranges))
-				executeUpdateAction(cxt, ps, NULL, NULL, false);
+				executeMutateAction(cxt, &mut->mutator, false);
 			else
-				pushJsonbKeyValue(ps, NULL, &jbv);
+				JsonbArrayMutatorInsertElement(mut, &jbv_null);
 		}
 	}
 
-	Assert(tok == WJB_END_ARRAY);
-	tok = JsonbIteratorNext(&it, &jbv, true);
-	Assert(tok == WJB_DONE);
-
-	return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+	return JsonbArrayMutatorClose(mut);
 }
 
 static JsonPathExecResult
@@ -1047,15 +1276,14 @@ getArrayRange(JsonPathExecContext *cxt, JsonPathItem *jsp, int i,
 #define jspNextItem(jsp, buf) (jspGetNext(jsp, buf) ? (buf) : NULL)
 
 /*
- * Main jsonpath executor updadte function: walks on jsonpath
- * structure, finds relevant parts of jsonb and evaluates updates
+ * Main jsonpath executor mutate function: walks on jsonpath
+ * structure, finds relevant parts of jsonb and evaluates mutate
  * actions over them.  When 'unwrap' is true current SQL/JSON item is
  * unwrapped if it is an array.
  */
 static JsonbValue *
-executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
-				  JsonbParseState **ps, JsonbValue *key,
-				  JsonbValue *jb, bool unwrap, bool autowrapped)
+mutateItem(JsonPathExecContext *cxt, JsonPathItem *jsp,
+		   JsonbMutator *mutator, bool unwrap, bool autowrapped)
 {
 	JsonPathItem next;
 
@@ -1063,92 +1291,42 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	CHECK_FOR_INTERRUPTS();
 
 	if (!jsp)
-		return executeUpdateAction(cxt, ps, key, jb, autowrapped);
+		return executeMutateAction(cxt, mutator, autowrapped);
 
 	switch (jsp->type)
 	{
 		case jpiKey:
 		case jpiAnyKey:
-			if (JsonbType(jb) == jbvObject)
+			if (JsonbMutatorIsObject(mutator))
 			{
-				JsonbIterator *it;
-				JsonbIteratorToken tok;
-				JsonbValue	jbv_key;
-				JsonbValue	jbv_val;
 				JsonPathItem *jsp_next = jspNextItem(jsp, &next);
-				bool		key_found = false;
-				int			key_len;
-				char	   *key_str =
-					jsp->type == jpiKey ? jspGetString(jsp, &key_len) : NULL;
+				JsonbObjectMutator *mut = JsonbObjectMutatorOpen(mutator);
+				JsonbValue	jbv_key;
 
-				Assert(jb->type == jbvBinary &&
-					   JsonContainerIsObject(jb->val.binary.data));
-
-				it = JsonbIteratorInit(jb->val.binary.data);
-
-				tok = JsonbIteratorNext(&it, &jbv_val, true);
-				Assert(tok == WJB_BEGIN_OBJECT);
-
-				if (key)
-					pushJsonbValue(ps, WJB_KEY, key);
-
-				pushJsonbValue(ps, WJB_BEGIN_OBJECT, NULL);
-
-				while ((tok = JsonbIteratorNext(&it, &jbv_key, true)) == WJB_KEY)
-				{
-					Assert(jbv_key.type == jbvString);
-
-					tok = JsonbIteratorNext(&it, &jbv_val, true);
-					Assert(tok == WJB_VALUE);
-
-					if (!key_found)
-					{
-						int			cmp = key_str ?
-							lengthCompareJsonbString(jbv_key.val.string.val,
-													 jbv_key.val.string.len,
-													 key_str, key_len) : 0;
-
-						if (!cmp)
-						{
-							if (key_str)
-								key_found = true;	/* XXX json: replace last key */
-
-							(void) executeItemUpdate(cxt, jsp_next, ps,
-													 &jbv_key, &jbv_val,
-													 jspAutoUnwrap(cxt),
-													 false);
-
-							continue;
-						}
-						else if (cmp > 0)
-						{
-							/* key_found = true; XXX key order */
-						}
-					}
-
-					pushJsonbKeyValue(ps, &jbv_key, &jbv_val);
-				}
-
-				/* missing key is the last in the path */
-				if (key_str && !key_found && !jsp_next)
+				if (jsp->type == jpiKey)
 				{
 					jbv_key.type = jbvString;
-					jbv_key.val.string.val = key_str;
-					jbv_key.val.string.len = key_len;
+					jbv_key.val.string.val =
+						jspGetString(jsp, &jbv_key.val.string.len);
 
-					(void) executeUpdateAction(cxt, ps, &jbv_key, NULL, false);
+					if (JsonbObjectMutatorFindKey(mut, &jbv_key))
+						(void) mutateItem(cxt, jsp_next, &mut->mutator,
+										  jspAutoUnwrap(cxt), false);
+					else if (!jsp_next)
+						(void) executeMutateAction(cxt, &mut->mutator, false);
+				}
+				else
+				{
+					while (JsonbObjectMutatorNext(mut, &jbv_key))
+						(void) mutateItem(cxt, jsp_next, &mut->mutator,
+										  jspAutoUnwrap(cxt), false);
 				}
 
-				Assert(tok == WJB_END_OBJECT);
-				tok = JsonbIteratorNext(&it, &jbv_val, true);
-				Assert(tok == WJB_DONE);
-
-				return pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+				return JsonbObjectMutatorClose(mut);
 			}
 
-			if (unwrap && JsonbType(jb) == jbvArray)
-				return executeItemUpdateArray(cxt, jsp, ps, key, jb,
-											  false, NULL, 0, -1);
+			if (unwrap && JsonbMutatorIsArray(mutator))
+				return mutateArray(cxt, jsp, mutator, false, NULL, 0, -1);
 
 			if (!jspIgnoreStructuralErrors(cxt))
 				ereport(ERROR,
@@ -1157,14 +1335,13 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			break;
 
 		case jpiAnyArray:
-			if (JsonbType(jb) == jbvArray)
-				return executeItemUpdateArray(cxt, jspNextItem(jsp, &next),
-											  ps, key, jb, jspAutoUnwrap(cxt),
-											  NULL, 0, -1);
+			if (JsonbMutatorIsArray(mutator))
+				return mutateArray(cxt, jspNextItem(jsp, &next),
+								   mutator, jspAutoUnwrap(cxt), NULL, 0, -1);
 
 			if (jspAutoWrap(cxt))
-				return executeItemUpdate(cxt, jspNextItem(jsp, &next),
-										 ps, key, jb, jspAutoUnwrap(cxt), true);
+				return mutateItem(cxt, jspNextItem(jsp, &next),
+								  mutator, jspAutoUnwrap(cxt), true);
 
 			if (!jspIgnoreStructuralErrors(cxt))
 				ereport(ERROR,
@@ -1174,10 +1351,11 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			break;
 
 		case jpiIndexArray:
-			if (JsonbType(jb) == jbvArray || jspAutoWrap(cxt))
+			if (JsonbMutatorIsArray(mutator) || jspAutoWrap(cxt))
 			{
 				int			innermostArraySize = cxt->innermostArraySize;
-				int			size = JsonbArraySize(jb);
+				JsonbValue *jbv = JsonbMutatorGetCurrent(mutator);
+				int			size = JsonbArraySize(jbv);
 				bool		singleton = size < 0;
 				JsonPathArrayRange *ranges;
 				int			nranges = 0;
@@ -1195,7 +1373,8 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 				for (int i = 0; i < jsp->content.array.nelems; i++)
 				{
-					JsonPathExecResult res = getArrayRange(cxt, jsp, i, jb, size,
+					JsonPathExecResult res = getArrayRange(cxt, jsp, i,
+														   jbv, size,
 														   &ranges[nranges]);
 
 					if (jperIsError(res))
@@ -1216,18 +1395,18 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				if (nranges)
 				{
 					JsonPathItem *jsp_next = jspNextItem(jsp, &next);
+					JsonbValue *res;
 
 					if (singleton)
-						jb = executeItemUpdate(cxt, jsp_next, ps,
-											   key, jb, jspAutoUnwrap(cxt), true);
+						res = mutateItem(cxt, jsp_next, mutator,
+										 jspAutoUnwrap(cxt), true);
 					else
-						jb = executeItemUpdateArray(cxt, jsp_next, ps,
-													key, jb, jspAutoUnwrap(cxt),
-													ranges, nranges,
-													max_index);
+						res = mutateArray(cxt, jsp_next, mutator,
+										  jspAutoUnwrap(cxt),
+										  ranges, nranges, max_index);
 
 					pfree(ranges);
-					return jb;
+					return res;
 				}
 				else
 				{
@@ -1247,18 +1426,16 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			{
 				JsonPathBool st;
 
-				if (unwrap && JsonbType(jb) == jbvArray)
-					return executeItemUpdateArray(cxt, jsp, ps, key, jb,
-												  false, NULL, 0, -1);
+				if (unwrap && JsonbMutatorIsArray(mutator))
+					return mutateArray(cxt, jsp, mutator, false, NULL, 0, -1);
 
 				jspGetArg(jsp, &next);
-				st = executeNestedBoolItem(cxt, &next, jb);
+				st = executeNestedBoolItem(cxt, &next, JsonbMutatorGetCurrent(mutator));
 
 				if (st == jpbTrue)
-					return executeItemUpdate(cxt, jspNextItem(jsp, &next),
-											 ps, key, jb,
-											 jspAutoUnwrap(cxt),
-											 autowrapped);
+					return mutateItem(cxt, jspNextItem(jsp, &next),
+									  mutator, jspAutoUnwrap(cxt),
+									  autowrapped);
 				break;
 			}
 
@@ -1269,8 +1446,8 @@ executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			return NULL;
 	}
 
-	/* no match, push old value */
-	return pushJsonbKeyValue(ps, key, jb);
+	/* no match, leave mutator unchanged */
+	return NULL;
 }
 
 static JsonbValue *
@@ -1324,15 +1501,15 @@ executeJsonPathUpdate(JsonPath *path, void *vars, JsonPathVarCallback getVar,
 	cxt.update.onNull = onNull;
 	cxt.update.missing = true;
 
-	resjbv = executeItemUpdate(&cxt, jsp, &ps, NULL, &jbv_root,
-							   jspAutoUnwrap(&cxt), false);
+	resjbv = mutateItem(&cxt, jsp, JsonbMutatorInit(&jbv_root, &ps),
+						jspAutoUnwrap(&cxt), false);
 
 	if (cxt.update.missing && onMissing == JSTB_ERROR)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 				 errmsg("missing value in %s", "JSON_TRANSFORM()")));
 
-	return resjbv;
+	return resjbv ? resjbv : copyJsonbValue(&jbv_root);
 }
 
 /*
