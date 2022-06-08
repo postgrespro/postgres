@@ -2784,6 +2784,45 @@ _copyJsonTableSibling(const JsonTableSibling *from)
 	return newnode;
 }
 
+/*
+ * _copyJsonTransformExpr
+ */
+static JsonTransformExpr *
+_copyJsonTransformExpr(const JsonTransformExpr *from)
+{
+	JsonTransformExpr *newnode = makeNode(JsonTransformExpr);
+
+	COPY_NODE_FIELD(formatted_expr);
+	COPY_NODE_FIELD(result_coercion);
+	COPY_NODE_FIELD(returning);
+	COPY_NODE_FIELD(format);
+	COPY_NODE_FIELD(ops);
+	COPY_NODE_FIELD(passing_names);
+	COPY_NODE_FIELD(passing_values);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+/*
+ * _copyJsonTransformOp
+ */
+static JsonTransformOp *
+_copyJsonTransformOp(const JsonTransformOp *from)
+{
+	JsonTransformOp *newnode = makeNode(JsonTransformOp);
+
+	COPY_NODE_FIELD(pathspec);
+	COPY_NODE_FIELD(expr);
+	COPY_SCALAR_FIELD(op_type);
+	COPY_SCALAR_FIELD(on_existing);
+	COPY_SCALAR_FIELD(on_missing);
+	COPY_SCALAR_FIELD(on_null);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *						pathnodes.h copy functions
  *
@@ -5979,6 +6018,12 @@ copyObjectImpl(const void *from)
 			break;
 		case T_JsonTableSibling:
 			retval = _copyJsonTableSibling(from);
+			break;
+		case T_JsonTransformExpr:
+			retval = _copyJsonTransformExpr(from);
+			break;
+		case T_JsonTransformOp:
+			retval = _copyJsonTransformOp(from);
 			break;
 
 			/*

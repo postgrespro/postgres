@@ -118,4 +118,11 @@ extern Node *makeJsonIsPredicate(Node *expr, JsonFormat *format,
 								 int location);
 extern JsonEncoding makeJsonEncoding(char *name);
 
+extern Node *makeJsonTransformOp(JsonTransformOpType type,
+								 Node *expr, Node *new_val,
+								 JsonTransformBehavior on_existing,
+								 JsonTransformBehavior on_missing,
+								 JsonTransformBehavior on_null,
+								 int location);
+
 #endif							/* MAKEFUNC_H */

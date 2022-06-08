@@ -585,3 +585,26 @@ SELECT
 	jsonb_path_query_first(s1.j, '$.s > $s', vars => s2.j) gt
 FROM str s1, str s2
 ORDER BY s1.num, s2.num;
+
+-- test jsonb_path_set()
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[*]', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[0]', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[1]', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.*', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a[*]', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a ? (@.d == 2)', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a ? (@.d == 2).d', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a.d ? (@ == 2)', '111');
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.*.d ? (@ == 2)', '111');
+
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[*]', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[0]', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[1]', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.*', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a[*]', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a ? (@.d == 2)', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a ? (@.d == 2).d', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.a.d ? (@ == 2)', NULL);
+SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$.*.d ? (@ == 2)', NULL);

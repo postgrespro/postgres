@@ -10003,6 +10003,10 @@
 { oid => '4009', descr => 'jsonpath match',
   proname => 'jsonb_path_match', prorettype => 'bool',
   proargtypes => 'jsonb jsonpath jsonb bool', prosrc => 'jsonb_path_match' },
+{ oid => '6105', descr => 'jsonpath set',
+  proname => 'jsonb_path_set', prorettype => 'jsonb',
+  proargtypes => 'jsonb jsonpath jsonb jsonb bool',
+  prosrc => 'jsonb_path_set', proisstrict => 'f' },
 
 { oid => '1177', descr => 'jsonpath exists test with timezone',
   proname => 'jsonb_path_exists_tz', provolatile => 's', prorettype => 'bool',

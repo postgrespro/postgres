@@ -288,6 +288,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		JsonBehavior *on_empty;
 		JsonBehavior *on_error;
 	}			on_behavior;
+	JsonTransformBehavior jstbehavior;
 	JsonQuotes	js_quotes;
 }
 
@@ -677,6 +678,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					json_object_aggregate_constructor
 					json_array_aggregate_constructor
 					json_path_specification
+					json_path_specification_const
 					json_table
 					json_table_column_definition
 					json_table_ordinality_column_definition
@@ -696,6 +698,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					json_table_plan_cross
 					json_table_plan_primary
 					json_table_default_plan
+					json_transform_expr
+					json_transform_op
+					json_transform_keep_op
 
 %type <list>		json_name_and_value_list
 					json_value_expr_list
@@ -704,6 +709,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					json_passing_clause_opt
 					json_table_columns_clause
 					json_table_column_definition_list
+					json_transform_op_list
+					json_transform_keep_op_list
 
 %type <str>			json_table_path_name
 					json_as_path_name_clause_opt
@@ -734,6 +741,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 					json_exists_error_clause_opt
 					json_table_error_behavior
 					json_table_error_clause_opt
+
+%type <jstbehavior>	json_transform_missing_behavior
+					json_transform_missing_behavior_opt
+					json_transform_existing_behavior
+					json_transform_null_behavior_opt
 
 %type <on_behavior> json_value_on_behavior_clause_opt
 					json_query_on_behavior_clause_opt
@@ -771,7 +783,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
+	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY APPEND ARRAY AS ASC
 	ASENSITIVE ASSERTION ASSIGNMENT ASYMMETRIC ATOMIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
@@ -792,8 +804,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	DOUBLE_P DROP
 
 	EACH ELSE EMPTY_P ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ERROR_P ESCAPE
-	EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN EXPRESSION
-	EXTENSION EXTERNAL EXTRACT
+	EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTING EXISTS
+	EXPLAIN EXPRESSION EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FINALIZE FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORMAT FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
@@ -802,13 +814,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 	HANDLER HAVING HEADER_P HOLD HOUR_P
 
-	IDENTITY_P IF_P ILIKE IMMEDIATE IMMUTABLE IMPLICIT_P IMPORT_P IN_P INCLUDE
+	IDENTITY_P IGNORE IF_P ILIKE IMMEDIATE IMMUTABLE IMPLICIT_P IMPORT_P IN_P INCLUDE
 	INCLUDING INCREMENT INDEX INDEXES INHERIT INHERITS INITIALLY INLINE_P
 	INNER_P INOUT INPUT_P INSENSITIVE INSERT INSTEAD INT_P INTEGER
 	INTERSECT INTERVAL INTO INVOKER IS ISNULL ISOLATION
 
 	JOIN JSON JSON_ARRAY JSON_ARRAYAGG JSON_EXISTS JSON_OBJECT JSON_OBJECTAGG
-	JSON_QUERY JSON_SCALAR JSON_SERIALIZE JSON_TABLE JSON_VALUE
+	JSON_QUERY JSON_SCALAR JSON_SERIALIZE JSON_TABLE JSON_TRANSFORM JSON_VALUE
 
 	KEY KEYS KEEP
 
@@ -817,7 +829,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
 	MAPPING MATCH MATCHED MATERIALIZED MAXVALUE MERGE METHOD
-	MINUTE_P MINVALUE MODE MONTH_P MOVE
+	MINUTE_P MINVALUE MISSING MODE MONTH_P MOVE
 
 	NAME_P NAMES NATIONAL NATURAL NCHAR NESTED NEW NEXT NFC NFD NFKC NFKD NO
 	NONE NORMALIZE NORMALIZED
@@ -836,7 +848,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	QUOTE QUOTES
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFERENCING
-	REFRESH REINDEX RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
+	REFRESH REINDEX RELATIVE_P RELEASE REMOVE RENAME REPEATABLE REPLACE REPLICA
 	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
 	ROUTINE ROUTINES ROW ROWS RULE
 
@@ -16488,6 +16500,7 @@ json_func_expr:
 			| json_parse_expr
 			| json_scalar_expr
 			| json_serialize_expr
+			| json_transform_expr
 		;
 
 json_parse_expr:
@@ -16569,6 +16582,10 @@ json_context_item:
 
 json_path_specification:
 			a_expr									{ $$ = $1; }
+		;
+
+json_path_specification_const:
+			Sconst									{ $$ = makeStringConst($1, @1); }
 		;
 
 json_as_path_name_clause_opt:
@@ -17287,6 +17304,172 @@ json_array_aggregate_order_by_clause_opt:
 			| /* EMPTY */							{ $$ = NIL; }
 		;
 
+json_transform_expr:
+			JSON_TRANSFORM '('
+				json_context_item ','
+				json_transform_op_list
+				json_output_clause_opt
+				json_passing_clause_opt
+			')'
+				{
+					JsonTransform *n = makeNode(JsonTransform);
+					n->expr = (JsonValueExpr *) $3;
+					n->ops = $5;
+					n->output = (JsonOutput *) $6;
+					n->passing = $7;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+json_transform_op_list:
+			json_transform_op								{ $$ = list_make1($1); }
+			| json_transform_op_list ',' json_transform_op	{ $$ = lappend($1, $3); }
+		;
+
+json_transform_op:
+			REMOVE json_path_specification_const
+					json_transform_missing_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_REMOVE, $2, NULL,
+											 JSTB_DEFAULT, $3, JSTB_DEFAULT, @1);
+				}
+
+			| INSERT json_path_specification_const '=' json_value_expr
+					json_transform_existing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_INSERT, $2, $4,
+											 $5, JSTB_DEFAULT, $6, @1);
+				}
+
+			| INSERT json_path_specification_const '=' json_value_expr
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_INSERT, $2, $4,
+											 JSTB_DEFAULT, JSTB_DEFAULT, $5, @1);
+				}
+
+			| REPLACE json_path_specification_const '=' json_value_expr
+					json_transform_missing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_REPLACE, $2, $4,
+											 JSTB_DEFAULT, $5, $6, @1);
+				}
+
+			| REPLACE json_path_specification_const '=' json_value_expr
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_REPLACE, $2, $4,
+											 JSTB_DEFAULT, JSTB_DEFAULT, $5, @1);
+				}
+
+			| APPEND json_path_specification_const '=' json_value_expr
+					json_transform_missing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_APPEND, $2, $4,
+											 JSTB_DEFAULT, $5, $6, @1);
+				}
+
+			| APPEND json_path_specification_const '=' json_value_expr
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_APPEND, $2, $4,
+											 JSTB_DEFAULT, JSTB_DEFAULT, $5, @1);
+				}
+
+			| SET json_path_specification_const '=' json_value_expr
+					json_transform_existing_behavior
+					json_transform_missing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_SET, $2, $4,
+											 $5, $6, $7, @1);
+				}
+
+			| SET json_path_specification_const '=' json_value_expr
+					json_transform_existing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_SET, $2, $4,
+											 $5, JSTB_DEFAULT, $6, @1);
+				}
+
+			| SET json_path_specification_const '=' json_value_expr
+					json_transform_missing_behavior
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_SET, $2, $4,
+											 JSTB_DEFAULT, $5, $6, @1);
+				}
+
+			| SET json_path_specification_const '=' json_value_expr
+					json_transform_null_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_SET, $2, $4,
+											 JSTB_DEFAULT, JSTB_DEFAULT, $5, @1);
+				}
+
+			| RENAME json_path_specification_const WITH Sconst
+					json_transform_missing_behavior_opt
+				{
+					Node *key_name = (Node *) makeJsonValueExpr(
+						(Expr *) makeStringConst($4, @4),
+						makeJsonFormat(JS_FORMAT_DEFAULT, JS_ENC_DEFAULT, -1));
+
+					$$ = makeJsonTransformOp(JSTO_RENAME, $2, key_name,
+											 JSTB_DEFAULT, $5, JSTB_DEFAULT, @1);
+				}
+/*
+			| KEEP json_transform_keep_op_list
+				{
+					JsonTransformOp *n = makeNode(JsonTransformOp);
+
+					$$ = (Node *) n;
+				} */
+		;
+
+json_transform_keep_op:
+			json_path_specification_const json_transform_missing_behavior_opt
+				{
+					$$ = makeJsonTransformOp(JSTO_KEEP, $1, NULL, JSTB_DEFAULT, $2, JSTB_DEFAULT);
+				}
+		;
+
+json_transform_keep_op_list:
+			json_transform_keep_op
+				{ $$ = list_make1($1); }
+			| json_transform_keep_op_list ',' json_transform_keep_op
+				{ $$ = lappend($1, $3); }
+		;
+
+json_transform_missing_behavior:
+			CREATE    ON MISSING		{ $$ = JSTB_CREATE; }
+			| IGNORE  ON MISSING		{ $$ = JSTB_IGNORE; }
+			| ERROR_P ON MISSING		{ $$ = JSTB_ERROR; }
+		;
+
+json_transform_missing_behavior_opt:
+			/* EMPTY */					{ $$ = JSTB_DEFAULT; }
+			| json_transform_missing_behavior
+		;
+
+json_transform_existing_behavior:
+			REPLACE   ON EXISTING		{ $$ = JSTB_REPLACE; }
+			| IGNORE  ON EXISTING		{ $$ = JSTB_IGNORE; }
+			| ERROR_P ON EXISTING		{ $$ = JSTB_ERROR; }
+		;
+
+json_transform_null_behavior_opt:
+			/* EMPTY */					{ $$ = JSTB_DEFAULT; }
+			| NULL_P  ON NULL_P			{ $$ = JSTB_NULL; }
+			| ERROR_P ON NULL_P			{ $$ = JSTB_ERROR; }
+			| IGNORE  ON NULL_P			{ $$ = JSTB_IGNORE; }
+			| REMOVE  ON NULL_P			{ $$ = JSTB_REMOVE; }
+		;
+
 /*****************************************************************************
  *
  *	target list for SELECT
@@ -17748,6 +17931,7 @@ unreserved_keyword:
 			| ALSO
 			| ALTER
 			| ALWAYS
+			| APPEND
 			| ASENSITIVE
 			| ASSERTION
 			| ASSIGNMENT
@@ -17827,6 +18011,7 @@ unreserved_keyword:
 			| EXCLUDING
 			| EXCLUSIVE
 			| EXECUTE
+			| EXISTING
 			| EXPLAIN
 			| EXPRESSION
 			| EXTENSION
@@ -17851,6 +18036,7 @@ unreserved_keyword:
 			| HOUR_P
 			| IDENTITY_P
 			| IF_P
+			| IGNORE
 			| IMMEDIATE
 			| IMMUTABLE
 			| IMPLICIT_P
@@ -17894,6 +18080,7 @@ unreserved_keyword:
 			| METHOD
 			| MINUTE_P
 			| MINVALUE
+			| MISSING
 			| MODE
 			| MONTH_P
 			| MOVE
@@ -17962,6 +18149,7 @@ unreserved_keyword:
 			| REINDEX
 			| RELATIVE_P
 			| RELEASE
+			| REMOVE
 			| RENAME
 			| REPEATABLE
 			| REPLACE
@@ -18101,6 +18289,7 @@ col_name_keyword:
 			| JSON_SCALAR
 			| JSON_SERIALIZE
 			| JSON_TABLE
+			| JSON_TRANSFORM
 			| JSON_VALUE
 			| LEAST
 			| NATIONAL
@@ -18287,6 +18476,7 @@ bare_label_keyword:
 			| ANALYZE
 			| AND
 			| ANY
+			| APPEND
 			| ASC
 			| ASENSITIVE
 			| ASSERTION
@@ -18400,6 +18590,7 @@ bare_label_keyword:
 			| EXCLUDING
 			| EXCLUSIVE
 			| EXECUTE
+			| EXISTING
 			| EXISTS
 			| EXPLAIN
 			| EXPRESSION
@@ -18431,6 +18622,7 @@ bare_label_keyword:
 			| HOLD
 			| IDENTITY_P
 			| IF_P
+			| IGNORE
 			| ILIKE
 			| IMMEDIATE
 			| IMMUTABLE
@@ -18469,6 +18661,7 @@ bare_label_keyword:
 			| JSON_SCALAR
 			| JSON_SERIALIZE
 			| JSON_TABLE
+			| JSON_TRANSFORM
 			| JSON_VALUE
 			| KEEP
 			| KEY
@@ -18501,6 +18694,7 @@ bare_label_keyword:
 			| MERGE
 			| METHOD
 			| MINVALUE
+			| MISSING
 			| MODE
 			| MOVE
 			| NAME_P
@@ -18586,6 +18780,7 @@ bare_label_keyword:
 			| REINDEX
 			| RELATIVE_P
 			| RELEASE
+			| REMOVE
 			| RENAME
 			| REPEATABLE
 			| REPLACE

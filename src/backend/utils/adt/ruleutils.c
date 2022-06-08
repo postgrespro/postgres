@@ -8173,6 +8173,7 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 		case T_FuncExpr:
 		case T_JsonConstructorExpr:
 		case T_JsonExpr:
+		case T_JsonTransformExpr:
 			/* function-like: name(..) or name[..] */
 			return true;
 
@@ -9838,6 +9839,79 @@ get_rule_expr(Node *node, deparse_context *context,
 				get_json_expr_options(jexpr, context,
 									  jexpr->op == JSON_EXISTS_OP ?
 									  JSON_BEHAVIOR_FALSE : JSON_BEHAVIOR_NULL);
+
+				appendStringInfoString(buf, ")");
+			}
+			break;
+
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr *jtexpr = (JsonTransformExpr *) node;
+				ListCell *lc;
+
+				appendStringInfoString(buf, "JSON_TRANSFORM(");
+				get_rule_expr(jtexpr->formatted_expr, context, showimplicit);
+
+				foreach(lc, jtexpr->ops)
+				{
+					JsonTransformOp *jtop = lfirst_node(JsonTransformOp, lc);
+
+					switch (jtop->op_type)
+					{
+						case JSTO_SET:
+							appendStringInfoString(buf, ", SET ");
+							break;
+						case JSTO_REMOVE:
+							appendStringInfoString(buf, ", REMOVE ");
+							break;
+						case JSTO_INSERT:
+							appendStringInfoString(buf, ", INSERT ");
+							break;
+						case JSTO_APPEND:
+							appendStringInfoString(buf, ", APPEND ");
+							break;
+						case JSTO_RENAME:
+							appendStringInfoString(buf, ", RENAME ");
+							break;
+						case JSTO_KEEP:
+							appendStringInfoString(buf, ", KEEP ");
+							break;
+						case JSTO_REPLACE:
+							appendStringInfoString(buf, ", REPLACE ");
+							break;
+					}
+
+					get_json_path_spec(jtop->pathspec, context, showimplicit);
+
+					if (jtop->expr)
+					{
+						appendStringInfoString(buf, " = ");
+						get_rule_expr(jtop->expr, context, showimplicit);
+					}
+
+					//FIXME jtop->on_existing ...
+				}
+
+				if (jtexpr->passing_values)
+				{
+					ListCell   *lc1,
+							   *lc2;
+					bool		needcomma = false;
+
+					appendStringInfoString(buf, " PASSING ");
+
+					forboth(lc1, jtexpr->passing_names,
+							lc2, jtexpr->passing_values)
+					{
+						if (needcomma)
+							appendStringInfoString(buf, ", ");
+						needcomma = true;
+
+						get_rule_expr((Node *) lfirst(lc2), context, showimplicit);
+						appendStringInfo(buf, " AS %s",
+										 ((String *) lfirst_node(String, lc1))->sval);
+					}
+				}
 
 				appendStringInfoString(buf, ")");
 			}

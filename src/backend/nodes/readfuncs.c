@@ -1620,6 +1620,45 @@ _readJsonIsPredicate()
 }
 
 /*
+ * _readJsonTransformExpr
+ */
+static JsonTransformExpr *
+_readJsonTransformExpr()
+{
+	READ_LOCALS(JsonTransformExpr);
+
+	READ_NODE_FIELD(formatted_expr);
+	READ_NODE_FIELD(result_coercion);
+	READ_NODE_FIELD(returning);
+	READ_NODE_FIELD(format);
+	READ_NODE_FIELD(ops);
+	READ_NODE_FIELD(passing_names);
+	READ_NODE_FIELD(passing_values);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+/*
+ * _readJsonTransformOp
+ */
+static JsonTransformOp *
+_readJsonTransformOp()
+{
+	READ_LOCALS(JsonTransformOp);
+
+	READ_NODE_FIELD(pathspec);
+	READ_NODE_FIELD(expr);
+	READ_ENUM_FIELD(op_type, JsonTransformOpType);
+	READ_ENUM_FIELD(on_existing, JsonTransformBehavior);
+	READ_ENUM_FIELD(on_missing, JsonTransformBehavior);
+	READ_ENUM_FIELD(on_null, JsonTransformBehavior);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+/*
  *	Stuff from pathnodes.h.
  *
  * Mostly we don't need to read planner nodes back in again, but some
@@ -3235,6 +3274,10 @@ parseNodeString(void)
 		return_value = _readJsonTableParent();
 	else if (MATCH("JSONTABLESIBLING", 16))
 		return_value = _readJsonTableSibling();
+	else if (MATCH("JSONTRANSFORMEXPR", 17))
+		return_value = _readJsonTransformExpr();
+	else if (MATCH("JSONTRANSFORMOP", 15))
+		return_value = _readJsonTransformOp();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

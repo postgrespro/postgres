@@ -214,6 +214,7 @@ typedef enum NodeTag
 	T_JsonItemCoercions,
 	T_JsonTableParent,
 	T_JsonTableSibling,
+	T_JsonTransformExpr,
 
 	/*
 	 * TAGS FOR EXPRESSION STATE NODES (execnodes.h)
@@ -525,6 +526,8 @@ typedef enum NodeTag
 	T_JsonKeyValue,
 	T_JsonBehavior,
 	T_JsonOutput,
+	T_JsonTransform,
+	T_JsonTransformOp,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)

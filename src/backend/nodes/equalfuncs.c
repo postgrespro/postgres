@@ -1184,6 +1184,39 @@ _equalJsonItemCoercions(const JsonItemCoercions *a, const JsonItemCoercions *b)
 }
 
 /*
+ * _equalJsonTransformExpr
+ */
+static bool
+_equalJsonTransformExpr(const JsonTransformExpr *a, const JsonTransformExpr *b)
+{
+	COMPARE_NODE_FIELD(formatted_expr);
+	COMPARE_NODE_FIELD(result_coercion);
+	COMPARE_NODE_FIELD(returning);
+	COMPARE_NODE_FIELD(format);
+	COMPARE_NODE_FIELD(ops);
+	COMPARE_NODE_FIELD(passing_names);
+	COMPARE_NODE_FIELD(passing_values);
+
+	return true;
+}
+
+/*
+ * _equalJsonTransformOp
+ */
+static bool
+_equalJsonTransformOp(const JsonTransformOp *a, const JsonTransformOp *b)
+{
+	COMPARE_NODE_FIELD(pathspec);
+	COMPARE_NODE_FIELD(expr);
+	COMPARE_SCALAR_FIELD(op_type);
+	COMPARE_SCALAR_FIELD(on_existing);
+	COMPARE_SCALAR_FIELD(on_missing);
+	COMPARE_SCALAR_FIELD(on_null);
+
+	return true;
+}
+
+/*
  * Stuff from pathnodes.h
  */
 
@@ -3793,6 +3826,12 @@ equal(const void *a, const void *b)
 			break;
 		case T_JsonTableSibling:
 			retval = _equalJsonTableSibling(a, b);
+			break;
+		case T_JsonTransformExpr:
+			retval = _equalJsonTransformExpr(a, b);
+			break;
+		case T_JsonTransformOp:
+			retval = _equalJsonTransformOp(a, b);
 			break;
 
 			/*

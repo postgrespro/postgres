@@ -1905,6 +1905,35 @@ _outJsonTableSibling(StringInfo str, const JsonTableSibling *node)
 	WRITE_BOOL_FIELD(cross);
 }
 
+static void
+_outJsonTransformExpr(StringInfo str, const JsonTransformExpr *node)
+{
+	WRITE_NODE_TYPE("JSONTRANSFORMEXPR");
+
+	WRITE_NODE_FIELD(formatted_expr);
+	WRITE_NODE_FIELD(result_coercion);
+	WRITE_NODE_FIELD(returning);
+	WRITE_NODE_FIELD(format);
+	WRITE_NODE_FIELD(ops);
+	WRITE_NODE_FIELD(passing_names);
+	WRITE_NODE_FIELD(passing_values);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outJsonTransformOp(StringInfo str, const JsonTransformOp *node)
+{
+	WRITE_NODE_TYPE("JSONTRANSFORMOP");
+
+	WRITE_NODE_FIELD(pathspec);
+	WRITE_NODE_FIELD(expr);
+	WRITE_ENUM_FIELD(op_type, JsonTransformOpType);
+	WRITE_ENUM_FIELD(on_existing, JsonTransformBehavior);
+	WRITE_ENUM_FIELD(on_missing, JsonTransformBehavior);
+	WRITE_ENUM_FIELD(on_null, JsonTransformBehavior);
+	WRITE_LOCATION_FIELD(location);
+}
+
 /*****************************************************************************
  *
  *	Stuff from pathnodes.h.
@@ -4762,6 +4791,12 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_JsonTableSibling:
 				_outJsonTableSibling(str, obj);
+				break;
+			case T_JsonTransformExpr:
+				_outJsonTransformExpr(str, obj);
+				break;
+			case T_JsonTransformOp:
+				_outJsonTransformOp(str, obj);
 				break;
 
 			default:
