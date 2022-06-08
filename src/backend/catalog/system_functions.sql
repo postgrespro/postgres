@@ -579,6 +579,15 @@ LANGUAGE INTERNAL
 STRICT STABLE PARALLEL SAFE
 AS 'jsonb_path_query_first_tz';
 
+CREATE OR REPLACE FUNCTION
+  jsonb_path_set(target jsonb, path jsonpath, newval jsonb,
+                 vars jsonb DEFAULT '{}',
+                 silent boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_set';
+
 -- default normalization form is NFC, per SQL standard
 CREATE OR REPLACE FUNCTION
   "normalize"(text, text DEFAULT 'NFC')

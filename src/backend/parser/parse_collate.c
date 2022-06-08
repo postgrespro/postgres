@@ -698,6 +698,24 @@ assign_collations_walker(Node *node, assign_collations_context *context)
 						 * marked with collations in parse_expr.c.
 						 */
 						break;
+					case T_JsonTransformExpr:
+						{
+							JsonTransformExpr *jte = (JsonTransformExpr *) node;
+							ListCell   *lc;
+
+							/*
+							 * Context item and PASSING arguments are already
+							 * marked with collations in parse_expr.c.
+							 */
+							foreach(lc, jte->ops)
+							{
+								JsonTransformOp *jtop = lfirst_node(JsonTransformOp, lc);
+
+								assign_expr_collations(context->pstate,
+													   jtop->expr);
+							}
+						}
+						break;
 					default:
 
 						/*

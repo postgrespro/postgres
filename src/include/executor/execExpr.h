@@ -245,6 +245,7 @@ typedef enum ExprEvalOp
 	EEOP_JSON_CONSTRUCTOR,
 	EEOP_IS_JSON,
 	EEOP_JSONEXPR,
+	EEOP_JSONTRANSFORM,
 
 	/* aggregation related nodes */
 	EEOP_AGG_STRICT_DESERIALIZE,
@@ -688,6 +689,33 @@ typedef struct ExprEvalStep
 			struct JsonExprState *jsestate;
 		}			jsonexpr;
 
+		/* for EEOP_JSONTRANSFORM */
+		struct
+		{
+			JsonTransformExpr *jsexpr; /* original expression node */
+
+			struct
+			{
+				FmgrInfo	func;		/* typinput function for output type */
+				Oid			typioparam;
+			}			input;			/* I/O info for output type */
+
+			NullableDatum
+					   *formatted_expr, /* formatted context item value */
+					   *res_expr,		/* result item */
+					   *coercion_expr;	/* input for JSON item coercion */
+
+			ExprState  *result_expr;	/* coerced to output type */
+			List	   *args;			/* passing arguments */
+			struct
+			{
+				NullableDatum pathspec;	/* path specification value */
+				NullableDatum expr;		/* new value, if any */
+				Oid			expr_typid;
+				int32		expr_typmod;
+			}		   *ops;			/* list of update operations */
+			void	   *cache;			/* cache for json_populate_type() */
+		}			jsontransform;
 	}			d;
 } ExprEvalStep;
 
@@ -852,6 +880,8 @@ extern void ExecEvalJsonConstructor(ExprState *state, ExprEvalStep *op,
 									ExprContext *econtext);
 extern void ExecEvalJson(ExprState *state, ExprEvalStep *op,
 						 ExprContext *econtext);
+extern void ExecEvalJsonTransform(ExprState *state, ExprEvalStep *op,
+								  ExprContext *econtext);
 extern Datum ExecPrepareJsonItemCoercion(struct JsonbValue *item,
 										 JsonReturning *returning,
 										 struct JsonCoercionsState *coercions,

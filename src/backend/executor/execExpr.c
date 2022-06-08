@@ -2668,6 +2668,101 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				break;
 			}
 
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr *jexpr = castNode(JsonTransformExpr, node);
+				ListCell   *argexprlc;
+				ListCell   *argnamelc;
+				ListCell   *oplc;
+				int			i = 0;
+
+				scratch.opcode = EEOP_JSONTRANSFORM;
+				scratch.d.jsontransform.jsexpr = jexpr;
+
+				scratch.d.jsontransform.formatted_expr =
+					palloc(sizeof(*scratch.d.jsontransform.formatted_expr));
+
+				ExecInitExprRec((Expr *) jexpr->formatted_expr, state,
+								&scratch.d.jsontransform.formatted_expr->value,
+								&scratch.d.jsontransform.formatted_expr->isnull);
+
+				scratch.d.jsontransform.ops =
+					palloc(sizeof(*scratch.d.jsontransform.ops) * list_length(jexpr->ops));
+
+				foreach(oplc, jexpr->ops)
+				{
+					JsonTransformOp *op = lfirst_node(JsonTransformOp, oplc);
+
+					if (op->expr)
+					{
+						ExecInitExprRec((Expr *) op->expr, state,
+										&scratch.d.jsontransform.ops[i].expr.value,
+										&scratch.d.jsontransform.ops[i].expr.isnull);
+
+						scratch.d.jsontransform.ops[i].expr_typid = exprType(op->expr);
+						scratch.d.jsontransform.ops[i].expr_typmod = exprTypmod(op->expr);
+					}
+					else
+					{
+						memset(&scratch.d.jsontransform.ops[i], 0,
+							   sizeof(scratch.d.jsontransform.ops[i]));
+						scratch.d.jsontransform.ops[i].expr.isnull = true;
+					}
+
+					ExecInitExprRec((Expr *) op->pathspec, state,
+									&scratch.d.jsontransform.ops[i].pathspec.value,
+									&scratch.d.jsontransform.ops[i].pathspec.isnull);
+
+					i++;
+				}
+
+				scratch.d.jsontransform.res_expr =
+					palloc(sizeof(*scratch.d.jsontransform.res_expr));
+
+				scratch.d.jsontransform.result_expr = jexpr->result_coercion
+					? ExecInitExprWithCaseValue((Expr *) jexpr->result_coercion->expr,
+												state->parent,
+												&scratch.d.jsontransform.res_expr->value,
+												&scratch.d.jsontransform.res_expr->isnull)
+					: NULL;
+
+				if (jexpr->result_coercion && jexpr->result_coercion->via_io)
+				{
+					Oid			typinput;
+
+					/* lookup the result type's input function */
+					getTypeInputInfo(jexpr->returning->typid, &typinput,
+									 &scratch.d.jsontransform.input.typioparam);
+					fmgr_info(typinput, &scratch.d.jsontransform.input.func);
+				}
+
+				scratch.d.jsontransform.args = NIL;
+
+				forboth(argexprlc, jexpr->passing_values,
+						argnamelc, jexpr->passing_names)
+				{
+					Expr	   *argexpr = (Expr *) lfirst(argexprlc);
+					String	   *argname = lfirst_node(String, argnamelc);
+					JsonPathVariableEvalContext *var = palloc(sizeof(*var));
+
+					var->name = pstrdup(argname->sval);
+					var->typid = exprType((Node *) argexpr);
+					var->typmod = exprTypmod((Node *) argexpr);
+					var->estate = ExecInitExpr(argexpr, state->parent);
+					var->econtext = NULL;
+					var->mcxt = NULL;
+					var->evaluated = false;
+					var->value = (Datum) 0;
+					var->isnull = true;
+
+					scratch.d.jsontransform.args =
+						lappend(scratch.d.jsontransform.args, var);
+				}
+
+				ExprEvalPushStep(state, &scratch);
+				break;
+			}
+
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));

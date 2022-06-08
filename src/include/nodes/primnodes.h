@@ -1630,6 +1630,47 @@ typedef struct JsonTableSibling
 	bool		cross;			/* cross or union join? */
 } JsonTableSibling;
 
+typedef enum JsonTransformOpType
+{
+	JSTO_REMOVE,
+	JSTO_INSERT,
+	JSTO_REPLACE,
+	JSTO_SET,
+	JSTO_APPEND,
+	JSTO_RENAME,
+	JSTO_KEEP,
+} JsonTransformOpType;
+
+typedef enum JsonTransformBehavior
+{
+	JSTB_DEFAULT,
+	JSTB_NULL,
+	JSTB_IGNORE,
+	JSTB_ERROR,
+	JSTB_CREATE,
+	JSTB_REPLACE,
+	JSTB_REMOVE,
+	JSTB_INSERT,
+	JSTB_RENAME
+} JsonTransformBehavior;
+
+/*
+ * Transformed JSON_TRANSFORM() expression.
+ */
+typedef struct JsonTransformExpr
+{
+	Expr		xpr;
+	Node	   *formatted_expr;
+	JsonCoercion *result_coercion;	/* resulting coercion to RETURNING type */
+	JsonReturning *returning;		/* RETURNING clause type/format info */
+	JsonFormat *format;				/* context item format (JSON/JSONB) */
+	List	   *ops;				/* list of operations */
+	List	   *passing_names;
+	List	   *passing_values;
+	int			location;
+} JsonTransformExpr;
+
+
 /* ----------------
  * NullTest
  *

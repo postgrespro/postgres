@@ -491,6 +491,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_JSON_CONSTRUCTOR,
 		&&CASE_EEOP_IS_JSON,
 		&&CASE_EEOP_JSONEXPR,
+		&&CASE_EEOP_JSONTRANSFORM,
 		&&CASE_EEOP_AGG_STRICT_DESERIALIZE,
 		&&CASE_EEOP_AGG_DESERIALIZE,
 		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK_ARGS,
@@ -1821,6 +1822,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/* too complex for an inline implementation */
 			ExecEvalJson(state, op, econtext);
+			EEO_NEXT();
+		}
+
+		EEO_CASE(EEOP_JSONTRANSFORM)
+		{
+			/* too complex for an inline implementation */
+			ExecEvalJsonTransform(state, op, econtext);
 			EEO_NEXT();
 		}
 
@@ -5142,4 +5150,112 @@ ExecEvalJson(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	}
 
 	*op->resvalue = res;
+}
+
+/*
+ * Evaluate a coercion of a JSON item to the target type.
+ */
+static Datum
+ExecEvalJsonTransformCoercion(ExprEvalStep *op, ExprContext *econtext,
+							  Datum res, bool *isNull)
+{
+	JsonTransformExpr *jexpr = op->d.jsontransform.jsexpr;
+	JsonCoercion *coercion = jexpr->result_coercion;
+
+	if (coercion)
+	{
+		if (coercion->via_io)
+		{
+			/* strip quotes and call typinput function */
+			char	   *str = *isNull ? NULL : JsonbUnquote(DatumGetJsonbP(res));
+
+			return InputFunctionCall(&op->d.jsontransform.input.func, str,
+									 op->d.jsontransform.input.typioparam,
+									 jexpr->returning->typmod);
+		}
+
+		if (coercion->via_populate)
+			return json_populate_type(res, JSONBOID,
+									  jexpr->returning->typid,
+									  jexpr->returning->typmod,
+									  &op->d.jsontransform.cache,
+									  econtext->ecxt_per_query_memory,
+									  isNull);
+	}
+
+	if (op->d.jsontransform.result_expr)
+	{
+		op->d.jsontransform.res_expr->value = res;
+		op->d.jsontransform.res_expr->isnull = *isNull;
+
+		res = ExecEvalExpr(op->d.jsontransform.result_expr, econtext, isNull);
+	}
+
+	return res;
+}
+
+void
+ExecEvalJsonTransform(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
+{
+	JsonTransformExpr *jexpr = op->d.jsontransform.jsexpr;
+	Datum		res = (Datum) 0;
+	ListCell   *lc;
+	int			i = 0;
+
+	*op->resnull = true;		/* until we get a result */
+	*op->resvalue = (Datum) 0;
+
+	if (op->d.jsontransform.formatted_expr->isnull)
+		goto check_null;
+
+	res = op->d.jsontransform.formatted_expr->value;
+
+	/* reset JSON path variable contexts */
+	foreach(lc, op->d.jsontransform.args)
+	{
+		JsonPathVariableEvalContext *var = lfirst(lc);
+
+		var->econtext = econtext;
+		var->evaluated = false;
+	}
+
+	foreach(lc, jexpr->ops)
+	{
+		JsonPath *path;
+		JsonTransformOp *oper = lfirst_node(JsonTransformOp, lc);
+
+		if (op->d.jsontransform.ops[i].pathspec.isnull)
+			goto check_null;
+
+		if (oper->on_null == JSTB_ERROR &&
+			op->d.jsontransform.ops[i].expr.isnull)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("JSON_TRANSFORM called with NULL input")));
+
+		path = DatumGetJsonPathP(op->d.jsontransform.ops[i].pathspec.value);
+		res = JsonPathTransform(res, path,
+								op->d.jsontransform.ops[i].expr.value,
+								op->d.jsontransform.ops[i].expr.isnull,
+								op->d.jsontransform.ops[i].expr_typid,
+								op->d.jsontransform.ops[i].expr_typmod,
+								op->d.jsontransform.args,
+								oper->op_type, oper->on_existing,
+								oper->on_missing, oper->on_null);
+
+		*op->resnull = res == (Datum) 0;
+
+		if (*op->resnull)
+			goto check_null;
+
+		i++;
+	}
+
+	*op->resvalue = ExecEvalJsonTransformCoercion(op, econtext, res, op->resnull);
+	return;
+
+check_null:
+	/* execute domain checks for NULLs */
+	(void) ExecEvalJsonTransformCoercion(op, econtext, res, op->resnull);
+	Assert(*op->resnull);
 }

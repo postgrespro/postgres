@@ -1893,6 +1893,35 @@ typedef struct JsonArrayAgg
 	bool		absent_on_null; /* skip NULL elements? */
 } JsonArrayAgg;
 
+/*
+ * JsonTransform -
+ *		untransformed representation of JSON_TRANSFORM()
+ */
+typedef struct JsonTransform
+{
+	NodeTag		type;
+	JsonValueExpr *expr;		/* context item expression */
+	List	   *ops;			/* list of operations */
+	JsonOutput *output;			/* output clause, if specified */
+	List	   *passing;		/* list of PASSING clause arguments, if any */
+	int			location;		/* token location, or -1 if unknown */
+} JsonTransform;
+
+/*
+ * JsonTransformOp -
+ *		untransformed representation of JSON_TRANSFORM() operations
+ */
+typedef struct JsonTransformOp
+{
+	NodeTag		type;
+	Node	   *pathspec;
+	Node	   *expr;
+	JsonTransformOpType op_type;
+	JsonTransformBehavior on_existing;
+	JsonTransformBehavior on_missing;
+	JsonTransformBehavior on_null;
+	int			location;		/* token location, or -1 if unknown */
+} JsonTransformOp;
 
 /*****************************************************************************
  *		Raw Grammar Output Statements

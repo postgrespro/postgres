@@ -279,6 +279,13 @@ extern Datum JsonPathQuery(Datum jb, JsonPath *jp, JsonWrapper wrapper,
 						   bool *empty, bool *error, List *vars);
 extern JsonbValue *JsonPathValue(Datum jb, JsonPath *jp, bool *empty,
 								 bool *error, List *vars);
+extern Datum JsonPathTransform(Datum jb, JsonPath *jp,
+							   Datum val, bool val_isnull,
+							   Oid val_typid, int32 val_typmod,
+							   List *vars, JsonTransformOpType op,
+							   JsonTransformBehavior on_existing,
+							   JsonTransformBehavior on_missing,
+							   JsonTransformBehavior on_null);
 
 extern int	EvalJsonPathVar(void *vars, char *varName, int varNameLen,
 							JsonbValue *val, JsonbValue *baseObject);

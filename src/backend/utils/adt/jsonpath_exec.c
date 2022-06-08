@@ -116,6 +116,15 @@ typedef struct JsonPathExecContext
 	bool		throwErrors;	/* with "false" all suppressible errors are
 								 * suppressed */
 	bool		useTz;
+	struct
+	{
+		JsonbValue *value;		/* new value, if any */
+		JsonTransformOpType op;	/* operation */
+		JsonTransformBehavior onExisting;
+		JsonTransformBehavior onMissing;
+		JsonTransformBehavior onNull;
+		bool		missing;
+	}			update;			/* used for updates only */;
 } JsonPathExecContext;
 
 /* Context for LIKE_REGEX execution. */
@@ -238,6 +247,14 @@ static JsonPathExecResult executeJsonPath(JsonPath *path, void *vars,
 										  JsonPathVarCallback getVar,
 										  Jsonb *json, bool throwErrors,
 										  JsonValueList *result, bool useTz);
+static JsonbValue *executeJsonPathUpdate(JsonPath *path, void *vars,
+										 JsonPathVarCallback getVar,
+										 Jsonb *json, JsonbValue *new_value,
+										 JsonTransformOpType op,
+										 JsonTransformBehavior onExisting,
+										 JsonTransformBehavior onMissing,
+										 JsonTransformBehavior onNull,
+										 bool throwErrors, bool useTz);
 static JsonPathExecResult executeItem(JsonPathExecContext *cxt,
 									  JsonPathItem *jsp, JsonbValue *jb, JsonValueList *found);
 static JsonPathExecResult executeItemOptUnwrapTarget(JsonPathExecContext *cxt,
@@ -595,6 +612,55 @@ jsonb_path_query_first_tz(PG_FUNCTION_ARGS)
 	return jsonb_path_query_first_internal(fcinfo, true);
 }
 
+
+/*
+ * jsonb_path_set
+ *		Replaces jsonpath in the given jsonb document and returns
+ *		updated jsonb as result.
+ */
+static Datum
+jsonb_path_set_internal(FunctionCallInfo fcinfo, bool tz)
+{
+	Jsonb	   *jb;
+	JsonPath   *jp;
+	Jsonb	   *jb_new;
+	Jsonb	   *vars;
+	bool		silent;
+	JsonbValue	jbv_new;
+	JsonbValue *res;
+
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+
+	jsonbInitIterators();
+
+	jb = PG_GETARG_JSONB_P(0);
+	jp = PG_GETARG_JSONPATH_P(1);
+	jb_new = PG_ARGISNULL(2) ? NULL : PG_GETARG_JSONB_P(2);
+	vars = PG_ARGISNULL(3) ? NULL : PG_GETARG_JSONB_P(3);
+	silent = !PG_ARGISNULL(4) && PG_GETARG_BOOL(4);
+
+	if (jb_new && !JsonbExtractScalar(JsonRoot(jb_new), &jbv_new))
+		JsonValueInitBinary(&jbv_new, JsonRoot(jb_new));
+
+	res = executeJsonPathUpdate(jp, vars, getJsonPathVariableFromJsonb,
+								jb, jb_new ? &jbv_new : NULL,
+								jb_new ? JSTO_SET : JSTO_REMOVE,
+								JSTB_REPLACE, JSTB_CREATE, JSTB_REMOVE,
+								!silent, tz);
+
+	if (!res)
+		PG_RETURN_NULL();
+
+	PG_RETURN_JSONB_VALUE_P(res);
+}
+
+Datum
+jsonb_path_set(PG_FUNCTION_ARGS)
+{
+	return jsonb_path_set_internal(fcinfo, false);
+}
+
 /********************Execute functions for JsonPath**************************/
 
 /*
@@ -645,6 +711,8 @@ executeJsonPath(JsonPath *path, void *vars, JsonPathVarCallback getVar,
 	cxt.throwErrors = throwErrors;
 	cxt.useTz = useTz;
 
+	memset(&cxt.update, 0, sizeof(cxt.update));
+
 	if (jspStrictAbsenseOfErrors(&cxt) && !result)
 	{
 		/*
@@ -666,6 +734,605 @@ executeJsonPath(JsonPath *path, void *vars, JsonPathVarCallback getVar,
 	Assert(!throwErrors || !jperIsError(res));
 
 	return res;
+}
+
+static JsonbValue *
+executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
+				  JsonbParseState **ps, JsonbValue *key, JsonbValue *jb,
+				  bool unwrap, bool autowrapped);
+
+
+static JsonbValue *
+pushJsonbKeyValue(JsonbParseState **ps, JsonbValue *key, JsonbValue *value)
+{
+	Assert(value);
+
+	if (key)
+	{
+		Assert(*ps);
+		pushJsonbValue(ps, WJB_KEY, key);
+		pushJsonbValue(ps, WJB_VALUE, value);
+	}
+	else
+	{
+		if (!*ps)
+		{
+			if (IsAJsonbScalar(value))
+				return pushScalarJsonbValue(ps, value, false, false);
+			else
+				return copyJsonbValue(value);	/* XXX */
+		}
+
+		pushJsonbValue(ps, WJB_ELEM, value);
+	}
+
+	return NULL;
+}
+
+static JsonbValue *
+replaceOldValue(JsonPathExecContext *cxt, JsonbParseState **ps,
+				JsonbValue *key, JsonbValue *old_value)
+{
+	JsonbValue jbv_null;
+	JsonbValue *new_value = cxt->update.value;
+
+	if (!new_value)
+	{
+		Assert(cxt->update.onNull != JSTB_ERROR);
+
+		if (cxt->update.onNull == JSTB_IGNORE)
+		{
+			if (!old_value)
+				return NULL;
+
+			new_value = old_value;
+		}
+		else if (cxt->update.onNull == JSTB_NULL)
+		{
+			jbv_null.type = jbvNull;
+			new_value = &jbv_null;
+		}
+		else
+		{
+			Assert(cxt->update.onNull == JSTB_REMOVE);
+			return NULL;
+		}
+	}
+
+	return pushJsonbKeyValue(ps, key, new_value);
+}
+
+static JsonbValue *
+executeUpdateAction(JsonPathExecContext *cxt, JsonbParseState **ps,
+					JsonbValue *key, JsonbValue *old_val, bool autowrapped)
+{
+	if (old_val)
+	{
+		cxt->update.missing = false;
+
+		if (cxt->update.op == JSTO_APPEND)
+		{
+			JsonbIterator *it;
+			JsonbIteratorToken tok;
+			JsonbValue jbv;
+
+			if (JsonbType(old_val) != jbvArray)
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+					 errmsg("argument of %s APPEND is not an array", "JSON_TRANSFORM()")));
+
+			if (!cxt->update.value && cxt->update.onNull == JSTB_IGNORE)
+				return pushJsonbKeyValue(ps, key, old_val);
+
+			if (key)
+				pushJsonbValue(ps, WJB_KEY, key);
+
+			pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
+
+			Assert(old_val->type == jbvBinary);
+
+			it = JsonbIteratorInit(old_val->val.binary.data);
+
+			tok = JsonbIteratorNext(&it, &jbv, true);
+			Assert(tok == WJB_BEGIN_ARRAY);
+
+			while ((tok = JsonbIteratorNext(&it, &jbv, true)) == WJB_ELEM)
+				pushJsonbValue(ps, WJB_ELEM, &jbv);
+
+			Assert(tok == WJB_END_ARRAY);
+			tok = JsonbIteratorNext(&it, &jbv, true);
+			Assert(tok == WJB_DONE);
+
+			replaceOldValue(cxt, ps, NULL, NULL);
+
+			return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+		}
+
+		if (cxt->update.op == JSTO_INSERT && !key && !autowrapped)
+		{
+			replaceOldValue(cxt, ps, NULL, NULL);
+			return pushJsonbKeyValue(ps, NULL, old_val);
+		}
+
+		if (cxt->update.onExisting == JSTB_ERROR)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+					 errmsg("existing value in %s", "JSON_TRANSFORM()")));
+
+		if (cxt->update.onExisting == JSTB_IGNORE)
+			return pushJsonbKeyValue(ps, key, old_val);
+
+		if (cxt->update.onExisting == JSTB_REMOVE)
+		{
+			if (!*ps)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+						 errmsg("cannor remove root value in %s", "JSON_TRANSFORM()")));
+
+			return NULL;
+		}
+
+		if (cxt->update.onExisting == JSTB_RENAME)
+		{
+			if (!key || autowrapped)
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+					 errmsg("invalid path in RENAME operation of %s",
+							"JSON_TRANSFORM()")));
+
+			if (!cxt->update.value ||
+				cxt->update.value->type != jbvString)
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+					 errmsg("invalid key name value in RENAME operation of %s",
+							"JSON_TRANSFORM()")));
+
+			return pushJsonbKeyValue(ps, cxt->update.value, old_val);
+		}
+
+		Assert(cxt->update.onExisting == JSTB_REPLACE);
+
+		return replaceOldValue(cxt, ps, key, old_val);
+	}
+	else
+	{
+		if (cxt->update.onMissing == JSTB_ERROR)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+					 errmsg("missing value in %s", "JSON_TRANSFORM()")));
+
+		/* TODO create path ??? */
+		if (cxt->update.onMissing == JSTB_CREATE)
+		{
+			if (cxt->update.op == JSTO_APPEND)
+			{
+				if (!cxt->update.value &&
+					cxt->update.onNull == JSTB_IGNORE)
+					return NULL;
+
+				/* create singleton array */
+				if (key)
+					pushJsonbValue(ps, WJB_KEY, key);
+
+				pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
+				replaceOldValue(cxt, ps, NULL, NULL);
+				return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+			}
+
+			return replaceOldValue(cxt, ps, key, NULL);
+		}
+
+		Assert(cxt->update.onMissing == JSTB_IGNORE);
+
+		return NULL;
+	}
+}
+
+typedef struct JsonPathArrayRange
+{
+	int32		lo;
+	int32		hi;
+} JsonPathArrayRange;
+
+static bool
+checkIndexInRanges(int32 index, JsonPathArrayRange *ranges, int nranges)
+{
+	for (int i = 0; i < nranges; i++)
+		if (index >= ranges[i].lo && index <= ranges[i].hi)
+			return true;
+
+	return false;
+}
+
+static JsonbValue *
+executeItemUpdateArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
+					   JsonbParseState **ps, JsonbValue *key,
+					   JsonbValue *jb, bool unwrapElements,
+					   JsonPathArrayRange *ranges, int nranges,
+					   int32 max_index)
+{
+	JsonbIterator *it;
+	JsonbIteratorToken tok;
+	JsonbValue	jbv;
+	int32		index = 0;
+
+	if (jb->type != jbvBinary)
+	{
+		Assert(jb->type != jbvArray);
+		elog(ERROR, "invalid jsonb array value type: %d", jb->type);
+	}
+
+	it = JsonbIteratorInit(jb->val.binary.data);
+
+	tok = JsonbIteratorNext(&it, &jbv, true);
+	Assert(tok == WJB_BEGIN_ARRAY);
+
+	if (key)
+		pushJsonbValue(ps, WJB_KEY, key);
+
+	pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
+
+	while ((tok = JsonbIteratorNext(&it, &jbv, true)) == WJB_ELEM)
+	{
+		if (!ranges || checkIndexInRanges(index, ranges, nranges))
+			executeItemUpdate(cxt, jsp, ps, NULL, &jbv, unwrapElements, false);
+		else
+			pushJsonbKeyValue(ps, NULL, &jbv);
+
+		index++;
+	}
+
+	if (!jsp && cxt->update.onMissing == JSTB_CREATE &&
+		(cxt->update.value || cxt->update.onNull == JSTB_NULL))
+	{
+		jbv.type = jbvNull;
+
+		for (; index <= max_index; index++)
+		{
+			if (checkIndexInRanges(index, ranges, nranges))
+				executeUpdateAction(cxt, ps, NULL, NULL, false);
+			else
+				pushJsonbKeyValue(ps, NULL, &jbv);
+		}
+	}
+
+	Assert(tok == WJB_END_ARRAY);
+	tok = JsonbIteratorNext(&it, &jbv, true);
+	Assert(tok == WJB_DONE);
+
+	return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+}
+
+static JsonPathExecResult
+getArrayRange(JsonPathExecContext *cxt, JsonPathItem *jsp, int i,
+			  JsonbValue *jb, int32 size, JsonPathArrayRange *range)
+{
+	JsonPathExecResult res;
+	JsonPathItem from;
+	JsonPathItem to;
+	bool		is_range = jspGetArraySubscript(jsp, &from, &to, i);
+
+	res = getArrayIndex(cxt, &from, jb, &range->lo);
+
+	if (jperIsError(res))
+		return res;
+
+	if (is_range)
+	{
+		res = getArrayIndex(cxt, &to, jb, &range->hi);
+
+		if (jperIsError(res))
+			return res;
+	}
+	else
+		range->hi = range->lo;
+
+	if (!jspIgnoreStructuralErrors(cxt) &&
+		(range->lo < 0 ||
+		 range->hi > range->lo ||
+		 range->hi >= size))
+		RETURN_ERROR(ereport(ERROR,
+							 (errcode(ERRCODE_INVALID_SQL_JSON_SUBSCRIPT),
+							  errmsg("jsonpath array subscript is out of bounds"))));
+
+	if (range->lo < 0)
+		range->lo = 0;
+
+	if (size >= 0 && range->hi >= size)
+		range->hi = size - 1;
+
+	return jperOk;
+}
+
+#define jspNextItem(jsp, buf) (jspGetNext(jsp, buf) ? (buf) : NULL)
+
+/*
+ * Main jsonpath executor updadte function: walks on jsonpath
+ * structure, finds relevant parts of jsonb and evaluates updates
+ * actions over them.  When 'unwrap' is true current SQL/JSON item is
+ * unwrapped if it is an array.
+ */
+static JsonbValue *
+executeItemUpdate(JsonPathExecContext *cxt, JsonPathItem *jsp,
+				  JsonbParseState **ps, JsonbValue *key,
+				  JsonbValue *jb, bool unwrap, bool autowrapped)
+{
+	JsonPathItem next;
+
+	check_stack_depth();
+	CHECK_FOR_INTERRUPTS();
+
+	if (!jsp)
+		return executeUpdateAction(cxt, ps, key, jb, autowrapped);
+
+	switch (jsp->type)
+	{
+		case jpiKey:
+		case jpiAnyKey:
+			if (JsonbType(jb) == jbvObject)
+			{
+				JsonbIterator *it;
+				JsonbIteratorToken tok;
+				JsonbValue	jbv_key;
+				JsonbValue	jbv_val;
+				JsonPathItem *jsp_next = jspNextItem(jsp, &next);
+				bool		key_found = false;
+				int			key_len;
+				char	   *key_str =
+					jsp->type == jpiKey ? jspGetString(jsp, &key_len) : NULL;
+
+				Assert(jb->type == jbvBinary &&
+					   JsonContainerIsObject(jb->val.binary.data));
+
+				it = JsonbIteratorInit(jb->val.binary.data);
+
+				tok = JsonbIteratorNext(&it, &jbv_val, true);
+				Assert(tok == WJB_BEGIN_OBJECT);
+
+				if (key)
+					pushJsonbValue(ps, WJB_KEY, key);
+
+				pushJsonbValue(ps, WJB_BEGIN_OBJECT, NULL);
+
+				while ((tok = JsonbIteratorNext(&it, &jbv_key, true)) == WJB_KEY)
+				{
+					Assert(jbv_key.type == jbvString);
+
+					tok = JsonbIteratorNext(&it, &jbv_val, true);
+					Assert(tok == WJB_VALUE);
+
+					if (!key_found)
+					{
+						int			cmp = key_str ?
+							lengthCompareJsonbString(jbv_key.val.string.val,
+													 jbv_key.val.string.len,
+													 key_str, key_len) : 0;
+
+						if (!cmp)
+						{
+							if (key_str)
+								key_found = true;	/* XXX json: replace last key */
+
+							(void) executeItemUpdate(cxt, jsp_next, ps,
+													 &jbv_key, &jbv_val,
+													 jspAutoUnwrap(cxt),
+													 false);
+
+							continue;
+						}
+						else if (cmp > 0)
+						{
+							/* key_found = true; XXX key order */
+						}
+					}
+
+					pushJsonbKeyValue(ps, &jbv_key, &jbv_val);
+				}
+
+				/* missing key is the last in the path */
+				if (key_str && !key_found && !jsp_next)
+				{
+					jbv_key.type = jbvString;
+					jbv_key.val.string.val = key_str;
+					jbv_key.val.string.len = key_len;
+
+					(void) executeUpdateAction(cxt, ps, &jbv_key, NULL, false);
+				}
+
+				Assert(tok == WJB_END_OBJECT);
+				tok = JsonbIteratorNext(&it, &jbv_val, true);
+				Assert(tok == WJB_DONE);
+
+				return pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+			}
+
+			if (unwrap && JsonbType(jb) == jbvArray)
+				return executeItemUpdateArray(cxt, jsp, ps, key, jb,
+											  false, NULL, 0, -1);
+
+			if (!jspIgnoreStructuralErrors(cxt))
+				ereport(ERROR,
+						(errcode(ERRCODE_SQL_JSON_MEMBER_NOT_FOUND),
+						 errmsg("jsonpath member accessor can only be applied to an object")));
+			break;
+
+		case jpiAnyArray:
+			if (JsonbType(jb) == jbvArray)
+				return executeItemUpdateArray(cxt, jspNextItem(jsp, &next),
+											  ps, key, jb, jspAutoUnwrap(cxt),
+											  NULL, 0, -1);
+
+			if (jspAutoWrap(cxt))
+				return executeItemUpdate(cxt, jspNextItem(jsp, &next),
+										 ps, key, jb, jspAutoUnwrap(cxt), true);
+
+			if (!jspIgnoreStructuralErrors(cxt))
+				ereport(ERROR,
+						(errcode(ERRCODE_SQL_JSON_ARRAY_NOT_FOUND),
+						 errmsg("jsonpath array accessor can only be applied to an array")));
+
+			break;
+
+		case jpiIndexArray:
+			if (JsonbType(jb) == jbvArray || jspAutoWrap(cxt))
+			{
+				int			innermostArraySize = cxt->innermostArraySize;
+				int			size = JsonbArraySize(jb);
+				bool		singleton = size < 0;
+				JsonPathArrayRange *ranges;
+				int			nranges = 0;
+				int			max_index = -1;
+
+				if (singleton)
+					size = 1;
+
+				cxt->innermostArraySize = size; /* for LAST evaluation */
+
+				ranges = palloc(sizeof(*ranges) * jsp->content.array.nelems);
+
+				if (!singleton && cxt->update.onMissing == JSTB_CREATE)
+					size = -1;
+
+				for (int i = 0; i < jsp->content.array.nelems; i++)
+				{
+					JsonPathExecResult res = getArrayRange(cxt, jsp, i, jb, size,
+														   &ranges[nranges]);
+
+					if (jperIsError(res))
+						break;	/* FIXME */
+
+					/* fill only non-empty ranges */
+					if (ranges[nranges].lo <= ranges[nranges].hi)
+					{
+						if (max_index < ranges[nranges].hi)
+							max_index = ranges[nranges].hi;
+
+						nranges++;
+					}
+				}
+
+				cxt->innermostArraySize = innermostArraySize;
+
+				if (nranges)
+				{
+					JsonPathItem *jsp_next = jspNextItem(jsp, &next);
+
+					if (singleton)
+						jb = executeItemUpdate(cxt, jsp_next, ps,
+											   key, jb, jspAutoUnwrap(cxt), true);
+					else
+						jb = executeItemUpdateArray(cxt, jsp_next, ps,
+													key, jb, jspAutoUnwrap(cxt),
+													ranges, nranges,
+													max_index);
+
+					pfree(ranges);
+					return jb;
+				}
+				else
+				{
+					pfree(ranges);
+					break;
+				}
+			}
+
+			if (!jspIgnoreStructuralErrors(cxt))
+				ereport(ERROR,
+						(errcode(ERRCODE_SQL_JSON_ARRAY_NOT_FOUND),
+						 errmsg("jsonpath array accessor can only be applied to an array")));
+
+			break;
+
+		case jpiFilter:
+			{
+				JsonPathBool st;
+
+				if (unwrap && JsonbType(jb) == jbvArray)
+					return executeItemUpdateArray(cxt, jsp, ps, key, jb,
+												  false, NULL, 0, -1);
+
+				jspGetArg(jsp, &next);
+				st = executeNestedBoolItem(cxt, &next, jb);
+
+				if (st == jpbTrue)
+					return executeItemUpdate(cxt, jspNextItem(jsp, &next),
+											 ps, key, jb,
+											 jspAutoUnwrap(cxt),
+											 autowrapped);
+				break;
+			}
+
+		default:
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("unsupported jsonpath item type")));
+			return NULL;
+	}
+
+	/* no match, push old value */
+	return pushJsonbKeyValue(ps, key, jb);
+}
+
+static JsonbValue *
+executeJsonPathUpdate(JsonPath *path, void *vars, JsonPathVarCallback getVar,
+					  Jsonb *json, JsonbValue *jbv_new,
+					  JsonTransformOpType op,
+					  JsonTransformBehavior onExisting,
+					  JsonTransformBehavior onMissing,
+					  JsonTransformBehavior onNull,
+					  bool throwErrors, bool useTz)
+{
+	JsonPathExecContext cxt;
+	JsonbValue *resjbv;
+	JsonPathItem jsp_buf;
+	JsonPathItem *jsp = &jsp_buf;
+	JsonbValue	jbv_root;
+	JsonbParseState *ps = NULL;
+
+	jspInit(jsp, path);
+
+	if (jsp->type != jpiRoot)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("jsonpath should start from $")));
+
+	if (!JsonbExtractScalar(&json->root, &jbv_root))
+		JsonValueInitBinary(&jbv_root, JsonRoot(json));
+
+	if (!jspGetNext(jsp, jsp))
+		jsp = NULL;
+	//	return jbv_new ? copyJsonbValue(jbv_new) : NULL;
+
+	cxt.vars = vars;
+	cxt.getVar = getVar;
+	cxt.laxMode = (path->header & JSONPATH_LAX) != 0;
+	cxt.ignoreStructuralErrors = cxt.laxMode;
+	cxt.root = &jbv_root;
+	cxt.current = &jbv_root;
+	cxt.baseObject.jbc = NULL;
+	cxt.baseObject.id = 0;
+	/* 1 + number of base objects in vars */
+	cxt.lastGeneratedObjectId = 1 + getVar(vars, NULL, 0, NULL, NULL);
+	cxt.innermostArraySize = -1;
+	cxt.throwErrors = throwErrors;
+	cxt.useTz = useTz;
+
+	cxt.update.op = op;
+	cxt.update.value = jbv_new;
+	cxt.update.onExisting = onExisting;
+	cxt.update.onMissing = onMissing;
+	cxt.update.onNull = onNull;
+	cxt.update.missing = true;
+
+	resjbv = executeItemUpdate(&cxt, jsp, &ps, NULL, &jbv_root,
+							   jspAutoUnwrap(&cxt), false);
+
+	if (cxt.update.missing && onMissing == JSTB_ERROR)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
+				 errmsg("missing value in %s", "JSON_TRANSFORM()")));
+
+	return resjbv;
 }
 
 /*
@@ -746,7 +1413,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 						return jperError;
 
 					ereport(ERROR,
-							(errcode(ERRCODE_SQL_JSON_MEMBER_NOT_FOUND), \
+							(errcode(ERRCODE_SQL_JSON_MEMBER_NOT_FOUND),
 							 errmsg("JSON object does not contain key \"%s\"",
 									pnstrdup(key.val.string.val,
 											 key.val.string.len))));
@@ -807,46 +1474,16 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 				for (i = 0; i < jsp->content.array.nelems; i++)
 				{
-					JsonPathItem from;
-					JsonPathItem to;
-					int32		index;
-					int32		index_from;
-					int32		index_to;
-					bool		range = jspGetArraySubscript(jsp, &from,
-															 &to, i);
+					JsonPathArrayRange range;
 
-					res = getArrayIndex(cxt, &from, jb, &index_from);
+					res = getArrayRange(cxt, jsp, i, jb, size, &range);
 
 					if (jperIsError(res))
 						break;
 
-					if (range)
-					{
-						res = getArrayIndex(cxt, &to, jb, &index_to);
-
-						if (jperIsError(res))
-							break;
-					}
-					else
-						index_to = index_from;
-
-					if (!jspIgnoreStructuralErrors(cxt) &&
-						(index_from < 0 ||
-						 index_from > index_to ||
-						 index_to >= size))
-						RETURN_ERROR(ereport(ERROR,
-											 (errcode(ERRCODE_INVALID_SQL_JSON_SUBSCRIPT),
-											  errmsg("jsonpath array subscript is out of bounds"))));
-
-					if (index_from < 0)
-						index_from = 0;
-
-					if (index_to >= size)
-						index_to = size - 1;
-
 					res = jperNotFound;
 
-					for (index = index_from; index <= index_to; index++)
+					for (int32 index = range.lo; index <= range.hi; index++)
 					{
 						JsonbValue *v;
 						bool		copy;
@@ -3129,6 +3766,34 @@ JsonItemFromDatum(Datum val, Oid typid, int32 typmod, JsonbValue *res)
 					 errmsg("only bool, numeric, and text types could be "
 							"casted to supported jsonpath types.")));
 	}
+}
+
+Datum
+JsonPathTransform(Datum jb, JsonPath *jp,
+				  Datum val, bool val_isnull, Oid val_typid, int32 val_typmod,
+				  List *vars,
+				  JsonTransformOpType op,
+				  JsonTransformBehavior onExisting,
+				  JsonTransformBehavior onMissing,
+				  JsonTransformBehavior onNull)
+{
+//	jsonbInitIterators();
+	Jsonb	   *jb_oldval = DatumGetJsonbP(jb);
+	JsonbValue	jbv_newval;
+	JsonbValue *res;
+
+	if (!val_isnull)
+		JsonItemFromDatum(val, val_typid, val_typmod, &jbv_newval);
+
+	res = executeJsonPathUpdate(jp, vars, EvalJsonPathVar,
+								jb_oldval, val_isnull ? NULL : &jbv_newval,
+								op, onExisting, onMissing, onNull,
+								false, false);
+
+	if (!res)
+		return (Datum) 0;
+
+	return JsonValueToJsonbDatum(res);
 }
 
 /************************ JSON_TABLE functions ***************************/

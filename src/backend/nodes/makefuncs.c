@@ -941,3 +941,29 @@ makeJsonIsPredicate(Node *expr, JsonFormat *format, JsonValueType item_type,
 
 	return (Node *) n;
 }
+
+/*
+ * makeJsonTransformOp -
+ *	  creates a JsonTransformOp node
+ */
+Node *
+makeJsonTransformOp(JsonTransformOpType op_type,
+					Node *pathspec, Node *expr,
+					JsonTransformBehavior on_existing,
+					JsonTransformBehavior on_missing,
+					JsonTransformBehavior on_null,
+					int location)
+{
+	JsonTransformOp *n = makeNode(JsonTransformOp);
+
+	n->pathspec = pathspec;
+	n->expr = expr;
+	n->op_type = op_type;
+	n->on_existing = on_existing;
+	n->on_missing = on_missing;
+	n->on_null = on_null;
+	n->location = location;
+
+	return (Node *) n;
+}
+

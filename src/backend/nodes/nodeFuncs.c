@@ -269,6 +269,9 @@ exprType(const Node *expr)
 		case T_JsonCoercion:
 			type = exprType(((const JsonCoercion *) expr)->expr);
 			break;
+		case T_JsonTransformExpr:
+			type = ((const JsonTransformExpr *) expr)->returning->typid;
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			type = InvalidOid;	/* keep compiler quiet */
@@ -509,6 +512,8 @@ exprTypmod(const Node *expr)
 			return ((JsonExpr *) expr)->returning->typmod;
 		case T_JsonCoercion:
 			return exprTypmod(((const JsonCoercion *) expr)->expr);
+		case T_JsonTransformExpr:
+			return ((JsonTransformExpr *) expr)->returning->typmod;
 		default:
 			break;
 	}
@@ -1016,6 +1021,21 @@ exprCollation(const Node *expr)
 					coll = InvalidOid;
 			}
 			break;
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr   *jexpr = (JsonTransformExpr *) expr;
+				JsonCoercion *coercion = jexpr->result_coercion;
+
+				if (!coercion)
+					coll = InvalidOid;
+				else if (coercion->expr)
+					coll = exprCollation(coercion->expr);
+				else if (coercion->via_io || coercion->via_populate)
+					coll = coercion->collation;
+				else
+					coll = InvalidOid;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			coll = InvalidOid;	/* keep compiler quiet */
@@ -1257,6 +1277,31 @@ exprSetCollation(Node *expr, Oid collation)
 					exprSetCollation(coercion->expr, collation);
 				else if (coercion->via_io || coercion->via_populate)
 					coercion->collation = collation;
+				else
+					Assert(!OidIsValid(collation));
+			}
+			break;
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr *jexpr = (JsonTransformExpr *) expr;
+				JsonCoercion *coercion = jexpr->result_coercion;
+
+				if (!coercion)
+					Assert(!OidIsValid(collation));
+				else if (coercion->expr)
+					exprSetCollation(coercion->expr, collation);
+				else if (coercion->via_io || coercion->via_populate)
+					coercion->collation = collation;
+				else
+					Assert(!OidIsValid(collation));
+			}
+			break;
+		case T_JsonTransformOp:
+			{
+				JsonTransformOp *jtop = (JsonTransformOp *) expr;
+
+				if (jtop->expr)
+					exprSetCollation(jtop->expr, collation);
 				else
 					Assert(!OidIsValid(collation));
 			}
@@ -1719,6 +1764,15 @@ exprLocation(const Node *expr)
 		case T_JsonExpr:
 			{
 				const JsonExpr *jsexpr = (const JsonExpr *) expr;
+
+				/* consider both function name and leftmost arg */
+				loc = leftmostLoc(jsexpr->location,
+								  exprLocation(jsexpr->formatted_expr));
+			}
+			break;
+		case T_JsonTransformExpr:
+			{
+				const JsonTransformExpr *jsexpr = (const JsonTransformExpr *) expr;
 
 				/* consider both function name and leftmost arg */
 				loc = leftmostLoc(jsexpr->location,
@@ -2540,6 +2594,31 @@ expression_tree_walker(Node *node,
 				if (walker(coercions->timestamptz, context))
 					return true;
 				if (walker(coercions->composite, context))
+					return true;
+			}
+			break;
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr *jexpr = (JsonTransformExpr *) node;
+
+				if (walker(jexpr->formatted_expr, context))
+					return true;
+				if (walker(jexpr->result_coercion, context))
+					return true;
+				if (walker(jexpr->passing_values, context))
+					return true;
+				/* we assume walker doesn't care about passing_names */
+				if (walker(jexpr->ops, context))
+					return true;
+			}
+			break;
+		case T_JsonTransformOp:
+			{
+				JsonTransformOp *jtop = (JsonTransformOp *) node;
+
+				if (walker(jtop->pathspec, context))
+					return true;
+				if (walker(jtop->expr, context))
 					return true;
 			}
 			break;
@@ -3607,6 +3686,33 @@ expression_tree_mutator(Node *node,
 				MUTATE(newnode->timestamp, coercions->timestamp, JsonCoercion *);
 				MUTATE(newnode->timestamptz, coercions->timestamptz, JsonCoercion *);
 				MUTATE(newnode->composite, coercions->composite, JsonCoercion *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_JsonTransformExpr:
+			{
+				JsonTransformExpr *jexpr = (JsonTransformExpr *) node;
+				JsonTransformExpr *newnode;
+
+				FLATCOPY(newnode, jexpr, JsonTransformExpr);
+				MUTATE(newnode->formatted_expr, jexpr->formatted_expr, Node *);
+				MUTATE(newnode->result_coercion, jexpr->result_coercion, JsonCoercion *);
+				MUTATE(newnode->passing_values, jexpr->passing_values, List *);
+				/* assume mutator does not care about passing_names */
+				MUTATE(newnode->ops, jexpr->ops, List *);
+
+				return (Node *) newnode;
+			}
+			break;
+		case T_JsonTransformOp:
+			{
+				JsonTransformOp *jexpr = (JsonTransformOp *) node;
+				JsonTransformOp *newnode;
+
+				FLATCOPY(newnode, jexpr, JsonTransformOp);
+				MUTATE(newnode->pathspec, jexpr->pathspec, Node *);
+				MUTATE(newnode->expr, jexpr->expr, Node *);
+
 				return (Node *) newnode;
 			}
 			break;
