@@ -2599,23 +2599,11 @@ SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}
 (1 row)
 
 SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$', NULL);
- jsonb_path_set 
-----------------
- 
-(1 row)
-
+ERROR:  cannor remove root jsonb value
 SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[*]', NULL);
- jsonb_path_set 
-----------------
- 
-(1 row)
-
+ERROR:  cannor remove root jsonb value
 SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[0]', NULL);
- jsonb_path_set 
-----------------
- 
-(1 row)
-
+ERROR:  cannor remove root jsonb value
 SELECT jsonb_path_set('{"a": [1, {"d": 2, "e": 5}, 3], "b": "xxx", "c": {"d": 2}}', '$[1]', NULL);
                        jsonb_path_set                       
 ------------------------------------------------------------

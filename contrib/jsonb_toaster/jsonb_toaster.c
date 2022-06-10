@@ -1114,7 +1114,9 @@ estimateJsonbValueSize(const JsonbValue *jbv)
 }
 
 static bool
-JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcptr)
+JsonContainerIsToastedExt(JsonContainer *jc,
+						  JsonbToastedContainerPointerData *jbcptr,
+						  bool root_only)
 {
 	if (jc->ops == &jsonbzContainerOps)
 	{
@@ -1122,7 +1124,7 @@ JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcp
 		FetchDatumIterator fetch_iter = cjb->iter->fetch_datum_iterator;
 
 		if (fetch_iter->toast_pointer.va_rawsize > 0 &&
-			cjb->offset == offsetof(JsonbDatum, root))
+			(!root_only || cjb->offset == offsetof(JsonbDatum, root)))
 		{
 			if (jbcptr)
 				jsonxInitToastedContainerPointer(jbcptr,
@@ -1138,7 +1140,7 @@ JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcp
 		CompressedJsonx *cjb = jsonxzGetCompressedJsonx(jc);
 		JsonxFetchDatumIterator fetch_iter = cjb->iter->fetch_datum_iterator;
 
-		if (cjb->offset != offsetof(JsonbDatum, root))
+		if (root_only && cjb->offset != offsetof(JsonbDatum, root))
 			return false;
 
 		if (jsonxInitToastedContainerPointerFromIterator(fetch_iter, jbcptr, cjb->offset))
@@ -1158,6 +1160,12 @@ JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcp
 	}
 
 	return false;
+}
+
+static bool
+JsonContainerIsToasted(JsonContainer *jc, JsonbToastedContainerPointerData *jbcptr)
+{
+	return JsonContainerIsToastedExt(jc, jbcptr, true);
 }
 
 static bool
@@ -2346,6 +2354,521 @@ jsonxSetObjectKey(JsonContainer *jc,
 								   st, level, newval, op_type);
 }
 
+typedef struct JsonxMutatorRoot
+{
+	JsonContainer *container;
+	JsonbToastedContainerPointerData jbcptr;
+	struct
+	{
+		const void *val;
+		int			offset;
+		int			len;
+	}			diff;
+	bool		toasted;
+} JsonxMutatorRoot;
+
+typedef struct JsonxMutator JsonxMutator;
+
+typedef struct JsonxMutatorCommon
+{
+	JsonxMutator *parent;
+	JsonxMutatorRoot *root;
+	JsonContainer *container;
+	JsonbToastedContainerPointerData jbcptr;
+	JsonFieldPtr ptr;
+	bool		inplace;
+} JsonxMutatorCommon;
+
+struct JsonxMutator
+{
+	union
+	{
+		JsonMutator	common;
+		JsonObjectMutator object;
+		JsonArrayMutator array;
+	}			mutator;
+
+	JsonxMutatorCommon jx;
+
+	union
+	{
+		JsonObjectMutator *obj;
+		JsonArrayMutator *arr;
+		JsonMutator  *mut;
+	}			generic;
+
+	union
+	{
+		JsonValue	key;
+		//int			index;
+	}			current;
+};
+
+static JsonContainer *
+jsonxMutatorMakeDiff(JsonxMutatorRoot *jxroot)
+{
+	Datum		toast_diff = PointerGetDatum(
+		jsonx_toast_make_pointer_diff(jxroot->container->toasterid, //jxroot->jbcptr.toasterid,
+									  &jxroot->jbcptr.ptr,
+									  jxroot->jbcptr.compressed_chunks,
+									  jxroot->diff.offset,
+									  jxroot->diff.len, jxroot->diff.val));
+
+	return jsonxzInitContainerFromDatum(jxroot->container, toast_diff);
+}
+
+static void
+jsonxMutatorCopyCurrent(JsonMutator *dst, JsonMutator *src)
+{
+	dst->cur_exists = src->cur_exists;
+
+	if (dst->cur_exists)
+		dst->cur_val = src->cur_val;
+}
+
+static JsonContainer *
+jsonxMutatorSwitchToGeneric(JsonxMutator *jxmut, JsonMutator **pgeneric)
+{
+	if (!jxmut->generic.mut)
+	{
+		JsonMutator *parent_generic = NULL;
+
+		if (jxmut->jx.parent)
+			jxmut->jx.container = jsonxMutatorSwitchToGeneric(jxmut->jx.parent, &parent_generic);
+		else if (jxmut->jx.root->diff.val)
+			jxmut->jx.container = jsonxMutatorMakeDiff(jxmut->jx.root);
+
+		if (jxmut->mutator.common.cur_key)
+		{
+			if (parent_generic)
+				jxmut->generic.obj = JsonObjectMutatorOpen(parent_generic);
+			else
+				jxmut->generic.obj = JsonObjectMutatorInitGeneric(jxmut->jx.container, NULL);
+
+			if (jxmut->current.key.type == jbvString) // FIXME initialization check
+			{
+				JsonObjectMutatorFindKey(jxmut->generic.obj, &jxmut->current.key);
+				jxmut->generic.obj->mutator.cur_exists = jxmut->mutator.common.cur_exists;
+
+				jsonxMutatorCopyCurrent(&jxmut->mutator.common,
+										&jxmut->generic.obj->mutator);
+			}
+		}
+		else
+		{
+			if (parent_generic)
+				jxmut->generic.arr = JsonArrayMutatorOpen(parent_generic);
+			else
+				jxmut->generic.arr = JsonArrayMutatorInitGeneric(jxmut->jx.container, NULL);
+
+			if (jxmut->mutator.array.cur_index >= 0)
+			{
+				JsonArrayMutatorFindElement(jxmut->generic.arr, jxmut->mutator.array.cur_index);
+				jxmut->generic.arr->mutator.cur_exists = jxmut->mutator.common.cur_exists;
+
+				jsonxMutatorCopyCurrent(&jxmut->mutator.common,
+										&jxmut->generic.arr->mutator);
+				jxmut->mutator.array.cur_index = jxmut->generic.arr->cur_index;
+			}
+		}
+	}
+
+	if (pgeneric)
+		*pgeneric = jxmut->generic.mut;
+
+	return jxmut->generic.mut->cur_exists &&
+			jxmut->generic.mut->cur_val.type == jbvBinary ?
+		jxmut->generic.mut->cur_val.val.binary.data : NULL;
+}
+
+static bool
+jsonxMutatorReplaceCurrentInplace(JsonxMutator *jxmut, JsonbValue *new_val)
+{
+	JsonValue	new_val_buf;
+	JsonxMutatorRoot *root = jxmut->jx.root;
+	const void *val;
+	int			len;
+
+	if (!new_val || !jxmut->mutator.common.cur_exists || !jxmut->jx.inplace || root->diff.val)
+		return false;
+
+	if (root->jbcptr.tail_size > 0)
+	{
+		JsonxPointerDiff diff;
+
+		memcpy(&diff, root->jbcptr.tail_data, offsetof(JsonxPointerDiff, data));
+
+		if (jxmut->jx.ptr.offset != diff.offset)
+			return false;
+	}
+
+	if (new_val->type == jbvBinary &&
+		JsonContainerIsScalar(new_val->val.binary.data))
+		new_val = JsonExtractScalar(new_val->val.binary.data, &new_val_buf);
+
+	if (!isValueReplacable(&jxmut->mutator.common.cur_val, new_val))
+		return false;
+
+	switch (new_val->type)
+	{
+		case jbvString:
+			val = new_val->val.string.val;
+			len = new_val->val.string.len;
+			break;
+
+		case jbvNumeric:
+			val = new_val->val.numeric;
+			len = VARSIZE_ANY(new_val->val.numeric);
+			break;
+
+		case jbvBinary:
+			Assert(new_val->val.binary.data->ops == &jsonbContainerOps);
+			val = JsonContainerDataPtr(new_val->val.binary.data);
+			len = new_val->val.binary.data->len;
+			break;
+
+		default:
+			return false;
+	}
+
+	root->diff.val = val;
+	root->diff.len = len;
+	root->diff.offset = jxmut->jx.ptr.offset;
+
+	return true;
+}
+
+static JsonValue *
+jsonxMutatorReplaceCurrent(JsonMutator *mut, JsonbValue *val)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+
+	if (!jxmut->generic.mut &&
+		jsonxMutatorReplaceCurrentInplace(jxmut, val))
+		return NULL;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+
+	return jxmut->generic.mut->replace(jxmut->generic.mut, val);
+}
+
+static void
+jsonxObjectMutatorInsert(JsonObjectMutator *mut, JsonbValue *key, JsonbValue *val)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+	JsonObjectMutatorInsert(jxmut->generic.obj, key, val);
+}
+
+static void
+jsonxArrayMutatorInsert(JsonArrayMutator *mut, JsonbValue *val)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+	JsonArrayMutatorInsert(jxmut->generic.arr, val);
+}
+
+static bool
+jsonxObjectMutatorNext(JsonObjectMutator *mut, JsonbValue *key)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+	bool		res;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+
+	res = JsonObjectMutatorNext(jxmut->generic.obj, key);
+
+	jsonxMutatorCopyCurrent(&jxmut->mutator.common,
+							jxmut->generic.mut);
+
+	return res;
+}
+
+static bool
+jsonxArrayMutatorNext(JsonArrayMutator *mut)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+	bool		res;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+
+	res = JsonArrayMutatorNext(jxmut->generic.arr);
+
+	jsonxMutatorCopyCurrent(&jxmut->mutator.common, jxmut->generic.mut);
+	jxmut->mutator.array.cur_index = jxmut->generic.arr->cur_index;
+
+	return res;
+}
+
+static bool
+jsonxMutatorFind(JsonxMutator *jmut, JsonbValue *key, int index)
+{
+	JsonMutator *mut = (JsonMutator *) jmut;
+	JsonxMutatorCommon *jxmut = &jmut->jx;
+	JsonxMutatorRoot *root = jxmut->root;
+	bool		res;
+
+	if (!jmut->generic.mut &&
+		jsonb_inplace_updates &&
+		root->toasted && !root->diff.val &&
+		(!root->jbcptr.tail_data || root->jbcptr.has_diff))
+	{
+		JsonFieldPtr ptr = {0};
+		JsonValue  *old_val;
+
+		if (key)
+			old_val = JsonFindKeyPtrInObject(jxmut->container,
+										     key->val.string.val,
+										     key->val.string.len,
+										     &mut->cur_val, &ptr);
+		else
+		{
+			old_val = JsonGetArrayElementPtr(jxmut->container, index, &ptr);
+
+			if (old_val)
+				mut->cur_val = *old_val;
+		}
+
+		if (ptr.offset)
+		{
+			ptr.offset += jxmut->jbcptr.container_offset;
+
+			mut->cur_exists = old_val != NULL;
+
+			if (key)
+				jmut->current.key = *key;
+			else
+				jmut->mutator.array.cur_index = index;
+
+			jxmut->ptr = ptr;
+			jxmut->inplace = mut->cur_exists;
+
+			return mut->cur_exists;
+		}
+
+		jxmut->inplace = false;
+	}
+
+	jsonxMutatorSwitchToGeneric(jmut, NULL);
+
+	if (key)
+		res = JsonObjectMutatorFindKey(jmut->generic.obj, key);
+	else
+		res = JsonArrayMutatorFindElement(jmut->generic.arr, index);
+
+	jsonxMutatorCopyCurrent(mut, jmut->generic.mut);
+
+	if (key)
+		jmut->current.key = *key;
+	else
+		jmut->mutator.array.cur_index = jmut->generic.arr->cur_index;
+
+	return res;
+}
+
+static bool
+jsonxObjectMutatorFindKey(JsonObjectMutator *mut, JsonbValue *key)
+{
+	return jsonxMutatorFind((JsonxMutator *) mut, key, 0);
+}
+
+static bool
+jsonxArrayMutatorFindIndex(JsonArrayMutator *mut, int index)
+{
+	return jsonxMutatorFind((JsonxMutator *) mut, NULL, index);
+}
+
+static void
+jsonxArrayMutatorFindLast(JsonArrayMutator *mut)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+
+	jsonxMutatorSwitchToGeneric(jxmut, NULL);
+	JsonArrayMutatorFindLast(jxmut->generic.arr);
+	jsonxMutatorCopyCurrent(&jxmut->mutator.common, jxmut->generic.mut);
+}
+
+static JsonValue *
+jsonxMutatorGetDiffValue(JsonxMutatorCommon *jxmut)
+{
+	JsonValue   *jbv = palloc(sizeof(*jbv));
+
+	if (jxmut->root->diff.val)
+	{
+		Assert(jxmut->root->toasted);
+		JsonValueInitBinary(jbv, jsonxMutatorMakeDiff(jxmut->root));
+	}
+	else
+		JsonValueInitBinary(jbv, jxmut->container);
+
+	return jbv;
+}
+
+static JsonValue *
+jsonxMutatorClose(JsonxMutator *jxmut, bool is_object)
+{
+	JsonValue *res;
+
+	if (jxmut->generic.mut)
+	{
+		if (is_object)
+			res = JsonObjectMutatorClose(jxmut->generic.obj);
+		else
+			res = JsonArrayMutatorClose(jxmut->generic.arr);
+	}
+	else if (!jxmut->jx.parent)
+		res = jsonxMutatorGetDiffValue(&jxmut->jx);
+	else
+		res = NULL;
+
+	if (jxmut->mutator.common.parent)
+	{
+		Assert(res);
+		JsonMutatorReplaceCurrent(jxmut->mutator.common.parent, res);
+	}
+
+	return res;
+}
+
+static JsonValue *
+jsonxObjectMutatorClose(JsonObjectMutator *mut)
+{
+	return jsonxMutatorClose((JsonxMutator *) mut, true);
+}
+
+static JsonValue *
+jsonxArrayMutatorClose(JsonArrayMutator *mut)
+{
+	return jsonxMutatorClose((JsonxMutator *) mut, false);
+}
+
+static JsonArrayMutator *jsonxArrayMutatorInit(JsonContainer *jc, JsonMutator *parent);
+static JsonObjectMutator *jsonxObjectMutatorInit(JsonContainer *jc, JsonMutator *parent);
+static JsonxMutator *jsonxMutatorInitExt(JsonContainer *jc, JsonxMutator *jxparent, JsonMutator *parent);
+
+static JsonObjectMutator *
+jsonxObjectMutatorOpen(JsonMutator *mut)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+	JsonContainer *jc;
+
+	if (mut->cur_exists && mut->cur_val.type != jbvBinary)
+	{
+		Assert(mut->cur_val.type != jbvObject);
+		elog(ERROR, "invalid jsonb object value type: %d", mut->cur_val.type);
+	}
+
+	if (jxmut->generic.mut)
+		return JsonObjectMutatorOpen(jxmut->generic.mut);
+
+	jc = mut->cur_exists ? mut->cur_val.val.binary.data : NULL;
+
+	if (jc && jc->ops->initObjectMutator == jsonxObjectMutatorInit)
+		return &jsonxMutatorInitExt(jc, jxmut, NULL)->mutator.object;
+
+	return JsonObjectMutatorInit(jc, mut);
+}
+
+static JsonArrayMutator *
+jsonxArrayMutatorOpen(JsonMutator *mut)
+{
+	JsonxMutator *jxmut = (JsonxMutator *) mut;
+	JsonContainer *jc;
+
+	if (mut->cur_exists && mut->cur_val.type != jbvBinary)
+	{
+		Assert(mut->cur_val.type != jbvArray);
+		elog(ERROR, "invalid jsonb array value type: %d", mut->cur_val.type);
+	}
+
+	if (jxmut->generic.mut)
+		return JsonArrayMutatorOpen(jxmut->generic.mut);
+
+	jc = mut->cur_exists ? mut->cur_val.val.binary.data : NULL;
+
+	if (jc && jc->ops->initArrayMutator == jsonxArrayMutatorInit)
+		return &jsonxMutatorInitExt(jc, jxmut, NULL)->mutator.array;
+
+	return JsonArrayMutatorInit(jc, mut);
+}
+
+static JsonxMutator *
+jsonxMutatorInitExt(JsonbContainer *jc, JsonxMutator *jxparent, JsonMutator *parent)
+{
+	JsonxMutator *mut = palloc0(sizeof(*mut));
+	bool		is_object = JsonContainerIsObject(jc);
+	bool		toasted;
+
+	mut->mutator.common.parent = parent;
+	mut->mutator.common.type = is_object ? jbvObject : jbvArray;
+	mut->mutator.common.cur_key = is_object ? &mut->current.key : NULL;
+	mut->mutator.common.cur_exists = false;
+	mut->mutator.common.replace = jsonxMutatorReplaceCurrent;
+	mut->mutator.common.openObject = jsonxObjectMutatorOpen;
+	mut->mutator.common.openArray = jsonxArrayMutatorOpen;
+
+	if (is_object)
+	{
+		mut->mutator.object.next = jsonxObjectMutatorNext;
+		mut->mutator.object.find = jsonxObjectMutatorFindKey;
+		mut->mutator.object.insert = jsonxObjectMutatorInsert;
+		mut->mutator.object.close = jsonxObjectMutatorClose;
+	}
+	else
+	{
+		mut->mutator.array.next = jsonxArrayMutatorNext;
+		mut->mutator.array.find = jsonxArrayMutatorFindIndex;
+		mut->mutator.array.last = jsonxArrayMutatorFindLast;
+		mut->mutator.array.insert = jsonxArrayMutatorInsert;
+		mut->mutator.array.close = jsonxArrayMutatorClose;
+		mut->mutator.array.cur_index = -1;
+	}
+
+	toasted = JsonContainerIsToastedExt(jc, &mut->jx.jbcptr, !jxparent);
+
+	if (jxparent &&
+		(!toasted || memcmp(&jxparent->jx.root->jbcptr.ptr,
+							&mut->jx.jbcptr.ptr,
+							sizeof(struct varatt_external))))
+	{
+		Assert(!mut->mutator.common.parent);
+		mut->mutator.common.parent = (JsonMutator *) jxparent;
+		jxparent = NULL;
+		toasted = false;
+	}
+
+	mut->jx.parent = jxparent;
+
+	if (jxparent)
+		mut->jx.root = jxparent->jx.root;
+	else
+	{
+		mut->jx.root = palloc0(sizeof(*mut->jx.root));	// FIXME free
+		mut->jx.root->jbcptr = mut->jx.jbcptr;
+		mut->jx.root->container = jc;
+		mut->jx.root->toasted = toasted;
+	}
+
+	mut->jx.container = jc;
+	mut->generic.mut = NULL;
+
+	return mut;
+}
+
+static JsonObjectMutator *
+jsonxObjectMutatorInit(JsonContainer *jc, JsonMutator *parent)
+{
+	return &jsonxMutatorInitExt(jc, NULL, parent)->mutator.object;
+}
+
+static JsonArrayMutator *
+jsonxArrayMutatorInit(JsonContainer *jc, JsonMutator *parent)
+{
+	return &jsonxMutatorInitExt(jc, NULL, parent)->mutator.array;
+}
+
 static JsonContainerOps
 jsonxzContainerOps =
 {
@@ -2362,7 +2885,9 @@ jsonxzContainerOps =
 	jsonxzEncode,
 	jsonxSetPath,
 	jsonxSetObjectKey,
-	jsonxSetArrayElement
+	jsonxSetArrayElement,
+	jsonxObjectMutatorInit,
+	jsonxArrayMutatorInit
 };
 
 static JsonContainerOps
@@ -2381,7 +2906,9 @@ jsonxContainerOps =
 	jsonxEncode,
 	jsonxSetPath,
 	jsonxSetObjectKey,
-	jsonxSetArrayElement
+	jsonxSetArrayElement,
+	jsonxObjectMutatorInit,
+	jsonxArrayMutatorInit
 };
 
 static JsonContainer *

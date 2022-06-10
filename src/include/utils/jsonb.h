@@ -223,6 +223,8 @@ extern JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
 extern JsonbValue *pushScalarJsonbValue(JsonbParseState **pstate,
 										const JsonbValue *jbval, bool isKey,
 										bool unpackBinary);
+extern JsonbValue *pushJsonbKeyValue(JsonbParseState **ps,
+									 JsonbValue *key, JsonbValue *val);
 extern JsonbParseState *JsonbParseStateClone(JsonbParseState *state);
 extern void JsonbParseStateSetUniqueKeys(JsonbParseState *state, bool unique_keys);
 extern void JsonbParseStateSetSkipNulls(JsonbParseState *state, bool skip_nulls);

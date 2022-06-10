@@ -2198,6 +2198,30 @@ SELECT JSON_TRANSFORM(jsonb('[{"x":2},{"y":3}]'), SET '$[*].y ? (@ >= 3)' = 5 ER
  [{"x": 2}, {"y": 5}]
 (1 row)
 
+-- [1,{},[5],[5]]
+SELECT JSON_TRANSFORM(jsonb('[1,{},[],[1]]'), SET '$[*][0]' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_TRANSFORM()
+-- [1,{},[],[5]]
+SELECT JSON_TRANSFORM(jsonb('[1,{},[],[1]]'), SET '$[*][0]?(@>0)' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_TRANSFORM()
+SELECT JSON_TRANSFORM(jsonb('[0]'), SET '$[0][0]' = 5);
+ ?column? 
+----------
+ [5]
+(1 row)
+
+SELECT JSON_TRANSFORM(jsonb('[0]'), SET '$[0][0]' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_TRANSFORM()
+SELECT JSON_TRANSFORM(jsonb('0'),  INSERT '$[0]' = 1);
+ERROR:  existing value in JSON_TRANSFORM()
+SELECT JSON_TRANSFORM(jsonb('0'),  INSERT '$[0]' = 1 REPLACE ON EXISTING);
+ ?column? 
+----------
+ 1
+(1 row)
+
+SELECT JSON_TRANSFORM(jsonb('{}'), INSERT '$[0]' = 1);
+ERROR:  existing value in JSON_TRANSFORM()
 SELECT JSON_TRANSFORM(jsonb('[]'), INSERT '$[0]' = 1);
  ?column? 
 ----------
@@ -2283,7 +2307,7 @@ SELECT JSON_TRANSFORM(jsonb('[0]'),  INSERT '$[0][0]' = 5 REPLACE ON EXISTING);
 (1 row)
 
 SELECT JSON_TRANSFORM(jsonb('1'), REMOVE '$');
-ERROR:  cannor remove root value in JSON_TRANSFORM()
+ERROR:  cannor remove root jsonb value
 SELECT JSON_TRANSFORM(jsonb('{}'), REMOVE '$.a');
  ?column? 
 ----------
