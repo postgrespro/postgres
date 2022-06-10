@@ -2197,163 +2197,6 @@ isValueReplacable(JsonValue *oldval, JsonValue *newval)
 	}
 }
 
-static bool
-jsonxSetPathInplace(JsonContainer *jc, int idx,
-					Datum *path_elems, bool *path_nulls,
-					int path_len, int level, JsonbValue *newval,
-					int op_type, JsonbParseState **st, JsonValue **res)
-{
-	JsonbToastedContainerPointerData jbcptr;
-
-	if (!jsonb_inplace_updates)
-		return false;
-
-	if (level != path_len - 1 ||	/* FIXME */
-		(op_type & (JB_PATH_INSERT_AFTER | JB_PATH_INSERT_BEFORE)))
-		return false;
-
-	if (JsonContainerIsToasted(jc, &jbcptr) &&
-		(!jbcptr.tail_data || jbcptr.has_diff))
-	{
-		JsonFieldPtr ptr = {0};
-		JsonValue *old_val;
-
-		if (JsonContainerIsObject(jc))
-			old_val = JsonFindKeyPtrInObject(jc,
-											 VARDATA_ANY(path_elems[level]),
-											 VARSIZE_ANY_EXHDR(path_elems[level]),
-											 NULL,
-											 &ptr);
-		else
-			old_val = JsonGetArrayElementPtr(jc, idx, &ptr);
-
-		if (old_val && ptr.offset)
-		{
-			JsonxPointerDiff diff;
-			JsonValue  *new_val = newval;
-			JsonValue	new_val_buf;
-
-			ptr.offset += jbcptr.container_offset;
-
-			if (newval->type == jbvBinary &&
-				JsonContainerIsScalar(newval->val.binary.data))
-				new_val = JsonExtractScalar(newval->val.binary.data,
-											&new_val_buf);
-
-			if (jbcptr.tail_size > 0)
-				memcpy(&diff, jbcptr.tail_data, offsetof(JsonxPointerDiff, data));
-			else
-				diff.offset = ptr.offset;
-
-			if (ptr.offset == diff.offset &&
-				isValueReplacable(old_val, new_val))
-			{
-				JsonIteratorToken r;
-				JsonValue	toast_diff_jv;
-				Datum		toast_diff;
-				const void *val;
-				int			len;
-
-				switch (new_val->type)
-				{
-					case jbvString:
-						val = new_val->val.string.val;
-						len = new_val->val.string.len;
-						break;
-
-					case jbvNumeric:
-						val = new_val->val.numeric;
-						len = VARSIZE_ANY(new_val->val.numeric);
-						break;
-
-					case jbvBinary:
-						Assert(new_val->val.binary.data->ops == &jsonbContainerOps);
-						val = JsonContainerDataPtr(new_val->val.binary.data);
-						len = new_val->val.binary.data->len;
-						break;
-
-					default:
-						break;
-				}
-
-				pfree(old_val);
-
-				toast_diff = PointerGetDatum(
-					jsonx_toast_make_pointer_diff(jbcptr.toasterid,
-												  &jbcptr.ptr,
-												  jbcptr.compressed_chunks,
-												  diff.offset,
-												  len, val));
-
-				JsonValueInitBinary(&toast_diff_jv,
-									jsonxzInitContainerFromDatum(jc, toast_diff));
-
-				r = *st && (*st)->contVal.type == jbvArray ? WJB_ELEM : WJB_VALUE;
-
-				*res = pushJsonbValueExt(st, r, &toast_diff_jv, false);
-				return true;
-			}
-		}
-
-		if (old_val)
-			pfree(old_val);
-	}
-
-	return false;
-}
-
-static Datum
-jsonxSetPath(JsonContainer *js, Datum *path_elems,
-			 bool *path_nulls, int path_len,
-			 JsonValue *newval, int op_type)
-{
-#if 0
-	Datum		res =
-		jsonxSetPathInplace(js, -1 path_elems, path_nulls, path_len, 0,
-							newval, op_type);
-
-	if (res != (Datum) 0)
-		return res;
-#endif
-
-	return JsonSetPathGeneric(js, path_elems, path_nulls, path_len,
-							  newval, op_type);
-}
-
-static JsonValue *
-jsonxSetArrayElement(JsonContainer *jc, int idx,
-					 Datum *path_elems, bool *path_nulls, int path_len,
-					 JsonbParseState **st, int level,
-					 JsonValue *newval, int op_type)
-{
-	JsonValue *res;
-
-	if (jsonxSetPathInplace(jc, idx, path_elems,
-							path_nulls, path_len,
-							level, newval, op_type, st, &res))
-		return res;
-
-	return JsonSetArrayElementGeneric(jc, idx, path_elems, path_nulls, path_len,
-									  st, level, newval, op_type);
-}
-
-static JsonValue *
-jsonxSetObjectKey(JsonContainer *jc,
-				  Datum *path_elems, bool *path_nulls, int path_len,
-				  JsonbParseState **st, int level,
-				  JsonValue *newval, int op_type)
-{
-	JsonValue *res;
-
-	if (jsonxSetPathInplace(jc, -1, path_elems,
-							path_nulls, path_len,
-							level, newval, op_type, st, &res))
-		return res;
-
-	return JsonSetObjectKeyGeneric(jc, path_elems, path_nulls, path_len,
-								   st, level, newval, op_type);
-}
-
 typedef struct JsonxMutatorRoot
 {
 	JsonContainer *container;
@@ -2883,9 +2726,6 @@ jsonxzContainerOps =
 	jsonxzCopy,
 	jsonxzFree,
 	jsonxzEncode,
-	jsonxSetPath,
-	jsonxSetObjectKey,
-	jsonxSetArrayElement,
 	jsonxObjectMutatorInit,
 	jsonxArrayMutatorInit
 };
@@ -2904,9 +2744,6 @@ jsonxContainerOps =
 	JsonCopyFlat,
 	NULL,
 	jsonxEncode,
-	jsonxSetPath,
-	jsonxSetObjectKey,
-	jsonxSetArrayElement,
 	jsonxObjectMutatorInit,
 	jsonxArrayMutatorInit
 };
