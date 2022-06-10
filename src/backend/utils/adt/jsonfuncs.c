@@ -454,18 +454,17 @@ static Datum populate_domain(DomainIOData *io, Oid typid, const char *colname,
 /* functions supporting jsonb_delete, jsonb_set and jsonb_concat */
 static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 								  JsonbParseState **state);
-static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
+static JsonbValue *setPath(JsonMutator *mut, Datum *path_elems,
 						   bool *path_nulls, int path_len,
-						   JsonbParseState **st, int level, JsonbValue *newval,
-						   int op_type);
-static JsonbIteratorToken setPathObject(JsonbIterator **it, Datum *path_elems,
-										bool *path_nulls, int path_len,
-										JsonbParseState **st, int level,
-										JsonbValue *newval, int op_type);
-static void setPathArray(JsonbIterator **it, int idx, Datum *path_elems,
-						 bool *path_nulls, int path_len, JsonbParseState **st,
-						 int level,
+						   int level, JsonbValue *newval, int op_type);
+static void setPathObject(JsonObjectMutator *mut, Datum *path_elems,
+						  bool *path_nulls, int path_len,
+						  int level, JsonbValue *newval, int op_type);
+static void setPathArray(JsonArrayMutator *mut, int idx, Datum *path_elems,
+						 bool *path_nulls, int path_len, int level,
 						 JsonbValue *newval, uint32 nelems, int op_type);
+static Datum jsonSetPath(JsonContainer *js, Datum *path_elems,
+						 bool *path_nulls, int path_len, JsonValue *newval, int flags);
 
 /* function supporting iterate_json_values */
 static JsonParseErrorType iterate_values_scalar(void *state, char *token, JsonTokenType tokentype);
@@ -1692,13 +1691,24 @@ jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
 	if (newval->type == jbvArray && newval->val.array.rawScalar)
 		*newval = newval->val.array.elems[0];
 
-	res = JsonSetPath(JsonbRoot(jb), path, path_nulls, path_len, newval,
+	res = jsonSetPath(JsonbRoot(jb), path, path_nulls, path_len, newval,
 					  JB_PATH_CREATE | JB_PATH_FILL_GAPS |
 					  JB_PATH_CONSISTENT_POSITION);
 
 	pfree(path_nulls);
 
 	PG_RETURN_DATUM(res);
+}
+
+static void
+insert_null_elements(JsonArrayMutator *mut, int num)
+{
+	JsonbValue	null;
+
+	null.type = jbvNull;
+
+	while (num-- > 0)
+		JsonArrayMutatorInsert(mut, &null);
 }
 
 static void
@@ -1711,7 +1721,6 @@ push_null_elements(JsonbParseState **ps, int num)
 	while (num-- > 0)
 		pushJsonbValue(ps, WJB_ELEM, &null);
 }
-
 /*
  * Prepare a new structure containing nested empty objects and arrays
  * corresponding to the specified path, and assign a new value at the end of
@@ -1720,8 +1729,8 @@ push_null_elements(JsonbParseState **ps, int num)
  *
  * Caller is responsible to make sure such path does not exist yet.
  */
-static void
-push_path(JsonbParseState **st, int level, Datum *path_elems,
+static JsonbValue *
+push_path(int level, Datum *path_elems,
 		  bool *path_nulls, int path_len, JsonbValue *newval)
 {
 	/*
@@ -1732,6 +1741,9 @@ push_path(JsonbParseState **st, int level, Datum *path_elems,
 	 */
 	enum jbvType *tpath = palloc0((path_len - level) * sizeof(enum jbvType));
 	JsonbValue	newkey;
+	JsonbParseState *pstate = NULL;
+	JsonbParseState **st = &pstate;
+	JsonbValue *res;
 
 	/*
 	 * Create first part of the chain with beginning tokens. For the current
@@ -1795,10 +1807,12 @@ push_path(JsonbParseState **st, int level, Datum *path_elems,
 			break;
 
 		if (tpath[i - level] == jbvObject)
-			(void) pushJsonbValue(st, WJB_END_OBJECT, NULL);
+			res = pushJsonbValue(st, WJB_END_OBJECT, NULL);
 		else
-			(void) pushJsonbValue(st, WJB_END_ARRAY, NULL);
+			res = pushJsonbValue(st, WJB_END_ARRAY, NULL);
 	}
+
+	return res;
 }
 
 /*
@@ -4591,16 +4605,21 @@ jsonb_delete_idx(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, in));
 }
 
-Datum
-JsonSetPathGeneric(JsonContainer *js,
-				   Datum *path_elems, bool *path_nulls, int path_len,
-				   JsonValue *newval, int flags)
+static Datum
+jsonSetPath(JsonContainer *js,
+			Datum *path_elems, bool *path_nulls, int path_len,
+			JsonValue *newval, int flags)
 {
-	JsonbParseState *st = NULL;
-	JsonbIterator *it = JsonbIteratorInit(js);
+	JsonbValue jbv;
+	JsonMutator *mut;
 	JsonbValue *res;
 
-	res = setPath(&it, path_elems, path_nulls, path_len, &st, 0,
+	if (!JsonbExtractScalar(js, &jbv))
+		JsonValueInitBinary(&jbv, js);
+
+	mut = JsonMutatorInit(&jbv);
+
+	res = setPath(mut, path_elems, path_nulls, path_len, 0,
 				  newval, flags);
 
 	Assert(res != NULL);
@@ -4644,7 +4663,7 @@ jsonb_set(PG_FUNCTION_ARGS)
 	if (path_len == 0)
 		PG_RETURN_JSONB_P(in);
 
-	res = JsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len,
+	res = jsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len,
 					  &newval, create ? JB_PATH_CREATE : JB_PATH_REPLACE);
 
 	PG_RETURN_DATUM(res);
@@ -4749,7 +4768,7 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
 	if (path_len == 0)
 		PG_RETURN_JSONB_P(in);
 
-	res = JsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len,
+	res = jsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len,
 					  NULL, JB_PATH_DELETE);
 
 	Assert(res != (Datum) 0);
@@ -4790,7 +4809,7 @@ jsonb_insert(PG_FUNCTION_ARGS)
 	if (path_len == 0)
 		PG_RETURN_JSONB_P(in);
 
-	res = JsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len, &newval,
+	res = jsonSetPath(JsonbRoot(in), path_elems, path_nulls, path_len, &newval,
 					  after ? JB_PATH_INSERT_AFTER : JB_PATH_INSERT_BEFORE);
 
 	Assert(res != (Datum) 0);
@@ -4904,50 +4923,6 @@ IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 	return res;
 }
 
-JsonValue *
-JsonSetArrayElementGeneric(JsonContainer *jc, int idx,
-						   Datum *path_elems, bool *path_nulls, int path_len,
-						   JsonbParseState **st, int level,
-						   JsonbValue *newval, int op_type)
-{
-	JsonValue	v;
-	JsonIterator *it = JsonIteratorInit(jc);
-	JsonIteratorToken r;
-
-	r = JsonIteratorNext(&it, &v, false);
-	Assert(r == WJB_BEGIN_ARRAY);
-	(void) pushJsonbValue(st, r, NULL);
-
-	setPathArray(&it, idx, path_elems, path_nulls, path_len, st, level,
-				 newval, v.val.array.nElems, op_type);
-
-	r = JsonbIteratorNext(&it, &v, false);
-	Assert(r == WJB_END_ARRAY);
-
-	return pushJsonbValue(st, r, NULL);
-}
-
-JsonValue *
-JsonSetObjectKeyGeneric(JsonContainer *jc,
-						Datum *path_elems, bool *path_nulls, int path_len,
-						JsonbParseState **st, int level,
-						JsonbValue *newval, int op_type)
-{
-	JsonValue	v;
-	JsonIterator *it = JsonIteratorInit(jc);
-	JsonIteratorToken r;
-
-	r = JsonIteratorNext(&it, &v, false);
-	Assert(r == WJB_BEGIN_OBJECT);
-	(void) pushJsonbValue(st, r, NULL);
-
-	r = setPathObject(&it, path_elems, path_nulls, path_len, st, level,
-					  newval, op_type);
-	Assert(r == WJB_END_OBJECT);
-
-	return pushJsonbValue(st, r, NULL);
-}
-
 /*
  * Do most of the heavy work for jsonb_set/jsonb_insert
  *
@@ -4978,14 +4953,10 @@ JsonSetObjectKeyGeneric(JsonContainer *jc,
  * whatever bits in op_type are set, or nothing is done.
  */
 static JsonbValue *
-setPath(JsonbIterator **it, Datum *path_elems,
-		bool *path_nulls, int path_len,
-		JsonbParseState **st, int level, JsonbValue *newval, int op_type)
+setPath(JsonMutator *mut, Datum *path_elems,
+		bool *path_nulls, int path_len, int level,
+		JsonbValue *newval, int op_type)
 {
-	JsonbValue	v;
-	JsonbIteratorToken r;
-	JsonbValue *res;
-
 	check_stack_depth();
 
 	if (path_nulls[level])
@@ -4994,59 +4965,30 @@ setPath(JsonbIterator **it, Datum *path_elems,
 				 errmsg("path element at position %d is null",
 						level + 1)));
 
-	if (!level)
+	if (JsonMutatorIsArray(mut))
 	{
-		JsonValueInitBinary(&v, (*it)->container);	/* FIXME pass container here */
-		r = WJB_VALUE;
+		JsonArrayMutator *arr_mut = JsonArrayMutatorOpen(mut);
+		JsonContainer *jc = JsonMutatorGetCurrent(mut)->val.binary.data;
+		int			size = JsonContainerSize(jc);
+		int			idx;
+
+		/* pick correct index */
+		idx = JsonGetPathArrayIndex(path_elems, path_nulls, path_len,
+									level, size, op_type);
+
+		setPathArray(arr_mut, idx, path_elems, path_nulls, path_len,
+					 level, newval, size, op_type);
+
+		return JsonArrayMutatorClose(arr_mut);
 	}
-	else
-		r = JsonbIteratorNext(it, &v, true);
-
-	if (r != WJB_ELEM && r != WJB_VALUE)
+	else if (JsonMutatorIsObject(mut))
 	{
-		elog(ERROR, "unrecognized iterator result: %d", (int) r);
-		res = NULL;			/* keep compiler quiet */
-	}
-	else if (v.type == jbvBinary)
-	{
-		JsonContainer *jc = v.val.binary.data;
+		JsonObjectMutator *obj_mut = JsonObjectMutatorOpen(mut);
 
-		if (JsonContainerIsArray(jc))
-		{
-			int			idx;
+		setPathObject(obj_mut, path_elems, path_nulls, path_len, level,
+					  newval, op_type);
 
-			/*
-			 * If instructed complain about attempts to replace within a raw
-			 * scalar value. This happens even when current level is equal to
-			 * path_len, because the last path key should also correspond to
-			 * an object or an array, not raw scalar.
-			 */
-			if ((op_type & JB_PATH_FILL_GAPS) && (level <= path_len - 1) &&
-				JsonContainerIsScalar(jc))
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("cannot replace existing key"),
-						 errdetail("The path assumes key is a composite object, "
-								   "but it is a scalar value.")));
-
-			/* pick correct index */
-			idx = JsonGetPathArrayIndex(path_elems, path_nulls, path_len, level,
-										JsonContainerSize(jc), op_type);
-
-			res = jc->ops->setArrayElement(jc, idx,
-										   path_elems, path_nulls, path_len,
-										   st, level,
-										   newval, op_type);
-		}
-		else
-		{
-			Assert(JsonContainerIsObject(jc));
-
-			res = jc->ops->setObjectKey(jc,
-									    path_elems, path_nulls, path_len,
-									    st, level,
-									    newval, op_type);
-		}
+		return JsonObjectMutatorClose(obj_mut);
 	}
 	else
 	{
@@ -5063,83 +5005,58 @@ setPath(JsonbIterator **it, Datum *path_elems,
 					 errdetail("The path assumes key is a composite object, "
 							   "but it is a scalar value.")));
 
-		res = pushJsonbValueExt(st, r, &v, false);
+		return JsonMutatorGetCurrent(mut);
 	}
-
-	return res;
 }
 
 /*
  * Object walker for setPath
  */
-static JsonbIteratorToken
-setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
-			  int path_len, JsonbParseState **st, int level,
-			  JsonbValue *newval, int op_type)
+static void
+setPathObject(JsonObjectMutator *mut, Datum *path_elems, bool *path_nulls,
+			  int path_len, int level, JsonbValue *newval, int op_type)
 {
-	text	   *pathelem = NULL;
-	JsonbValue	k,
-				v;
-	JsonbIteratorToken r;
-	bool		done = false;
+	text	   *pathelem;
+	JsonbValue	newkey;
 
 	if (level >= path_len || path_nulls[level])
-		done = true;
-	else
-	{
-		/* The path Datum could be toasted, in which case we must detoast it */
-		pathelem = DatumGetTextPP(path_elems[level]);
-	}
+		return;
 
-	while ((r = JsonbIteratorNext(it, &k, true)) == WJB_KEY)
+	/* The path Datum could be toasted, in which case we must detoast it */
+	pathelem = DatumGetTextPP(path_elems[level]);
+
+	newkey.type = jbvString;
+	newkey.val.string.val = VARDATA_ANY(pathelem);
+	newkey.val.string.len = VARSIZE_ANY_EXHDR(pathelem);
+
+	if (JsonObjectMutatorFindKey(mut, &newkey))
 	{
-		if (!done &&
-			k.val.string.len == VARSIZE_ANY_EXHDR(pathelem) &&
-			memcmp(k.val.string.val, VARDATA_ANY(pathelem),
-				   k.val.string.len) == 0)
+		if (level == path_len - 1)
 		{
-			done = true;
+			/*
+			 * called from jsonb_insert(), it forbids redefining an
+			 * existing value
+			 */
+			if (op_type & (JB_PATH_INSERT_BEFORE | JB_PATH_INSERT_AFTER))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("cannot replace existing key"),
+						 errhint("Try using the function jsonb_set "
+								 "to replace key value.")));
 
-			if (level == path_len - 1)
-			{
-				/*
-				 * called from jsonb_insert(), it forbids redefining an
-				 * existing value
-				 */
-				if (op_type & (JB_PATH_INSERT_BEFORE | JB_PATH_INSERT_AFTER))
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("cannot replace existing key"),
-							 errhint("Try using the function jsonb_set "
-									 "to replace key value.")));
-
-				r = JsonbIteratorNext(it, &v, true);	/* skip value */
-				Assert(r == WJB_VALUE);
-
-				if (!(op_type & JB_PATH_DELETE))
-				{
-					(void) pushJsonbValue(st, WJB_KEY, &k);
-					(void) pushJsonbValueExt(st, WJB_VALUE, newval, false);
-				}
-			}
+			if (op_type & JB_PATH_DELETE)
+				JsonMutatorRemoveCurrent(&mut->mutator);
 			else
-			{
-				(void) pushJsonbValue(st, r, &k);
-				setPath(it, path_elems, path_nulls, path_len,
-						st, level + 1, newval, op_type);
-			}
+				JsonMutatorReplaceCurrent(&mut->mutator, newval);
 		}
 		else
 		{
-			(void) pushJsonbValue(st, r, &k);
-			r = JsonbIteratorNext(it, &v, true);
-			Assert(r == WJB_VALUE);
-			(void) pushJsonbValueExt(st, r, &v, false);
+			setPath(&mut->mutator, path_elems, path_nulls, path_len,
+					level + 1, newval, op_type);
 		}
-	}
 
-	if (done)
-		return r;
+		return;
+	}
 
 	/*
 	 * If we got here there are only few possibilities:
@@ -5154,24 +5071,15 @@ setPathObject(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 	if ((level < path_len - 1 && (op_type & JB_PATH_FILL_GAPS)) ||
 		(level == path_len - 1 && (op_type & JB_PATH_CREATE_OR_INSERT)))
 	{
-		JsonbValue	newkey;
-
-		newkey.type = jbvString;
-		newkey.val.string.val = VARDATA_ANY(pathelem);
-		newkey.val.string.len = VARSIZE_ANY_EXHDR(pathelem);
-
-		(void) pushJsonbValue(st, WJB_KEY, &newkey);
-
 		if (level == path_len - 1)
-			(void) pushJsonbValueExt(st, WJB_VALUE, newval, false);
+			JsonObjectMutatorInsert(mut, &newkey, newval);
 		else
-			(void) push_path(st, level, path_elems, path_nulls,
-							 path_len, newval);
+			JsonObjectMutatorInsert(mut, &newkey,
+									push_path(level, path_elems, path_nulls,
+											  path_len, newval));
 
 		/* Result is closed with WJB_END_OBJECT outside of this function */
 	}
-
-	return r;
 }
 
 int
@@ -5234,14 +5142,10 @@ JsonGetPathArrayIndex(Datum *path_elems, bool *path_nulls, int path_len,
  * Array walker for setPath
  */
 static void
-setPathArray(JsonbIterator **it, int idx, Datum *path_elems, bool *path_nulls,
-			 int path_len, JsonbParseState **st, int level,
-			 JsonbValue *newval, uint32 nelems, int op_type)
+setPathArray(JsonArrayMutator *mut, int idx, Datum *path_elems, bool *path_nulls,
+			 int path_len, int level, JsonbValue *newval,
+			 uint32 nelems, int op_type)
 {
-	JsonbValue	v;
-	int			i;
-	bool		done = false;
-
 	/*
 	 * if we're creating, and idx == INT_MIN, we prepend the new value to the
 	 * array also if the array is empty - in which case we don't really care
@@ -5253,63 +5157,62 @@ setPathArray(JsonbIterator **it, int idx, Datum *path_elems, bool *path_nulls,
 		Assert(newval != NULL);
 
 		if (op_type & JB_PATH_FILL_GAPS && nelems == 0 && idx > 0)
-			push_null_elements(st, idx);
+			insert_null_elements(mut, idx);
 
-		(void) pushJsonbValueExt(st, WJB_ELEM, newval, false);
+		(void) JsonArrayMutatorInsert(mut, newval);
 
-		done = true;
+		return;
 	}
 
-	/* iterate over the array elements */
-	for (i = 0; i < nelems; i++)
+	if (idx < nelems && idx >= 0)
 	{
-		JsonbIteratorToken r;
+		bool		found = JsonArrayMutatorFindElement(mut, idx);
 
-		if (i == idx && level < path_len)
+		Assert(found);
+
+		if (level == path_len - 1)
 		{
-			done = true;
+			if (op_type & JB_PATH_INSERT_BEFORE)
+				(void) JsonArrayMutatorInsert(mut, newval);
 
-			if (level == path_len - 1)
+			/*
+			 * We should keep current value only in case of
+			 * JB_PATH_INSERT_BEFORE or JB_PATH_INSERT_AFTER because
+			 * otherwise it should be deleted or replaced
+			 */
+			if (op_type & (JB_PATH_REPLACE | JB_PATH_CREATE))
+				(void) JsonMutatorReplaceCurrent(&mut->mutator, newval);
+			else if (op_type & JB_PATH_DELETE)
+				(void) JsonMutatorRemoveCurrent(&mut->mutator);
+
+			if (op_type & JB_PATH_INSERT_AFTER)
 			{
-				r = JsonbIteratorNext(it, &v, true);	/* skip */
-
-				if (op_type & (JB_PATH_INSERT_BEFORE | JB_PATH_CREATE))
-					(void) pushJsonbValueExt(st, WJB_ELEM, newval, false);
-
-				/*
-				 * We should keep current value only in case of
-				 * JB_PATH_INSERT_BEFORE or JB_PATH_INSERT_AFTER because
-				 * otherwise it should be deleted or replaced
-				 */
-				if (op_type & (JB_PATH_INSERT_AFTER | JB_PATH_INSERT_BEFORE))
-					(void) pushJsonbValueExt(st, r, &v, false);
-
-				if (op_type & (JB_PATH_INSERT_AFTER | JB_PATH_REPLACE))
-					(void) pushJsonbValueExt(st, WJB_ELEM, newval, false);
+				found = JsonArrayMutatorNext(mut);
+				(void) JsonArrayMutatorInsert(mut, newval);
 			}
-			else
-				(void) setPath(it, path_elems, path_nulls, path_len,
-							   st, level + 1, newval, op_type);
 		}
 		else
-		{
-			r = JsonbIteratorNext(it, &v, true);
-			Assert(r == WJB_ELEM);
-			(void) pushJsonbValueExt(st, r, &v, false);
-		}
+			(void) setPath(&mut->mutator, path_elems, path_nulls, path_len,
+						   level + 1, newval, op_type);
+
+		return;
 	}
 
-	if ((op_type & JB_PATH_CREATE_OR_INSERT) && !done && level == path_len - 1)
+	JsonArrayMutatorFindLast(mut);
+	Assert(mut->cur_index == nelems);
+
+	if ((op_type & JB_PATH_CREATE_OR_INSERT) && level == path_len - 1)
 	{
 		/*
 		 * If asked to fill the gaps, idx could be bigger than nelems, so
 		 * prepend the new element with nulls if that's the case.
 		 */
 		if (op_type & JB_PATH_FILL_GAPS && idx > nelems)
-			push_null_elements(st, idx - nelems);
+			insert_null_elements(mut, idx - nelems);
 
-		(void) pushJsonbValueExt(st, WJB_ELEM, newval, false);
-		done = true;
+		(void) JsonArrayMutatorInsert(mut, newval);
+
+		return;
 	}
 
 	/*--
@@ -5322,13 +5225,14 @@ setPathArray(JsonbIterator **it, int idx, Datum *path_elems, bool *path_nulls,
 	 * generate the whole chain of empty objects and insert the new value
 	 * there.
 	 */
-	if (!done && (op_type & JB_PATH_FILL_GAPS) && (level < path_len - 1))
+	if ((op_type & JB_PATH_FILL_GAPS) && (level < path_len - 1))
 	{
 		if (idx > 0)
-			push_null_elements(st, idx - nelems);
+			insert_null_elements(mut, idx - nelems);
 
-		(void) push_path(st, level, path_elems, path_nulls,
-						 path_len, newval);
+		JsonArrayMutatorInsert(mut,
+							   push_path(level, path_elems, path_nulls,
+										 path_len, newval));
 
 		/* Result is closed with WJB_END_OBJECT outside of this function */
 	}

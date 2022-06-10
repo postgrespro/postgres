@@ -112,18 +112,6 @@ struct JsonContainerOps
 	void			(*free)(JsonContainer *jc);
 	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops, Oid toasterid);
 
-	Datum			(*setPath)(JsonContainer *js, Datum *path_elems,
-							   bool *path_nulls, int path_len,
-							   JsonValue *newval, int flags);
-	JsonValue	   *(*setObjectKey)(JsonContainer *jc,
-									Datum *path_elems, bool *path_nulls, int path_len,
-									JsonbParseState **st, int level,
-									JsonbValue *newval, int op_type);
-	JsonValue	   *(*setArrayElement)(JsonContainer *jc, int idx,
-									   Datum *path_elems, bool *path_nulls, int path_len,
-									   JsonbParseState **st, int level,
-									   JsonbValue *newval, int op_type);
-
 	JsonObjectMutator *(*initObjectMutator)(JsonContainer *jc, JsonMutator *parent);
 	JsonArrayMutator  *(*initArrayMutator)(JsonContainer *jc, JsonMutator *parent);
 };
@@ -260,9 +248,6 @@ typedef JsonContainer JsonbContainer;
 			(jc)->ops->free(jc); \
 	} while (0)
 
-#define JsonSetPath(jc, path_elems, path_nulls, path_len, newval, flags) \
-		JsonOp5(setPath, jc, path_elems, path_nulls, path_len, newval, flags)
-
 
 #define JsonMutatorCurrentExists(mut)		((mut)->cur_exists)
 #define JsonMutatorGetCurrent(mut)			(&(mut)->cur_val)
@@ -393,19 +378,6 @@ extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
 extern const JsonValue *JsonValueUnwrap(const JsonValue *val, JsonValue *buf);
 extern JsonContainer *JsonCopyFlat(JsonContainer *flatContainer);
 extern JsonValue *JsonExtractScalar(JsonContainer *jc, JsonValue *scalar);
-extern Datum JsonSetPathGeneric(JsonContainer *js, Datum *path_elems,
-								bool *path_nulls, int path_len,
-								JsonValue *newval, int flags);
-extern JsonValue *
-JsonSetArrayElementGeneric(JsonContainer *jc, int idx,
-						   Datum *path_elems, bool *path_nulls, int path_len,
-						   JsonbParseState **st, int level,
-						   JsonbValue *newval, int op_type);
-extern JsonValue *
-JsonSetObjectKeyGeneric(JsonContainer *jc,
-						Datum *path_elems, bool *path_nulls, int path_len,
-						JsonbParseState **st, int level,
-						JsonbValue *newval, int op_type);
 
 extern int JsonbType(JsonbValue *jb);
 

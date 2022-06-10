@@ -2583,9 +2583,6 @@ jsonbContainerOps =
 	JsonCopyFlat,
 	NULL,
 	NULL,
-	JsonSetPathGeneric,
-	JsonSetObjectKeyGeneric,
-	JsonSetArrayElementGeneric,
 	JsonObjectMutatorInitGeneric,
 	JsonArrayMutatorInitGeneric
 };
@@ -3179,9 +3176,6 @@ jsonbzContainerOps =
 	JsonCopyFlat,	// FIXME
 	jsonbzFree,
 	NULL,
-	JsonSetPathGeneric,
-	JsonSetObjectKeyGeneric,
-	JsonSetArrayElementGeneric,
 	JsonObjectMutatorInitGeneric,
 	JsonArrayMutatorInitGeneric
 };
