@@ -2585,7 +2585,9 @@ jsonbContainerOps =
 	NULL,
 	JsonSetPathGeneric,
 	JsonSetObjectKeyGeneric,
-	JsonSetArrayElementGeneric
+	JsonSetArrayElementGeneric,
+	JsonObjectMutatorInitGeneric,
+	JsonArrayMutatorInitGeneric
 };
 
 #ifndef JSONB_DETOAST_ITERATOR
@@ -3179,7 +3181,9 @@ jsonbzContainerOps =
 	NULL,
 	JsonSetPathGeneric,
 	JsonSetObjectKeyGeneric,
-	JsonSetArrayElementGeneric
+	JsonSetArrayElementGeneric,
+	JsonObjectMutatorInitGeneric,
+	JsonArrayMutatorInitGeneric
 };
 
 Json *

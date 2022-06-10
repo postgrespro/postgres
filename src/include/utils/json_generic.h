@@ -54,6 +54,43 @@ struct JsonIteratorData
 	JsonIteratorNextFunc	next;
 };
 
+typedef struct JsonMutator JsonMutator;
+typedef struct JsonObjectMutator JsonObjectMutator;
+typedef struct JsonArrayMutator JsonArrayMutator;
+
+struct JsonMutator
+{
+	JsonMutator *parent;
+	JsonbValue	cur_val;
+	JsonbValue *cur_key;
+	bool		cur_exists;
+	JsonbValueType type;
+	JsonbValue *(*replace)(JsonMutator *mut, JsonbValue *val);
+	JsonObjectMutator *(*openObject)(JsonMutator *mut);
+	JsonArrayMutator *(*openArray)(JsonMutator *mut);
+};
+
+struct JsonObjectMutator
+{
+	JsonMutator mutator;
+	bool		(*next)(JsonObjectMutator *mut, JsonbValue *key);
+	bool		(*find)(JsonObjectMutator *mut, JsonbValue *key);
+	void		(*insert)(JsonObjectMutator *mut,
+						  JsonbValue *key, JsonbValue *val);
+	JsonbValue *(*close)(JsonObjectMutator *mut);
+};
+
+struct JsonArrayMutator
+{
+	JsonMutator mutator;
+	int			cur_index;
+	bool		(*next)(JsonArrayMutator *mut);
+	bool		(*find)(JsonArrayMutator *mut, int index);
+	void		(*last)(JsonArrayMutator *mut);
+	void		(*insert)(JsonArrayMutator *mut, JsonbValue *val);
+	JsonbValue *(*close)(JsonArrayMutator *mut);
+};
+
 struct JsonContainerOps
 {
 	int				data_size;
@@ -86,6 +123,9 @@ struct JsonContainerOps
 									   Datum *path_elems, bool *path_nulls, int path_len,
 									   JsonbParseState **st, int level,
 									   JsonbValue *newval, int op_type);
+
+	JsonObjectMutator *(*initObjectMutator)(JsonContainer *jc, JsonMutator *parent);
+	JsonArrayMutator  *(*initArrayMutator)(JsonContainer *jc, JsonMutator *parent);
 };
 
 typedef struct CompressedObject
@@ -209,6 +249,12 @@ typedef JsonContainer JsonbContainer;
 #define JsonCopy(jscontainer) \
 		JsonOp0(copy, jscontainer)
 
+#define JsonObjectMutatorInit(jc, parent) \
+		(((jc) ? (jc)->ops->initObjectMutator : JsonObjectMutatorInitGeneric)(jc, parent))
+
+#define JsonArrayMutatorInit(jc, parent) \
+		(((jc) ? (jc)->ops->initArrayMutator : JsonArrayMutatorInitGeneric)(jc, parent))
+
 #define	JsonContainerFree(jc) do { \
 		if ((jc)->ops->free) \
 			(jc)->ops->free(jc); \
@@ -216,6 +262,27 @@ typedef JsonContainer JsonbContainer;
 
 #define JsonSetPath(jc, path_elems, path_nulls, path_len, newval, flags) \
 		JsonOp5(setPath, jc, path_elems, path_nulls, path_len, newval, flags)
+
+
+#define JsonMutatorCurrentExists(mut)		((mut)->cur_exists)
+#define JsonMutatorGetCurrent(mut)			(&(mut)->cur_val)
+#define JsonMutatorIsObject(mut)			(JsonbType(&(mut)->cur_val) == jbvObject)
+#define JsonMutatorIsArray(mut)				(JsonbType(&(mut)->cur_val) == jbvArray)
+#define JsonMutatorReplaceCurrent(mut, val)	((mut)->replace(mut, val))
+#define JsonObjectMutatorOpen(mut)			((mut)->openObject(mut))
+#define JsonArrayMutatorOpen(mut)			((mut)->openArray(mut))
+#define JsonMutatorRemoveCurrent(mut)		((void) JsonMutatorReplaceCurrent(mut, NULL))
+
+#define JsonObjectMutatorNext(mut, key)			((mut)->next(mut, key))
+#define JsonObjectMutatorFindKey(mut, key)		((mut)->find(mut, key))
+#define JsonObjectMutatorInsert(mut, key, val)	((mut)->insert(mut, key, val))
+#define JsonObjectMutatorClose(mut)				((mut)->close(mut))
+
+#define JsonArrayMutatorNext(mut)				((mut)->next(mut))
+#define JsonArrayMutatorFindElement(mut, idx)	((mut)->find(mut, idx))
+#define JsonArrayMutatorFindLast(mut)			((mut)->last(mut))
+#define JsonArrayMutatorInsert(mut, val)		((mut)->insert(mut, val))
+#define JsonArrayMutatorClose(mut)				((mut)->close(mut))
 
 static inline JsonIteratorToken
 JsonIteratorNext(JsonIterator **it, JsonValue *val, bool skipNested)
@@ -339,6 +406,16 @@ JsonSetObjectKeyGeneric(JsonContainer *jc,
 						Datum *path_elems, bool *path_nulls, int path_len,
 						JsonbParseState **st, int level,
 						JsonbValue *newval, int op_type);
+
+extern int JsonbType(JsonbValue *jb);
+
+extern JsonMutator *JsonMutatorInit(JsonValue *jbv);
+
+extern JsonObjectMutator *
+JsonObjectMutatorInitGeneric(JsonContainer *jc, JsonMutator *parent);
+
+extern JsonArrayMutator *
+JsonArrayMutatorInitGeneric(JsonContainer *jc, JsonMutator *parent);
 
 extern Jsonb *JsonbMakeEmptyArray(void);
 extern Jsonb *JsonbMakeEmptyObject(void);

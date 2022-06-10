@@ -247,8 +247,6 @@ static void JsonValueListInitIterator(const JsonValueList *jvl,
 									  JsonValueListIterator *it);
 static JsonbValue *JsonValueListNext(const JsonValueList *jvl,
 									 JsonValueListIterator *it);
-static int	JsonbType(JsonbValue *jb);
-static int	JsonbType(JsonbValue *jb);
 static JsonbValue *getScalar(JsonbValue *scalar, enum jbvType type);
 static JsonbValue *wrapItemsInArray(const JsonValueList *items);
 static int	compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
@@ -2385,6 +2383,33 @@ copyJsonbValue(JsonbValue *src)
 	return dst;
 }
 
+JsonbValue *
+pushJsonbKeyValue(JsonbParseState **ps, JsonbValue *key, JsonbValue *value)
+{
+	Assert(value);
+
+	if (key)
+	{
+		Assert(*ps);
+		pushJsonbValue(ps, WJB_KEY, key);
+		pushJsonbValue(ps, WJB_VALUE, value);
+	}
+	else
+	{
+		if (!*ps)
+		{
+			if (IsAJsonbScalar(value))
+				return pushScalarJsonbValue(ps, value, false, false);
+			else
+				return copyJsonbValue(value);	/* XXX */
+		}
+
+		pushJsonbValue(ps, WJB_ELEM, value);
+	}
+
+	return NULL;
+}
+
 /*
  * Execute array subscript expression and convert resulting numeric item to
  * the integer type with truncation.
@@ -2524,7 +2549,7 @@ JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
 /*
  * Returns jbv* type of JsonbValue. Note, it never returns jbvBinary as is.
  */
-static int
+int
 JsonbType(JsonbValue *jb)
 {
 	int			type = jb->type;

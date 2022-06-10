@@ -37,7 +37,8 @@ select
   j id,
   jsonb_build_object(
      'a', jsonb_agg(repeat('a', pow(2, 6 + i)::int)),
-     'b', 'foo'
+     'b', 'foo',
+     'c', jsonb_agg(jsonb_build_object('a', repeat('a', pow(2, 6 + i)::int), 'b', 1))
   ) js
 from
   generate_series(0, 19) j,
@@ -56,3 +57,16 @@ select id, js->'a'->>0 from test_jsonbz_arr order by id;
 
 update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('e', 65)));
 select id, js->'a'->>0 from test_jsonbz_arr order by id;
+
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('b', 64)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('c', 64)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('d', 65)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('e', 65)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
