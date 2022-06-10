@@ -129,7 +129,8 @@ select
   j id,
   jsonb_build_object(
      'a', jsonb_agg(repeat('a', pow(2, 6 + i)::int)),
-     'b', 'foo'
+     'b', 'foo',
+     'c', jsonb_agg(jsonb_build_object('a', repeat('a', pow(2, 6 + i)::int), 'b', 1))
   ) js
 from
   generate_series(0, 19) j,
@@ -216,6 +217,110 @@ select id, js->'a'->>0 from test_jsonbz_arr order by id;
 
 update test_jsonbz_arr set js = jsonb_set(js, '{a,0}', to_jsonb(repeat('e', 65)));
 select id, js->'a'->>0 from test_jsonbz_arr order by id;
+ id |                             ?column?                              
+----+-------------------------------------------------------------------
+  0 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  1 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  2 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  3 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  4 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  5 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  6 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  7 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  8 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  9 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 10 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 11 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 12 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 13 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 14 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 15 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 16 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 17 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 18 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+ 19 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+(20 rows)
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('b', 64)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+ id |                             ?column?                             
+----+------------------------------------------------------------------
+  0 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  1 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  2 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  3 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  4 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  5 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  6 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  7 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  8 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  9 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 10 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 11 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 12 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 13 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 14 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 15 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 16 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 17 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 18 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ 19 | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+(20 rows)
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('c', 64)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+ id |                             ?column?                             
+----+------------------------------------------------------------------
+  0 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  1 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  2 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  3 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  4 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  5 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  6 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  7 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  8 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  9 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 10 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 11 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 12 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 13 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 14 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 15 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 16 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 17 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 18 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ 19 | cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+(20 rows)
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('d', 65)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+ id |                             ?column?                              
+----+-------------------------------------------------------------------
+  0 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  1 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  2 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  3 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  4 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  5 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  6 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  7 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  8 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  9 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 10 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 11 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 12 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 13 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 14 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 15 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 16 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 17 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 18 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ 19 | ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+(20 rows)
+
+update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('e', 65)));
+select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
  id |                             ?column?                              
 ----+-------------------------------------------------------------------
   0 | eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
