@@ -65,10 +65,11 @@ void _PG_init(void);
 #define JBC_TOBJECT_COMPRESSED	0x60000000	/* object with compressed keys */
 
 #define JB_HEADER(jb) ((jb)->root.header)
-#define JX_ROOT_IS_OBJECT(jbp_) ((JB_HEADER(jbp_) & JBC_TMASK) == JBC_TOBJECT || \
-								 (JB_HEADER(jbp_) & JBC_TMASK) == JBC_TOBJECT_SORTED || \
-								 (JB_HEADER(jbp_) & JBC_TMASK) == JBC_TOBJECT_TOASTED || \
-								 (JB_HEADER(jbp_) & JBC_TMASK) == JBC_TOBJECT_COMPRESSED)
+#define JX_HEADER_IS_OBJECT(hdr) (((hdr) & JBC_TMASK) == JBC_TOBJECT || \
+								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_SORTED || \
+								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_TOASTED || \
+								  ((hdr) & JBC_TMASK) == JBC_TOBJECT_COMPRESSED)
+#define JX_ROOT_IS_OBJECT(jbp_)	JX_HEADER_IS_OBJECT(JB_HEADER(jbp_))
 
 typedef struct varatt_external JsonbToastPointer;
 
@@ -1863,7 +1864,7 @@ findValueInCompressedJsonbObject(CompressedJsonx *cjb, Oid toasterid,
 	uint32		stopLow = 0,
 				stopHigh = count;
 
-	Assert(JX_ROOT_IS_OBJECT(jb));
+	Assert(JX_HEADER_IS_OBJECT(container->header));
 
 	/* Quick out if object/array is empty */
 	if (count <= 0)
