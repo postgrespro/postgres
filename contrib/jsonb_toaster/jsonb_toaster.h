@@ -23,6 +23,7 @@
 #define JSONX_POINTER_DIRECT_TIDS_COMP		0x30000000
 #define JSONX_POINTER_COMPRESSED_CHUNKS		0x40000000
 #define JSONX_POINTER_DIFF					0x50000000
+#define JSONX_POINTER_DIFF_COMP				0x60000000
 
 #define JSONX_CUSTOM_PTR_HEADER_SIZE		(INTALIGN(VARATT_CUSTOM_SIZE(0)) + sizeof(uint32))
 
@@ -140,6 +141,7 @@ jsonx_toast_make_plain_pointer(Oid toasterid, JsonbContainerHeader *jbc, int len
 
 extern struct varlena *
 jsonx_toast_make_pointer_diff(Oid toasterid, struct varatt_external *ptr,
+							  bool compressed_chunks,
 							  int32 diff_offset, int32 diff_len,
 							  const void *diff_data);
 

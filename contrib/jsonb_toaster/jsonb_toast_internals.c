@@ -141,6 +141,7 @@ jsonx_toast_make_pointer_compressed_chunks(Oid toasterid,
 struct varlena *
 jsonx_toast_make_pointer_diff(Oid toasterid,
 							  struct varatt_external *toast_pointer,
+							  bool compressed_chunks,
 							  int32 diff_offset, int32 diff_len,
 							  const void *diff_data)
 {
@@ -150,7 +151,10 @@ jsonx_toast_make_pointer_diff(Oid toasterid,
 		TOAST_POINTER_SIZE + offsetof(JsonxPointerDiff, data) + diff_len;
 
 	struct varlena *result =
-		jsonx_toast_make_custom_pointer(toasterid, JSONX_POINTER_DIFF,
+		jsonx_toast_make_custom_pointer(toasterid,
+										compressed_chunks ?
+											JSONX_POINTER_DIFF_COMP :
+											JSONX_POINTER_DIFF,
 										datalen, toast_pointer->va_rawsize, &data);
 
 	SET_VARTAG_EXTERNAL(data, VARTAG_ONDISK);
@@ -169,7 +173,10 @@ jsonxMakeToastPointer(JsonbToastedContainerPointerData *ptr)
 	if (ptr->ntids || ptr->has_diff)
 	{
 		char	   *data;
-		uint32		header = ptr->has_diff ? JSONX_POINTER_DIFF :
+		uint32		header = ptr->has_diff ?
+				(ptr->compressed_chunks ?
+					JSONX_POINTER_DIFF_COMP :
+					JSONX_POINTER_DIFF) :
 			ptr->ntids | (ptr->compressed_tids ?
 						  JSONX_POINTER_DIRECT_TIDS_COMP :
 						  JSONX_POINTER_DIRECT_TIDS);
@@ -209,7 +216,9 @@ jsonxWriteToastPointer(StringInfo buffer, JsonbToastedContainerPointerData *ptr)
 		char		custom_ptr[JSONX_CUSTOM_PTR_HEADER_SIZE];
 		char		toast_ptr[TOAST_POINTER_SIZE];
 		uint32		header = ptr->has_diff ?
-			JSONX_POINTER_DIFF :
+			(ptr->compressed_chunks ?
+				JSONX_POINTER_DIFF_COMP :
+				JSONX_POINTER_DIFF) :
 			ptr->ntids | (ptr->compressed_tids ?
 						  JSONX_POINTER_DIRECT_TIDS_COMP :
 						  JSONX_POINTER_DIRECT_TIDS);
@@ -989,12 +998,16 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 	iter->toasterid = toasterid;
 	iter->chunk_tids_inline_size = inline_size;
 
-	if (inline_size <= 0 || type == JSONX_POINTER_DIFF)
+	if (inline_size <= 0 ||
+		type == JSONX_POINTER_DIFF ||
+		type == JSONX_POINTER_DIFF_COMP)
 	{
 		iter->nchunk_tids = 0;
 		iter->chunk_tids = NULL;
 		iter->compressed_chunk_tids = NULL;
-		iter->compressed_chunks = type == JSONX_POINTER_COMPRESSED_CHUNKS;
+		iter->compressed_chunks =
+			type == JSONX_POINTER_COMPRESSED_CHUNKS ||
+			type == JSONX_POINTER_DIFF_COMP;
 	}
 	else
 	{
@@ -1628,7 +1641,8 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 			/* prepare buffer to received decompressed data */
 			iter->buf = create_toast_buffer(toast_pointer.va_rawsize, false);
 
-			if (type == JSONX_POINTER_DIFF)
+			if (type == JSONX_POINTER_DIFF ||
+				type == JSONX_POINTER_DIFF_COMP)
 				iter->orig_buf = create_toast_buffer(toast_pointer.va_rawsize, false);
 			else
 				iter->orig_buf = iter->buf;
@@ -1642,7 +1656,8 @@ jsonx_create_detoast_iterator(struct varlena *attr)
 			iter->buf = iter->orig_buf = iter->fetch_datum_iterator->buf;
 		}
 
-		if (type == JSONX_POINTER_DIFF)
+		if (type == JSONX_POINTER_DIFF ||
+			type == JSONX_POINTER_DIFF_COMP)
 		{
 			JsonxPointerDiff *diff = (JsonxPointerDiff *) inline_data;
 
