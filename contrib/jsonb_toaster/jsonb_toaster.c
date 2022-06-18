@@ -2272,6 +2272,7 @@ jsonxSetPathInplace(JsonContainer *jc, int idx,
 				toast_diff = PointerGetDatum(
 					jsonx_toast_make_pointer_diff(jbcptr.toasterid,
 												  &jbcptr.ptr,
+												  jbcptr.compressed_chunks,
 												  diff.offset,
 												  len, val));
 
