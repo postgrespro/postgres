@@ -852,7 +852,7 @@ executeMutateAction(JsonPathExecContext *cxt, JsonbMutator *mutator,
 			if (!JsonbMutatorIsArray(mutator))
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
-					 errmsg("argument of %s APPEND is not an array", "JSON_TRANSFORM()")));
+					 errmsg("argument of %s APPEND is not an array", "JSON_MODIFY()")));
 
 			if (!cxt->update.value && cxt->update.onNull == JSTB_IGNORE)
 				return NULL;
@@ -875,7 +875,7 @@ executeMutateAction(JsonPathExecContext *cxt, JsonbMutator *mutator,
 		if (cxt->update.onExisting == JSTB_ERROR)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
-					 errmsg("existing value in %s", "JSON_TRANSFORM()")));
+					 errmsg("existing value in %s", "JSON_MODIFY()")));
 
 		if (cxt->update.onExisting == JSTB_IGNORE)
 			return NULL;
@@ -892,14 +892,14 @@ executeMutateAction(JsonPathExecContext *cxt, JsonbMutator *mutator,
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 					 errmsg("invalid path in RENAME operation of %s",
-							"JSON_TRANSFORM()")));
+							"JSON_MODIFY()")));
 
 			if (!cxt->update.value ||
 				cxt->update.value->type != jbvString)
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
 					 errmsg("invalid key name value in RENAME operation of %s",
-							"JSON_TRANSFORM()")));
+							"JSON_MODIFY()")));
 
 			JsonbMutatorRemoveCurrent(mutator);
 			JsonbObjectMutatorInsert((JsonObjectMutator *) mutator,
@@ -917,7 +917,7 @@ executeMutateAction(JsonPathExecContext *cxt, JsonbMutator *mutator,
 		if (cxt->update.onMissing == JSTB_ERROR)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
-					 errmsg("missing value in %s", "JSON_TRANSFORM()")));
+					 errmsg("missing value in %s", "JSON_MODIFY()")));
 
 		/* TODO create path ??? */
 		if (cxt->update.onMissing == JSTB_CREATE)
@@ -1291,7 +1291,7 @@ executeJsonPathUpdate(JsonPath *path, void *vars, JsonPathVarCallback getVar,
 	if (cxt.update.missing && onMissing == JSTB_ERROR)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), /* XXX */
-				 errmsg("missing value in %s", "JSON_TRANSFORM()")));
+				 errmsg("missing value in %s", "JSON_MODIFY()")));
 
 	return resjbv ? resjbv : copyJsonbValue(&jbv_root);
 }

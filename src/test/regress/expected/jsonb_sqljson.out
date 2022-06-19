@@ -2133,320 +2133,320 @@ SELECT sum(JSON_VALUE(js, '$' RETURNING numeric ERROR ON ERROR)) FROM test_paral
 (1 row)
 
 DROP TABLE test_parallel_jsonb_value;
--- Test JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[0]' = NULL);
+-- Test JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[0]' = NULL);
  ?column?  
 -----------
  [null, 2]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[0]' = NULL REMOVE ON NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[0]' = NULL REMOVE ON NULL);
  ?column? 
 ----------
  [2]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[1]' = NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[1]' = NULL);
  ?column?  
 -----------
  [1, null]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[1]' = NULL REMOVE ON NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[1]' = NULL REMOVE ON NULL);
  ?column? 
 ----------
  [1]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[0 TO 4]' = NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[0 TO 4]' = NULL);
             ?column?            
 --------------------------------
  [null, null, null, null, null]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[0 TO 4]' = NULL REMOVE ON NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[0 TO 4]' = NULL REMOVE ON NULL);
  ?column? 
 ----------
  []
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[4]' = NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[4]' = NULL);
          ?column?         
 --------------------------
  [1, 2, null, null, null]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), SET '$[4]' = NULL REMOVE ON NULL);
+SELECT JSON_MODIFY(jsonb('[1,2]'), SET '$[4]' = NULL REMOVE ON NULL);
  ?column? 
 ----------
  [1, 2]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[{"a":{"x":2}},{"a":{"y":3}}]'), SET '$[*].*.y' = 5 ERROR ON MISSING);
-ERROR:  missing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[{"a":{"x":2}},{"a":{"y":3}}]'), SET '$[*].*.y ? (@ >= 3)' = 5 ERROR ON MISSING);
+SELECT JSON_MODIFY(jsonb('[{"a":{"x":2}},{"a":{"y":3}}]'), SET '$[*].*.y' = 5 ERROR ON MISSING);
+ERROR:  missing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[{"a":{"x":2}},{"a":{"y":3}}]'), SET '$[*].*.y ? (@ >= 3)' = 5 ERROR ON MISSING);
               ?column?              
 ------------------------------------
  [{"a": {"x": 2}}, {"a": {"y": 5}}]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[{"x":2},{"y":3}]'), SET '$[*].y' = 5 ERROR ON MISSING);
-ERROR:  missing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[{"x":2},{"y":3}]'), SET '$[*].y ? (@ >= 3)' = 5 ERROR ON MISSING);
+SELECT JSON_MODIFY(jsonb('[{"x":2},{"y":3}]'), SET '$[*].y' = 5 ERROR ON MISSING);
+ERROR:  missing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[{"x":2},{"y":3}]'), SET '$[*].y ? (@ >= 3)' = 5 ERROR ON MISSING);
        ?column?       
 ----------------------
  [{"x": 2}, {"y": 5}]
 (1 row)
 
 -- [1,{},[5],[5]]
-SELECT JSON_TRANSFORM(jsonb('[1,{},[],[1]]'), SET '$[*][0]' = 5 ERROR ON EXISTING);
-ERROR:  existing value in JSON_TRANSFORM()
+SELECT JSON_MODIFY(jsonb('[1,{},[],[1]]'), SET '$[*][0]' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_MODIFY()
 -- [1,{},[],[5]]
-SELECT JSON_TRANSFORM(jsonb('[1,{},[],[1]]'), SET '$[*][0]?(@>0)' = 5 ERROR ON EXISTING);
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[0]'), SET '$[0][0]' = 5);
+SELECT JSON_MODIFY(jsonb('[1,{},[],[1]]'), SET '$[*][0]?(@>0)' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[0]'), SET '$[0][0]' = 5);
  ?column? 
 ----------
  [5]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[0]'), SET '$[0][0]' = 5 ERROR ON EXISTING);
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('0'),  INSERT '$[0]' = 1);
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('0'),  INSERT '$[0]' = 1 REPLACE ON EXISTING);
+SELECT JSON_MODIFY(jsonb('[0]'), SET '$[0][0]' = 5 ERROR ON EXISTING);
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('0'),  INSERT '$[0]' = 1);
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('0'),  INSERT '$[0]' = 1 REPLACE ON EXISTING);
  ?column? 
 ----------
  1
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{}'), INSERT '$[0]' = 1);
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[]'), INSERT '$[0]' = 1);
+SELECT JSON_MODIFY(jsonb('{}'), INSERT '$[0]' = 1);
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[]'), INSERT '$[0]' = 1);
  ?column? 
 ----------
  [1]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[]'), INSERT '$[3]' = 1);
+SELECT JSON_MODIFY(jsonb('[]'), INSERT '$[3]' = 1);
        ?column?        
 -----------------------
  [null, null, null, 1]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[0]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[0]' = 0);
    ?column?   
 --------------
  [0, 1, 2, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[1]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[1]' = 0);
    ?column?   
 --------------
  [1, 0, 2, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[2]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[2]' = 0);
    ?column?   
 --------------
  [1, 2, 0, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[3]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[3]' = 0);
    ?column?   
 --------------
  [1, 2, 3, 0]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[6]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[6]' = 0);
             ?column?            
 --------------------------------
  [1, 2, 3, null, null, null, 0]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[last]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[last]' = 0);
    ?column?   
 --------------
  [1, 2, 0, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), INSERT '$[last + 1]' = 0);
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), INSERT '$[last + 1]' = 0);
    ?column?   
 --------------
  [1, 2, 3, 0]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), INSERT '$.a' = '5');
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), INSERT '$.a' = '5' REPLACE ON EXISTING);
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), INSERT '$.a' = '5');
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), INSERT '$.a' = '5' REPLACE ON EXISTING);
   ?column?  
 ------------
  {"a": "5"}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), INSERT '$.a[0]' = '5');
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{"a": [0,1,2]}'), INSERT '$.a[1]' = 5);
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), INSERT '$.a[0]' = '5');
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{"a": [0,1,2]}'), INSERT '$.a[1]' = 5);
       ?column?       
 ---------------------
  {"a": [0, 5, 1, 2]}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": [0,1,2]}'), INSERT '$.a[*] ? (@ > 0)' = 5);
+SELECT JSON_MODIFY(jsonb('{"a": [0,1,2]}'), INSERT '$.a[*] ? (@ > 0)' = 5);
         ?column?        
 ------------------------
  {"a": [0, 5, 1, 5, 2]}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[0]'),  INSERT '$[0][0]' = 5);
-ERROR:  existing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[0]'),  INSERT '$[0][0]' = 5 REPLACE ON EXISTING);
+SELECT JSON_MODIFY(jsonb('[0]'),  INSERT '$[0][0]' = 5);
+ERROR:  existing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[0]'),  INSERT '$[0][0]' = 5 REPLACE ON EXISTING);
  ?column? 
 ----------
  [5]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('1'), REMOVE '$');
+SELECT JSON_MODIFY(jsonb('1'), REMOVE '$');
 ERROR:  cannor remove root jsonb value
-SELECT JSON_TRANSFORM(jsonb('{}'), REMOVE '$.a');
+SELECT JSON_MODIFY(jsonb('{}'), REMOVE '$.a');
  ?column? 
 ----------
  {}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 1}'), REMOVE '$.a');
+SELECT JSON_MODIFY(jsonb('{"a": 1}'), REMOVE '$.a');
  ?column? 
 ----------
  {}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 1, "b": 2}'), REMOVE '$.a');
+SELECT JSON_MODIFY(jsonb('{"a": 1, "b": 2}'), REMOVE '$.a');
  ?column? 
 ----------
  {"b": 2}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 1, "b": 2}'), REMOVE '$.*');
+SELECT JSON_MODIFY(jsonb('{"a": 1, "b": 2}'), REMOVE '$.*');
  ?column? 
 ----------
  {}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), REMOVE '$[0]');
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), REMOVE '$[0]');
  ?column? 
 ----------
  [2, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), REMOVE '$[1]');
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), REMOVE '$[1]');
  ?column? 
 ----------
  [1, 3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), REMOVE '$[*]');
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), REMOVE '$[*]');
  ?column? 
 ----------
  []
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2,3]'), REMOVE '$[0 TO 1]');
+SELECT JSON_MODIFY(jsonb('[1,2,3]'), REMOVE '$[0 TO 1]');
  ?column? 
 ----------
  [3]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": [3,1,4,2]}'), REMOVE '$.a ? (@ > 2)');
+SELECT JSON_MODIFY(jsonb('{"a": [3,1,4,2]}'), REMOVE '$.a ? (@ > 2)');
    ?column?    
 ---------------
  {"a": [1, 2]}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('1'), RENAME '$.a' WITH 'b');
+SELECT JSON_MODIFY(jsonb('1'), RENAME '$.a' WITH 'b');
  ?column? 
 ----------
  1
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[]'), RENAME '$.a' WITH 'b');
+SELECT JSON_MODIFY(jsonb('[]'), RENAME '$.a' WITH 'b');
  ?column? 
 ----------
  []
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('1'), RENAME '$[0]' WITH 'b');
-ERROR:  invalid path in RENAME operation of JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{}'), RENAME '$.a' WITH 'b');
+SELECT JSON_MODIFY(jsonb('1'), RENAME '$[0]' WITH 'b');
+ERROR:  invalid path in RENAME operation of JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{}'), RENAME '$.a' WITH 'b');
  ?column? 
 ----------
  {}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1}'), RENAME '$.a' WITH 'b');
+SELECT JSON_MODIFY(jsonb('{"c": 1}'), RENAME '$.a' WITH 'b');
  ?column? 
 ----------
  {"c": 1}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2}'), RENAME '$.a' WITH 'b');
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2}'), RENAME '$.a' WITH 'b');
      ?column?     
 ------------------
  {"b": 2, "c": 1}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.a' WITH 'b'); -- XXX
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.a' WITH 'b'); -- XXX
      ?column?     
 ------------------
  {"b": 3, "c": 1}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.x' WITH 'b');
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.x' WITH 'b');
          ?column?         
 --------------------------
  {"a": 2, "b": 3, "c": 1}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.x' WITH 'b' ERROR ON MISSING);
-ERROR:  missing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2}'), RENAME '$.* ? (@ > 1)' WITH 'x');
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.x' WITH 'b' ERROR ON MISSING);
+ERROR:  missing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2}'), RENAME '$.* ? (@ > 1)' WITH 'x');
      ?column?     
 ------------------
  {"c": 1, "x": 2}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.* ? (@ > 1)' WITH 'x');
+SELECT JSON_MODIFY(jsonb('{"c": 1, "a": 2, "b": 3}'), RENAME '$.* ? (@ > 1)' WITH 'x');
      ?column?     
 ------------------
  {"c": 1, "x": 3}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), RENAME '$.a[0]' WITH '5');
-ERROR:  invalid path in RENAME operation of JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), RENAME '$.a[*]' WITH '5');
-ERROR:  invalid path in RENAME operation of JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), RENAME '$.a[1]' WITH '5');
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), RENAME '$.a[0]' WITH '5');
+ERROR:  invalid path in RENAME operation of JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), RENAME '$.a[*]' WITH '5');
+ERROR:  invalid path in RENAME operation of JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), RENAME '$.a[1]' WITH '5');
  ?column? 
 ----------
  {"a": 0}
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('{"a": 0}'), RENAME '$.a[1]' WITH '5' ERROR ON MISSING);
-ERROR:  missing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[]'), APPEND '$' = 5);
+SELECT JSON_MODIFY(jsonb('{"a": 0}'), RENAME '$.a[1]' WITH '5' ERROR ON MISSING);
+ERROR:  missing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[]'), APPEND '$' = 5);
  ?column? 
 ----------
  [5]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), APPEND '$' = 5);
+SELECT JSON_MODIFY(jsonb('[1,2]'), APPEND '$' = 5);
  ?column?  
 -----------
  [1, 2, 5]
 (1 row)
 
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), APPEND '$[4]' = 5);
-ERROR:  missing value in JSON_TRANSFORM()
-SELECT JSON_TRANSFORM(jsonb('[1,2]'), APPEND '$[4]' = 5 CREATE ON MISSING);
+SELECT JSON_MODIFY(jsonb('[1,2]'), APPEND '$[4]' = 5);
+ERROR:  missing value in JSON_MODIFY()
+SELECT JSON_MODIFY(jsonb('[1,2]'), APPEND '$[4]' = 5 CREATE ON MISSING);
         ?column?         
 -------------------------
  [1, 2, null, null, [5]]

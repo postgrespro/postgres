@@ -4200,7 +4200,7 @@ coerceJsonExpr(ParseState *pstate, Node *expr, const JsonReturning *returning)
 }
 
 /*
- * Transform a JSON output clause of JSON_VALUE, JSON_QUERY and JSON_TRANSFORM.
+ * Transform a JSON output clause of JSON_VALUE, JSON_QUERY and JSON_MODIFY.
  */
 static JsonReturning *
 transformJsonExprOutput(ParseState *pstate, Node *formatted_expr,
@@ -4697,19 +4697,19 @@ transformJsonTransformOp(ParseState *pstate, JsonTransformOp *jto,
 	if (!((1 << op->on_null) & on_null_mask))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid ON NULL behavior in JSON_TRANSFORM()"),
+				 errmsg("invalid ON NULL behavior in JSON_MODIFY()"),
 				 parser_errposition(pstate, exprLocation((Node *) jto))));
 
 	if (!((1 << op->on_missing) & on_missing_mask))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid ON MISSING behavior in JSON_TRANSFORM()"),
+				 errmsg("invalid ON MISSING behavior in JSON_MODIFY()"),
 				 parser_errposition(pstate, exprLocation((Node *) jto))));
 
 	if (!((1 << op->on_existing) & on_existing_mask))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid ON EXISTING behavior in JSON_TRANSFORM()"),
+				 errmsg("invalid ON EXISTING behavior in JSON_MODIFY()"),
 				 parser_errposition(pstate, exprLocation((Node *) jto))));
 
 	op->pathspec =
@@ -4738,7 +4738,7 @@ transformJsonTransformOp(ParseState *pstate, JsonTransformOp *jto,
 }
 
 /*
- * Transform a JSON_TRANSFORM() expression.
+ * Transform a JSON_MODIFY() expression.
  */
 static Node *
 transformJsonTransform(ParseState *pstate, JsonTransform *jst)
@@ -4760,7 +4760,7 @@ transformJsonTransform(ParseState *pstate, JsonTransform *jst)
 	if (expr_typid != JSONBOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("%s() is not yet implemented for the json type", "JSON_TRANSFORM"),
+				 errmsg("%s() is not yet implemented for the json type", "JSON_MODIFY"),
 				 errhint("Try casting the argument to jsonb"),
 				 parser_errposition(pstate, jst->location)));
 
