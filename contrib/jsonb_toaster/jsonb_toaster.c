@@ -196,6 +196,7 @@ static JsonbValue *fillCompressedJsonbValue(CompressedJsonx *cjb,
 											JsonFieldPtr *ptr);
 static JsonbContainerHeader *jsonxzDecompress(JsonContainer *jc);
 static void jsonxzDecompressTo(CompressedJsonx *cjb, Size offset);
+static void jsonxzDecompressSlice(CompressedJsonx *cjb, Size offset, Size length);
 static bool JsonContainerIsToasted(JsonContainer *jc,
 								   JsonbToastedContainerPointerData *jbcptr);
 static bool JsonContainerIsCompressed(JsonContainer *jc,
@@ -796,7 +797,7 @@ JsonxIteratorInit(JsonContainer *cont, const JsonbContainerHeader *container,
 
 	/* decompress container header */
 	if (cjb)
-		jsonxzDecompressTo(cjb, cjb->offset + offsetof(JsonbContainerHeader, children));
+		jsonxzDecompressSlice(cjb, cjb->offset, offsetof(JsonbContainerHeader, children));
 
 	type = container->header & JBC_TMASK;
 
@@ -843,7 +844,7 @@ JsonxIteratorInit(JsonContainer *cont, const JsonbContainerHeader *container,
 	}
 
 	if (it->dataProper && cjb)
-		jsonxzDecompressTo(cjb, cjb->offset + (it->dataProper - (char *) container));
+		jsonxzDecompressSlice(cjb, cjb->offset, it->dataProper - (char *) container);
 
 	return (JsonIterator *) it;
 }
@@ -1785,7 +1786,7 @@ jsonxzDecompress(JsonContainer *jc)
 	JsonbDatum *jb = (JsonbDatum *) cjb->iter->buf->buf;
 	JsonbContainerHeader *container = (JsonbContainerHeader *)((char *) jb + cjb->offset);
 
-	jsonxzDecompressTo(cjb, cjb->offset + jc->len);
+	jsonxzDecompressSlice(cjb, cjb->offset, jc->len);
 
 	return container;
 }
@@ -1826,7 +1827,7 @@ fillCompressedJsonbValue(CompressedJsonx *cjb,
 
 		cjb2.offset = base_offset + offset;
 
-		jsonxzDecompressTo(cjb, cjb2.offset + offsetof(JsonbContainerHeader, children));
+		jsonxzDecompressSlice(cjb, cjb2.offset, offsetof(JsonbContainerHeader, children));
 		jsonxzInitContainer(cont, &cjb2, NULL, length);
 		JsonValueInitBinary(result, cont);
 
@@ -1877,7 +1878,7 @@ findValueInCompressedJsonbObject(CompressedJsonx *cjb, Oid toasterid,
 	key.val.string.val = keystr;
 	key.val.string.len = keylen;
 
-	jsonxzDecompressTo(cjb, base_offset);
+	jsonxzDecompressSlice(cjb, cjb->offset, base_offset - cjb->offset);
 
 	/* Binary search on object/pair keys *only* */
 	while (stopLow < stopHigh)
@@ -1944,7 +1945,7 @@ jsonxzFindKeyInObject(JsonContainer *jc, const char *key, int len,
 
 	CompressedDatumDecompress(cjb->datum, cjb->offset + offsetof(JsonbContainerHeader, header));
 #else
-	jsonxzDecompressTo(cjb, cjb->offset + offsetof(JsonbContainerHeader, children));
+	jsonxzDecompressSlice(cjb, cjb->offset, offsetof(JsonbContainerHeader, children));
 #endif
 
 	return findValueInCompressedJsonbObject(cjb, jc->toasterid, key, len, res, ptr);
@@ -1968,11 +1969,11 @@ JsonbzArrayIteratorInit(JsonbzArrayIterator *it, CompressedJsonx *cjb,
 	JsonbDatum	   *jb = (JsonbDatum *) cjb->iter->buf->buf;
 	const JsonbContainerHeader *jbc = (const JsonbContainerHeader *)((char *) jb + cjb->offset);
 
-	//jsonxzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children - (char *) jbc));
+	//jsonxzDecompressSlice(cjb, cjb->offset, ((char *) &jbc->children - (char *) jbc));
 
 	it->count = (cjb->header & JBC_CMASK);
 
-	//jsonxzDecompressTo(cjb, cjb->offset + ((char *) &jbc->children[it->count] - (char *) jbc));
+	//jsonxzDecompressSlice(cjb, cjb->offset, ((char *) &jbc->children[it->count] - (char *) jbc));
 
 	it->cjb = cjb;
 	it->container = jbc;
@@ -1991,7 +1992,7 @@ JsonbzArrayIteratorNext(JsonbzArrayIterator *it, JsonValue *result)
 	if (it->index >= it->count)
 		return false;
 
-	jsonxzDecompressTo(it->cjb, (char *) &jbc->children[it->count] - (char *) jb);
+	jsonxzDecompressSlice(it->cjb, it->cjb->offset, (char *) &jbc->children[it->count] - (char *) jb - it->cjb->offset);
 	fillCompressedJsonbValue(it->cjb, it->container, it->toasterid, it->index, it->base_addr,
 							 it->offset, result, NULL);
 
