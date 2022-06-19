@@ -1885,7 +1885,7 @@ typedef struct JsonArrayAgg
 
 /*
  * JsonTransform -
- *		untransformed representation of JSON_TRANSFORM()
+ *		untransformed representation of JSON_MODIFY()
  */
 typedef struct JsonTransform
 {
@@ -1899,7 +1899,7 @@ typedef struct JsonTransform
 
 /*
  * JsonTransformOp -
- *		untransformed representation of JSON_TRANSFORM() operations
+ *		untransformed representation of JSON_MODIFY() operations
  */
 typedef struct JsonTransformOp
 {

@@ -5211,7 +5211,7 @@ ExecEvalJsonTransform(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 			op->d.jsontransform.ops[i].expr.isnull)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("JSON_TRANSFORM called with NULL input")));
+					 errmsg("JSON_MODIFY called with NULL input")));
 
 		path = DatumGetJsonPathP(op->d.jsontransform.ops[i].pathspec.value);
 		res = JsonPathTransform(res, path,

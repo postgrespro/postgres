@@ -9849,7 +9849,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				JsonTransformExpr *jtexpr = (JsonTransformExpr *) node;
 				ListCell *lc;
 
-				appendStringInfoString(buf, "JSON_TRANSFORM(");
+				appendStringInfoString(buf, "JSON_MODIFY(");
 				get_rule_expr(jtexpr->formatted_expr, context, showimplicit);
 
 				foreach(lc, jtexpr->ops)

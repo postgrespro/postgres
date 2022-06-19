@@ -1521,7 +1521,7 @@ typedef enum JsonTransformBehavior
 } JsonTransformBehavior;
 
 /*
- * Transformed JSON_TRANSFORM() expression.
+ * Transformed JSON_MODIFY() expression.
  */
 typedef struct JsonTransformExpr
 {
