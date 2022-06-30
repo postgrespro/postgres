@@ -6850,6 +6850,7 @@ describeToasters(const char *pattern, bool verbose)
 	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
 	static const bool translate_columns[] = {false, false, false};
+	int dotcnt;
 
 	if (pset.sversion < 150000)
 	{
@@ -6881,7 +6882,7 @@ describeToasters(const char *pattern, bool verbose)
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
 						  NULL, "tsrname", NULL,
-						  NULL);
+						  NULL, NULL, &dotcnt);
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1;");
 
