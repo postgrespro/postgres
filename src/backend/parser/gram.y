@@ -2483,6 +2483,15 @@ alter_table_cmd:
 					n->def = (Node *) makeString($6);
 					$$ = (Node *)n;
 				}
+			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET TOASTER <toaster_name> */
+			| ALTER opt_column ColId SET TOASTER name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetToaster;
+					n->name = $3;
+					n->def = (Node *) makeString($6);
+					$$ = (Node *)n;
+				}
 			/* ALTER TABLE <name> ALTER [COLUMN] <colname> DROP EXPRESSION */
 			| ALTER opt_column ColId DROP EXPRESSION
 				{
@@ -5267,6 +5276,15 @@ AlterExtensionContentsStmt:
 					n->objtype = OBJECT_ROUTINE;
 					n->object = (Node *) $6;
 					$$ = (Node *) n;
+				}
+			| ALTER EXTENSION name add_drop TOASTER name
+				{
+					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
+					n->extname = $3;
+					n->action = $4;
+					n->objtype = OBJECT_TOASTER;
+					n->object = (Node *) makeString($6);
+					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop TOASTER name
 				{

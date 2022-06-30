@@ -974,6 +974,10 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 								format_type_be(attr->atttypid))));
 		}
 
+		if (partitioned)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("specifying a table access method is not supported on a partitioned table")));
 		if (colDef->toaster)
 			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
 		else if (TypeIsToastable(attr->atttypid))
@@ -985,20 +989,6 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 			validateToaster(attr->atttoaster, attr->atttypid,
 							attr->attstorage, attr->attcompression,
 							accessMethodId, false);
-	}
-
-	/*
-	 * If the statement hasn't specified an access method, but we're defining
-	 * a type of relation that needs one, use the default.
-	 */
-	if (stmt->accessMethod != NULL)
-	{
-		accessMethod = stmt->accessMethod;
-
-		if (partitioned)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("specifying a table access method is not supported on a partitioned table")));
 	}
 
 	/*
