@@ -116,7 +116,11 @@ toast_tuple_init(ToastTupleContext *ttc)
 					 * we reuse the original reference to the old value
 					 * in the new tuple.
 					 */
-					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+					if (VARATT_IS_EXTERNAL_ONDISK(new_value))
+						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+					else
+						ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+
 					continue;
 				}
 				else if (toaster && toaster->update_toast &&
@@ -289,7 +293,8 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 			continue;
 		if (VARATT_IS_EXTERNAL(value) && !VARATT_IS_CUSTOM(value))
 			continue;			/* can't happen, toast_action would be PLAIN */
-		if (for_compression && VARATT_IS_COMPRESSED(value))
+		if (for_compression &&
+			(VARATT_IS_COMPRESSED(value) || VARATT_IS_CUSTOM(value)))
 			continue;
 		if (check_main && att->attstorage != TYPSTORAGE_MAIN)
 			continue;
