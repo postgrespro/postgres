@@ -70,3 +70,49 @@ select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
 
 update test_jsonbz_arr set js = jsonb_set(js, '{c,0,a}', to_jsonb(repeat('e', 65)));
 select id, js->'c'->0->>'a' from test_jsonbz_arr order by id;
+
+
+create table test_jsonxa_arr (id int, js jsonb toaster jsonb_toaster);
+
+insert into test_jsonxa_arr
+select i, (select jsonb_agg(j) from generate_series(1, (2 ^ i)::int) j)
+from generate_series(7, 20) i;
+
+select id, pg_column_size(js) from test_jsonxa_arr order by id;
+select id, (select count(*) from jsonb_array_elements(js)) from test_jsonxa_arr order by id;
+
+select id, js -> 100 from test_jsonxa_arr order by id;
+select id, js -> 200 from test_jsonxa_arr order by id;
+select id, js -> (jsonb_array_length(js) - 1) from test_jsonxa_arr order by id;
+
+select id, json_query(js, '$[0 to 10]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = jsonb_set(js, '{0}', '0');
+
+select id, (select count(*) from jsonb_array_elements(js)) from test_jsonxa_arr order by id;
+select id, js -> 0 from test_jsonxa_arr order by id;
+select id, js -> 100 from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, set '$[0 to 3]' = '0');
+select id, json_query(js, '$[0 to 10]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, insert '$[200 to 203]' = '0');
+select id, json_query(js, '$[200 to 210]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, set '$[0 to 300]' = '0');
+select id, json_query(js, '$[290 to 310]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, set '$[100,500,1000]' = '0');
+select id, json_query(js, '$[95 to 105, 495 to 505, 995 to 1005]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, insert '$[1000003 to 1000005]' = '0');
+select id, json_query(js, '$[1000000 to 1000010]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, remove '$[0 to 10]');
+select id, json_query(js, '$[0 to 20]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, remove '$[20 to 200]');
+select id, json_query(js, '$[0 to 30]' with wrapper) from test_jsonxa_arr order by id;
+
+update test_jsonxa_arr set js = json_modify(js, remove '$[30 to 100000]');
+select id, json_query(js, '$[0 to 40]' with wrapper) from test_jsonxa_arr order by id;

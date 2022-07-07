@@ -4,7 +4,8 @@ MODULE_big = jsonb_toaster
 OBJS = \
 	$(WIN32RES) \
 	jsonb_toaster.o \
-	jsonb_toast_internals.o
+	jsonb_toast_internals.o \
+	jsonb_toast_array.o
 
 EXTENSION = jsonb_toaster
 DATA = jsonb_toaster--1.0.sql
