@@ -24,6 +24,7 @@
 #define JSONX_POINTER_COMPRESSED_CHUNKS		0x40000000
 #define JSONX_POINTER_DIFF					0x50000000
 #define JSONX_POINTER_DIFF_COMP				0x60000000
+#define JSONX_CHUCKED_ARRAY					0x70000000
 
 #define JSONX_CUSTOM_PTR_HEADER_SIZE		(INTALIGN(VARATT_CUSTOM_SIZE(0)) + sizeof(uint32))
 
@@ -119,6 +120,25 @@ typedef struct JsonxPointerDiff
 	char		data[FLEXIBLE_ARRAY_MEMBER];
 } JsonxPointerDiff;
 
+#define JSONXA_INLINE_CHUNK 0x80000000
+
+typedef ItemPointerData JsonxArrayChunkPtr;
+typedef uint32 JsonxArrayChunkOffset;
+
+typedef struct JsonxArray
+{
+	int32		n_elems;
+	int32		n_chunks;
+	Oid			toastrelid;
+	JsonxArrayChunkOffset	chunk_offsets[FLEXIBLE_ARRAY_MEMBER];
+	/* JsonxArrayChunkPtr	chunk_ptrs[FLEXIBLE_ARRAY_MEMBER]; */
+} JsonxArray;
+
+#define JSONX_ARRAY_HDR_SIZE (JSONX_CUSTOM_PTR_HEADER_SIZE + offsetof(JsonxArray, chunk_offsets))
+
+extern JsonContainerOps jsonxaContainerOps;
+extern void jsonxaInit(JsonContainerData *jc, Datum value);
+
 extern Datum jsonx_toast_save_datum(Relation rel, Datum value,
 									struct varlena *oldexternal,
 									int options);
@@ -126,6 +146,7 @@ extern Datum
 jsonx_toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 					 struct varlena *oldexternal, int options,
 					 struct varlena **p_chunk_tids,
+					 ItemPointerData *chunk_tids,
 					 bool compress_chunks);
 extern void jsonx_toast_delete_datum(Datum value, bool is_speculative);
 
@@ -144,6 +165,17 @@ jsonx_toast_make_pointer_diff(Oid toasterid, struct varatt_external *ptr,
 							  bool compressed_chunks,
 							  int32 diff_offset, int32 diff_len,
 							  const void *diff_data);
+
+extern Datum jsonx_toast_array_chunks(Relation rel, Oid toastrelid,
+									  Oid toasterid, int options,
+									  int n_elems, int n_chunks,
+									  JsonxArrayChunkOffset *chunk_offsets,
+									  JsonxArrayChunkPtr *chunk_ptrs,
+									  Datum *chunk_jbs);
+
+extern struct varlena *
+jsonx_toast_wrap_array_into_pointer(Oid toasterid, JsonxArray *array,
+									int data_size);
 
 extern struct varlena *
 jsonx_toast_compress_tids(struct varlena *chunk_tids, int max_size);

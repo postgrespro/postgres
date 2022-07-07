@@ -998,7 +998,9 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 	iter->toasterid = toasterid;
 	iter->chunk_tids_inline_size = inline_size;
 
-	if (inline_size <= 0 ||
+	if (type == JSONX_PLAIN_JSONB ||
+		type == JSONX_POINTER ||
+		type == JSONX_POINTER_COMPRESSED_CHUNKS ||
 		type == JSONX_POINTER_DIFF ||
 		type == JSONX_POINTER_DIFF_COMP)
 	{
@@ -1009,8 +1011,11 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 			type == JSONX_POINTER_COMPRESSED_CHUNKS ||
 			type == JSONX_POINTER_DIFF_COMP;
 	}
-	else
+	else if (type == JSONX_POINTER_DIRECT_TIDS_COMP ||
+			 type == JSONX_POINTER_DIRECT_TIDS)
 	{
+		Assert(inline_size > 0);
+
 		iter->nchunk_tids = header & ~JSONX_POINTER_TYPE_MASK;
 		iter->compressed_chunks = false;
 
