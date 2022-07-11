@@ -995,10 +995,14 @@ mutateArray(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				mutateItem(cxt, jsp, &mut->mutator, unwrapElements, false);
 
 			index++;
+
+			if (ranges && index > max_index)
+				break;
 		}
 	}
 
-	if (!jsp && cxt->update.onMissing == JSTB_CREATE &&
+	if (!jsp && ranges && index <= max_index &&
+		cxt->update.onMissing == JSTB_CREATE &&
 		(cxt->update.value || cxt->update.onNull == JSTB_NULL))
 	{
 		JsonbValue	jbv_null;

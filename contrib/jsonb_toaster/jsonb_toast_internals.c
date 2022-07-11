@@ -168,6 +168,44 @@ jsonx_toast_make_pointer_diff(Oid toasterid,
 }
 
 struct varlena *
+jsonx_toast_make_pointer_array(Oid toasterid, int n_chunks, int inline_chunks_size,
+							   JsonxArray **p_array)
+{
+	int			data_size = JSONX_ARRAY_SIZE(n_chunks);
+	char	   *data;
+	struct varlena *ptr;
+
+	if (inline_chunks_size)
+		data_size = INTALIGN(data_size) + inline_chunks_size;
+
+	ptr = jsonx_toast_make_custom_pointer(toasterid,
+										  JSONX_CHUCKED_ARRAY, // | n_elems FIXME
+										  data_size,
+										  data_size + JSONX_CUSTOM_PTR_HEADER_SIZE, // FIXME
+										  &data);
+
+	Assert((intptr_t) data == INTALIGN((intptr_t) data));
+
+	*p_array = (JsonxArray *) data;
+
+	return ptr;
+}
+
+struct varlena *
+jsonx_toast_wrap_array_into_pointer(Oid toasterid, JsonxArray *array, int data_size)
+{
+	char	   *data;
+	struct varlena *ptr =
+		jsonx_toast_make_custom_pointer(toasterid, JSONX_CHUCKED_ARRAY, // | n_elems FIXME
+										data_size, data_size + JSONX_CUSTOM_PTR_HEADER_SIZE, // FIXME
+										&data);
+
+	memcpy(data, array, data_size);
+
+	return ptr;
+}
+
+struct varlena *
 jsonxMakeToastPointer(JsonbToastedContainerPointerData *ptr)
 {
 	if (ptr->ntids || ptr->has_diff)
@@ -585,7 +623,8 @@ jsonx_toast_write_slice(Relation toastrel, Relation *toastidxs,
 Datum
 jsonx_toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 						   struct varlena *oldexternal, int options,
-						   struct varlena **p_chunk_tids,
+						   struct varlena **p_chunk_tids_ptr,
+						   ItemPointerData *chunk_tids,
 						   bool compress_chunks)
 {
 	Relation	toastrel;
@@ -597,7 +636,6 @@ jsonx_toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
-	ItemPointer	chunk_tids;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
 
@@ -743,14 +781,12 @@ jsonx_toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 		}
 	}
 
-	if (p_chunk_tids)
+	if (chunk_tids)
+		compress_chunks = false;
+	else if (p_chunk_tids_ptr)
 	{
 		compress_chunks = false;
-		*p_chunk_tids = jsonx_toast_make_pointer_with_tids(toasterid, &toast_pointer, data_todo, &chunk_tids);
-	}
-	else
-	{
-		chunk_tids = NULL;
+		*p_chunk_tids_ptr = jsonx_toast_make_pointer_with_tids(toasterid, &toast_pointer, data_todo, &chunk_tids);
 	}
 
 	jsonx_toast_write_slice(toastrel, toastidxs, num_indexes, validIndex,
@@ -786,7 +822,8 @@ Datum
 jsonx_toast_save_datum(Relation rel, Datum value,
 				 struct varlena *oldexternal, int options)
 {
-	return jsonx_toast_save_datum_ext(rel, InvalidOid, value, oldexternal, options, NULL, false);
+	return jsonx_toast_save_datum_ext(rel, InvalidOid, value, oldexternal,
+									  options, NULL, NULL, false);
 }
 
 /* ----------
@@ -1030,6 +1067,10 @@ jsonx_create_fetch_datum_iterator(struct varlena *attr, Oid toasterid,
 			iter->compressed_chunk_tids = NULL;
 			Assert(iter->nchunk_tids == inline_size / sizeof(ItemPointerData));
 		}
+	}
+	else
+	{
+		elog(ERROR, "invalid jsonx type: %d", type);
 	}
 
 	iter->chunksize = TOAST_MAX_CHUNK_SIZE;

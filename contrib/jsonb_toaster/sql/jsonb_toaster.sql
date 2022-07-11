@@ -93,6 +93,15 @@ select id, (select count(*) from jsonb_array_elements(js)) from test_jsonxa_arr 
 select id, js -> 0 from test_jsonxa_arr order by id;
 select id, js -> 100 from test_jsonxa_arr order by id;
 
+update test_jsonxa_arr set js = json_modify(js, set '$[LAST+1]' = '0') where id = 10;
+select pg_column_size(js) from test_jsonxa_arr where id = 10;
+update test_jsonxa_arr set js = json_modify(js, set '$[LAST+1]' = '0') where id = 10;
+select pg_column_size(js) from test_jsonxa_arr where id = 10;
+update test_jsonxa_arr set js = json_modify(js, set '$[LAST+1]' = '0') where id = 10;
+select pg_column_size(js) from test_jsonxa_arr where id = 10;
+update test_jsonxa_arr set js = json_modify(js, set '$[LAST+1]' = '0') where id = 10;
+select pg_column_size(js) from test_jsonxa_arr where id = 10;
+
 update test_jsonxa_arr set js = json_modify(js, set '$[0 to 3]' = '0');
 select id, json_query(js, '$[0 to 10]' with wrapper) from test_jsonxa_arr order by id;
 
@@ -108,6 +117,12 @@ select id, json_query(js, '$[95 to 105, 495 to 505, 995 to 1005]' with wrapper) 
 update test_jsonxa_arr set js = json_modify(js, insert '$[1000003 to 1000005]' = '0');
 select id, json_query(js, '$[1000000 to 1000010]' with wrapper) from test_jsonxa_arr order by id;
 
+truncate test_jsonxa_arr;
+
+insert into test_jsonxa_arr
+select i, (select jsonb_agg(j) from generate_series(1, (2 ^ i)::int) j)
+from generate_series(7, 20) i;
+
 update test_jsonxa_arr set js = json_modify(js, remove '$[0 to 10]');
 select id, json_query(js, '$[0 to 20]' with wrapper) from test_jsonxa_arr order by id;
 
@@ -116,3 +131,19 @@ select id, json_query(js, '$[0 to 30]' with wrapper) from test_jsonxa_arr order 
 
 update test_jsonxa_arr set js = json_modify(js, remove '$[30 to 100000]');
 select id, json_query(js, '$[0 to 40]' with wrapper) from test_jsonxa_arr order by id;
+
+-- test vacuum full
+truncate test_jsonxa_arr;
+
+insert into test_jsonxa_arr
+select i, (select jsonb_agg(j) from generate_series(1, (2 ^ i)::int) j)
+from generate_series(7, 20) i;
+
+update test_jsonxa_arr set js = json_modify(js, set '$[1, 101, 201, 301, 401, 501, 1001, 1501, 2001, 3001, 5001]' = '0');
+
+select format('vacuum full pg_toast.pg_toast_%s', 'test_jsonxa_arr'::regclass::oid)
+\gexec
+
+vacuum full test_jsonxa_arr;
+
+select id, json_query(js, '$[0 to 2, 100 to 102, 200 to 202, 300 to 302, 400 to 402, 500 to 502, 1000 to 1002, 1500 to 1502, 2000 to 2002, 3000 to 3002, 5000 to 5002]' with wrapper) from test_jsonxa_arr order by id;
