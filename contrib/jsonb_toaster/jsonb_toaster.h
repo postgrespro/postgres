@@ -134,7 +134,22 @@ typedef struct JsonxArray
 	/* JsonxArrayChunkPtr	chunk_ptrs[FLEXIBLE_ARRAY_MEMBER]; */
 } JsonxArray;
 
-#define JSONX_ARRAY_HDR_SIZE (JSONX_CUSTOM_PTR_HEADER_SIZE + offsetof(JsonxArray, chunk_offsets))
+#define JSONX_ARRAY_HDR_SIZE \
+	(JSONX_CUSTOM_PTR_HEADER_SIZE + offsetof(JsonxArray, chunk_offsets))
+
+#define JSONX_ARRAY_SIZE(n_chunks) \
+	(JSONX_ARRAY_HDR_SIZE + \
+	 (sizeof(JsonxArrayChunkOffset) + sizeof(JsonxArrayChunkPtr)) * (n_chunks))
+
+#define JSONX_ARRAY_CHUNK_PTRS(jxa) \
+	((JsonxArrayChunkPtr *) &(jxa)->chunk_offsets[(jxa)->n_chunks])
+
+typedef struct JsonxArrayChunkInfo
+{
+	Datum		jb;
+	JsonxArrayChunkOffset offset;
+	JsonxArrayChunkPtr ptr;
+} JsonxArrayChunkInfo;
 
 extern JsonContainerOps jsonxaContainerOps;
 extern void jsonxaInit(JsonContainerData *jc, Datum value);
@@ -166,12 +181,9 @@ jsonx_toast_make_pointer_diff(Oid toasterid, struct varatt_external *ptr,
 							  int32 diff_offset, int32 diff_len,
 							  const void *diff_data);
 
-extern Datum jsonx_toast_array_chunks(Relation rel, Oid toastrelid,
-									  Oid toasterid, int options,
-									  int n_elems, int n_chunks,
-									  JsonxArrayChunkOffset *chunk_offsets,
-									  JsonxArrayChunkPtr *chunk_ptrs,
-									  Datum *chunk_jbs);
+extern struct varlena *
+jsonx_toast_make_pointer_array(Oid toasterid, int n_chunks, int inline_chunks_size,
+							   JsonxArray **p_array);
 
 extern struct varlena *
 jsonx_toast_wrap_array_into_pointer(Oid toasterid, JsonxArray *array,
@@ -205,6 +217,18 @@ jsonxWriteToastPointer(StringInfo buffer, JsonbToastedContainerPointerData *ptr)
 
 extern int
 jsonxToastPointerSize(JsonbToastedContainerPointerData *jbcptr_data);
+
+extern bool
+jsonb_toaster_save_array(Relation rel, Oid toasterid, JsonContainer *root,
+						 Size max_size, char cmethod, int options, Datum *res);
+
+extern void jsonxa_toaster_delete(JsonContainer *jc, bool is_speculative);
+extern Datum jsonxa_toaster_copy(Relation rel, Oid toasterid,
+								 JsonContainer *jc, char cmethod);
+extern Datum jsonxa_toaster_cmp(Relation rel, Oid toasterid,
+								JsonContainer *new_jc,
+								JsonContainer *old_jc, char cmethod);
+
 
 /*
  * Support for de-TOASTing toasted value iteratively. "need" is a pointer

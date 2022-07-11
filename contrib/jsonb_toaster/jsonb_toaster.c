@@ -207,6 +207,7 @@ static bool JsonContainerContainsToasted(JsonContainer *jc);
 static bool JsonContainerContainsToastedOrCompressed(JsonContainer *jc, bool *toasted, bool *compressed);
 static bool JsonValueContainsToastedOrCompressed(const JsonValue *jv, bool *toasted, bool *compressed);
 
+static bool jsonb_toast_arrays = true;				/* GUC */
 static bool jsonb_toast_fields = true;				/* GUC */
 static bool jsonb_toast_fields_recursively = true;	/* GUC */
 static bool jsonb_compress_fields = true;			/* GUC */
@@ -1345,7 +1346,6 @@ JsonValueContainsToastedOrCompressed(const JsonValue *jv,
 	return *toasted || *compressed;
 }
 
-
 static void
 convertJsonbObject(StringInfo buffer, JEntry *pheader, const JsonbValue *val, int level)
 {
@@ -1736,19 +1736,26 @@ jsonxInitContainer(JsonContainerData *jc, JsonbContainerHeader *jbc, int len, Oi
 static void
 jsonxInit(JsonContainerData *jc, Datum value)
 {
-	JsonbDatum	   *jb;
+	uint32			header;
 
 	Assert(VARATT_IS_CUSTOM(value));
-	jb = (void *) JSONX_CUSTOM_PTR_GET_DATA(value);
+	header = JSONX_CUSTOM_PTR_GET_HEADER(value);
 
-	Assert((intptr_t) jb == INTALIGN((intptr_t) jb));
-	jb = (void *) INTALIGN((intptr_t) jb);		/* FIXME alignment */
-
-	if (VARATT_IS_EXTERNAL_ONDISK(jb) ||  VARATT_IS_COMPRESSED(jb))
-		jsonxzInit(jc, value);
+	if ((header & JSONX_POINTER_TYPE_MASK) == JSONX_CHUCKED_ARRAY)
+		jsonxaInit(jc, value);
 	else
-		jsonxInitContainer(jc, &jb->root, VARSIZE_ANY_EXHDR(jb),
-						   VARATT_CUSTOM_GET_TOASTERID(value));
+	{
+		JsonbDatum	   *jb = (void *) JSONX_CUSTOM_PTR_GET_DATA(value);
+
+		Assert((intptr_t) jb == INTALIGN((intptr_t) jb));
+		jb = (void *) INTALIGN((intptr_t) jb);		/* FIXME alignment */
+
+		if (VARATT_IS_EXTERNAL_ONDISK(jb) || VARATT_IS_COMPRESSED(jb))
+			jsonxzInit(jc, value);
+		else
+			jsonxInitContainer(jc, &jb->root, VARSIZE_ANY_EXHDR(jb),
+							   VARATT_CUSTOM_GET_TOASTERID(value));
+	}
 }
 
 static void
@@ -2770,8 +2777,8 @@ jsonxzInitContainerFromDatum(JsonContainer *jc, Datum toasted_val)
 
 static bool
 jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
-						  /* XXX bool uniquified, */ Size max_size, char cmethod,
-						  JsonValue	*object)
+						  /* XXX bool uniquified, */ Size max_size,
+						  char cmethod, int options, JsonValue *object)
 {
 	JsonIterator *it;
 	JsonValue	jsv;
@@ -2967,8 +2974,20 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 			{
 				JsonValue	jv;
 
+#if 0 // TODO
+				if (JsonContainerIsArray(jc) && jsonb_toast_arrays &&
+					jsonb_toaster_save_array(rel, toasterid, jc, max_size - total_size,
+											 cmethod, options, &jv))
+				{
+					pairs[max_key_idx].value = jv;
+					break;
+				}
+#endif
+
 				if (JsonContainerIsObject(jc) &&
-					jsonb_toaster_save_object(rel, toasterid, jc, /* XXX uniquified,*/ max_size - total_size, cmethod, &jv))
+					jsonb_toaster_save_object(rel, toasterid, jc, /* XXX uniquified,*/
+											  max_size - total_size,
+											  cmethod, options, &jv))
 				{
 					pairs[max_key_idx].value = jv;
 					break;
@@ -3044,7 +3063,9 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 		{
 			struct varlena *chunks = NULL;
 
-			toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, value_to_toast, NULL, 0, &chunks, compress_chunks);
+			toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, value_to_toast,
+													 NULL, options,
+													 &chunks, NULL, compress_chunks);
 
 			if (!chunks)
 				;
@@ -3075,7 +3096,8 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 			}
 		}
 		else
-			toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, value_to_toast, NULL, 0, NULL, compress_chunks);
+			toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, value_to_toast,
+													 NULL, options, NULL, NULL, compress_chunks);
 
 		if (fields[max_key_idx].status != 'c' &&	/* FIXME free compressed at pass 1 */
 			compressed_val != val)
@@ -3110,29 +3132,41 @@ exit:
 
 static Datum
 jsonb_toaster_save(Relation rel, Oid toasterid, Json *js,
-				   int max_size, char cmethod)
+				   int max_size, char cmethod, int options)
 {
 	JsonContainer *root = JsonRoot(js);
-	JsonValue	object;
-	Datum		jb = (Datum) 0;
 
-	if (!(jsonb_toast_fields || jsonb_compress_fields) || max_size <= 0)
+	if (max_size <= 0)
 		return (Datum) 0;
 
-	if (!JsonContainerIsObject(root))
-		return (Datum) 0;
+	if (JsonContainerIsObject(root) &&
+		(jsonb_toast_fields || jsonb_compress_fields))
+	{
+		JsonValue	object;
+		Datum		jb = (Datum) 0;
 
-	if (!jsonb_toaster_save_object(rel, toasterid, root, /* XXX JsonIsUniquified(js), */
-								   max_size, cmethod, &object))
-		return (Datum) 0;
+		if (!jsonb_toaster_save_object(rel, toasterid, root, /* XXX JsonIsUniquified(js), */
+									   max_size, cmethod, options, &object))
+			return (Datum) 0;
 
-	jb = PointerGetDatum(JsonValueFlatten(&object, JsonxEncode,
-										  &jsonxContainerOps,
-										  (void *)(intptr_t) toasterid));
+		jb = PointerGetDatum(JsonValueFlatten(&object, JsonxEncode,
+											  &jsonxContainerOps,
+											  (void *)(intptr_t) toasterid));
 
-	pfree(object.val.object.pairs);
+		pfree(object.val.object.pairs);
 
-	return jb;
+		return jb;
+	}
+
+	if (JsonContainerIsArray(root) && jsonb_toast_arrays)
+	{
+		Datum		jb = (Datum) 0;
+
+		if (jsonb_toaster_save_array(rel, toasterid, root, max_size, cmethod, options, &jb))
+			return jb;
+	}
+
+	return (Datum) 0;
 }
 
 static uint32
@@ -3157,13 +3191,14 @@ JsonbIteratorGetValuePtr(jsonbIterator *it, uint32 offset)
 }
 
 static Datum
-jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod, bool apply_changes);
+jsonb_toaster_copy(Relation rel, Oid toasterid, JsonContainer *jc,
+				   char cmethod, bool apply_changes);
 
 static void
-jsonb_toaster_copy_recursive(Relation rel, JsonContainer *jc, char cmethod);
+jsonb_toaster_copy_recursive(Relation rel, Oid toasterid, JsonContainer *jc, char cmethod);
 
 static bool
-jsonb_toaster_replace_toasted(Relation rel, JsonValue *jsv,
+jsonb_toaster_replace_toasted(Relation rel, Oid toasterid, JsonValue *jsv,
 							  jsonbIterator *it, uint32 offset, char cmethod)
 {
 	JsonContainer *jc;
@@ -3175,7 +3210,7 @@ jsonb_toaster_replace_toasted(Relation rel, JsonValue *jsv,
 
 	if (JsonContainerIsToasted(jc, NULL))
 	{
-		Datum		copied = jsonb_toaster_copy(rel, jc, cmethod, false);
+		Datum		copied = jsonb_toaster_copy(rel, toasterid, jc, cmethod, false);
 		Datum		compressed;
 		Datum		toasted;
 		JsonbToastedContainerPointer *jbcptr;
@@ -3196,14 +3231,14 @@ jsonb_toaster_replace_toasted(Relation rel, JsonValue *jsv,
 	}
 	else if (JsonContainerContainsToasted(jc))
 	{
-		jsonb_toaster_copy_recursive(rel, jc, cmethod);
+		jsonb_toaster_copy_recursive(rel, toasterid, jc, cmethod);
 	}
 
 	return true;
 }
 
 static void
-jsonb_toaster_copy_recursive(Relation rel, JsonContainer *jc, char cmethod)
+jsonb_toaster_copy_recursive(Relation rel, Oid toasterid, JsonContainer *jc, char cmethod)
 {
 	JsonIterator *it;
 	JsonIteratorToken tok;
@@ -3221,16 +3256,19 @@ jsonb_toaster_copy_recursive(Relation rel, JsonContainer *jc, char cmethod)
 		if (tok != WJB_VALUE && tok != WJB_ELEM)
 			continue;
 
-		jsonb_toaster_replace_toasted(rel, &jsv, (jsonbIterator *) it, offset, cmethod);
+		jsonb_toaster_replace_toasted(rel, toasterid, &jsv, (jsonbIterator *) it, offset, cmethod);
 	}
 }
 
 static Datum
-jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod,
-				   bool apply_changes)
+jsonb_toaster_copy(Relation rel, Oid toasterid, JsonContainer *jc,
+				   char cmethod, bool apply_changes)
 {
 	JsonbContainerHeader *jbc;
 	void	   *jb;
+
+	if (jc->ops == &jsonxaContainerOps)
+		return jsonxa_toaster_copy(rel, toasterid, jc, cmethod);
 
 	if (!JsonContainerIsToasted(jc, NULL) &&
 		!JsonContainerContainsToasted(jc))
@@ -3256,7 +3294,7 @@ jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod,
 
 			jsonxInit(JsonRoot(js), PointerGetDatum(jb));
 
-			jsonb_toaster_copy_recursive(rel, JsonRoot(js), cmethod);
+			jsonb_toaster_copy_recursive(rel, toasterid, JsonRoot(js), cmethod);
 		}
 	}
 	else
@@ -3272,7 +3310,7 @@ jsonb_toaster_copy(Relation rel, JsonContainer *jc, char cmethod,
 }
 
 static void
-jsonb_toaster_delete_container(Relation rel, JsonContainer *jc)
+jsonb_toaster_delete_container(Relation rel, JsonContainer *jc, bool is_speculative)
 {
 	JsonbToastedContainerPointerData jbcptr;
 
@@ -3280,15 +3318,22 @@ jsonb_toaster_delete_container(Relation rel, JsonContainer *jc)
 	{
 		struct varlena *ptr = jsonxMakeToastPointer(&jbcptr);
 
-		jsonx_toast_delete_datum(PointerGetDatum(ptr), false);
+		jsonx_toast_delete_datum(PointerGetDatum(ptr), is_speculative);
 		pfree(ptr);
 	}
 }
 
 static void
-jsonb_toaster_delete_recursive(Relation rel, JsonContainer *jc, bool delete_self)
+jsonb_toaster_delete_recursive(Relation rel, JsonContainer *jc,
+							   bool delete_self, bool is_speculative)
 {
 	check_stack_depth();
+
+	if (jc->ops == &jsonxaContainerOps)
+	{
+		jsonxa_toaster_delete(jc, is_speculative);
+		return;
+	}
 
 	if (JsonContainerContainsToasted(jc))
 	{
@@ -3308,16 +3353,18 @@ jsonb_toaster_delete_recursive(Relation rel, JsonContainer *jc, bool delete_self
 
 			jc = jsv.val.binary.data;
 
-			jsonb_toaster_delete_recursive(rel, jc, true);
+			jsonb_toaster_delete_recursive(rel, jc, true, is_speculative);
 		}
 	}
 
 	if (delete_self)
-		jsonb_toaster_delete_container(rel, jc);
+		jsonb_toaster_delete_container(rel, jc, is_speculative);
 }
 
 static bool
-jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *new_jc, char cmethod)
+jsonb_toaster_cmp_recursive(Relation rel, Oid toasterid,
+							JsonContainer *old_jc, JsonContainer *new_jc,
+							char cmethod)
 {
 	JsonbToastedContainerPointerData new_jbcptr;
 	JsonbToastedContainerPointerData old_jbcptr;
@@ -3328,6 +3375,7 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 	bool		changed = false;
 	bool		old_end;
 	bool		new_end;
+	bool		is_speculative = false; // FIXME
 
 	check_stack_depth();
 
@@ -3368,36 +3416,42 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 						if (!JsonContainerIsToasted(oldjc, &old_jbcptr) ||
 							memcmp(&new_jbcptr.ptr, &old_jbcptr.ptr, sizeof(new_jbcptr.ptr)))
 						{
-							changed |= jsonb_toaster_replace_toasted(rel, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
-							jsonb_toaster_delete_recursive(rel, oldjc, true);
+							changed |= jsonb_toaster_replace_toasted(rel, toasterid,
+																	  &new_jbv, (jsonbIterator *) new_it,
+																	  offset, cmethod);
+							jsonb_toaster_delete_recursive(rel, oldjc, true, is_speculative);
 						}
 					}
 					else if (newjc->type != oldjc->type ||
 							 newjc->type != jbvObject)
 					{
-						changed |= jsonb_toaster_replace_toasted(rel, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
-						jsonb_toaster_delete_recursive(rel, oldjc, true);
+						changed |= jsonb_toaster_replace_toasted(rel, toasterid,
+																 &new_jbv, (jsonbIterator *) new_it,
+																 offset, cmethod);
+						jsonb_toaster_delete_recursive(rel, oldjc, true, is_speculative);
 					}
 					else if (!JsonContainerContainsToasted(newjc))
 					{
-						jsonb_toaster_delete_recursive(rel, oldjc, false);
+						jsonb_toaster_delete_recursive(rel, oldjc, false, is_speculative);
 					}
 					else if (!JsonContainerContainsToasted(oldjc))
-						changed |= jsonb_toaster_replace_toasted(rel, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
+						changed |= jsonb_toaster_replace_toasted(rel, toasterid,
+																 &new_jbv, (jsonbIterator *) new_it,
+																 offset, cmethod);
 					else
-						changed |= jsonb_toaster_cmp_recursive(rel, oldjc, newjc, cmethod);
+						changed |= jsonb_toaster_cmp_recursive(rel, toasterid, oldjc, newjc, cmethod);
 				}
 				else
 				{
 					changed |=
-						jsonb_toaster_replace_toasted(rel, &new_jbv,
+						jsonb_toaster_replace_toasted(rel, toasterid, &new_jbv,
 													  (jsonbIterator *) new_it,
 													  offset, cmethod);
 				}
 			}
 			else if (old_jbv.type == jbvBinary)
 			{
-				jsonb_toaster_delete_recursive(rel, old_jbv.val.binary.data, true);
+				jsonb_toaster_delete_recursive(rel, old_jbv.val.binary.data, true, is_speculative);
 			}
 
 			old_end = JsonIteratorNext(&old_it, &old_jbv, true) != WJB_KEY;
@@ -3410,7 +3464,7 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 
 			if (old_jbv.type == jbvBinary &&
 				JsonContainerIsToasted(old_jbv.val.binary.data, NULL))
-				jsonb_toaster_delete_recursive(rel, old_jbv.val.binary.data, true);
+				jsonb_toaster_delete_recursive(rel, old_jbv.val.binary.data, true, is_speculative);
 
 			old_end = JsonIteratorNext(&old_it, &old_jbv, true) != WJB_KEY;
 		}
@@ -3421,7 +3475,7 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 			if (JsonIteratorNext(&new_it, &new_jbv, true) != WJB_VALUE)
 				break;
 
-			changed |= jsonb_toaster_replace_toasted(rel, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
+			changed |= jsonb_toaster_replace_toasted(rel, toasterid, &new_jbv, (jsonbIterator *) new_it, offset, cmethod);
 
 			new_end = JsonIteratorNext(&new_it, &new_jbv, true) != WJB_KEY;
 		}
@@ -3431,7 +3485,8 @@ jsonb_toaster_cmp_recursive(Relation rel, JsonContainer *old_jc, JsonContainer *
 }
 
 static Datum
-jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, char cmethod)
+jsonb_toaster_cmp(Relation rel, Oid toasterid,
+				  JsonContainer *new_jc, JsonContainer *old_jc, char cmethod)
 {
 	JsonbToastedContainerPointerData new_jbcptr;
 	JsonbToastedContainerPointerData old_jbcptr;
@@ -3439,6 +3494,11 @@ jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, ch
 	void	   *jb;
 	JsonbContainerHeader *new_jbc;
 	bool		changed = false;
+	bool		is_speculative = false; // FIXME
+
+	if (new_jc->ops == &jsonxaContainerOps &&
+		old_jc->ops == &jsonxaContainerOps)
+		return jsonxa_toaster_cmp(rel, toasterid, new_jc, old_jc, cmethod);
 
 	if (JsonContainerIsToasted(new_jc, &new_jbcptr))
 	{
@@ -3446,28 +3506,30 @@ jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, ch
 			!memcmp(&new_jbcptr.ptr, &old_jbcptr.ptr, sizeof(new_jbcptr.ptr)))
 			return (Datum) 0;
 
-		res = jsonb_toaster_copy(rel, new_jc, cmethod, true);
-		jsonb_toaster_delete_recursive(rel, old_jc, false);
+		res = jsonb_toaster_copy(rel, toasterid, new_jc, cmethod, true);
+		jsonb_toaster_delete_recursive(rel, old_jc, false, is_speculative);
 
 		return res;
 	}
 
 	if (new_jc->type != old_jc->type ||
-		new_jc->type != jbvObject)
+		new_jc->type != jbvObject ||
+		new_jc->ops == &jsonxaContainerOps ||
+		old_jc->ops == &jsonxaContainerOps)
 	{
-		res = jsonb_toaster_copy(rel, new_jc, cmethod, true);
-		jsonb_toaster_delete_recursive(rel, old_jc, false);
+		res = jsonb_toaster_copy(rel, toasterid, new_jc, cmethod, true);
+		jsonb_toaster_delete_recursive(rel, old_jc, false, is_speculative);
 		return res;
 	}
 
 	if (!JsonContainerContainsToasted(new_jc))
 	{
-		jsonb_toaster_delete_recursive(rel, old_jc, false);
+		jsonb_toaster_delete_recursive(rel, old_jc, false, is_speculative);
 		return (Datum) 0;
 	}
 
 	if (!JsonContainerContainsToasted(old_jc))
-		return jsonb_toaster_copy(rel, new_jc, cmethod, true);
+		return jsonb_toaster_copy(rel, toasterid, new_jc, cmethod, true);
 
 	new_jbc =
 		new_jc->ops == &jsonbzContainerOps ? jsonbzDecompress(new_jc) :
@@ -3488,7 +3550,7 @@ jsonb_toaster_cmp(Relation rel, JsonContainer *new_jc, JsonContainer *old_jc, ch
 
 		jsonxInit(JsonRoot(js), PointerGetDatum(jb));
 
-		changed = jsonb_toaster_cmp_recursive(rel, old_jc, JsonRoot(js), cmethod);
+		changed = jsonb_toaster_cmp_recursive(rel, toasterid, old_jc, JsonRoot(js), cmethod);
 	}
 
 	return PointerGetDatum(changed ? jb : NULL);
@@ -3516,7 +3578,7 @@ jsonb_toaster_toast2(Relation rel, Oid toasterid, Datum val, Datum compressed_va
 	{
 		struct varlena *chunks = NULL;
 
-		toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, val, NULL, 0, &chunks, compress_chunks);
+		toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, val, NULL, 0, &chunks, NULL, compress_chunks);
 
 		if (!chunks)
 			;
@@ -3548,7 +3610,7 @@ jsonb_toaster_toast2(Relation rel, Oid toasterid, Datum val, Datum compressed_va
 	}
 	else
 		toasted_val = jsonx_toast_save_datum_ext(rel, toasterid, val,
-												 NULL, options, NULL, compress_chunks);
+												 NULL, options, NULL, NULL, compress_chunks);
 
 	return toasted_val;
 }
@@ -3571,7 +3633,7 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 		new_val = PointerGetDatum(JsonEncode(&jbv, JsonbEncode, NULL));
 	}
 
-	if (!VARATT_IS_COMPRESSED(new_val))
+	if (0 && !VARATT_IS_COMPRESSED(new_val))
 	{
 		compressed_val = toast_compress_datum(new_val, cmethod);
 
@@ -3579,14 +3641,15 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 			compressed_val = new_val;
 	}
 
-	if (VARSIZE_ANY(compressed_val) <= max_inline_size)
+	if (compressed_val != (Datum) 0 &&
+		VARSIZE_ANY(compressed_val) <= max_inline_size)
 		return compressed_val;
 
 	return jsonb_toaster_toast2(rel, toasterid, new_val, compressed_val,
 								max_inline_size, options);
 
 	return jsonx_toast_save_datum_ext(rel, toasterid, compressed_val,
-									  NULL, options, NULL, false);
+									  NULL, options, NULL, NULL, false);
 }
 
 static struct varlena *
@@ -3602,7 +3665,8 @@ jsonb_toaster_toast(Relation rel, Oid toasterid,
 
 	new_js = DatumGetJsonbPC(new_val, NULL /* FIXME alloca */, false);
 
-	res = jsonb_toaster_save(rel, toasterid, new_js, max_inline_size, cmethod);
+	res = jsonb_toaster_save(rel, toasterid, new_js, max_inline_size,
+							 cmethod, options);
 
 	if (res == (Datum) 0)
 		/* Fallback to default TOAST */
@@ -3631,7 +3695,7 @@ jsonb_toaster_update_toast(Relation rel, Oid toasterid,
 
 	new_js = DatumGetJsonbPC(new_val, NULL, false);
 	old_js = DatumGetJsonbPC(old_val, NULL, false);
-	res = jsonb_toaster_cmp(rel, JsonRoot(new_js), JsonRoot(old_js), cmethod);
+	res = jsonb_toaster_cmp(rel, toasterid, JsonRoot(new_js), JsonRoot(old_js), cmethod);
 
 	jsonbFreeIterators();
 
@@ -3649,7 +3713,7 @@ jsonb_toaster_copy_toast(Relation rel, Oid toasterid,
 	jsonbInitIterators();
 
 	new_js = DatumGetJsonbPC(new_val, NULL, false);
-	res = jsonb_toaster_copy(rel, JsonRoot(new_js), cmethod, true);
+	res = jsonb_toaster_copy(rel, toasterid, JsonRoot(new_js), cmethod, true);
 
 	jsonbFreeIterators();
 
@@ -3664,7 +3728,7 @@ jsonb_toaster_delete_toast(Datum val, bool is_speculative)
 	jsonbInitIterators();
 
 	js = DatumGetJsonbPC(val, NULL, false);
-	jsonb_toaster_delete_recursive(NULL /* XXX rel */, JsonRoot(js), false);
+	jsonb_toaster_delete_recursive(NULL /* XXX rel */, JsonRoot(js), false, is_speculative);
 
 	jsonbFreeIterators();
 }
@@ -3753,6 +3817,17 @@ jsonb_toaster_handler(PG_FUNCTION_ARGS)
 void
 _PG_init(void)
 {
+	DefineCustomBoolVariable("jsonb_toaster.toast_arrays",
+							 "TOAST arrays object into logical chunks.",
+							 NULL,
+							 &jsonb_toast_arrays,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomBoolVariable("jsonb_toaster.toast_fields",
 							 "TOAST jsonb object fields.",
 							 NULL,
