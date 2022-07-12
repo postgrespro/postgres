@@ -974,6 +974,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 								format_type_be(attr->atttypid))));
 		}
 
+<<<<<<< HEAD
 		if (colDef->toaster)
 			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
 		else if (TypeIsToastable(attr->atttypid))
@@ -995,10 +996,26 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	{
 		accessMethod = stmt->accessMethod;
 
+=======
+>>>>>>> 5ecf3aa00b9af177b9d072dacce7e1ab089abf68
 		if (partitioned)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("specifying a table access method is not supported on a partitioned table")));
+<<<<<<< HEAD
+=======
+		if (colDef->toaster)
+			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
+		else if (TypeIsToastable(attr->atttypid))
+			attr->atttoaster = DEFAULT_TOASTER_OID;
+		else
+			attr->atttoaster = InvalidOid;
+
+		if (OidIsValid(attr->atttoaster))
+			validateToaster(attr->atttoaster, attr->atttypid,
+							attr->attstorage, attr->attcompression,
+							accessMethodId, false);
+>>>>>>> 5ecf3aa00b9af177b9d072dacce7e1ab089abf68
 	}
 
 	/*
