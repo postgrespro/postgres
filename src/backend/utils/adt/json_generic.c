@@ -191,7 +191,7 @@ JsonbValueToOrigJsonbDatum2(JsonValue *val, JsonContainer *orig_json)
 }
 
 JsonContainer *
-JsonCopyFlat(JsonContainer *jc)
+JsonCopyFlat(JsonContainer *jc, MemoryContext qcxt)
 {
 	JsonContainerData *res = JsonContainerAlloc(jc->ops);
 

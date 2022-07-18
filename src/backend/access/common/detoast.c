@@ -22,6 +22,24 @@
 #include "utils/expandeddatum.h"
 #include "utils/rel.h"
 #include "access/toasterapi.h"
+#include "utils/memutils.h"
+
+void
+free_detoast_iterator_resources(DetoastIterator iter)
+{
+	if (iter->compressed && iter->buf)
+	{
+		free_toast_buffer(iter->buf);
+		iter->buf = NULL;
+	}
+
+	if (iter->fetch_datum_iterator)
+		free_fetch_datum_iterator(iter->fetch_datum_iterator);
+	iter->fetch_datum_iterator = NULL;
+
+	if (iter->self_ptr)
+		*iter->self_ptr = NULL;
+}
 
 /* ----------
  * create_detoast_iterator -
@@ -42,7 +60,7 @@ create_detoast_iterator(struct varlena *attr)
 		iter = (DetoastIterator) palloc0(sizeof(DetoastIteratorData));
 		iter->done = false;
 		iter->nrefs = 1;
-		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator;
+		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator_resources;
 
 		/* This is an externally stored datum --- initialize fetch datum iterator */
 		iter->fetch_datum_iterator = fetch_iter = create_fetch_datum_iterator(attr);
@@ -87,7 +105,7 @@ create_detoast_iterator(struct varlena *attr)
 		iter = (DetoastIterator) palloc0(sizeof(DetoastIteratorData));
 		iter->done = false;
 		iter->nrefs = 1;
-		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator;
+		iter->gen.free_callback.func = (void (*)(void *)) free_detoast_iterator_resources;
 
 		iter->fetch_datum_iterator = palloc0(sizeof(*iter->fetch_datum_iterator));
 		iter->fetch_datum_iterator->buf = buf = create_toast_buffer(VARSIZE_ANY(attr), true);
@@ -120,10 +138,12 @@ free_detoast_iterator(DetoastIterator iter)
 {
 	if (iter == NULL)
 		return;
+
 	if (--iter->nrefs > 0)
 		return;
-	if (iter->compressed)
-		free_toast_buffer(iter->buf);
-	free_fetch_datum_iterator(iter->fetch_datum_iterator);
-	pfree(iter);
+
+	free_detoast_iterator_resources(iter);
+
+	if (!iter->gen.free_callback.arg)
+		pfree(iter);
 }

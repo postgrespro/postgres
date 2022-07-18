@@ -12,6 +12,8 @@ typedef struct PLyJsonb
 	PyObject   *cache;
 	int			ncached;
 	bool		fully_cached;
+	int			replaced_index;
+	PyObject   *replaced_value;
 } PLyJsonb;
 
 /* Python types based on PLyJsonb structure */
@@ -28,6 +30,7 @@ PLyJsonb_Check(PyObject *obj)
 
 extern PyObject *PLyJsonb_FromJsonbContainer(JsonbContainer *jsonb);
 extern JsonbValue *PLyJsonb_ToJsonbValue(PyObject *obj, JsonbValue *jbv, bool copy);
+extern JsonbValue *PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_elem);
 
 extern void PLyString_ToJsonbValue(PyObject *obj, JsonbValue *jbvElem);
 extern void PLyKey_ToJsonbValue(PyObject *key, JsonbValue *jbv);

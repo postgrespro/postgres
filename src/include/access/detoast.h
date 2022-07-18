@@ -98,19 +98,20 @@ typedef struct GenericDetoastIteratorData
 	MemoryContextCallback free_callback;
 } GenericDetoastIteratorData, *GenericDetoastIterator;
 
+typedef struct DetoastIteratorData *DetoastIterator;
+
 typedef struct DetoastIteratorData
 {
 	GenericDetoastIteratorData gen;
 	ToastBuffer 		*buf;
 	FetchDatumIterator	fetch_datum_iterator;
+	DetoastIterator	   *self_ptr;
 	int					nrefs;
 	void			   *decompression_state;
 	ToastCompressionId	compression_method;
 	bool				compressed;		/* toast value is compressed? */
 	bool				done;
 }			DetoastIteratorData;
-
-typedef struct DetoastIteratorData *DetoastIterator;
 
 extern FetchDatumIterator create_fetch_datum_iterator(struct varlena *attr);
 extern void free_fetch_datum_iterator(FetchDatumIterator iter);

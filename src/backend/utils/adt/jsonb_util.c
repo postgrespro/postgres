@@ -3142,13 +3142,13 @@ jsonbzFree(JsonContainer *jc)
 	CompressedJsonb *cjb = jsonbzGetCompressedJsonb(jc);
 
 #ifdef JSONB_DETOAST_ITERATOR
-//	if (cjb->iter)
-//		free_detoast_iterator(cjb->iter);
+	//if (cjb->iter)
+	//	free_detoast_iterator(cjb->iter);
 #endif
 }
 
 static JsonContainer *
-jsonbzCopy(JsonContainer *jc)
+jsonbzCopy(JsonContainer *jc, MemoryContext qcxt)
 {
 	JsonContainer *jc_copy;
 	CompressedJsonb *cjb_copy;
@@ -3181,7 +3181,9 @@ jsonbzCopy(JsonContainer *jc)
 		val = &toast_ptr;
 	}
 
+	//oldcxt = MemoryContextSwitchTo(qcxt);
 	iter = jsonbzCreateDetoastIterator(PointerGetDatum(val), true);//qcxt == CurrentMemoryContext);
+	//MemoryContextSwitchTo(oldcxt);
 
 	jc_copy = JsonContainerAlloc(&jsonbzContainerOps);
 
@@ -3191,6 +3193,8 @@ jsonbzCopy(JsonContainer *jc)
 
 	cjb_copy->iter = iter;
 	cjb_copy->offset = cjb->offset;
+
+	//iter->self_ptr = &cjb_copy->iter;
 
 	return jc_copy;
 }

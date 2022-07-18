@@ -108,7 +108,7 @@ struct JsonContainerOps
 	uint32			(*getArraySize)(JsonContainer *array);
 	char		   *(*toString)(StringInfo out, JsonContainer *jc,
 								int estimated_len);
-	JsonContainer  *(*copy)(JsonContainer *jc);
+	JsonContainer  *(*copy)(JsonContainer *jc, MemoryContext qcxt);
 	void			(*free)(JsonContainer *jc);
 	void		   *(*encode)(JsonValue *jc, JsonContainerOps *ops, Oid toasterid);
 
@@ -230,8 +230,8 @@ typedef JsonContainer JsonbContainer;
 #define JsonGetArraySize(json) \
 		JsonOp0(getArraySize, json)
 
-#define JsonCopy(jscontainer) \
-		JsonOp0(copy, jscontainer)
+#define JsonCopy(jscontainer, qcxt) \
+		JsonOp1(copy, jscontainer, qcxt)
 
 #define JsonObjectMutatorInit(jc, parent) \
 		(((jc) ? (jc)->ops->initObjectMutator : JsonObjectMutatorInitGeneric)(jc, parent))
@@ -372,7 +372,7 @@ extern JsonValue *JsonToJsonValue(Json *json, JsonValue *jv);
 extern JsonValue *JsonValueUnpackBinary(const JsonValue *jbv);
 extern JsonValue *JsonValueCopy(JsonValue *res, const JsonValue *val);
 extern const JsonValue *JsonValueUnwrap(const JsonValue *val, JsonValue *buf);
-extern JsonContainer *JsonCopyFlat(JsonContainer *flatContainer);
+extern JsonContainer *JsonCopyFlat(JsonContainer *flatContainer, MemoryContext qcxt);
 extern JsonValue *JsonExtractScalar(JsonContainer *jc, JsonValue *scalar);
 
 extern int JsonbType(JsonbValue *jb);

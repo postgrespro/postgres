@@ -23,8 +23,10 @@ PLyJsonb_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 static void
 PLyJsonb_dealloc(PLyJsonb *self)
 {
+	Py_XDECREF(self->replaced_value);
 	Py_DECREF(self->cache);
 	JsonContainerFree(self->data);
+	pfree(self->data);
 	//PyMem_Free(self->data);
 	Py_TYPE(self)->tp_free((PyObject *) self);
 }
@@ -615,6 +617,20 @@ PLyJsonbArray_cache_item(PLyJsonb *jb, Py_ssize_t index, PyObject *item)
 }
 
 static PyObject *
+PLyJsonbArray_cache_item_replace(PLyJsonb *jb, Py_ssize_t index, PyObject *item)
+{
+	PyObject *old = PyList_GET_ITEM(jb->cache, index);
+
+	Py_INCREF(item);
+	PyList_SetItem(jb->cache, index, item);
+
+	if (!old && ++jb->ncached >= JsonContainerSize(jb->data))
+		jb->fully_cached = true;
+
+	return item;
+}
+
+static PyObject *
 PLyJsonbArray_get_or_transform_item(PLyJsonb *jb, int index, JsonbValue *jbv)
 {
 	PyObject *res = PLyJsonbArray_item_cached(jb, index);
@@ -662,7 +678,33 @@ PLyJsonbArray_item(PyObject *obj, Py_ssize_t i)
 
 	PLyJsonbArray_cache_item(jb, i, val);
 
+
 	return val;
+}
+
+static int
+PLyJsonbArray_ass_item(PyObject *obj, Py_ssize_t i, PyObject *val)
+{
+	PLyJsonb   *jb = (PLyJsonb *) obj;
+	int32		size = JsonContainerSize(jb->data);
+
+	if (i < 0)
+		i += size;
+
+	if (i < 0 || i >= size)
+	{
+		PyErr_Format(PyExc_IndexError, "JsonbArray index out of range");
+		return -1;
+	}
+
+	PLyJsonbArray_cache_item_replace(jb, i, val);
+
+	Py_XDECREF(jb->replaced_value);
+	Py_INCREF(val);
+	jb->replaced_value = val;
+	jb->replaced_index = i;
+
+	return 0;
 }
 
 /* Implementation of Sequence protocol for JsonbArray. */
@@ -671,7 +713,7 @@ PLyJsonbArray_SequenceMethods =
 {
 	.sq_length = PLyJsonbArray_length,
 	.sq_item = PLyJsonbArray_item,
-	.sq_ass_item = NULL	/* JsonbArray is read-only */
+	.sq_ass_item = PLyJsonbArray_ass_item
 };
 
 /* Compare jsonb to Python list without full transformation to list. */
@@ -1212,13 +1254,14 @@ PLyJsonb_FromJsonbContainer(JsonbContainer *jbc)
 		return NULL;
 
 	oldcxt = MemoryContextSwitchTo(PLy_get_global_memory_context());
-	res->data = JsonCopy(jbc); // FIXME memcpy(PyMem_Malloc(len), jbc, len);
-	//res->len = len;
+	res->data = JsonCopy(jbc, oldcxt);
 	MemoryContextSwitchTo(oldcxt);
 
 	res->cache = JsonContainerIsObject(jbc) ? PyDict_New() : PyList_New(JsonContainerSize(jbc));
 	res->ncached = 0;
 	res->fully_cached = !JsonContainerSize(jbc);
+	res->replaced_index = -1;
+	res->replaced_value = NULL;
 
 	return (PyObject *) res;
 }
@@ -1230,9 +1273,20 @@ PLyJsonb_ToJsonbValue(PyObject *obj, JsonbValue *jbv, bool copy)
 
 	Assert(!JsonContainerIsScalar(jb->data));
 
+	if (jb->replaced_value)
+	{
+		JsonbParseState *ps = NULL;
+		JsonArrayMutator *mut = JsonArrayMutatorInit(jb->data, NULL);
+		JsonValue *val = PLyObject_ToJsonbValue(jb->replaced_value, &ps, true);
+
+		JsonArrayMutatorFindElement(mut, jb->replaced_index);
+		JsonMutatorReplaceCurrent(&mut->mutator, val);
+
+		return JsonArrayMutatorClose(mut);
+	}
+
 	jbv->type = jbvBinary;
-	jbv->val.binary.data = copy ? JsonCopy(jb->data) : jb->data; // FIXME memcpy(palloc(jb->len), jb->data, jb->len) : jb->data;
-	//jbv->val.binary.len = jb->len;
+	jbv->val.binary.data = copy ? JsonCopy(jb->data, CurrentMemoryContext) : jb->data;
 
 	return jbv;
 }

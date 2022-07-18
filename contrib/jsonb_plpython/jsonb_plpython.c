@@ -28,8 +28,6 @@ PLyObject_AsString_t PLyObject_AsString_p;
 static PyObject *decimal_constructor;
 
 static PyObject *PLyObject_FromJsonb(Jsonb *in);
-static JsonbValue *PLyObject_ToJsonbValue(PyObject *obj,
-										  JsonbParseState **jsonb_state, bool is_elem);
 
 #ifdef NO_LAZY_JSONB_TRANSFORM
 # define PLyObject_FromJsonbContainerLazy(jbc) \
@@ -464,7 +462,7 @@ PLyIter_ToJsonbValue(PyObject *iter, JsonbParseState **jsonb_state)
  *
  * Transform python object to JsonbValue.
  */
-static JsonbValue *
+JsonbValue *
 PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_elem)
 {
 	JsonbValue *out;
@@ -474,11 +472,13 @@ PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_ele
 	{
 		if (PLyJsonb_Check(obj))
 		{
-			JsonbValue jbv;
+			JsonbValue jbvbuf;
+			JsonbValue *jbv = PLyJsonb_ToJsonbValue(obj, &jbvbuf, true);
 
-			PLyJsonb_ToJsonbValue(obj, &jbv, true);
+			if (!*jsonb_state)
+				return jbv == &jbvbuf ? memcpy(palloc(sizeof(*jbv)), jbv, sizeof(*jbv)) : jbv;
 
-			return pushJsonbValue(jsonb_state, is_elem ? WJB_ELEM : WJB_VALUE, &jbv);
+			return pushJsonbValue(jsonb_state, is_elem ? WJB_ELEM : WJB_VALUE, jbv);
 		}
 		else if (PySequence_Check(obj))
 			return PLySequence_ToJsonbValue(obj, jsonb_state);
