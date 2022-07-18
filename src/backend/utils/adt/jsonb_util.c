@@ -3112,6 +3112,30 @@ jsonbRegisterIterator(GenericDetoastIterator iter)
 #endif
 }
 
+static DetoastIterator
+jsonbzCreateDetoastIterator(Datum value, bool autofree)
+{
+#ifdef JSONB_FREE_ITERATORS
+	MemoryContext oldcxt = autofree && jsonb_detoast_iterators ? MemoryContextSwitchTo(jsonb_detoast_iterators->mcxt) : NULL;
+#endif
+	DetoastIterator iter = create_detoast_iterator((struct varlena *) DatumGetPointer(value));
+
+	if (autofree)
+	{
+#ifdef JSONB_FREE_ITERATORS
+		if (jsonb_detoast_iterators)
+		{
+			jsonbRegisterIterator(&iter->gen);
+			MemoryContextSwitchTo(oldcxt);
+		}
+#else
+		jsonbRegisterIterator(&iter->gen);
+#endif
+	}
+
+	return iter;
+}
+
 static void
 jsonbzFree(JsonContainer *jc)
 {
@@ -3121,6 +3145,54 @@ jsonbzFree(JsonContainer *jc)
 //	if (cjb->iter)
 //		free_detoast_iterator(cjb->iter);
 #endif
+}
+
+static JsonContainer *
+jsonbzCopy(JsonContainer *jc)
+{
+	JsonContainer *jc_copy;
+	CompressedJsonb *cjb_copy;
+	CompressedJsonb *cjb = jsonbzGetCompressedJsonb(jc);
+	FetchDatumIterator fetch_iter = cjb->iter->fetch_datum_iterator;
+	DetoastIterator iter;
+	char		toast_ptr[TOAST_POINTER_SIZE];
+	void	   *val;
+	MemoryContext oldcxt;
+
+	if (fetch_iter->done)
+	{
+		int			size = fetch_iter->buf->limit - fetch_iter->buf->buf;
+
+		val = memcpy(palloc(size), fetch_iter->buf->buf, size);
+
+		if (!VARATT_IS_COMPRESSED(val))
+		{
+			jc_copy = JsonContainerAlloc(&jsonbContainerOps);
+			jsonbInit((JsonContainerData *) jc_copy, PointerGetDatum(val));
+
+			return jc_copy;
+		}
+	}
+	else
+	{
+		SET_VARTAG_EXTERNAL(toast_ptr, VARTAG_ONDISK);
+		memcpy(VARDATA_EXTERNAL(toast_ptr), &fetch_iter->toast_pointer,
+			   sizeof(fetch_iter->toast_pointer));
+		val = &toast_ptr;
+	}
+
+	iter = jsonbzCreateDetoastIterator(PointerGetDatum(val), true);//qcxt == CurrentMemoryContext);
+
+	jc_copy = JsonContainerAlloc(&jsonbzContainerOps);
+
+	memcpy((JsonContainerData *) jc_copy, jc, offsetof(JsonContainerData, _data));
+
+	cjb_copy = jsonbzGetCompressedJsonb(jc_copy);
+
+	cjb_copy->iter = iter;
+	cjb_copy->offset = cjb->offset;
+
+	return jc_copy;
 }
 
 static void
@@ -3133,20 +3205,7 @@ jsonbzInitWithHeader(JsonContainerData *jc, Datum value, JsonbContainerHdr *head
 
 	jsonbzInitFromCompresedDatum(jc, cd, header);
 #else
-#ifdef JSONB_FREE_ITERATORS
-	MemoryContext oldcxt = jsonb_detoast_iterators ? MemoryContextSwitchTo(jsonb_detoast_iterators->mcxt) : NULL;
-#endif
-	DetoastIterator iter = create_detoast_iterator((struct varlena *) DatumGetPointer(value));
-
-#ifdef JSONB_FREE_ITERATORS
-	if (jsonb_detoast_iterators)
-	{
-		jsonbRegisterIterator(&iter->gen);
-		MemoryContextSwitchTo(oldcxt);
-	}
-#else
-	jsonbRegisterIterator(&iter->gen);
-#endif
+	DetoastIterator iter = jsonbzCreateDetoastIterator(value, true);
 
 	jsonbzInitFromDetoastIterator(jc, iter, header);
 #endif
@@ -3169,7 +3228,7 @@ jsonbzContainerOps =
 	jsonbzGetArrayElement,
 	NULL,
 	JsonbToCStringRaw,
-	JsonCopyFlat,	// FIXME
+	jsonbzCopy,
 	jsonbzFree,
 	NULL,
 	JsonObjectMutatorInitGeneric,
