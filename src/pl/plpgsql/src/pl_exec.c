@@ -17,7 +17,7 @@
 
 #include <ctype.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
@@ -51,6 +51,7 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 /*
  * All plpgsql function executions within a single transaction share the same
