@@ -2010,7 +2010,7 @@ exec_command_lo(PsqlScanState scan_state, bool active_branch, const char *cmd)
 		}
 
 		else if (strcmp(cmd + 3, "list") == 0)
-			success = do_lo_list();
+				success = do_lo_list();
 
 		else if (strcmp(cmd + 3, "unlink") == 0)
 		{
