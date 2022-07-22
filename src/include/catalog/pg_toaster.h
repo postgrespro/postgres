@@ -20,6 +20,7 @@
 
 #include "catalog/genbki.h"
 #include "catalog/pg_toaster_d.h"
+#include "utils/relcache.h"
 
 /* ----------------
  *		pg_toaster definition.  cpp turns this into
