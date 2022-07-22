@@ -17,7 +17,7 @@
 #include <ctype.h>
 #include <limits.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/toast_compression.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
@@ -40,6 +40,7 @@
 #include "utils/pg_locale.h"
 #include "utils/sortsupport.h"
 #include "utils/varlena.h"
+#include "access/toast_helper.h"
 
 
 /* GUC variable */
