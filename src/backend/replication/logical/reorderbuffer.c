@@ -84,7 +84,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/heapam.h"
 #include "access/rewriteheap.h"
 #include "access/transam.h"

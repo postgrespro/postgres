@@ -32,7 +32,7 @@
 #include "postgres.h"
 
 #include "access/brin_tuple.h"
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "access/toast_internals.h"
@@ -40,7 +40,7 @@
 #include "access/tupmacs.h"
 #include "utils/datum.h"
 #include "utils/memutils.h"
-
+#include "access/toast_helper.h"
 
 /*
  * This enables de-toasting of index entries.  Needed until VACUUM is
