@@ -15,6 +15,13 @@
 #define TOAST_HELPER_H
 
 #include "utils/rel.h"
+#include "access/toasterapi.h"
+#include "access/toast_internals.h"
+#include "access/table.h"
+#include "access/tableam.h"
+#include "common/int.h"
+#include "common/pg_lzcompress.h"
+#include "utils/expandeddatum.h"
 
 /*
  * Information about one column of a tuple being toasted.
@@ -33,6 +40,8 @@ typedef struct
 	int32		tai_size;
 	uint8		tai_colflags;
 	char		tai_compression;
+	TsrRoutine *tai_toaster;
+	Oid			tai_toasterid;
 } ToastAttrInfo;
 
 /*
@@ -107,10 +116,67 @@ extern int	toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 											   bool check_main);
 extern void toast_tuple_try_compression(ToastTupleContext *ttc, int attribute);
 extern void toast_tuple_externalize(ToastTupleContext *ttc, int attribute,
-									int options);
+									int maxDataLen, int options);
 extern void toast_tuple_cleanup(ToastTupleContext *ttc);
 
 extern void toast_delete_external(Relation rel, Datum *values, bool *isnull,
 								  bool is_speculative);
+
+extern Datum toast_compress_datum(Datum value, char cmethod);
+extern struct varlena *toast_decompress_datum(struct varlena *attr);
+extern struct varlena *toast_decompress_datum_slice(struct varlena *attr, int32 slicelength);
+
+/* ----------
+ * detoast_external_attr() -
+ *
+ *		Fetches an external stored attribute from the toast
+ *		relation. Does NOT decompress it, if stored external
+ *		in compressed format.
+ * ----------
+ */
+extern struct varlena *detoast_external_attr(struct varlena *attr);
+
+/* ----------
+ * detoast_attr() -
+ *
+ *		Fully detoasts one attribute, fetching and/or decompressing
+ *		it as needed.
+ * ----------
+ */
+extern struct varlena *detoast_attr(struct varlena *attr);
+
+/* ----------
+ * detoast_attr_slice() -
+ *
+ *		Fetches only the specified portion of an attribute.
+ *		(Handles all cases for attribute storage)
+ * ----------
+ */
+extern struct varlena *detoast_attr_slice(struct varlena *attr,
+										  int32 sliceoffset,
+										  int32 slicelength);
+
+
+/* ----------
+ * toast_raw_datum_size -
+ *
+ *	Return the raw (detoasted) size of a varlena datum
+ * ----------
+ */
+extern Size toast_raw_datum_size(Datum value);
+
+/* ----------
+ * toast_datum_size -
+ *
+ *	Return the storage size of a varlena datum
+ * ----------
+ */
+extern Size toast_datum_size(Datum value);
+
+extern void
+fetch_toast_slice(Relation toastrel, Oid valueid, 
+					   struct varlena *attr, int32 attrsize,
+					   int32 sliceoffset, int32 slicelength,
+					   struct varlena *result);
 
 #endif

@@ -16,7 +16,7 @@
 
 #include <math.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/genam.h"
 #include "access/multixact.h"
 #include "access/relation.h"
@@ -67,7 +67,7 @@
 #include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
-
+#include "access/toast_helper.h"
 
 /* Per-index data for ANALYZE */
 typedef struct AnlIndexData
