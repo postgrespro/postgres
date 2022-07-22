@@ -19,7 +19,7 @@
 #include <math.h>
 #include <signal.h>
 
-#include "access/detoast.h"
+#include "access/toasterapi.h"
 #include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -46,6 +46,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
+#include "access/toast_helper.h"
 
 #define EXPECT_TRUE(expr)	\
 	do { \

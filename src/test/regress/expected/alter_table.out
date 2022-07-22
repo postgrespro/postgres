@@ -2277,7 +2277,7 @@ ERROR:  column data type integer can only have storage PLAIN
 create index test_storage_idx on test_storage (b, a);
 alter table test_storage alter column a set storage external;
 \d+ test_storage
-                                      Table "public.test_storage"
+                                           Table "public.test_storage"
  Column |  Type   | Collation | Nullable |      Default      | Storage  |  Toaster   | Stats target | Description 
 --------+---------+-----------+----------+-------------------+----------+------------+--------------+-------------
  a      | text    |           |          |                   | external | deftoaster |              | 
