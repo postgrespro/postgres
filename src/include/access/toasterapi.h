@@ -16,11 +16,43 @@
 #include "catalog/pg_toaster.h"
 
 /*
+ * Macro to fetch the possibly-unaligned contents of an EXTERNAL datum
+ * into a local "struct varatt_external" toast pointer.  This should be
+ * just a memcpy, but some versions of gcc seem to produce broken code
+ * that assumes the datum contents are aligned.  Introducing an explicit
+ * intermediate "varattrib_1b_e *" variable seems to fix it.
+ */
+#define VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr) \
+do { \
+	varattrib_1b_e *attre = (varattrib_1b_e *) (attr); \
+	Assert(VARATT_IS_EXTERNAL(attre)); \
+	Assert(VARSIZE_EXTERNAL(attre) == sizeof(toast_pointer) + VARHDRSZ_EXTERNAL); \
+	memcpy(&(toast_pointer), VARDATA_EXTERNAL(attre), sizeof(toast_pointer)); \
+} while (0)
+
+/* Size of an EXTERNAL datum that contains a standard TOAST pointer */
+#define TOAST_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_external))
+
+/* Size of an EXTERNAL datum that contains an indirection pointer */
+#define INDIRECT_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_indirect))
+
+#define VARATT_TOASTER_GET_POINTER(toast_pointer, attr) \
+do { \
+	varattrib_1b_e *attre = (varattrib_1b_e *) (attr); \
+	Assert(VARATT_IS_TOASTER(attre)); \
+	Assert(VARSIZE_TOASTER(attre) == sizeof(toast_pointer) + VARHDRSZ_EXTERNAL); \
+	memcpy(&(toast_pointer), VARDATA_TOASTER(attre), sizeof(toast_pointer)); \
+} while (0)
+
+/* Size of an EXTERNAL datum that contains a custom TOAST pointer */
+#define TOASTER_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_custom))
+
+/*
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
 /* Create toast storage */
-typedef void (*toast_init)(Relation rel, Datum reloptions, LOCKMODE lockmode,
+typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast);
 
 /* Toast function */
@@ -45,8 +77,7 @@ typedef Datum (*copy_toast_function) (Relation toast_rel,
 												int options);
 
 /* Detoast function */
-typedef Datum (*detoast_function) (Relation toast_rel,
-											 Datum toast_ptr,
+typedef Datum (*detoast_function) (Datum toast_ptr,
 											 int offset, int length);
 
 /* Delete toast function */

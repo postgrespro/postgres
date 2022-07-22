@@ -212,9 +212,3 @@ validateToaster(Oid toasteroid, Oid typeoid,
 
 	return result;
 }
-
-Datum default_toaster_handler(PG_FUNCTION_ARGS)
-{
-       TsrRoutine *tsr = makeNode(TsrRoutine);
-       PG_RETURN_POINTER(tsr);
-}
