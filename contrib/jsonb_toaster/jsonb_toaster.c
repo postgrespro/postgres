@@ -17,6 +17,7 @@
 #define JSONB_UTIL_C
 
 #include "access/detoast.h"
+#include "access/generic_toaster.h"
 #include "access/heaptoast.h"
 #include "access/table.h"
 #include "access/tableam.h"
@@ -3802,6 +3803,192 @@ jsonb_toaster_relinfo(Relation toastrel)
 	return TOASTREL_VACUUM_FULL_DISABLED;
 }
 
+static JsonValue *
+jsonb_toaster_reconstruct_plain_recursive(Relation toastrel, Json *js,
+										  HTAB *chunk_hash,
+										  JsonbParseState **ps,
+										  MemoryContext rb_cxt)
+{
+	JsonContainer *jc = JsonRoot(js);
+	JsonIterator *it;
+	JsonIteratorToken tok;
+	JsonValue	key;
+	JsonValue	val;
+	JsonValue	str;
+
+	if (!JsonContainerIsObject(jc))
+		elog(ERROR, "jsonb_toaster: plain jsonb is not an object");
+
+	str.type = jbvString;
+
+	pushJsonbValue(ps, WJB_BEGIN_ARRAY, NULL);
+
+	it = JsonIteratorInit(jc);
+
+	tok = JsonIteratorNext(&it, &key, true);
+	Assert(tok == WJB_BEGIN_OBJECT);
+
+	while ((tok = JsonIteratorNext(&it, &key, true)) == WJB_KEY)
+	{
+		tok = JsonIteratorNext(&it, &val, true);
+		Assert(tok == WJB_VALUE);
+
+		pushJsonbValue(ps, WJB_BEGIN_OBJECT, NULL);
+
+		str.val.string.val = "key";
+		str.val.string.len = 3;
+		pushJsonbValue(ps, WJB_KEY, &str);
+		pushJsonbValue(ps, WJB_VALUE, &key);
+
+		str.val.string.val = "type";
+		str.val.string.len = 4;
+		pushJsonbValue(ps, WJB_KEY, &str);
+
+		if (val.type == jbvBinary &&
+			val.val.binary.data->ops == &jsonxzContainerOps)
+		{
+			CompressedJsonx *cjb = jsonxzGetCompressedJsonx(val.val.binary.data);
+			JsonxFetchDatumIterator fetch_iter = cjb->iter->fetch_datum_iterator;
+
+			Assert(cjb->offset == offsetof(JsonbDatum, root));
+
+			if (fetch_iter->toast_pointer.va_rawsize > 0)
+			{
+				char		tp[TOAST_POINTER_SIZE];
+				struct varlena *rec;
+				Jsonb	   *js_field;
+				bool		toasted;
+				bool		compressed;
+
+				Assert(fetch_iter->toast_pointer.va_toastrelid == RelationGetRelid(toastrel));
+
+				SET_VARTAG_EXTERNAL(tp, VARTAG_ONDISK);
+				memcpy(VARDATA_EXTERNAL(tp), &fetch_iter->toast_pointer,
+					   sizeof(fetch_iter->toast_pointer));
+				{
+					MemoryContext old_cxt = MemoryContextSwitchTo(rb_cxt);
+
+					rec = generic_toaster_reconstruct(toastrel, (struct varlena *) &tp, chunk_hash);
+
+					MemoryContextSwitchTo(old_cxt);
+				}
+
+				if (!rec)
+				{
+					str.val.string.val = "old";
+					str.val.string.len = 3;
+					pushJsonbValue(ps, WJB_VALUE, &str);
+					pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+					continue;
+				}
+
+				js_field = DatumGetJsonbP(PointerGetDatum(rec));
+
+				if (JsonContainerContainsToastedOrCompressed(JsonRoot(js_field),
+															 &toasted, &compressed))
+				{
+					str.val.string.val = "diff";
+					str.val.string.len = 4;
+					pushJsonbValue(ps, WJB_VALUE, &str);
+
+					str.val.string.val = "value";
+					str.val.string.len = 5;
+					pushJsonbValue(ps, WJB_KEY, &str);
+
+					jsonb_toaster_reconstruct_plain_recursive(toastrel, js_field, chunk_hash, ps, rb_cxt);
+
+					pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+					continue;
+				}
+
+				JsonValueInitBinary(&val, JsonRoot(js_field));
+			}
+			else
+			{
+				elog(ERROR, "jsonb_toaster: unsupported toast pointer");
+			}
+		}
+
+		str.val.string.val = "value";
+		str.val.string.len = 5;
+		pushJsonbValue(ps, WJB_VALUE, &str);
+
+		str.val.string.val = "value";
+		str.val.string.len = 5;
+		pushJsonbValue(ps, WJB_KEY, &str);
+		pushJsonbValue(ps, WJB_VALUE, &val);
+
+		pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+	}
+
+	Assert(tok == WJB_END_OBJECT);
+	tok = JsonIteratorNext(&it, &key, true);
+	Assert(tok == WJB_DONE);
+
+	return pushJsonbValue(ps, WJB_END_ARRAY, NULL);
+}
+
+static struct varlena *
+jsonb_toaster_reconstruct_plain(Relation toastrel, struct varlena *value,
+								HTAB *chunk_hash, MemoryContext rb_cxt)
+{
+	Json	   *js = DatumGetJsonbP(PointerGetDatum(value));
+	JsonbParseState *ps = NULL;
+	JsonValue  *resjbv;
+	Datum		resjb;
+	struct varlena *res;
+
+	resjbv = jsonb_toaster_reconstruct_plain_recursive(toastrel, js, chunk_hash, &ps, rb_cxt);
+	resjb = JsonValueToJsonbDatum(resjbv);
+
+	res = MemoryContextAlloc(rb_cxt, VARATT_CUSTOM_SIZE(VARSIZE_ANY(resjb)));
+
+	SET_VARTAG_EXTERNAL(res, VARTAG_CUSTOM);
+	VARATT_CUSTOM_SET_TOASTERID(res, InvalidOid);
+	VARATT_CUSTOM_SET_DATA_RAW_SIZE(res, VARSIZE_ANY(resjb));
+
+	if (VARSIZE_ANY(resjb) > VARATT_CUSTOM_MAX_DATA_SIZE)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("atribute length too large")));
+
+	VARATT_CUSTOM_SET_DATA_SIZE(res, VARSIZE_ANY(resjb));
+	memcpy(VARATT_CUSTOM_GET_DATA(res), DatumGetPointer(resjb), VARSIZE_ANY(resjb));
+
+	return res;
+}
+
+static struct varlena *
+jsonb_toaster_reconstruct(Relation toastrel, struct varlena *value,
+						  HTAB *chunk_hash, bool *need_free)
+{
+	uint32		header = JSONX_CUSTOM_PTR_GET_HEADER(value);
+	uint32		type = header & JSONX_POINTER_TYPE_MASK;
+
+	Assert(VARATT_IS_CUSTOM(value));
+
+	if (type == JSONX_PLAIN_JSONB)
+	{
+		*need_free = true;
+		struct varlena *res;
+		MemoryContext tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
+													  "jsonb_toaster_reconstruct",
+													  ALLOCSET_DEFAULT_SIZES);
+		MemoryContext rb_cxt = MemoryContextSwitchTo(tmp_cxt);
+
+		res = jsonb_toaster_reconstruct_plain(toastrel, value, chunk_hash, rb_cxt);
+
+		MemoryContextSwitchTo(rb_cxt);
+		MemoryContextDelete(tmp_cxt);
+
+		return res;
+	}
+	else
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("jsonb_toaster does not yet support reconstruction of non-plain jsonb values")));
+}
+
 PG_FUNCTION_INFO_V1(jsonb_toaster_handler);
 Datum
 jsonb_toaster_handler(PG_FUNCTION_ARGS)
@@ -3817,6 +4004,7 @@ jsonb_toaster_handler(PG_FUNCTION_ARGS)
 	tsr->toastervalidate = jsonb_toaster_validate;
 	tsr->get_vtable = jsonb_toaster_vtable;
 	tsr->relinfo = jsonb_toaster_relinfo;
+	tsr->reconstruct = jsonb_toaster_reconstruct;
 
 	PG_RETURN_POINTER(tsr);
 }
