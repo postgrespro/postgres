@@ -92,6 +92,9 @@ typedef bool (*toastervalidate_function) (Oid typeoid,
 										  char storage, char compression,
 										  Oid amoid, bool false_ok);
 
+#define TOASTREL_VACUUM_FULL_DISABLED 0x01
+typedef int (*toast_rel_info_function)(Relation toast_rel);
+
 /*
  * API struct for Toaster.  Note this must be stored in a single palloc'd
  * chunk of memory.
@@ -109,6 +112,7 @@ typedef struct TsrRoutine
 	del_toast_function deltoast;
 	get_vtable_function get_vtable;
 	toastervalidate_function toastervalidate;
+	toast_rel_info_function relinfo;
 } TsrRoutine;
 
 
