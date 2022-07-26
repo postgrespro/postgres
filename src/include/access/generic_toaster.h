@@ -39,5 +39,8 @@
 HeapTuple
 heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 							int options);
+extern struct varlena *
+generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
+							HTAB *toast_hash);
 
 #endif

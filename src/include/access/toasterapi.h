@@ -13,6 +13,7 @@
 #define TOASTERAPI_H
 
 #include "access/detoast.h"
+#include "utils/hsearch.h"
 
 /*
  * Macro to fetch the possibly-unaligned contents of an EXTERNAL datum
@@ -95,6 +96,11 @@ typedef bool (*toastervalidate_function) (Oid typeoid,
 #define TOASTREL_VACUUM_FULL_DISABLED 0x01
 typedef int (*toast_rel_info_function)(Relation toast_rel);
 
+typedef struct varlena *(*reconstruct_toast_function)(Relation toastrel,
+													  struct varlena *value,
+													  HTAB *chunk_hash,
+													  bool *need_free);
+
 /*
  * API struct for Toaster.  Note this must be stored in a single palloc'd
  * chunk of memory.
@@ -113,6 +119,7 @@ typedef struct TsrRoutine
 	get_vtable_function get_vtable;
 	toastervalidate_function toastervalidate;
 	toast_rel_info_function relinfo;
+	reconstruct_toast_function reconstruct;
 } TsrRoutine;
 
 
