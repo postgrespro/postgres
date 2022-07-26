@@ -32,6 +32,7 @@
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/tableam.h"
+#include "access/toasterapi.h"
 #include "access/transam.h"
 #include "access/toasterapi.h"
 #include "access/xact.h"
@@ -1810,6 +1811,76 @@ vac_truncate_clog(TransactionId frozenXID,
 	LWLockRelease(WrapLimitsVacuumLock);
 }
 
+static Oid
+get_main_rel_for_toast_rel(Oid toastrelid)
+{
+	Relation	class_rel = table_open(RelationRelationId, AccessShareLock);
+	SysScanDesc scan = systable_beginscan(class_rel, InvalidOid, false,
+										  NULL, 0, NULL);
+	HeapTuple	tup;
+	Oid			relid = InvalidOid;
+
+	while ((tup = systable_getnext(scan)) != NULL)
+	{
+		Form_pg_class relform = (Form_pg_class) GETSTRUCT(tup);
+
+		if (relform->reltoastrelid == toastrelid)
+		{
+			relid = relform->oid;
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(class_rel, NoLock);
+
+	if (!OidIsValid(relid))
+		elog(ERROR, "could not find main relation for TOAST relation %u",
+			 toastrelid);
+
+	return relid;
+}
+
+static bool
+toastrel_vacuum_full_is_disabled(Relation toastrel, VacuumParams *params)
+{
+	Oid			mainrelid = get_main_rel_for_toast_rel(RelationGetRelid(toastrel));
+	Relation	mainrel = vacuum_open_relation(mainrelid, NULL, params->options,
+											   params->log_min_duration >= 0,
+											   AccessShareLock);
+	TupleDesc	maindesc;
+	bool		res = false;
+
+	if (!mainrel)
+		return true;
+
+	maindesc = RelationGetDescr(mainrel);
+
+	for (int i = 0; i < maindesc->natts; i++)
+	{
+		Oid			toasterid = TupleDescAttr(maindesc, i)->atttoaster;
+
+		if (OidIsValid(toasterid))
+		{
+			TsrRoutine *toaster = SearchTsrCache(toasterid);
+
+			if (toaster->relinfo &&
+				(toaster->relinfo(toastrel) & TOASTREL_VACUUM_FULL_DISABLED))
+			{
+				ereport(WARNING,
+						(errmsg("skipping \"%s\" --- %s is disabled by toaster",
+								RelationGetRelationName(toastrel),
+								"VACUUM FULL")));
+				res = true;
+				break;
+			}
+		}
+	}
+
+	relation_close(mainrel, AccessShareLock);
+
+	return res;
+}
 
 /*
  *	vacuum_rel() -- vacuum one heap relation
@@ -1976,6 +2047,20 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 		CommitTransactionCommand();
 		/* It's OK to proceed with ANALYZE on this table */
 		return true;
+	}
+
+	/*
+	 * Check if VACUUM FULL of TOAST relation is disabled by the
+	 * toasters.
+	 */
+	if (rel->rd_rel->relkind == RELKIND_TOASTVALUE &&
+		(params->options & VACOPT_FULL) != 0 &&
+		toastrel_vacuum_full_is_disabled(rel, params))
+	{
+		relation_close(rel, lmode);
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+		return false;
 	}
 
 	/*
