@@ -9698,6 +9698,9 @@
 { oid => '3803', descr => 'I/O',
   proname => 'jsonb_send', prorettype => 'bytea', proargtypes => 'jsonb',
   prosrc => 'jsonb_send' },
+{ oid => '6099', descr => 'I/O',
+  proname => 'jsonb_apply_diff', prorettype => 'jsonb',
+  proargtypes => 'jsonb jsonb', prosrc => 'jsonb_apply_diff' },
 
 { oid => '3263', descr => 'map text array of key value pairs to jsonb object',
   proname => 'jsonb_object', prorettype => 'jsonb', proargtypes => '_text',

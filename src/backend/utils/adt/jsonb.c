@@ -140,7 +140,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 
 	jb = PG_GETARG_JSONB_P(0);
 	jtext = makeStringInfo();
-	
+
 	(void) JsonToCString(JsonbRoot(jb), jtext);
 
 	jsonbFreeIterators();
@@ -2237,4 +2237,117 @@ JsonbUnquote(Jsonb *jb)
 	}
 	else
 		return JsonbToCString(NULL, &jb->root, VARSIZE(jb));
+}
+
+static JsonValue *
+jsonb_apply_diff_recursive(JsonContainer *oldjs, JsonbContainer *diff,
+						   JsonbParseState **ps)
+{
+	JsonbValue  jbv;
+	JsonIterator *it;
+	JsonIteratorToken tok;
+
+	if (!JsonContainerIsArray(diff))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("jsonb diff must be an array")));
+
+	it = JsonIteratorInit(diff);
+	tok = JsonIteratorNext(&it, &jbv, true);
+	Assert(tok == WJB_BEGIN_ARRAY);
+
+	pushJsonbValue(ps, WJB_BEGIN_OBJECT, NULL);
+
+	while ((tok = JsonIteratorNext(&it, &jbv, true)) == WJB_ELEM)
+	{
+		JsonContainer *jc = jbv.val.binary.data;
+		JsonValue keybuf;
+		JsonValue valbuf;
+		JsonValue typebuf;
+		JsonValue *key;
+		JsonValue *val;
+		JsonValue *type;
+
+		if (jbv.type != jbvBinary || !JsonContainerIsObject(jc))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("jsonb diff elements must objects")));
+
+		if (!(key = JsonFindKeyInObject(jc, "key", 3, &keybuf)) ||
+			!(type = JsonFindKeyInObject(jc, "type", 4, &typebuf)) ||
+			key->type != jbvString ||
+			type->type != jbvString)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid jsonb diff element")));
+
+		pushJsonbValue(ps, WJB_KEY, key);
+
+		if (!strncmp("old", type->val.string.val, type->val.string.len))
+		{
+			JsonValue	oldvalbuf;
+			JsonValue  *oldval = JsonFindKeyInObject(oldjs,
+													 key->val.string.val,
+													 key->val.string.len,
+													 &oldvalbuf);
+
+			if (!oldval)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("key is missing in old jsonb value")));
+
+			pushJsonbValueExt(ps, WJB_VALUE, oldval, false);
+			continue;
+		}
+
+		if (!(val = JsonFindKeyInObject(jc, "value", 5, &valbuf)))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid jsonb diff element")));
+
+		if (!strncmp("diff", type->val.string.val, type->val.string.len))
+		{
+			if (val->type != jbvBinary)
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid jsonb diff element")));
+
+			jsonb_apply_diff_recursive(oldjs, val->val.binary.data, ps);
+		}
+		else if (!strncmp("value", type->val.string.val, type->val.string.len))
+		{
+			pushJsonbValue(ps, WJB_VALUE, val);
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid jsonb diff element")));
+	}
+
+	Assert(tok == WJB_END_ARRAY);
+	tok = JsonIteratorNext(&it, &jbv, true);
+	Assert(tok == WJB_DONE);
+
+	return pushJsonbValue(ps, WJB_END_OBJECT, NULL);
+}
+
+volatile int x = 1;
+
+Datum
+jsonb_apply_diff(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *oldjs = PG_ARGISNULL(0) ? NULL : PG_GETARG_JSONB_P(0);
+	Jsonb	   *diff = PG_ARGISNULL(1) ? NULL : PG_GETARG_JSONB_P(1);
+	JsonbParseState *ps = NULL;
+	JsonbValue *res;
+
+	//while (x) ;
+
+	if (!diff)
+		return PG_GETARG_DATUM(0);
+
+	res = jsonb_apply_diff_recursive(oldjs ? JsonRoot(oldjs) : NULL,
+									 JsonRoot(diff), &ps);
+
+	PG_RETURN_DATUM(JsonbValueToOrigJsonbDatum(res, oldjs));
 }
