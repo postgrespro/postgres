@@ -3797,6 +3797,12 @@ jsonb_toaster_init(Relation rel, Oid toastoid, Oid toastindexoid,
 							  lockmode, check, OIDOldToast);
 }
 
+static int
+jsonb_toaster_relinfo(Relation toastrel)
+{
+	return TOASTREL_VACUUM_FULL_DISABLED;
+}
+
 PG_FUNCTION_INFO_V1(jsonb_toaster_handler);
 Datum
 jsonb_toaster_handler(PG_FUNCTION_ARGS)
@@ -3811,6 +3817,7 @@ jsonb_toaster_handler(PG_FUNCTION_ARGS)
 	tsr->detoast = jsonb_toaster_detoast;
 	tsr->toastervalidate = jsonb_toaster_validate;
 	tsr->get_vtable = jsonb_toaster_vtable;
+	tsr->relinfo = jsonb_toaster_relinfo;
 
 	PG_RETURN_POINTER(tsr);
 }
