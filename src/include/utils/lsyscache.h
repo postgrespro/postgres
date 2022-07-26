@@ -181,6 +181,7 @@ extern bool type_is_collatable(Oid typid);
 extern RegProcedure get_typsubscript(Oid typid, Oid *typelemp);
 extern const struct SubscriptRoutines *getSubscriptingRoutines(Oid typid,
 															   Oid *typelemp);
+extern RegProcedure get_typapplydiff(Oid typid);
 extern Oid	getBaseType(Oid typid);
 extern Oid	getBaseTypeAndTypmod(Oid typid, int32 *typmod);
 extern int32 get_typavgwidth(Oid typid, int32 typmod);

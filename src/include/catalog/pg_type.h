@@ -148,6 +148,11 @@ CATALOG(pg_type,1247,TypeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71,TypeRelati
 	 */
 	regproc		typanalyze BKI_DEFAULT(-) BKI_ARRAY_DEFAULT(array_typanalyze) BKI_LOOKUP_OPT(pg_proc);
 
+	/*
+	 * Custom diff application procedure for the datatype (optional).
+	 */
+	regproc		typapplydiff BKI_DEFAULT(-) BKI_LOOKUP_OPT(pg_proc);
+
 	/* ----------------
 	 * typalign is the alignment required when storing a value of this
 	 * type.  It applies to storage on disk as well as most
