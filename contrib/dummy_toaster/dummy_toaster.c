@@ -137,8 +137,9 @@ dummy_toaster_validate(Oid typeoid, char storage, char compression,
  * Dummy validation function, always returns TRUE
  */
 static void
-dummy_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast)
+dummy_toast_init(Relation rel, Oid toasterid, Oid toastoid,
+				 Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
+				 bool check, Oid OIDOldToast)
 {
 }
 

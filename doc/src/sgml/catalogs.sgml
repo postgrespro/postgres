@@ -2030,13 +2030,23 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>reltoastrelid</structfield> <type>oid</type>
+       <structfield>reltoasterids</structfield> <type>oid</type>
+       (references <link linkend="catalog-pg-toaster"><structname>pg_toaster</structname></link>.<structfield>oid</structfield>)
+      </para>
+      <para>
+       OIDs of the TOASTers associated with this table, NULL if none.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>reltoastrelids</structfield> <type>oid</type>
        (references <link linkend="catalog-pg-class"><structname>pg_class</structname></link>.<structfield>oid</structfield>)
       </para>
       <para>
-       OID of the TOAST table associated with this table, zero if none.  The
-       TOAST table stores large attributes <quote>out of line</quote> in a
-       secondary table.
+       OIDs of the TOAST tables associated with this table, NULL if none.
+       The TOAST tables stores large attributes <quote>out of line</quote>
+       in a secondary table.
       </para></entry>
      </row>
 
@@ -8147,7 +8157,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
   <para>
    Every toaster registered in database is stored in <structname>pg_toaster</structname>.
-   This table contains toaster OID, toaster name and related handler procedire. 
+   This table contains toaster OID, toaster name and related handler procedire.
   </para>
 
   <table>
@@ -9364,8 +9374,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
         <listitem>
          <para>
           <literal>e</literal> (external): Values can be stored in a
-          secondary <quote>TOAST</quote> relation (if relation has one, see
-          <literal>pg_class.reltoastrelid</literal>).
+          secondary <quote>TOAST</quote> relations (if relation has them, see
+          <literal>pg_class.reltoastrelids</literal>).
          </para>
         </listitem>
         <listitem>

@@ -28,6 +28,7 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/storage.h"
+#include "catalog/toasting.h"
 #include "commands/policy.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -573,12 +574,11 @@ DefineQueryRewrite(const char *rulename,
 	if (RelisBecomingView)
 	{
 		Relation	relationRelation;
-		Oid			toastrelid;
 		HeapTuple	classTup;
+		HeapTuple	newClassTup;
 		Form_pg_class classForm;
 
 		relationRelation = table_open(RelationRelationId, RowExclusiveLock);
-		toastrelid = event_relation->rd_rel->reltoastrelid;
 
 		/* drop storage while table still looks like a table  */
 		RelationDropStorage(event_relation);
@@ -589,9 +589,13 @@ DefineQueryRewrite(const char *rulename,
 		 * toast fields in the relation's own pg_class entry; we handle that
 		 * below.)
 		 */
-		if (OidIsValid(toastrelid))
+		for (int i = 0; i < event_relation->rd_ntoasters; i++)
 		{
 			ObjectAddress toastobject;
+			Oid			toastrelid = event_relation->rd_toastrelids[i];
+
+			if (!OidIsValid(toastrelid))
+				continue;
 
 			/*
 			 * Delete the dependency of the toast relation on the main
@@ -619,7 +623,7 @@ DefineQueryRewrite(const char *rulename,
 
 		/*
 		 * Fix pg_class entry to look like a normal view's, including setting
-		 * the correct relkind and removal of reltoastrelid of the toast table
+		 * the correct relkind and removal of reltoastrelids of the toast table
 		 * we potentially removed above.
 		 */
 		classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(event_relid));
@@ -632,16 +636,21 @@ DefineQueryRewrite(const char *rulename,
 		classForm->relpages = 0;
 		classForm->reltuples = -1;
 		classForm->relallvisible = 0;
-		classForm->reltoastrelid = InvalidOid;
 		classForm->relhasindex = false;
 		classForm->relkind = RELKIND_VIEW;
 		classForm->relfrozenxid = InvalidTransactionId;
 		classForm->relminmxid = InvalidMultiXactId;
 		classForm->relreplident = REPLICA_IDENTITY_NOTHING;
 
-		CatalogTupleUpdate(relationRelation, &classTup->t_self, classTup);
+		/* FIXME remove dependencies */
+		newClassTup = toast_modify_pg_class_tuple(relationRelation,
+												  classTup,
+												  (Datum) 0, (Datum) 0);
+
+		CatalogTupleUpdate(relationRelation, &classTup->t_self, newClassTup);
 
 		heap_freetuple(classTup);
+		heap_freetuple(newClassTup);
 		table_close(relationRelation, RowExclusiveLock);
 	}
 

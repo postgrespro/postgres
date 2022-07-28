@@ -229,19 +229,19 @@ select pg_relpages('test_partition');
 (1 row)
 
 -- toast tables should work
-select pgstattuple((select reltoastrelid from pg_class where relname = 'test'));
+select pgstattuple((select reltoastrelids[1] from pg_class where relname = 'test'));
      pgstattuple     
 ---------------------
  (0,0,0,0,0,0,0,0,0)
 (1 row)
 
-select pgstattuple_approx((select reltoastrelid from pg_class where relname = 'test'));
+select pgstattuple_approx((select reltoastrelids[1] from pg_class where relname = 'test'));
   pgstattuple_approx   
 -----------------------
  (0,0,0,0,0,0,0,0,0,0)
 (1 row)
 
-select pg_relpages((select reltoastrelid from pg_class where relname = 'test'));
+select pg_relpages((select reltoastrelids[1] from pg_class where relname = 'test'));
  pg_relpages 
 -------------
            0

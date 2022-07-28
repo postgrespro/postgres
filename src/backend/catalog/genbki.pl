@@ -517,7 +517,8 @@ EOM
 	print $bki "create $catname $catalog->{relation_oid}"
 	  . $catalog->{shared_relation}
 	  . $catalog->{bootstrap}
-	  . $catalog->{rowtype_oid_clause};
+	  . $catalog->{rowtype_oid_clause}
+	  . $catalog->{toastrel_oid_clause};
 
 	my $first = 1;
 
@@ -668,6 +669,20 @@ EOM
 			$bki_values{oid_symbol} = $symbol
 			  if defined $symbol;
 		}
+
+		# Special hack to write toast relation OID symbols for pg_type entries
+		if ($catname eq 'pg_class')
+		{
+			my $cat = $catalogs{$bki_values{relname}};
+
+			foreach my $toast (@{ $cat->{toasting} })
+			{
+				my $toastrelid = $toast->{toast_oid};
+				$bki_values{reltoasterids} = "{$DEFAULT_TOASTER_OID}";
+				$bki_values{reltoastrelids} = "{$toastrelid}";
+			}
+		}
+
 
 		# Write to postgres.bki
 		print_bki_insert(\%bki_values, $schema);

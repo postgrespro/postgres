@@ -52,8 +52,10 @@ do { \
  */
 
 /* Create toast storage */
-typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast);
+typedef void (*toast_init)(Relation rel, Oid toasterid, Oid toastoid,
+						   Oid toastindexoid, Datum reloptions,
+						   LOCKMODE lockmode, bool check,
+						   Oid OIDOldToast);
 
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,

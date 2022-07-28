@@ -3790,11 +3790,12 @@ jsonb_toaster_vtable(Datum toast_ptr)
 }
 
 static void
-jsonb_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
-				   bool check, Oid OIDOldToast)
+jsonb_toaster_init(Relation rel, Oid toasterid, Oid toastoid,
+				   Oid toastindexoid, Datum reloptions,
+				   LOCKMODE lockmode, bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions,
-							  lockmode, check, OIDOldToast);
+	(void) create_toast_table(rel, toasterid, toastoid, toastindexoid,
+							  reloptions, lockmode, check, OIDOldToast);
 }
 
 static int

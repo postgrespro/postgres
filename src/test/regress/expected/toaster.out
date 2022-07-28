@@ -23,6 +23,27 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
       3 | t3      |       23 | p          | 
 (3 rows)
 
+SELECT 'pg_toast.pg_toast_' || ('tsttsrtbl'::regclass::oid) AS toastrel \gset
+SELECT
+  substring(relid::regclass::text, 1, length(:'toastrel')) = :'toastrel' AS prefix_ok,
+  substring(relid::regclass::text, length(:'toastrel') + 1) AS suffix
+FROM pg_class, unnest(reltoastrelids) relid
+WHERE relname = 'tsttsrtbl';
+ prefix_ok | suffix 
+-----------+--------
+ t         | 
+ t         | _9864
+(2 rows)
+
+SELECT (SELECT tsrname FROM pg_toaster WHERE oid = tsroid)
+FROM pg_class, unnest(reltoasterids) tsroid
+WHERE relname = 'tsttsrtbl';
+  tsrname   
+------------
+ tsttoaster
+ deftoaster
+(2 rows)
+
 ALTER TABLE tsttsrtbl ALTER COLUMN t2 SET TOASTER tsttoaster;
 SELECT attnum, attname, atttypid, attstorage, tsrname
     FROM pg_attribute LEFT OUTER JOIN pg_toaster t ON t.oid = atttoaster

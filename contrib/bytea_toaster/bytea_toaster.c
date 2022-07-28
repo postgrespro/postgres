@@ -57,10 +57,10 @@ do { \
 } while (0)
 
 static void
-bytea_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
+bytea_toaster_init(Relation rel, Oid toasterid, Datum reloptions, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions,
+	(void) create_toast_table(rel, toasterid, InvalidOid, InvalidOid, reloptions,
 							  lockmode, check, OIDOldToast);
 }
 
@@ -214,12 +214,13 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 	{
 		AppendableToastData old_data;
 		AppendableToastData new_data;
-		Oid			toastrelid = rel->rd_rel->reltoastrelid;
+		Oid			real_toastrelid
+		Oid			toastrelid = toast_find_relation_for_toaster(rel, toasterid, &real_toastrelid);
 
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(newval, new_data);
 
-		if (new_data.ptr.va_toastrelid == toastrelid &&
+		if (new_data.ptr.va_toastrelid == real_toastrelid &&
 			new_data.ptr.va_toastrelid == old_data.ptr.va_toastrelid &&
 			new_data.ptr.va_valueid == old_data.ptr.va_valueid &&
 			new_data.version == old_data.version &&

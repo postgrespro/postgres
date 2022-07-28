@@ -246,8 +246,8 @@ segments as well, though this is unlikely to happen in practice.
 A table that has columns with potentially large entries will have an
 associated <firstterm>TOAST</firstterm> table, which is used for out-of-line storage of
 field values that are too large to keep in the table rows proper.
-<structname>pg_class</structname>.<structfield>reltoastrelid</structfield> links from a table to
-its <acronym>TOAST</acronym> table, if any.
+<structname>pg_class</structname>.<structfield>reltoastrelids</structfield> links from a table to
+its <acronym>TOAST</acronym> tables, if any.
 See <xref linkend="storage-toast"/> for more information.
 </para>
 
@@ -407,8 +407,8 @@ Further details appear in <xref linkend="storage-toast-inmemory"/>.
 
 <para>
 If any of the columns of a table are <acronym>TOAST</acronym>-able, the table will
-have an associated <acronym>TOAST</acronym> table, whose OID is stored in the table's
-<structname>pg_class</structname>.<structfield>reltoastrelid</structfield> entry.  On-disk
+have an associated <acronym>TOAST</acronym> tables, whose OIDs are stored in the table's
+<structname>pg_class</structname>.<structfield>reltoastrelids</structfield> entry.  On-disk
 <acronym>TOAST</acronym>ed values are kept in the <acronym>TOAST</acronym> table, as
 described in more detail below.
 </para>

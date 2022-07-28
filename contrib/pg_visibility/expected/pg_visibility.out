@@ -137,7 +137,7 @@ select count(*) > 0 from pg_visibility('regular_table');
  t
 (1 row)
 
-select count(*) > 0 from pg_visibility((select reltoastrelid from pg_class where relname = 'regular_table'));
+select count(*) > 0 from pg_visibility((select reltoastrelids[1] from pg_class where relname = 'regular_table'));
  ?column? 
 ----------
  t
@@ -150,7 +150,7 @@ select count(*) > 0 from pg_visibility('regular_table');
  f
 (1 row)
 
-select count(*) > 0 from pg_visibility((select reltoastrelid from pg_class where relname = 'regular_table'));
+select count(*) > 0 from pg_visibility((select reltoastrelids[1] from pg_class where relname = 'regular_table'));
  ?column? 
 ----------
  f

@@ -721,8 +721,8 @@ from generate_series(7, 20) i;
 update test_jsonxa_arr set js = json_modify(js, set '$[1, 101, 201, 301, 401, 501, 1001, 1501, 2001, 3001, 5001]' = '0');
 select format('vacuum full pg_toast.pg_toast_%s', 'test_jsonxa_arr'::regclass::oid)
 \gexec
-vacuum full pg_toast.pg_toast_16461
-WARNING:  skipping "pg_toast_16461" --- VACUUM FULL is disabled by toaster
+vacuum full pg_toast.pg_toast_16465
+WARNING:  skipping "pg_toast_16465" --- VACUUM FULL is disabled by toaster
 vacuum full test_jsonxa_arr;
 select id, json_query(js, '$[0 to 2, 100 to 102, 200 to 202, 300 to 302, 400 to 402, 500 to 502, 1000 to 1002, 1500 to 1502, 2000 to 2002, 3000 to 3002, 5000 to 5002]' with wrapper) from test_jsonxa_arr order by id;
  id |                                                                                  json_query                                                                                   

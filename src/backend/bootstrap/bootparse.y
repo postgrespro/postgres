@@ -26,6 +26,7 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/toasting.h"
 #include "commands/defrem.h"
 #include "miscadmin.h"
@@ -95,7 +96,7 @@ static int num_columns_read = 0;
 %type <ielem> boot_index_param
 %type <str>   boot_ident
 %type <ival>  optbootstrap optsharedrelation boot_column_nullness
-%type <oidval> oidspec optrowtypeoid
+%type <oidval> oidspec optrowtypeoid opttoastreloid
 
 %token <str> ID
 %token COMMA EQUALS LPAREN RPAREN
@@ -104,7 +105,7 @@ static int num_columns_read = 0;
 /* All the rest are unreserved, and should be handled in boot_ident! */
 %token <kw> OPEN XCLOSE XCREATE INSERT_TUPLE
 %token <kw> XDECLARE INDEX ON USING XBUILD INDICES UNIQUE XTOAST
-%token <kw> OBJ_ID XBOOTSTRAP XSHARED_RELATION XROWTYPE_OID
+%token <kw> OBJ_ID XBOOTSTRAP XSHARED_RELATION XROWTYPE_OID XTOASTREL_OID
 %token <kw> XFORCE XNOT XNULL
 
 %start TopLevel
@@ -151,7 +152,7 @@ Boot_CloseStmt:
 		;
 
 Boot_CreateStmt:
-		  XCREATE boot_ident oidspec optbootstrap optsharedrelation optrowtypeoid LPAREN
+		  XCREATE boot_ident oidspec optbootstrap optsharedrelation optrowtypeoid opttoastreloid LPAREN
 				{
 					do_start();
 					numattr = 0;
@@ -213,7 +214,8 @@ Boot_CreateStmt:
 												   true,
 												   &relfrozenxid,
 												   &relminmxid,
-												   true);
+												   true,
+												   $7);
 						elog(DEBUG4, "bootstrap relation created");
 					}
 					else
@@ -236,6 +238,7 @@ Boot_CreateStmt:
 													  mapped_relation,
 													  ONCOMMIT_NOOP,
 													  (Datum) 0,
+													  $7,
 													  false,
 													  true,
 													  false,
@@ -425,6 +428,11 @@ optsharedrelation:
 
 optrowtypeoid:
 			XROWTYPE_OID oidspec	{ $$ = $2; }
+		|							{ $$ = InvalidOid; }
+		;
+
+opttoastreloid:
+			XTOASTREL_OID oidspec	{ $$ = $2; }
 		|							{ $$ = InvalidOid; }
 		;
 

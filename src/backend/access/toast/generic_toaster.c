@@ -62,11 +62,13 @@
  * Default Toast mechanics uses heap storage mechanics
  */
 static void
-generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
-				 bool check, Oid OIDOldToast)
+generic_toast_init(Relation rel, Oid toasterid,
+				   Oid toastoid, Oid toastindexoid,
+				   Datum reloptions, LOCKMODE lockmode,
+				   bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, toastoid, toastindexoid, reloptions, lockmode,
-							  check, OIDOldToast);
+	(void) create_toast_table(rel, toasterid, toastoid, toastindexoid,
+							  reloptions, lockmode, check, OIDOldToast);
 }
 
 
@@ -81,7 +83,7 @@ generic_toast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
 
 	Assert(toast_rel != NULL);
 
-	result = toast_save_datum(toast_rel, value,
+	result = toast_save_datum(toast_rel, toasterid, value,
 							  (struct varlena *) DatumGetPointer(oldvalue),
 							  options);
 	return result;

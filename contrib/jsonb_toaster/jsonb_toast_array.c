@@ -1285,7 +1285,7 @@ jsonb_toaster_save_array(Relation rel, Oid toasterid, JsonContainer *root,
 	JsonxArrayChunkInfo *chunks;
 	int			n_chunks;
 	int			n_elems;
-	Oid			toastrelid;
+	Oid			real_toastrelid;
 
 	*res = (Datum) 0;
 
@@ -1305,12 +1305,9 @@ jsonb_toaster_save_array(Relation rel, Oid toasterid, JsonContainer *root,
 	if (n_chunks < 0)
 		return false;
 
-	if (OidIsValid(rel->rd_toastoid))
-		toastrelid = rel->rd_toastoid;
-	else
-		toastrelid = rel->rd_rel->reltoastrelid;
+	(void) toast_find_relation_for_toaster(rel, toasterid, &real_toastrelid);
 
-	*res = jsonx_toast_array_chunks(rel, toastrelid, toasterid,
+	*res = jsonx_toast_array_chunks(rel, real_toastrelid, toasterid,
 								    options, n_elems, n_chunks, chunks);
 
 	Assert(VARSIZE_ANY(*res) <= max_size);
@@ -1401,10 +1398,7 @@ jsonxa_toaster_copy_chunks(Relation rel, Oid toasterid, int options,
 
 		jsonxaArrayIteratorFree(&iter);
 
-		if (OidIsValid(rel->rd_toastoid))
-			jxa->toastrelid = rel->rd_toastoid;
-		else
-			jxa->toastrelid = rel->rd_rel->reltoastrelid;
+		(void) toast_find_relation_for_toaster(rel, toasterid, &jxa->toastrelid);
 	}
 
 	return PointerGetDatum(res);
@@ -1433,7 +1427,7 @@ jsonxa_toaster_cmp(Relation rel, Oid toasterid, JsonContainer *new_jc,
 	bool		is_speculative = false; /* FIXME */
 	int			options = 0; /* FIXME */
 	Datum		res = (Datum) 0;
-	Oid			toastrelid = rel->rd_rel->reltoastrelid;
+	Oid			toastrelid = toast_find_relation_for_toaster(rel, toasterid, NULL);
 	Relation	toastrel = NULL;
 
 	if (old_jxa->toastrelid != toastrelid ||

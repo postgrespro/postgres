@@ -92,6 +92,7 @@
 #include "access/xact.h"
 #include "access/xlog_internal.h"
 #include "catalog/catalog.h"
+#include "catalog/pg_toaster.h"
 #include "lib/binaryheap.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -4596,7 +4597,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	bool	   *isnull;
 	bool	   *free;
 	HeapTuple	tmphtup;
-	Relation	toast_rel;
+	Relation   *toast_rels;
 	MemoryContext oldcontext;
 	ReorderBufferTupleBuf *newtup;
 	Size		old_size;
@@ -4604,7 +4605,8 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	/* no toast tuples changed */
 	//if (txn->toast_hash == NULL)
 	if (!change->data.tp.newtuple ||
-		!HeapTupleHasExternal(&change->data.tp.newtuple->tuple))
+		!HeapTupleHasExternal(&change->data.tp.newtuple->tuple) ||
+		relation->rd_ntoasters <= 0)
 		return;
 
 	/*
@@ -4626,10 +4628,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	desc = RelationGetDescr(relation);
 
-	toast_rel = RelationIdGetRelation(relation->rd_rel->reltoastrelid);
-	if (!RelationIsValid(toast_rel))
-		elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
-			 relation->rd_rel->reltoastrelid, RelationGetRelationName(relation));
+	toast_rels = palloc0(sizeof(*toast_rels) * relation->rd_ntoasters);
 
 	/* should we allocate from stack instead? */
 	attrs = palloc0(sizeof(Datum) * desc->natts);
@@ -4643,8 +4642,11 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	for (natt = 0; natt < desc->natts; natt++)
 	{
 		Form_pg_attribute attr = TupleDescAttr(desc, natt);
+		Oid			toasterid;
 		TsrRoutine *toaster;
 		struct varlena *varlena;
+		Relation	toast_rel = NULL;
+		bool		toaster_found = false;
 
 		/* va_rawsize is the size of the original datum -- including header */
 		struct varatt_indirect redirect_pointer;
@@ -4671,11 +4673,45 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		varlena = (struct varlena *) DatumGetPointer(attrs[natt]);
 
 		/* no need to do anything if the tuple isn't external */
-		if (!VARATT_IS_EXTERNAL_ONDISK(varlena) &&
-			!VARATT_IS_CUSTOM(varlena))
+		if (VARATT_IS_EXTERNAL_ONDISK(varlena))
+			toasterid = DEFAULT_TOASTER_OID;
+		else if (VARATT_IS_CUSTOM(varlena))
+			toasterid = VARATT_CUSTOM_GET_TOASTERID(varlena);
+		else
 			continue;
 
-		toaster = SearchTsrCache(attr->atttoaster);
+		for (int i = 0; i < relation->rd_ntoasters; i++)
+		{
+			Oid			toastrelid = relation->rd_toastrelids[i];
+
+			if (relation->rd_toasterids[i] != toasterid)
+				continue;
+
+			toaster_found = true;
+
+			if (!OidIsValid(toastrelid))
+				toast_rel = NULL;
+			else if (toast_rels[i])
+				toast_rel = toast_rels[i];
+			else
+			{
+				toast_rel = RelationIdGetRelation(toastrelid);
+
+				if (!RelationIsValid(toast_rel))
+					elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
+						 toastrelid, RelationGetRelationName(relation));
+
+				toast_rels[i] = toast_rel;
+			}
+
+			break;
+		}
+
+		if (!toaster_found)
+			elog(ERROR, "could not find toaster %u in reltoasterids (base relation \"%s\")",
+				 toasterid, RelationGetRelationName(relation));
+
+		toaster = SearchTsrCache(toasterid);
 
 		if (toaster->reconstruct)
 		{
@@ -4725,7 +4761,14 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	 * free resources we won't further need, more persistent stuff will be
 	 * free'd in ReorderBufferToastReset().
 	 */
-	RelationClose(toast_rel);
+	for (int i = 0; i < relation->rd_ntoasters; i++)
+	{
+		if (toast_rels[i])
+			RelationClose(toast_rels[i]);
+	}
+
+	pfree(toast_rels);
+
 	pfree(tmphtup);
 	for (natt = 0; natt < desc->natts; natt++)
 	{

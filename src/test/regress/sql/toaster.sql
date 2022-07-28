@@ -22,6 +22,18 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
     WHERE attrelid = 'tsttsrtbl'::regclass and attnum>0
     ORDER BY attnum;
 
+SELECT 'pg_toast.pg_toast_' || ('tsttsrtbl'::regclass::oid) AS toastrel \gset
+
+SELECT
+  substring(relid::regclass::text, 1, length(:'toastrel')) = :'toastrel' AS prefix_ok,
+  substring(relid::regclass::text, length(:'toastrel') + 1) AS suffix
+FROM pg_class, unnest(reltoastrelids) relid
+WHERE relname = 'tsttsrtbl';
+
+SELECT (SELECT tsrname FROM pg_toaster WHERE oid = tsroid)
+FROM pg_class, unnest(reltoasterids) tsroid
+WHERE relname = 'tsttsrtbl';
+
 ALTER TABLE tsttsrtbl ALTER COLUMN t2 SET TOASTER tsttoaster;
 
 SELECT attnum, attname, atttypid, attstorage, tsrname

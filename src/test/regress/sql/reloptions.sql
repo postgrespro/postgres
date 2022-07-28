@@ -65,8 +65,8 @@ INSERT INTO reloptions_test VALUES (1, NULL), (NULL, NULL);
 VACUUM (FREEZE, DISABLE_PAGE_SKIPPING) reloptions_test;
 SELECT pg_relation_size('reloptions_test') > 0;
 
-SELECT reloptions FROM pg_class WHERE oid =
-	(SELECT reltoastrelid FROM pg_class
+SELECT reloptions FROM pg_class WHERE oid IN
+	(SELECT unnest(reltoastrelids) FROM pg_class
 	WHERE oid = 'reloptions_test'::regclass);
 
 ALTER TABLE reloptions_test RESET (vacuum_truncate);
@@ -81,7 +81,7 @@ DROP TABLE reloptions_test;
 
 CREATE TABLE reloptions_test (s VARCHAR)
 	WITH (toast.autovacuum_vacuum_cost_delay = 23);
-SELECT reltoastrelid as toast_oid
+SELECT reltoastrelids[1] as toast_oid
 	FROM pg_class WHERE oid = 'reloptions_test'::regclass \gset
 SELECT reloptions FROM pg_class WHERE oid = :toast_oid;
 
@@ -102,8 +102,8 @@ CREATE TABLE reloptions_test (s VARCHAR) WITH
 	autovacuum_vacuum_cost_delay = 24, fillfactor = 40);
 
 SELECT reloptions FROM pg_class WHERE oid = 'reloptions_test'::regclass;
-SELECT reloptions FROM pg_class WHERE oid = (
-	SELECT reltoastrelid FROM pg_class WHERE oid = 'reloptions_test'::regclass);
+SELECT reloptions FROM pg_class WHERE oid IN (
+	SELECT unnest(reltoastrelids) FROM pg_class WHERE oid = 'reloptions_test'::regclass);
 
 --
 -- CREATE INDEX, ALTER INDEX for btrees

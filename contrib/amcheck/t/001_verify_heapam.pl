@@ -97,7 +97,7 @@ sub get_toast_for
 		SELECT 'pg_toast.' || t.relname
 			FROM pg_catalog.pg_class c, pg_catalog.pg_class t
 			WHERE c.relname = '$relname'
-			  AND c.reltoastrelid = t.oid));
+			  AND t.oid = ANY(c.reltoastrelids)));
 }
 
 # (Re)create and populate a test table of the given name.

@@ -75,6 +75,7 @@ OID				{ yylval.kw = "OID"; return OBJ_ID; }
 bootstrap		{ yylval.kw = "bootstrap"; return XBOOTSTRAP; }
 shared_relation	{ yylval.kw = "shared_relation"; return XSHARED_RELATION; }
 rowtype_oid		{ yylval.kw = "rowtype_oid"; return XROWTYPE_OID; }
+toastrel_oid	{ yylval.kw = "toastrel_oid"; return XTOASTREL_OID; }
 
 insert			{ yylval.kw = "insert"; return INSERT_TUPLE; }
 

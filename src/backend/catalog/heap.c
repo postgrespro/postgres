@@ -52,6 +52,7 @@
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
 #include "commands/tablecmds.h"
@@ -91,7 +92,9 @@ static void AddNewRelationTuple(Relation pg_class_desc,
 								TransactionId relfrozenxid,
 								TransactionId relminmxid,
 								Datum relacl,
-								Datum reloptions);
+								Datum reloptions,
+								Datum reltoasterids,
+								Datum reltoastrelids);
 static ObjectAddress AddNewRelationType(const char *typeName,
 										Oid typeNamespace,
 										Oid new_rel_oid,
@@ -268,7 +271,6 @@ SystemAttributeByName(const char *attname)
  *				XXX END OF UGLY HARD CODED BADNESS XXX
  * ---------------------------------------------------------------- */
 
-
 /* ----------------------------------------------------------------
  *		heap_create		- Create an uncataloged heap relation
  *
@@ -299,7 +301,8 @@ heap_create(const char *relname,
 			bool allow_system_table_mods,
 			TransactionId *relfrozenxid,
 			MultiXactId *relminmxid,
-			bool create_storage)
+			bool create_storage,
+			Oid toastrelid)
 {
 	Relation	rel;
 
@@ -373,7 +376,8 @@ heap_create(const char *relname,
 									 shared_relation,
 									 mapped_relation,
 									 relpersistence,
-									 relkind);
+									 relkind,
+									 toastrelid);
 
 	/*
 	 * Have the storage manager create the relation's disk file, if needed.
@@ -881,7 +885,9 @@ InsertPgClassTuple(Relation pg_class_desc,
 				   Relation new_rel_desc,
 				   Oid new_rel_oid,
 				   Datum relacl,
-				   Datum reloptions)
+				   Datum reloptions,
+				   Datum reltoasterids,
+				   Datum reltoastrelids)
 {
 	Form_pg_class rd_rel = new_rel_desc->rd_rel;
 	Datum		values[Natts_pg_class];
@@ -904,7 +910,6 @@ InsertPgClassTuple(Relation pg_class_desc,
 	values[Anum_pg_class_relpages - 1] = Int32GetDatum(rd_rel->relpages);
 	values[Anum_pg_class_reltuples - 1] = Float4GetDatum(rd_rel->reltuples);
 	values[Anum_pg_class_relallvisible - 1] = Int32GetDatum(rd_rel->relallvisible);
-	values[Anum_pg_class_reltoastrelid - 1] = ObjectIdGetDatum(rd_rel->reltoastrelid);
 	values[Anum_pg_class_relhasindex - 1] = BoolGetDatum(rd_rel->relhasindex);
 	values[Anum_pg_class_relisshared - 1] = BoolGetDatum(rd_rel->relisshared);
 	values[Anum_pg_class_relpersistence - 1] = CharGetDatum(rd_rel->relpersistence);
@@ -930,6 +935,15 @@ InsertPgClassTuple(Relation pg_class_desc,
 		values[Anum_pg_class_reloptions - 1] = reloptions;
 	else
 		nulls[Anum_pg_class_reloptions - 1] = true;
+
+	if (reltoasterids != (Datum) 0)
+		values[Anum_pg_class_reltoasterids - 1] = reltoasterids;
+	else
+		nulls[Anum_pg_class_reltoasterids - 1] = true;
+	if (reltoastrelids != (Datum) 0)
+		values[Anum_pg_class_reltoastrelids - 1] = reltoastrelids;
+	else
+		nulls[Anum_pg_class_reltoastrelids - 1] = true;
 
 	/* relpartbound is set by updating this tuple, if necessary */
 	nulls[Anum_pg_class_relpartbound - 1] = true;
@@ -960,7 +974,9 @@ AddNewRelationTuple(Relation pg_class_desc,
 					TransactionId relfrozenxid,
 					TransactionId relminmxid,
 					Datum relacl,
-					Datum reloptions)
+					Datum reloptions,
+					Datum reltoasterids,
+				    Datum reltoastrelids)
 {
 	Form_pg_class new_rel_reltup;
 
@@ -997,7 +1013,7 @@ AddNewRelationTuple(Relation pg_class_desc,
 
 	/* Now build and insert the tuple */
 	InsertPgClassTuple(pg_class_desc, new_rel_desc, new_rel_oid,
-					   relacl, reloptions);
+					   relacl, reloptions, reltoasterids, reltoastrelids);
 }
 
 
@@ -1102,6 +1118,7 @@ heap_create_with_catalog(const char *relname,
 						 bool mapped_relation,
 						 OnCommitAction oncommit,
 						 Datum reloptions,
+						 Oid toastrelid,
 						 bool use_user_acl,
 						 bool allow_system_table_mods,
 						 bool is_internal,
@@ -1114,6 +1131,8 @@ heap_create_with_catalog(const char *relname,
 	Oid			existing_relid;
 	Oid			old_type_oid;
 	Oid			new_type_oid;
+	Datum		reltoasterids = (Datum) 0;
+	Datum		reltoastrelids = (Datum) 0;
 
 	/* By default set to InvalidOid unless overridden by binary-upgrade */
 	RelFileNumber relfilenumber = InvalidRelFileNumber;
@@ -1284,7 +1303,8 @@ heap_create_with_catalog(const char *relname,
 							   allow_system_table_mods,
 							   &relfrozenxid,
 							   &relminmxid,
-							   true);
+							   true,
+							   toastrelid);
 
 	Assert(relid == RelationGetRelid(new_rel_desc));
 
@@ -1377,6 +1397,15 @@ heap_create_with_catalog(const char *relname,
 		new_type_oid = InvalidOid;
 	}
 
+	if (OidIsValid(toastrelid))
+	{
+		Datum		toasterids = ObjectIdGetDatum(DEFAULT_TOASTER_OID);
+		Datum		toastrelids = ObjectIdGetDatum(toastrelid);
+
+		reltoasterids = PointerGetDatum(construct_array_builtin(&toasterids, 1, OIDOID));
+		reltoastrelids = PointerGetDatum(construct_array_builtin(&toastrelids, 1, OIDOID));
+	}
+
 	/*
 	 * now create an entry in pg_class for the relation.
 	 *
@@ -1394,7 +1423,9 @@ heap_create_with_catalog(const char *relname,
 						relfrozenxid,
 						relminmxid,
 						PointerGetDatum(relacl),
-						reloptions);
+						reloptions,
+						reltoasterids,
+						reltoastrelids);
 
 	/*
 	 * now add tuples to pg_attribute for the attributes in our new relation.
@@ -3034,8 +3065,6 @@ heap_truncate(List *relids)
 void
 heap_truncate_one_rel(Relation rel)
 {
-	Oid			toastrelid;
-
 	/*
 	 * Truncate the relation.  Partitioned tables have no storage, so there is
 	 * nothing to do for them here.
@@ -3049,16 +3078,20 @@ heap_truncate_one_rel(Relation rel)
 	/* If the relation has indexes, truncate the indexes too */
 	RelationTruncateIndexes(rel);
 
-	/* If there is a toast table, truncate that too */
-	toastrelid = rel->rd_rel->reltoastrelid;
-	if (OidIsValid(toastrelid))
+	/* If there is a toast tables, truncate them too */
+	for (int i = 0; i < rel->rd_ntoasters; i++)
 	{
-		Relation	toastrel = table_open(toastrelid, AccessExclusiveLock);
+		Oid			toastrelid = rel->rd_toastrelids[i];
 
-		table_relation_nontransactional_truncate(toastrel);
-		RelationTruncateIndexes(toastrel);
-		/* keep the lock... */
-		table_close(toastrel, NoLock);
+		if (OidIsValid(toastrelid))
+		{
+			Relation	toastrel = table_open(toastrelid, AccessExclusiveLock);
+
+			table_relation_nontransactional_truncate(toastrel);
+			RelationTruncateIndexes(toastrel);
+			/* keep the lock... */
+			table_close(toastrel, NoLock);
+		}
 	}
 }
 

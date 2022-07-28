@@ -34,10 +34,10 @@ sub relation_toast
 
 	my $rel = $node->safe_psql(
 		$dbname, qq(
-		SELECT c.reltoastrelid::regclass
+		SELECT c.reltoastrelids[1]::regclass
 			FROM pg_catalog.pg_class c
 			WHERE c.oid = '$relname'::regclass
-			  AND c.reltoastrelid != 0
+			  AND c.reltoastrelids IS NOT NULL
 			));
 	return $rel;
 }
