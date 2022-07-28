@@ -358,6 +358,18 @@ foreach my $row (@{ $catalog_data{pg_type} })
 	$types{ $row->{typname} } = $row;
 }
 
+# toaster lookups
+my %toasteroids;
+my %toasters;
+foreach my $row (@{ $catalog_data{pg_toaster} })
+{
+	# for OID macro substitutions
+	$toasteroids{ $row->{tsrname} } = $row->{oid};
+
+	# for pg_attribute copies of pg_type values
+	$toasters{ $row->{tsrname} } = $row;
+}
+
 # Encoding identifier lookup.  This uses the same replacement machinery
 # as for OIDs, but we have to dig the values out of pg_wchar.h.
 my %encids;
@@ -401,6 +413,7 @@ my %lookup_kind = (
 	pg_opfamily    => \%opfoids,
 	pg_proc        => \%procoids,
 	pg_tablespace  => \%tablespaceoids,
+	pg_toaster     => \%toasteroids,
 	pg_ts_config   => \%tsconfigoids,
 	pg_ts_dict     => \%tsdictoids,
 	pg_ts_parser   => \%tsparseroids,
