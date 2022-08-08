@@ -1,0 +1,205 @@
+CREATE EXTENSION dummy_toaster;
+CREATE TABLE tst_failed (
+	t text TOASTER dummy_toaster TOASTER dummy_toaster
+);
+ERROR:  multiple TOASTER clauses not allowed
+CREATE TABLE tst1 (
+	f text STORAGE plain,
+	t text STORAGE external TOASTER dummy_toaster,
+	l int
+);
+SELECT  setseed(0);
+ setseed 
+---------
+ 
+(1 row)
+
+INSERT INTO tst1
+	SELECT repeat('a', 2000)::text as f, t.t as t, length(t.t) as l FROM
+		(SELECT
+			repeat(random()::text, (20+30*random())::int) as t
+		 FROM
+			generate_series(1, 32) as  i) as t;
+SELECT length(t), l, length(t) = l FROM tst1 ORDER BY 1, 3;
+ length |  l  | ?column? 
+--------+-----+----------
+    391 | 391 | t
+    414 | 414 | t
+    437 | 437 | t
+    442 | 442 | t
+    448 | 448 | t
+    450 | 450 | t
+    540 | 540 | t
+    540 | 540 | t
+    551 | 551 | t
+    558 | 558 | t
+    594 | 594 | t
+    612 | 612 | t
+    630 | 630 | t
+    646 | 646 | t
+    648 | 648 | t
+    648 | 648 | t
+    665 | 665 | t
+    666 | 666 | t
+    684 | 684 | t
+    702 | 702 | t
+    738 | 738 | t
+    738 | 738 | t
+    741 | 741 | t
+    756 | 756 | t
+    756 | 756 | t
+    774 | 774 | t
+    792 | 792 | t
+    798 | 798 | t
+    833 | 833 | t
+    836 | 836 | t
+    855 | 855 | t
+    882 | 882 | t
+(32 rows)
+
+SELECT attnum, attname, atttypid, attstorage, tsrname
+	FROM pg_attribute, pg_toaster t
+	WHERE attrelid = 'tst1'::regclass and attnum>0 and t.oid = atttoaster
+	ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |    tsrname    
+--------+---------+----------+------------+---------------
+      1 | f       |       25 | p          | deftoaster
+      2 | t       |       25 | e          | dummy_toaster
+(2 rows)
+
+CREATE TABLE tst2 (
+	t text
+);
+SELECT attnum, attname, atttypid, attstorage, tsrname
+	FROM pg_attribute, pg_toaster t
+	WHERE attrelid = 'tst2'::regclass and attnum>0 and t.oid = atttoaster
+	ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |  tsrname   
+--------+---------+----------+------------+------------
+      1 | t       |       25 | x          | deftoaster
+(1 row)
+
+ALTER TABLE tst2 ALTER COLUMN t SET TOASTER dummy_toaster;
+SELECT attnum, attname, atttypid, attstorage, tsrname
+	FROM pg_attribute, pg_toaster t
+	WHERE attrelid = 'tst2'::regclass and attnum>0 and t.oid = atttoaster
+	ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |    tsrname    
+--------+---------+----------+------------+---------------
+      1 | t       |       25 | x          | dummy_toaster
+(1 row)
+
+CREATE TABLE tst3 (
+	f text STORAGE external TOASTER deftoaster,
+	t text STORAGE external TOASTER dummy_toaster,
+	l int
+);
+alter table tst3 add id serial;
+INSERT INTO tst3
+	SELECT repeat('a', 2000)::text as f, t.t as t, length(t.t) as l FROM
+		(SELECT
+			repeat(random()::text, (20+30*random())::int) as t
+		 FROM
+			generate_series(1, 32) as  i) as t;
+SELECT length(t), l, length(t) = l FROM tst1 ORDER BY 1, 3;
+ length |  l  | ?column? 
+--------+-----+----------
+    391 | 391 | t
+    414 | 414 | t
+    437 | 437 | t
+    442 | 442 | t
+    448 | 448 | t
+    450 | 450 | t
+    540 | 540 | t
+    540 | 540 | t
+    551 | 551 | t
+    558 | 558 | t
+    594 | 594 | t
+    612 | 612 | t
+    630 | 630 | t
+    646 | 646 | t
+    648 | 648 | t
+    648 | 648 | t
+    665 | 665 | t
+    666 | 666 | t
+    684 | 684 | t
+    702 | 702 | t
+    738 | 738 | t
+    738 | 738 | t
+    741 | 741 | t
+    756 | 756 | t
+    756 | 756 | t
+    774 | 774 | t
+    792 | 792 | t
+    798 | 798 | t
+    833 | 833 | t
+    836 | 836 | t
+    855 | 855 | t
+    882 | 882 | t
+(32 rows)
+
+SELECT attnum, attname, atttypid, attstorage, tsrname
+	FROM pg_attribute, pg_toaster t
+	WHERE attrelid = 'tst3'::regclass and attnum>0 and t.oid = atttoaster
+	ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |    tsrname    
+--------+---------+----------+------------+---------------
+      1 | f       |       25 | e          | deftoaster
+      2 | t       |       25 | e          | dummy_toaster
+(2 rows)
+
+update tst3 set f = repeat('b', 2000)::text;
+update tst3 set t = repeat('c', 2000)::text;
+ERROR:  Data <2000> size exceeds MAX_DUMMY_CHUNK_SIZE <1024>
+ALTER TABLE tst3 ALTER COLUMN f SET TOASTER dummy_toaster;
+update tst3 set f = repeat('d', 2000)::text;
+ERROR:  Data <2000> size exceeds MAX_DUMMY_CHUNK_SIZE <1024>
+ALTER TABLE tst3 ALTER COLUMN t SET TOASTER deftoaster;
+update tst3 set t = repeat('e', 2000)::text;
+SELECT l, left(f,20), left(t,20) FROM tst3 ORDER BY 1, 3;
+  l  |         left         |         left         
+-----+----------------------+----------------------
+ 378 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 396 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 414 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 456 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 468 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 468 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 494 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 504 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 522 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 528 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 540 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 558 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 558 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 594 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 594 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 608 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 627 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 646 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 648 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 665 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 666 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 702 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 703 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 720 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 741 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 760 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 760 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 774 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 798 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 810 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 810 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+ 817 | bbbbbbbbbbbbbbbbbbbb | eeeeeeeeeeeeeeeeeeee
+(32 rows)
+
+SELECT attnum, attname, atttypid, attstorage, tsrname
+	FROM pg_attribute, pg_toaster t
+	WHERE attrelid = 'tst3'::regclass and attnum>0 and t.oid = atttoaster
+	ORDER BY attnum;
+ attnum | attname | atttypid | attstorage |    tsrname    
+--------+---------+----------+------------+---------------
+      1 | f       |       25 | e          | dummy_toaster
+      2 | t       |       25 | e          | deftoaster
+(2 rows)
+
