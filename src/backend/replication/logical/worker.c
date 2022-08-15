@@ -615,7 +615,7 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
  */
 static void
 slot_store_data(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
-				LogicalRepTupleData *tupleData)
+				LogicalRepTupleData *tupleData, bool old)
 {
 	int			natts = slot->tts_tupleDescriptor->natts;
 	int			i;
@@ -673,6 +673,17 @@ slot_store_data(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 									remoteattnum + 1)));
 				slot->tts_isnull[i] = false;
 			}
+            else if (tupleData->colstatus[remoteattnum] == LOGICALREP_COLUMN_DIFF && !old)
+            {
+                Oid                     typapplydiff = get_typapplydiff(att->atttypid);
+
+                if (!OidIsValid(typapplydiff))
+                     elog(ERROR, "type %u does not support diffs", att->atttypid);
+
+                slot->tts_values[i] =
+                    OidApplyDiffFunctionCall(typapplydiff, NULL, colvalue);
+                slot->tts_isnull[i] = false;
+            }
 			else
 			{
 				/*
@@ -788,6 +799,21 @@ slot_modify_data(TupleTableSlot *slot, TupleTableSlot *srcslot,
 									remoteattnum + 1)));
 				slot->tts_isnull[i] = false;
 			}
+            else if (tupleData->colstatus[remoteattnum] == LOGICALREP_COLUMN_DIFF)
+            {
+                Oid                     typapplydiff = get_typapplydiff(att->atttypid);
+
+                if (!OidIsValid(typapplydiff))
+                     elog(ERROR, "type %u does not support diffs", att->atttypid);
+
+                slot->tts_values[i] =
+                    OidApplyDiffFunctionCall(	typapplydiff,
+                                             	slot->tts_isnull[i] ? NULL :
+	                                                (struct varlena *) DatumGetPointer(slot->tts_values[i]),
+                                            	colvalue);
+
+                slot->tts_isnull[i] = false;
+            }
 			else
 			{
 				/* must be LOGICALREP_COLUMN_NULL */
@@ -1687,7 +1713,7 @@ apply_handle_insert(StringInfo s)
 
 	/* Process and store remote tuple in the slot */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-	slot_store_data(remoteslot, rel, &newtup);
+	slot_store_data(remoteslot, rel, &newtup, false);
 	slot_fill_defaults(rel, estate, remoteslot);
 	MemoryContextSwitchTo(oldctx);
 
@@ -1858,7 +1884,7 @@ apply_handle_update(StringInfo s)
 	/* Build the search tuple. */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 	slot_store_data(remoteslot, rel,
-					has_oldtup ? &oldtup : &newtup);
+					has_oldtup ? &oldtup : &newtup, true);
 	MemoryContextSwitchTo(oldctx);
 
 	/* For a partitioned table, apply update to correct partition. */
@@ -1998,7 +2024,7 @@ apply_handle_delete(StringInfo s)
 
 	/* Build the search tuple. */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-	slot_store_data(remoteslot, rel, &oldtup);
+	slot_store_data(remoteslot, rel, &oldtup, true);
 	MemoryContextSwitchTo(oldctx);
 
 	/* For a partitioned table, apply delete to correct partition. */
