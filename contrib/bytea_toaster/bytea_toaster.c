@@ -159,7 +159,7 @@ bytea_toaster_check_visibility(void *pcxt, char **chunkdata,
 }
 
 static void
-bytea_toaster_delete_toast(Datum oldval, bool is_speculative)
+bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative)
 {
 	if (VARATT_IS_CUSTOM(oldval))
 	{
@@ -251,7 +251,7 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 	}
 
 	if (VARATT_IS_CUSTOM(oldval))
-		bytea_toaster_delete_toast(oldval, is_speculative);
+		bytea_toaster_delete_toast(rel, oldval, is_speculative);
 	else if (VARATT_IS_EXTERNAL_ONDISK(oldval))
 		toast_delete_datum(oldval, is_speculative);
 

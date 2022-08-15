@@ -119,7 +119,7 @@ generic_detoast(Datum toast_ptr, int offset, int length)
  * (marks as dead)
  */
 static void
-generic_delete_toast(Datum value, bool is_speculative)
+generic_delete_toast(Relation rel, Datum value, bool is_speculative)
 {
 	toast_delete_datum(value, is_speculative);
 }

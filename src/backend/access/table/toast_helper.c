@@ -355,11 +355,11 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen,
 }
 
 static void
-toast_delete_external_datum(Datum value, bool is_speculative)
+toast_delete_external_datum(Relation rel, Datum value, bool is_speculative)
 {
 	Oid			toasterid;
 
-	if (VARATT_IS_EXTERNAL(value))
+	if (VARATT_IS_EXTERNAL_ONDISK(value))
 		toasterid = DEFAULT_TOASTER_OID;
 	else if (VARATT_IS_CUSTOM(value))
 		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
@@ -369,7 +369,7 @@ toast_delete_external_datum(Datum value, bool is_speculative)
 	if (toasterid != InvalidOid)
 	{
 		TsrRoutine *toaster = SearchTsrCache(toasterid);
-		toaster->deltoast(value, is_speculative);
+		toaster->deltoast(rel, value, is_speculative);
 	}
 }
 
@@ -410,7 +410,9 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-				toast_delete_external_datum((Datum)(ttc->ttc_oldvalues[i]), false);
+            toast_delete_external_datum(ttc->ttc_rel,
+                                        (Datum)(ttc->ttc_oldvalues[i]),
+                                        false);
 		}
 	}
 }
@@ -430,7 +432,7 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 	for (i = 0; i < numAttrs; i++)
 	{
 		if (TupleDescAttr(tupleDesc, i)->attlen == -1 && !isnull[i])
-			toast_delete_external_datum((Datum)(values[i]),
+			toast_delete_external_datum(rel, (Datum)(values[i]),
 										is_speculative);
 	}
 }
