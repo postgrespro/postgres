@@ -36,4 +36,7 @@
 #include "access/toast_helper.h"
 #include "utils/fmgroids.h"
 
+extern struct varlena *
+generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
+                            HTAB *toast_hash);
 #endif

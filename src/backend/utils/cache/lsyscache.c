@@ -3096,6 +3096,25 @@ getSubscriptingRoutines(Oid typid, Oid *typelemp)
 		DatumGetPointer(OidFunctionCall0(typsubscript));
 }
 
+RegProcedure
+get_typapplydiff(Oid typid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_type typform = (Form_pg_type) GETSTRUCT(tp);
+		RegProcedure handler = typform->typapplydiff;
+
+		ReleaseSysCache(tp);
+		return handler;
+	}
+	else
+	{
+		return InvalidOid;
+	}
+}
 
 /*				---------- STATISTICS CACHE ----------					 */
 
