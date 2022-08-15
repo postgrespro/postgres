@@ -131,4 +131,30 @@ typedef struct GenericToastRoutine
 extern struct varlena *
 generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
                             HTAB *toast_hash);
+
+typedef struct
+{
+	uint32align16 va_extinfo;
+	uint32align16 va_valueid;
+	uint32align16 va_toastrelid;
+} ExternalToastData;
+
+#define VARATT_CUSTOM_EXTERNAL_HDRSZ \
+	sizeof(ExternalToastData)
+
+#define VARATT_CUSTOM_EXTERNAL_SIZE \
+	VARATT_CUSTOM_SIZE(VARATT_CUSTOM_EXTERNAL_HDRSZ)
+
+#define VARATT_CUSTOM_GET_EXTERNAL_DATA(attr, data) \
+do { \
+	varattrib_1b_e *attrc = (varattrib_1b_e *)(attr); \
+	Assert(VARATT_IS_CUSTOM(attrc)); \
+	Assert(VARSIZE_CUSTOM(attrc) >= VARATT_CUSTOM_EXTERNAL_SIZE); \
+	memcpy(&(data), VARATT_CUSTOM_GET_DATA(attrc), VARATT_CUSTOM_EXTERNAL_HDRSZ); \
+} while (0)
+
+#define VARATT_CUSTOM_EXTERNAL_IS_COMPRESSED(toast_ptr, extsize) \
+	(extsize < \
+	VARATT_CUSTOM_GET_DATA_RAW_SIZE(toast_ptr) - VARHDRSZ)
+
 #endif

@@ -19,6 +19,7 @@
 #include "access/heaptoast.h"
 #include "access/table.h"
 #include "access/toast_internals.h"
+#include "access/generic_toaster.h"
 #include "catalog/toasting.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -165,9 +166,22 @@ toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 		{
 			struct varatt_external old_toast_pointer;
 
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
+			/* New case - Generic TOAST working with Custom pointer */
+			if(VARATT_IS_CUSTOM(oldexternal))
+			{
+				ExternalToastData data;
+				VARATT_CUSTOM_GET_EXTERNAL_DATA(PointerGetDatum(oldexternal), data);
+				old_toast_pointer.va_toastrelid = get_uint32align16(&data.va_toastrelid);
+				old_toast_pointer.va_valueid = get_uint32align16(&data.va_valueid);
+			}
+			else
+			{
+				Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
+				VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
+			}
 			/* Must copy to access aligned fields */
-			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
+			/* VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal); */
+			/* XXX if (old_toast_pointer.va_toastrelid == rel->rd_toastoid) */
 			if (old_toast_pointer.va_toastrelid == real_toastrelid)
 			{
 				/* This value came from the old toast table; reuse its OID */
@@ -265,17 +279,34 @@ toast_delete_datum(Datum value, bool is_speculative)
 	int			num_indexes;
 	int			validIndex;
 	SnapshotData SnapshotToast;
+	ExternalToastData data;
+	Oid va_toastrelid;
+	Oid va_valueid;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_CUSTOM(attr))
 		return;
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	if(VARATT_IS_CUSTOM(attr))
+	{
+		/* process custom Toast Pointer */
+		VARATT_CUSTOM_GET_EXTERNAL_DATA(attr, data);
+
+		va_toastrelid = get_uint32align16(&data.va_toastrelid);
+		va_valueid = get_uint32align16(&data.va_valueid);
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+		va_toastrelid = toast_pointer.va_toastrelid;
+		va_valueid = toast_pointer.va_valueid;
+	}
 
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+	toastrel = table_open(va_toastrelid, RowExclusiveLock);
 
 	/* Fetch valid relation used for process */
 	validIndex = toast_open_indexes(toastrel,
@@ -289,7 +320,7 @@ toast_delete_datum(Datum value, bool is_speculative)
 	ScanKeyInit(&toastkey,
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(toast_pointer.va_valueid));
+				ObjectIdGetDatum(va_valueid));
 
 	/*
 	 * Find all the chunks.  (We don't actually care whether we see them in
@@ -405,19 +436,43 @@ toast_fetch_datum(struct varlena *attr)
 	Relation	toastrel;
 	struct varlena *result;
 	struct varatt_external toast_pointer;
+	ExternalToastData data;
+	Oid va_toastrelid;
+	Oid va_valueid;
 	int32		attrsize;
+	bool		is_compressed = false;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
-		elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_CUSTOM(attr))
+		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk or non-custom datums");
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	if(VARATT_IS_CUSTOM(attr))
+	{
+		/* process custom Toast Pointer */
+		VARATT_CUSTOM_GET_EXTERNAL_DATA(attr, data);
 
-	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+		attrsize = get_uint32align16(&data.va_extinfo);
+		va_toastrelid = get_uint32align16(&data.va_toastrelid);
+		va_valueid = get_uint32align16(&data.va_valueid);
+
+		if (VARATT_CUSTOM_EXTERNAL_IS_COMPRESSED(attr, attrsize))
+			is_compressed = true;
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+		va_toastrelid = toast_pointer.va_toastrelid;
+		va_valueid = toast_pointer.va_valueid;
+
+		attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+			is_compressed = true;
+	}
 
 	result = (struct varlena *) palloc(attrsize + VARHDRSZ);
 
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+	if (is_compressed)
 		SET_VARSIZE_COMPRESSED(result, attrsize + VARHDRSZ);
 	else
 		SET_VARSIZE(result, attrsize + VARHDRSZ);
@@ -429,10 +484,10 @@ toast_fetch_datum(struct varlena *attr)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(va_toastrelid, AccessShareLock);
 
 	/* Fetch all chunks */
-	toast_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+	toast_fetch_toast_slice(toastrel, va_valueid,
 							attr, attrsize, 0, attrsize, result, 0,
 							NULL, NULL);
 
@@ -460,22 +515,47 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	Relation	toastrel;
 	struct varlena *result;
 	struct varatt_external toast_pointer;
+	ExternalToastData data;
+	Oid va_toastrelid;
+	Oid va_valueid;
 	int32		attrsize;
+	bool		is_compressed = false;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
-		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk datums");
+	if (!(VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_CUSTOM(attr)))
+		elog(ERROR, "toast_fetch_datum_slice shouldn't be called for non-ondisk or non-custom datums");
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	if(VARATT_IS_CUSTOM(attr))
+	{
+		/* process custom Toast Pointer */
+		VARATT_CUSTOM_GET_EXTERNAL_DATA(attr, data);
 
-	/*
-	 * It's nonsense to fetch slices of a compressed datum unless when it's a
-	 * prefix -- this isn't lo_* we can't return a compressed datum which is
-	 * meaningful to toast later.
-	 */
-	Assert(!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) || 0 == sliceoffset);
+		attrsize = get_uint32align16(&data.va_extinfo);
+		va_toastrelid = get_uint32align16(&data.va_toastrelid);
+		va_valueid = get_uint32align16(&data.va_valueid);
 
-	attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+		if (VARATT_CUSTOM_EXTERNAL_IS_COMPRESSED(attr, attrsize) && slicelength > 0)
+			is_compressed = true;
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+		va_toastrelid = toast_pointer.va_toastrelid;
+		va_valueid = toast_pointer.va_valueid;
+
+		/*
+		 * It's nonsense to fetch slices of a compressed datum unless when it's a
+	 	 * prefix -- this isn't lo_* we can't return a compressed datum which is
+	 	 * meaningful to toast later.
+	 	 */
+		Assert(!VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) || 0 == sliceoffset);
+
+		attrsize = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) && slicelength > 0)
+			is_compressed = true;
+	}
+
 
 	if (sliceoffset >= attrsize)
 	{
@@ -488,7 +568,8 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 	 * space required by va_tcinfo, which is stored at the beginning as an
 	 * int32 value.
 	 */
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) && slicelength > 0)
+	/* if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer) && slicelength > 0) */
+	if(is_compressed)
 		slicelength = slicelength + sizeof(int32);
 
 	/*
@@ -501,7 +582,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
 
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+	if(is_compressed)
 		SET_VARSIZE_COMPRESSED(result, slicelength + VARHDRSZ);
 	else
 		SET_VARSIZE(result, slicelength + VARHDRSZ);
@@ -510,10 +591,10 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
 		return result;			/* Can save a lot of work at this point! */
 
 	/* Open the toast relation */
-	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(va_toastrelid, AccessShareLock);
 
 	/* Fetch all chunks */
-	toast_fetch_toast_slice(toastrel, toast_pointer.va_valueid,
+	toast_fetch_toast_slice(toastrel, va_valueid,
 							attr, attrsize, sliceoffset, slicelength,
 							result, 0, NULL, NULL);
 

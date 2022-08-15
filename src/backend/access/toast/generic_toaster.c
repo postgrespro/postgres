@@ -50,6 +50,7 @@
 #include "access/genam.h"
 #include "access/toast_helper.h"
 #include "utils/fmgroids.h"
+#include "utils/memutils.h"
 #include "access/generic_toaster.h"
 #include "access/toast_compression.h"
 #include "replication/reorderbuffer.h"
@@ -57,6 +58,32 @@
 /*
  * Callback function signatures --- see toaster.sgml for more info.
  */
+static struct varlena *
+generic_toast_make_pointer(Oid toasterid, struct varatt_external *ptr)
+{
+	Size		size = VARATT_CUSTOM_EXTERNAL_SIZE;
+	struct varlena *result = palloc(size);
+	ExternalToastData result_data;
+
+	SET_VARTAG_EXTERNAL(result, VARTAG_CUSTOM);
+
+	if (ptr->va_rawsize > MaxAllocSize)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("atribute length too large")));
+
+	VARATT_CUSTOM_SET_TOASTERID(result, toasterid);
+	VARATT_CUSTOM_SET_DATA_RAW_SIZE(result, ptr->va_rawsize);
+	VARATT_CUSTOM_SET_DATA_SIZE(result, VARATT_CUSTOM_EXTERNAL_HDRSZ);
+
+	set_uint32align16(&result_data.va_extinfo, VARATT_EXTERNAL_GET_EXTSIZE(*ptr)); //->va_extinfo);
+	set_uint32align16(&result_data.va_toastrelid, ptr->va_toastrelid);
+	set_uint32align16(&result_data.va_valueid, ptr->va_valueid);
+
+	memcpy(VARATT_CUSTOM_GET_DATA(result), &result_data, VARATT_CUSTOM_EXTERNAL_HDRSZ);
+
+	return result;
+}
 
 /*
  * Init function. Creates Toast table for Toasted data storage
@@ -78,14 +105,25 @@ static Datum
 generic_toast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
 			 int max_inline_size, int options)
 {
-	Datum result;
+	Datum		detoasted_newval;
+	Datum		toasted_newval;
+	struct varatt_external toast_ptr;
 
 	Assert(toast_rel != NULL);
+	detoasted_newval = PointerGetDatum(detoast_attr((struct varlena *) value));
+	toasted_newval = toast_save_datum_ext(toast_rel, toasterid, detoasted_newval,
+					  (struct varlena *) DatumGetPointer(oldvalue), options,
+					  NULL, 0);
 
-	result = toast_save_datum(toast_rel, toasterid, value,
-				 (struct varlena *) DatumGetPointer(oldvalue),
-				 options);
-	return result;
+	/*
+	 * Custom Toast Pointers differ from regular, this assertion will fail for Custom
+	 * Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_newval));
+	 */
+	VARATT_EXTERNAL_GET_POINTER(toast_ptr, DatumGetPointer(toasted_newval));
+
+	pfree(DatumGetPointer(toasted_newval));
+
+	return PointerGetDatum(generic_toast_make_pointer(toasterid, &toast_ptr));
 }
 
 /*
@@ -96,21 +134,31 @@ static Datum
 generic_detoast(Datum toast_ptr, int offset, int length)
 {
 	struct varlena *result = 0;
-	struct varlena *tvalue = (struct varlena*)DatumGetPointer(toast_ptr);
 	struct varatt_external toast_pointer;
+	ExternalToastData data;
+	int32			toasted_size;
+	struct varlena *tvalue = (struct varlena*)DatumGetPointer(toast_ptr);;
 
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, tvalue);
+	if( VARATT_IS_CUSTOM( tvalue ) )
+	{
+		VARATT_CUSTOM_GET_EXTERNAL_DATA(toast_ptr, data);
+		toasted_size = get_uint32align16(&data.va_extinfo);
+	}
+	else
+	{
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, tvalue);
+		toasted_size = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+	}
 	if(offset == 0
-	   && (length < 0 || length >= VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer)))
+   	   && (length < 0 || length >= toasted_size))
 	{
 		result = toast_fetch_datum(tvalue);
 	}
 	else
 	{
 		result = toast_fetch_datum_slice(tvalue,
-						offset, length);
+			 offset, length);
 	}
-
 	return PointerGetDatum(result);
 }
 
@@ -163,10 +211,21 @@ DetoastIterator
 create_detoast_iterator(struct varlena *attr)
 {
 	struct varatt_external toast_pointer;
+	ExternalToastData data;
 	DetoastIterator iter;
-	if (VARATT_IS_EXTERNAL_ONDISK(attr))
+
+	if (VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_CUSTOM( attr ))
 	{
 		FetchDatumIterator fetch_iter;
+
+		if(VARATT_IS_CUSTOM( attr ))
+		{
+			VARATT_CUSTOM_GET_EXTERNAL_DATA(PointerGetDatum(attr), data);
+			toast_pointer.va_extinfo = get_uint32align16(&data.va_extinfo);
+			toast_pointer.va_toastrelid = get_uint32align16(&data.va_toastrelid);
+			toast_pointer.va_valueid = get_uint32align16(&data.va_valueid);
+			toast_pointer.va_rawsize = get_uint32align16(&data.va_extinfo) + VARATT_CUSTOM_EXTERNAL_HDRSZ;
+		}
 
 		iter = (DetoastIterator) palloc0(sizeof(DetoastIteratorData));
 		iter->done = false;
@@ -176,7 +235,7 @@ create_detoast_iterator(struct varlena *attr)
 		/* This is an externally stored datum --- initialize fetch datum iterator */
 		iter->fetch_datum_iterator = fetch_iter = create_fetch_datum_iterator(attr);
 		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
-		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+		if (!VARATT_IS_CUSTOM( attr ) && VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
 		{
 			iter->compressed = true;
 			iter->compression_method = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
@@ -619,7 +678,7 @@ generic_toaster_vtable(Datum toast_ptr)
 
 struct varlena *
 generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
-                                HTAB *toast_hash)
+                            HTAB *toast_hash)
 {
        struct varatt_external toast_pointer;
        struct varlena *reconstructed;
