@@ -19,6 +19,7 @@
 #include "replication/logicalproto.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "access/toasterapi.h"
 
 /*
  * Protocol message flags.
@@ -814,7 +815,9 @@ logicalrep_write_tuple(StringInfo out, Relation rel, TupleTableSlot *slot,
 			continue;
 		}
 
-		if (att->attlen == -1 && VARATT_IS_EXTERNAL_ONDISK(values[i]))
+        if (att->attlen == -1 &&
+           (VARATT_IS_EXTERNAL_ONDISK(values[i]) ||
+            VARATT_IS_CUSTOM(values[i])))
 		{
 			/*
 			 * Unchanged toasted datum.  (Note that we don't promise to detect
@@ -829,6 +832,31 @@ logicalrep_write_tuple(StringInfo out, Relation rel, TupleTableSlot *slot,
 		if (!HeapTupleIsValid(typtup))
 			elog(ERROR, "cache lookup failed for type %u", att->atttypid);
 		typclass = (Form_pg_type) GETSTRUCT(typtup);
+
+       	if (att->attlen == -1 && VARATT_IS_EXTERNAL_INDIRECT(values[i]))
+       	{
+            struct varatt_indirect redirect;
+            struct varlena *attr;
+
+            VARATT_EXTERNAL_GET_POINTER(redirect, values[i]);
+            attr = (struct varlena *) redirect.pointer;
+
+            /* Send type diff, if it is a custom pointer. */
+            if (VARATT_IS_CUSTOM(attr))
+            {
+                int len = VARATT_CUSTOM_GET_DATA_SIZE(attr);
+
+                if (!OidIsValid(typclass->typapplydiff))
+                    elog(ERROR, "toaster returned diff, but datatype does not support diffs");
+
+                pq_sendbyte(out, LOGICALREP_COLUMN_DIFF);
+                pq_sendint(out, len, 4);        /* length */
+                pq_sendbytes(out, VARATT_CUSTOM_GET_DATA(attr), len);   /* data */
+
+                ReleaseSysCache(typtup);
+                continue;
+            }
+	    }
 
 		/*
 		 * Send in binary if requested and type has suitable send function.
@@ -907,6 +935,7 @@ logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple)
 				value->maxlen = len;
 				break;
 			case LOGICALREP_COLUMN_BINARY:
+			case LOGICALREP_COLUMN_DIFF:
 				len = pq_getmsgint(in, 4);	/* read length */
 
 				/* and data */

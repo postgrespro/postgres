@@ -1775,6 +1775,38 @@ OidSendFunctionCall(Oid functionId, Datum val)
 	return SendFunctionCall(&flinfo, val);
 }
 
+Datum
+ApplyDiffFunctionCall(FmgrInfo *flinfo, struct varlena *oldval, void *diff)
+{
+	LOCAL_FCINFO(fcinfo, 2);
+	Datum		result;
+
+	Assert(diff);
+	InitFunctionCallInfoData(*fcinfo, flinfo, 2, InvalidOid, NULL, NULL);
+
+	fcinfo->args[0].value = PointerGetDatum(oldval);
+	fcinfo->args[0].isnull = oldval == NULL;
+	fcinfo->args[1].value = PointerGetDatum(diff);
+	fcinfo->args[1].isnull = false;
+
+	result = FunctionCallInvoke(fcinfo);
+
+	if (fcinfo->isnull)
+		elog(ERROR, "apply diff function %u returned NULL",
+			 flinfo->fn_oid);
+
+	return result;
+}
+
+Datum
+OidApplyDiffFunctionCall(Oid functionId, struct varlena *oldval, StringInfo diff)
+{
+	FmgrInfo	flinfo;
+
+	fmgr_info(functionId, &flinfo);
+	return ApplyDiffFunctionCall(&flinfo, oldval, diff->data);
+}
+
 
 /*-------------------------------------------------------------------------
  *		Support routines for standard maybe-pass-by-reference datatypes

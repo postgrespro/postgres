@@ -128,4 +128,7 @@ typedef struct GenericToastRoutine
 	void	  (*detoast_iterate_next)(Datum detoast_iter, Datum destend);
 } GenericToastRoutine;
 
+extern struct varlena *
+generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
+                            HTAB *toast_hash);
 #endif

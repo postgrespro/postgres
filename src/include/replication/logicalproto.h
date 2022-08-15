@@ -97,6 +97,7 @@ typedef struct LogicalRepTupleData
 #define LOGICALREP_COLUMN_UNCHANGED	'u'
 #define LOGICALREP_COLUMN_TEXT		't'
 #define LOGICALREP_COLUMN_BINARY	'b' /* added in PG14 */
+#define LOGICALREP_COLUMN_DIFF      'd' /* TOAST replication */
 
 typedef uint32 LogicalRepRelId;
 

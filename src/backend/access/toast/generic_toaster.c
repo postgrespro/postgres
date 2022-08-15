@@ -52,6 +52,7 @@
 #include "utils/fmgroids.h"
 #include "access/generic_toaster.h"
 #include "access/toast_compression.h"
+#include "replication/reorderbuffer.h"
 
 /*
  * Callback function signatures --- see toaster.sgml for more info.
@@ -63,10 +64,10 @@
  */
 static void
 generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
-				 bool check, Oid OIDOldToast)
+		   bool check, Oid OIDOldToast)
 {
 	(void) create_toast_table(rel, toastoid, toastindexoid, reloptions, lockmode,
-							  check, OIDOldToast);
+				  check, OIDOldToast);
 }
 
 
@@ -82,8 +83,8 @@ generic_toast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
 	Assert(toast_rel != NULL);
 
 	result = toast_save_datum(toast_rel, value,
-							  (struct varlena *) DatumGetPointer(oldvalue),
-							  options);
+				 (struct varlena *) DatumGetPointer(oldvalue),
+				 options);
 	return result;
 }
 
@@ -107,7 +108,7 @@ generic_detoast(Datum toast_ptr, int offset, int length)
 	else
 	{
 		result = toast_fetch_datum_slice(tvalue,
-										 offset, length);
+						offset, length);
 	}
 
 	return PointerGetDatum(result);
@@ -616,6 +617,83 @@ generic_toaster_vtable(Datum toast_ptr)
 	return routine;
 }
 
+struct varlena *
+generic_toaster_reconstruct(Relation toastrel, struct varlena *varlena,
+                                HTAB *toast_hash)
+{
+       struct varatt_external toast_pointer;
+       struct varlena *reconstructed;
+       ReorderBufferToastEnt *ent;
+       dlist_iter      it;
+       Size            data_done = 0;
+       TupleDesc       toast_desc;
+
+       if (!VARATT_IS_EXTERNAL_ONDISK(varlena))
+               return NULL;
+
+       if (!toast_hash)
+               return NULL;
+
+       VARATT_EXTERNAL_GET_POINTER(toast_pointer, varlena);
+
+       /*
+        * Check whether the toast tuple changed, replace if so.
+        */
+       ent = (ReorderBufferToastEnt *)
+               hash_search(toast_hash,
+                                       (void *) &toast_pointer.va_valueid,
+                                       HASH_FIND,
+                                       NULL);
+
+       if (ent == NULL)
+               return NULL;
+
+       reconstructed = palloc0(toast_pointer.va_rawsize);
+
+       ent->reconstructed = reconstructed;
+
+       toast_desc = RelationGetDescr(toastrel);
+
+       /* stitch toast tuple back together from its parts */
+       dlist_foreach(it, &ent->chunks)
+       {
+               bool            isnull;
+               ReorderBufferChange *cchange;
+               ReorderBufferTupleBuf *ctup;
+               Pointer         chunk;
+
+               cchange = dlist_container(ReorderBufferChange, node, it.cur);
+               ctup = cchange->data.tp.newtuple;
+               chunk = DatumGetPointer(fastgetattr(&ctup->tuple, 3, toast_desc, &isnull));
+
+               Assert(!isnull);
+               Assert(!VARATT_IS_EXTERNAL(chunk));
+               Assert(!VARATT_IS_SHORT(chunk));
+
+               memcpy(VARDATA(reconstructed) + data_done,
+                          VARDATA(chunk),
+                          VARSIZE(chunk) - VARHDRSZ);
+               data_done += VARSIZE(chunk) - VARHDRSZ;
+       }
+       Assert(data_done == VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer));
+
+       /* make sure its marked as compressed or not */
+       if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
+               SET_VARSIZE_COMPRESSED(reconstructed, data_done + VARHDRSZ);
+       else
+               SET_VARSIZE(reconstructed, data_done + VARHDRSZ);
+
+       return reconstructed;
+}
+
+static Datum
+generic_reconstruct(Relation toastrel, struct varlena *varlena,
+                                       HTAB *toast_hash, bool *need_free)
+{
+       *need_free = false;
+       return PointerGetDatum(generic_toaster_reconstruct(toastrel, varlena, toast_hash));
+}
+
 Datum
 default_toaster_handler(PG_FUNCTION_ARGS)
 {
@@ -628,6 +706,7 @@ default_toaster_handler(PG_FUNCTION_ARGS)
 	tsrroutine->update_toast = NULL;
 	tsrroutine->copy_toast = NULL;
 	tsrroutine->get_vtable = generic_toaster_vtable;
+	tsrroutine->reconstruct = generic_reconstruct;
 	tsrroutine->toastervalidate = generic_validate;
 
 	PG_RETURN_POINTER(tsrroutine);

@@ -373,6 +373,8 @@ typedef struct ReorderBufferTXN
 	 */
 	HTAB	   *toast_hash;
 
+	List       *toast_reconstructed;
+
 	/*
 	 * non-hierarchical list of subtransactions that are *not* aborted. Only
 	 * used in toplevel transactions.
@@ -417,6 +419,19 @@ typedef struct ReorderBufferTXN
 	 */
 	void	   *output_plugin_private;
 } ReorderBufferTXN;
+
+/* toast datastructures */
+typedef struct ReorderBufferToastEnt
+{
+       Oid              chunk_id;       /* toast_table.chunk_id */
+       int32           	last_chunk_seq; /* toast_table.chunk_seq of the last chunk we
+                                         * have seen */
+       Size            	num_chunks;     /* number of chunks we've already seen */
+       Size            	size;           /* combined size of chunks seen */
+       dlist_head      	chunks;         /* linked list of chunks */
+       struct varlena  *reconstructed;  /* reconstructed varlena now pointed to in
+                                         * main tup */
+} ReorderBufferToastEnt;
 
 /* so we can define the callbacks used inside struct ReorderBuffer itself */
 typedef struct ReorderBuffer ReorderBuffer;
