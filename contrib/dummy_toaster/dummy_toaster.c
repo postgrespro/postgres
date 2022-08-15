@@ -117,7 +117,7 @@ dummy_toast(Relation toast_rel, Oid toasterid,
  * Dummy delete function
  */
 static void
-dummy_delete(Datum value, bool is_speculative)
+dummy_delete(Relation rel, Datum value, bool is_speculative)
 {
 }
 
