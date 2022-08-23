@@ -174,6 +174,7 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 		case T_CreateCastStmt:
 		case T_CreateConversionStmt:
 		case T_CreateDomainStmt:
+		case T_CreateDictionaryStmt:
 		case T_CreateEnumStmt:
 		case T_CreateEventTrigStmt:
 		case T_CreateExtensionStmt:
@@ -1621,6 +1622,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				}
 				break;
 
+			case T_CreateDictionaryStmt:	/* CREATE TYPE AS DICTIONARY OF */
+				address = DefineDictionary((CreateDictionaryStmt *) parsetree);
+				break;
+
 			case T_CreateEnumStmt:	/* CREATE TYPE AS ENUM */
 				address = DefineEnum((CreateEnumStmt *) parsetree);
 				break;
@@ -2772,6 +2777,10 @@ CreateCommandTag(Node *parsetree)
 			tag = CMDTAG_CREATE_TYPE;
 			break;
 
+		case T_CreateDictionaryStmt:
+			tag = CMDTAG_CREATE_TYPE;
+			break;
+
 		case T_CreateEnumStmt:
 			tag = CMDTAG_CREATE_TYPE;
 			break;
@@ -3416,6 +3425,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CompositeTypeStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreateDictionaryStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

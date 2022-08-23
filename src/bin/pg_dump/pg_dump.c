@@ -10217,6 +10217,8 @@ dumpType(Archive *fout, const TypeInfo *tyinfo)
 		dumpDomain(fout, tyinfo);
 	else if (tyinfo->typtype == TYPTYPE_COMPOSITE)
 		dumpCompositeType(fout, tyinfo);
+	else if (tyinfo->typtype == TYPTYPE_DICT)
+		pg_log_error("AALEKSEEV TODO FIXME not implemented");
 	else if (tyinfo->typtype == TYPTYPE_ENUM)
 		dumpEnumType(fout, tyinfo);
 	else if (tyinfo->typtype == TYPTYPE_RANGE)

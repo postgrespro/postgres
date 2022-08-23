@@ -279,7 +279,22 @@ coerce_type(ParseState *pstate, Node *node,
 		if (baseTypeId == INTERVALOID)
 			inputTypeMod = baseTypeMod;
 		else
-			inputTypeMod = -1;
+		{
+			if((int32)targetTypeId == targetTypeMod)
+			{
+				/*
+				 * For dictionaries internally we set typmod to a dictionary
+				 * OID. This allows dictionary_in() and jsonb_dictionary() to
+				 * distinguish one dictionary from another.
+				 *
+				 * It also allows us to recognize that the target type is
+				 * a dictionary here and pass a correct typmod.
+				 */
+				inputTypeMod = targetTypeMod;
+			}
+			else
+				inputTypeMod = -1;
+		}
 
 		baseType = typeidType(baseTypeId);
 

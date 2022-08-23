@@ -10032,6 +10032,26 @@
   proname => 'jsonb_path_match_opr', prorettype => 'bool',
   proargtypes => 'jsonb jsonpath', prosrc => 'jsonb_path_match_opr' },
 
+# dictionaries
+{ oid => '9864', descr => 'Converts a cstring to a dictionary',
+  proname => 'dictionary_in', prorettype => 'any', proargtypes => 'cstring oid int4',
+  prosrc => 'dictionary_in' },
+{ oid => '9865', descr => 'Converts a dictionary to a cstring',
+  proname => 'dictionary_out', prorettype => 'cstring', proargtypes => 'any',
+  prosrc => 'dictionary_out' },
+{ oid => '9866', descr => 'Coverts JSONB to a dictionary type',
+  proname => 'jsonb_dictionary', proisstrict => 'f', provolatile => 's',
+  prorettype => 'any', proargtypes => 'jsonb int4',
+  prosrc => 'jsonb_dictionary' },
+{ oid => '9867', descr => 'Converts a dictionary type to JSONB',
+  proname => 'dictionary_jsonb', proisstrict => 'f', provolatile => 's',
+  prorettype => 'jsonb', proargtypes => 'any',
+  prosrc => 'dictionary_jsonb' },
+{ oid => '9868', descr => 'Converts a dictionary type to a byte array',
+  proname => 'dictionary_bytea', proisstrict => 'f', provolatile => 's',
+  prorettype => 'jsonb', proargtypes => 'any',
+  prosrc => 'dictionary_bytea' },
+
 # historical int8/txid_snapshot variants of xid8 functions
 { oid => '2939', descr => 'I/O',
   proname => 'txid_snapshot_in', prorettype => 'txid_snapshot',

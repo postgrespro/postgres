@@ -272,6 +272,7 @@ DECLARE_UNIQUE_INDEX(pg_type_typname_nsp_index, 2704, TypeNameNspIndexId, on pg_
  */
 #define  TYPTYPE_BASE		'b' /* base type (ordinary scalar type) */
 #define  TYPTYPE_COMPOSITE	'c' /* composite (e.g., table's rowtype) */
+#define  TYPTYPE_DICT		'D' /* dictionary */
 #define  TYPTYPE_DOMAIN		'd' /* domain over another type */
 #define  TYPTYPE_ENUM		'e' /* enumerated type */
 #define  TYPTYPE_MULTIRANGE	'm' /* multirange type */

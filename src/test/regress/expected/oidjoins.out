@@ -182,6 +182,7 @@ NOTICE:  checking pg_description {classoid} => pg_class {oid}
 NOTICE:  checking pg_cast {castsource} => pg_type {oid}
 NOTICE:  checking pg_cast {casttarget} => pg_type {oid}
 NOTICE:  checking pg_cast {castfunc} => pg_proc {oid}
+NOTICE:  checking pg_dict {dicttypid} => pg_type {oid}
 NOTICE:  checking pg_enum {enumtypid} => pg_type {oid}
 NOTICE:  checking pg_namespace {nspowner} => pg_authid {oid}
 NOTICE:  checking pg_conversion {connamespace} => pg_namespace {oid}

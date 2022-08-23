@@ -6267,6 +6267,14 @@ DefineStmt:
 					n->coldeflist = $6;
 					$$ = (Node *) n;
 				}
+			| CREATE TYPE_P any_name AS DICTIONARY OF any_name '(' opt_enum_val_list ')'
+				{
+					CreateDictionaryStmt *n = makeNode(CreateDictionaryStmt);
+					n->typeName = $3;
+					n->baseTypeName = $7;
+					n->vals = $9;
+					$$ = (Node *)n;
+				}
 			| CREATE TYPE_P any_name AS ENUM_P '(' opt_enum_val_list ')'
 				{
 					CreateEnumStmt *n = makeNode(CreateEnumStmt);

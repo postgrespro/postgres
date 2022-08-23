@@ -1292,6 +1292,7 @@ get_type_func_class(Oid typid, Oid *base_typeid)
 		case TYPTYPE_COMPOSITE:
 			return TYPEFUNC_COMPOSITE;
 		case TYPTYPE_BASE:
+		case TYPTYPE_DICT:
 		case TYPTYPE_ENUM:
 		case TYPTYPE_RANGE:
 		case TYPTYPE_MULTIRANGE:

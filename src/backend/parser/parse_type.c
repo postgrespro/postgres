@@ -259,6 +259,10 @@ LookupTypeNameOid(ParseState *pstate, const TypeName *typeName, bool missing_ok)
  * This is equivalent to LookupTypeName, except that this will report
  * a suitable error message if the type cannot be found or is not defined.
  * Callers of this can therefore assume the result is a fully valid type.
+ *
+ * For a dictionary type it's OID is returned as a typmod. This is used by
+ * dictionary_in() and jsonb_dictionary() to distinguish one dictionary from
+ * another.
  */
 Type
 typenameType(ParseState *pstate, const TypeName *typeName, int32 *typmod_p)
@@ -305,6 +309,10 @@ typenameTypeId(ParseState *pstate, const TypeName *typeName)
  *
  * This is equivalent to typenameType, but we only hand back the type OID
  * and typmod, not the syscache entry.
+ *
+ * For a dictionary type it's OID is returned as a typmod. This is used by
+ * dictionary_in() and jsonb_dictionary() to distinguish one dictionary from
+ * another.
  */
 void
 typenameTypeIdAndMod(ParseState *pstate, const TypeName *typeName,
@@ -327,6 +335,10 @@ typenameTypeIdAndMod(ParseState *pstate, const TypeName *typeName,
  * looked up, and is passed as "typ".
  *
  * pstate is only used for error location info, and may be NULL.
+ *
+ * For a dictionary type it's OID is returned as a typmod. This is used by
+ * dictionary_in() and jsonb_dictionary() to distinguish one dictionary from
+ * another.
  */
 static int32
 typenameTypeMod(ParseState *pstate, const TypeName *typeName, Type typ)
@@ -338,6 +350,10 @@ typenameTypeMod(ParseState *pstate, const TypeName *typeName, Type typ)
 	ListCell   *l;
 	ArrayType  *arrtypmod;
 	ParseCallbackState pcbstate;
+
+	/* For a dictionary return it's OID. */
+	if (((Form_pg_type) GETSTRUCT(typ))->typtype == TYPTYPE_DICT)
+		return (int32)((Form_pg_type) GETSTRUCT(typ))->oid;
 
 	/* Return prespecified typmod if no typmod expressions */
 	if (typeName->typmods == NIL)

@@ -3582,6 +3582,18 @@ typedef struct CompositeTypeStmt
 } CompositeTypeStmt;
 
 /* ----------------------
+ *		Create Type Statement, dictionary types
+ * ----------------------
+ */
+typedef struct CreateDictionaryStmt
+{
+	NodeTag		type;
+	List	   *typeName;		/* qualified name (list of String) */
+	List	   *baseTypeName;	/* qualified base type name (list of String) */
+	List	   *vals;			/* dictionary entries (list of String) */
+} CreateDictionaryStmt;
+
+/* ----------------------
  *		Create Type Statement, enum types
  * ----------------------
  */

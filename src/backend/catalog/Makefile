@@ -33,6 +33,7 @@ OBJS = \
 	pg_conversion.o \
 	pg_db_role_setting.o \
 	pg_depend.o \
+	pg_dict.o \
 	pg_enum.o \
 	pg_inherits.o \
 	pg_largeobject.o \
@@ -61,7 +62,7 @@ CATALOG_HEADERS := \
 	pg_language.h pg_largeobject_metadata.h pg_largeobject.h pg_aggregate.h \
 	pg_statistic.h pg_statistic_ext.h pg_statistic_ext_data.h \
 	pg_rewrite.h pg_trigger.h pg_event_trigger.h pg_description.h \
-	pg_cast.h pg_enum.h pg_namespace.h pg_conversion.h pg_depend.h \
+	pg_cast.h pg_dict.h pg_enum.h pg_namespace.h pg_conversion.h pg_depend.h \
 	pg_database.h pg_db_role_setting.h pg_tablespace.h \
 	pg_authid.h pg_auth_members.h pg_shdepend.h pg_shdescription.h \
 	pg_ts_config.h pg_ts_config_map.h pg_ts_dict.h \
