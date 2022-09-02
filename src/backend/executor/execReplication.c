@@ -180,7 +180,8 @@ retry:
 							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
-							   &tmfd);
+							   &tmfd,
+							   bms_make_singleton(0));
 
 		PopActiveSnapshot();
 
@@ -357,7 +358,8 @@ retry:
 							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
-							   &tmfd);
+							   &tmfd,
+							   bms_make_singleton(0));
 
 		PopActiveSnapshot();
 

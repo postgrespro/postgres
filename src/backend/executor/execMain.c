@@ -2673,7 +2673,7 @@ EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti, TupleTableSlot *slot)
 			/* ordinary table, fetch the tuple */
 			if (!table_tuple_fetch_row_version(erm->relation,
 											   (ItemPointer) DatumGetPointer(datum),
-											   SnapshotAny, slot))
+											   SnapshotAny, slot, bms_make_singleton(0)))
 				elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
 			return true;
 		}

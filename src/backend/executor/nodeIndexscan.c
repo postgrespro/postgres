@@ -115,6 +115,16 @@ IndexNext(IndexScanState *node)
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys);
 
+        if (table_scans_leverage_column_projection(node->ss.ss_currentRelation))
+        {
+                Bitmapset *proj = NULL;
+                Scan *planNode = (Scan *)node->ss.ps.plan;
+                int rti = planNode->scanrelid;
+                RangeTblEntry *rte = list_nth(estate->es_plannedstmt->rtable, rti - 1);
+                proj = rte->scanCols;
+                table_index_fetch_set_column_projection(scandesc->xs_heapfetch, proj);
+        }
+
 		node->iss_ScanDesc = scandesc;
 
 		/*

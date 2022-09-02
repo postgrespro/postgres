@@ -1467,7 +1467,9 @@ addRangeTableEntry(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -1555,7 +1557,9 @@ addRangeTableEntryForRelation(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -1656,7 +1660,9 @@ addRangeTableEntryForSubquery(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -1986,7 +1992,9 @@ addRangeTableEntryForFunction(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -2079,7 +2087,9 @@ addRangeTableEntryForTableFunc(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -2166,7 +2176,9 @@ addRangeTableEntryForValues(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -2263,7 +2275,9 @@ addRangeTableEntryForJoin(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -2413,7 +2427,9 @@ addRangeTableEntryForCTE(ParseState *pstate,
 	rte->selectedCols = NULL;
 	rte->insertedCols = NULL;
 	rte->updatedCols = NULL;
+	rte->returningCols = NULL;
 	rte->extraUpdatedCols = NULL;
+	rte->scanCols = NULL;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its

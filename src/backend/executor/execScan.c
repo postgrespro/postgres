@@ -21,7 +21,8 @@
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
-
+#include "utils/rel.h"
+#include "nodes/nodeFuncs.h"
 
 
 /*
@@ -339,4 +340,111 @@ ExecScanReScan(ScanState *node)
 			}
 		}
 	}
+}
+
+typedef struct neededColumnContext
+{
+       Bitmapset **mask;
+       int ncol;
+} neededColumnContext;
+
+static bool
+neededColumnContextWalker(Node *node, neededColumnContext *c)
+{
+       if (node == NULL || contains_whole_row_col(*c->mask))
+               return false;
+
+       if (IsA(node, Var))
+       {
+               Var *var = (Var *)node;
+
+               if (var->varattno > 0)
+               {
+                       Assert(var->varattno <= c->ncol);
+                       *(c->mask) = bms_add_member(*(c->mask), var->varattno);
+               }
+               else if(var->varattno == 0) {
+                       bms_free(*(c->mask));
+                       *(c->mask) = bms_make_singleton(0);
+               }
+
+               return false;
+       }
+       return expression_tree_walker(node, neededColumnContextWalker, (void * )c);
+}
+
+/*
+ * n specifies the number of allowed entries in mask: we use
+ * it for bounds-checking in the walker above.
+ */
+void
+PopulateNeededColumnsForNode(Node *expr, int ncol, Bitmapset **scanCols)
+{
+       neededColumnContext c;
+
+       c.mask = scanCols;
+       c.ncol = ncol;
+
+       neededColumnContextWalker(expr, &c);
+}
+
+
+Bitmapset *
+PopulateNeededColumnsForScan(ScanState *scanstate, int ncol)
+{
+       Bitmapset *result = NULL;
+       Plan       *plan = scanstate->ps.plan;
+
+       PopulateNeededColumnsForNode((Node *) plan->targetlist, ncol, &result);
+       PopulateNeededColumnsForNode((Node *) plan->qual, ncol, &result);
+
+       if (IsA(plan, IndexScan))
+       {
+               PopulateNeededColumnsForNode((Node *) ((IndexScan *) plan)->indexqualorig, ncol, &result);
+               PopulateNeededColumnsForNode((Node *) ((IndexScan *) plan)->indexorderbyorig, ncol, &result);
+       }
+       else if (IsA(plan, BitmapHeapScan))
+               PopulateNeededColumnsForNode((Node *) ((BitmapHeapScan *) plan)->bitmapqualorig, ncol, &result);
+
+       return result;
+}
+
+Bitmapset *
+PopulateNeededColumnsForEPQ(EPQState *epqstate, int ncol)
+{
+       Bitmapset *epqCols = NULL;
+       Assert(epqstate && epqstate->plan);
+       PopulateNeededColumnsForNode((Node *) epqstate->plan->qual,
+                                                                ncol,
+                                                                &epqCols);
+       return epqCols;
+}
+
+void
+PopulateNeededColumnsForOnConflictUpdate(ResultRelInfo *resultRelInfo)
+{
+       ExprState  *onConflictSetWhere = resultRelInfo->ri_onConflict->oc_WhereClause;
+       ProjectionInfo *oc_ProjInfo = resultRelInfo->ri_onConflict->oc_ProjInfo;
+       Relation relation = resultRelInfo->ri_RelationDesc;
+       Bitmapset *proj_cols = NULL;
+       ListCell *lc;
+
+       if (onConflictSetWhere && onConflictSetWhere->expr)
+               PopulateNeededColumnsForNode((Node *) onConflictSetWhere->expr,
+                                                                        RelationGetDescr(relation)->natts,
+                                                                        &proj_cols);
+
+       if (oc_ProjInfo)
+               PopulateNeededColumnsForNode((Node *) oc_ProjInfo->pi_state.expr,
+                                                                        RelationGetDescr(relation)->natts,
+                                                                        &proj_cols);
+
+       foreach(lc, resultRelInfo->ri_WithCheckOptionExprs)
+       {
+               ExprState  *wcoExpr = (ExprState *) lfirst(lc);
+               PopulateNeededColumnsForNode((Node *) wcoExpr->expr,
+                                                                        RelationGetDescr(relation)->natts,
+                                                                        &proj_cols);
+       }
+       resultRelInfo->ri_onConflict->proj_cols = proj_cols;
 }

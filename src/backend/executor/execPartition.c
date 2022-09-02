@@ -845,6 +845,8 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 						ExecInitQual((List *) clause, &mtstate->ps);
 				}
 			}
+
+			PopulateNeededColumnsForOnConflictUpdate(leaf_part_rri);
 		}
 	}
 

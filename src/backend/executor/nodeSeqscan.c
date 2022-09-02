@@ -68,9 +68,22 @@ SeqNext(SeqScanState *node)
 		 * We reach here if the scan is not parallel, or if we're serially
 		 * executing a scan that was planned to be parallel.
 		 */
-		scandesc = table_beginscan(node->ss.ss_currentRelation,
-								   estate->es_snapshot,
-								   0, NULL);
+      	if (table_scans_leverage_column_projection(node->ss.ss_currentRelation))
+      	{
+            Scan *planNode = (Scan *)node->ss.ps.plan;
+            int rti = planNode->scanrelid;
+            RangeTblEntry *rte = list_nth(estate->es_plannedstmt->rtable, rti - 1);
+            scandesc = table_beginscan_with_column_projection(node->ss.ss_currentRelation,
+                                                              estate->es_snapshot,
+                                                              0, NULL,
+                                                              rte->scanCols);
+      	}
+      	else
+      	{
+            scandesc = table_beginscan(node->ss.ss_currentRelation,
+                                       estate->es_snapshot,
+                                       0, NULL);
+      	}
 		node->ss.ss_currentScanDesc = scandesc;
 	}
 
@@ -270,14 +283,21 @@ ExecSeqScanInitializeDSM(SeqScanState *node,
 {
 	EState	   *estate = node->ss.ps.state;
 	ParallelTableScanDesc pscan;
+    Bitmapset *proj = NULL;
 
-	pscan = shm_toc_allocate(pcxt->toc, node->pscan_len);
-	table_parallelscan_initialize(node->ss.ss_currentRelation,
-								  pscan,
-								  estate->es_snapshot);
-	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, pscan);
-	node->ss.ss_currentScanDesc =
-		table_beginscan_parallel(node->ss.ss_currentRelation, pscan);
+    pscan = shm_toc_allocate(pcxt->toc, node->pscan_len);
+
+    if (table_scans_leverage_column_projection(node->ss.ss_currentRelation))
+    {
+        proj = PopulateNeededColumnsForScan(&node->ss,
+                                  			node->ss.ss_currentRelation->rd_att->natts);
+    }
+
+    table_parallelscan_initialize(node->ss.ss_currentRelation,
+                                  pscan,
+                                  estate->es_snapshot);
+    shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, pscan);
+    node->ss.ss_currentScanDesc = table_beginscan_parallel(node->ss.ss_currentRelation, pscan, proj);
 }
 
 /* ----------------------------------------------------------------
@@ -307,8 +327,19 @@ ExecSeqScanInitializeWorker(SeqScanState *node,
 							ParallelWorkerContext *pwcxt)
 {
 	ParallelTableScanDesc pscan;
+   Bitmapset *proj = NULL;
 
-	pscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
-	node->ss.ss_currentScanDesc =
-		table_beginscan_parallel(node->ss.ss_currentRelation, pscan);
+   /*
+    * FIXME: this is duplicate work with ExecSeqScanInitializeDSM. In future
+    * plan will have the we have projection list, then this overhead will not exist.
+    */
+   if (table_scans_leverage_column_projection(node->ss.ss_currentRelation))
+   {
+           proj = PopulateNeededColumnsForScan(&node->ss,
+                                                node->ss.ss_currentRelation->rd_att->natts);
+   }
+
+   pscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+   node->ss.ss_currentScanDesc =
+           table_beginscan_parallel(node->ss.ss_currentRelation, pscan, proj);
 }

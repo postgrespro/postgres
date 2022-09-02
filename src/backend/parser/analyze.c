@@ -73,7 +73,7 @@ static void determineRecursiveColTypes(ParseState *pstate,
 									   Node *larg, List *nrtargetlist);
 static Query *transformReturnStmt(ParseState *pstate, ReturnStmt *stmt);
 static Query *transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt);
-static List *transformReturningList(ParseState *pstate, List *returningList);
+static void transformReturningList(ParseState *pstate, Query *qry, List *returningList);
 static Query *transformPLAssignStmt(ParseState *pstate,
 									PLAssignStmt *stmt);
 static Query *transformDeclareCursorStmt(ParseState *pstate,
@@ -514,7 +514,8 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	qual = transformWhereClause(pstate, stmt->whereClause,
 								EXPR_KIND_WHERE, "WHERE");
 
-	qry->returningList = transformReturningList(pstate, stmt->returningList);
+	/* XXX qry->returningList = */
+	transformReturningList(pstate, qry, stmt->returningList);
 
 	/* done building the range table and jointree */
 	qry->rtable = pstate->p_rtable;
@@ -931,10 +932,10 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		qry->onConflict = transformOnConflictClause(pstate,
 													stmt->onConflictClause);
 
-	/* Process RETURNING, if any. */
+	/* Process RETURNING, if any. */ /* XXX qry->returningList =  */
 	if (stmt->returningList)
-		qry->returningList = transformReturningList(pstate,
-													stmt->returningList);
+		transformReturningList(pstate, qry,
+								stmt->returningList);
 
 	/* done building the range table and jointree */
 	qry->rtable = pstate->p_rtable;
@@ -2396,7 +2397,8 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	qual = transformWhereClause(pstate, stmt->whereClause,
 								EXPR_KIND_WHERE, "WHERE");
 
-	qry->returningList = transformReturningList(pstate, stmt->returningList);
+	/* qry->returningList = */
+	transformReturningList(pstate, qry, stmt->returningList);
 
 	/*
 	 * Now we are done with SELECT-like processing, and can get on with
@@ -2491,14 +2493,16 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
  * transformReturningList -
  *	handle a RETURNING clause in INSERT/UPDATE/DELETE
  */
-static List *
-transformReturningList(ParseState *pstate, List *returningList)
+static void /* List **/
+transformReturningList(ParseState *pstate, Query *qry, List *returningList)
 {
 	List	   *rlist;
 	int			save_next_resno;
+    List       *vars;
+    ListCell   *l;
 
 	if (returningList == NIL)
-		return NIL;				/* nothing to do */
+		return; /* NIL;*/				/* nothing to do */
 
 	/*
 	 * We need to assign resnos starting at one in the RETURNING list. Save
@@ -2510,6 +2514,27 @@ transformReturningList(ParseState *pstate, List *returningList)
 
 	/* transform RETURNING identically to a SELECT targetlist */
 	rlist = transformTargetList(pstate, returningList, EXPR_KIND_RETURNING);
+
+    vars = pull_var_clause((Node *) rlist,
+                            PVC_RECURSE_AGGREGATES |
+                            PVC_RECURSE_WINDOWFUNCS |
+                            PVC_INCLUDE_PLACEHOLDERS);
+    foreach (l, vars)
+    {
+        Var     *var = (Var *) lfirst(l);
+        RangeTblEntry *rte = (RangeTblEntry *) list_nth(pstate->p_rtable, var->varno - 1);
+        if (var->varattno > 0)
+            rte->returningCols = bms_add_member(rte->returningCols, var->varattno);
+        else if (var->varattno == 0)
+        {
+            /*
+             * If there is a whole-row var, we have to fetch the whole row.
+             */
+            bms_free(rte->returningCols);
+            rte->returningCols = bms_make_singleton(0);
+            break;
+        }
+    }
 
 	/*
 	 * Complain if the nonempty tlist expanded to nothing (which is possible
@@ -2534,7 +2559,8 @@ transformReturningList(ParseState *pstate, List *returningList)
 	/* restore state */
 	pstate->p_next_resno = save_next_resno;
 
-	return rlist;
+	qry->returningList = rlist;
+	/* return rlist; */
 }
 
 

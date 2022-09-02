@@ -651,6 +651,13 @@ extern void CheckCmdReplicaIdentity(Relation rel, CmdType cmd);
 extern void CheckSubscriptionRelkind(char relkind, const char *nspname,
 									 const char *relname);
 
+extern void
+	PopulateNeededColumnsForNode(Node *expr, int ncol, Bitmapset **scanCols);
+extern Bitmapset *
+	PopulateNeededColumnsForScan(ScanState *scanstate, int ncol);
+extern Bitmapset *PopulateNeededColumnsForEPQ(EPQState *epqstate, int ncol);
+extern void PopulateNeededColumnsForOnConflictUpdate(ResultRelInfo *resultRelInfo);
+
 /*
  * prototypes from functions in nodeModifyTable.c
  */

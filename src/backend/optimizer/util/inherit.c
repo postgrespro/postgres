@@ -49,7 +49,8 @@ static Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
 									  List *translated_vars);
 static void expand_appendrel_subquery(PlannerInfo *root, RelOptInfo *rel,
 									  RangeTblEntry *rte, Index rti);
-
+static Bitmapset *translate_parent_cols(Bitmapset *parent_cols, List *translated_vars,
+                                        Relation parent_rel);
 
 /*
  * expand_inherited_rtentry
@@ -539,6 +540,17 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 	childrte->alias = childrte->eref = makeAlias(parentrte->eref->aliasname,
 												 child_colnames);
 
+    if (childOID != parentOID)
+	{
+        childrte->returningCols =
+            translate_parent_cols(parentrte->returningCols,
+                                  appinfo->translated_vars, parentrel);
+	}
+    else
+	{
+        childrte->returningCols = bms_copy(parentrte->returningCols);
+	}
+
 	/*
 	 * Translate the column permissions bitmaps to the child's attnums (we
 	 * have to build the translated_vars list before we can do this).  But if
@@ -646,6 +658,31 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 									 childrte, childrel);
 		}
 	}
+}
+
+/*
+ * We need to translate the list of ordinal attnos from a parent table's
+ * RangeTblEntry to the ordinal attribute numbers for the child's entry.
+ */
+static Bitmapset *
+translate_parent_cols(Bitmapset *parent_cols, List *translated_vars,
+                                         Relation parent_rel)
+{
+    int col = -1;
+    Bitmapset *result = NULL;
+    /*
+     * Enumerate the set of parent columns for translation if there is a whole
+     * row var
+     */
+    if(contains_whole_row_col(parent_cols))
+        parent_cols = get_ordinal_attnos(parent_rel);
+    while ((col = bms_next_member(parent_cols, col)) >= 0)
+    {
+        Var *var = (Var *) list_nth(translated_vars, col - 1);
+        if (var)
+            result = bms_add_member(result, var->varattno);
+    }
+    return result;
 }
 
 /*

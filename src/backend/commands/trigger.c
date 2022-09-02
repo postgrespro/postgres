@@ -85,7 +85,8 @@ static bool GetTupleForTrigger(EState *estate,
 							   LockTupleMode lockmode,
 							   TupleTableSlot *oldslot,
 							   TupleTableSlot **newSlot,
-							   TM_FailureData *tmfpd);
+							   TM_FailureData *tmfpd,
+							   Bitmapset *bms);
 static bool TriggerEnabled(EState *estate, ResultRelInfo *relinfo,
 						   Trigger *trigger, TriggerEvent event,
 						   Bitmapset *modifiedCols,
@@ -2738,7 +2739,7 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
 								LockTupleExclusive, slot, &epqslot_candidate,
-								NULL))
+								NULL, bms_make_singleton(0)))
 			return false;
 
 		/*
@@ -2795,6 +2796,10 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		if (newtuple != trigtuple)
 			heap_freetuple(newtuple);
 	}
+
+    /* Make sure the new slot is not dependent on the original tuple */
+    ExecMaterializeSlot(slot);
+
 	if (should_free)
 		heap_freetuple(trigtuple);
 
@@ -2829,7 +2834,8 @@ ExecARDeleteTriggers(EState *estate,
 							   LockTupleExclusive,
 							   slot,
 							   NULL,
-							   NULL);
+							   NULL,
+							   bms_make_singleton(0));
 		else
 			ExecForceStoreHeapTuple(fdw_trigtuple, slot, false);
 
@@ -2994,7 +3000,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		/* get a copy of the on-disk tuple we are planning to update */
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
 								lockmode, oldslot, &epqslot_candidate,
-								tmfd))
+								tmfd, bms_make_singleton(0)))
 			return false;		/* cancel the update action */
 
 		/*
@@ -3092,6 +3098,10 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 			newtuple = NULL;
 		}
 	}
+
+    /* Make sure the new slot is not dependent on the original tuple */
+    ExecMaterializeSlot(newslot);
+
 	if (should_free_trig)
 		heap_freetuple(trigtuple);
 
@@ -3149,7 +3159,8 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 							   LockTupleExclusive,
 							   oldslot,
 							   NULL,
-							   NULL);
+							   NULL,
+							   bms_make_singleton(0));
 		else if (fdw_trigtuple != NULL)
 			ExecForceStoreHeapTuple(fdw_trigtuple, oldslot, false);
 		else
@@ -3304,7 +3315,8 @@ GetTupleForTrigger(EState *estate,
 				   LockTupleMode lockmode,
 				   TupleTableSlot *oldslot,
 				   TupleTableSlot **epqslot,
-				   TM_FailureData *tmfdp)
+				   TM_FailureData *tmfdp,
+				   Bitmapset *bms)
 {
 	Relation	relation = relinfo->ri_RelationDesc;
 
@@ -3328,7 +3340,7 @@ GetTupleForTrigger(EState *estate,
 								estate->es_output_cid,
 								lockmode, LockWaitBlock,
 								lockflags,
-								&tmfd);
+								&tmfd, bms_make_singleton(0));
 
 		/* Let the caller know about the status of this operation */
 		if (tmfdp)
@@ -3407,7 +3419,7 @@ GetTupleForTrigger(EState *estate,
 		 * suffices.
 		 */
 		if (!table_tuple_fetch_row_version(relation, tid, SnapshotAny,
-										   oldslot))
+										   oldslot, bms_make_singleton(0)))
 			elog(ERROR, "failed to fetch tuple for trigger");
 	}
 
@@ -4335,7 +4347,7 @@ AfterTriggerExecute(EState *estate,
 				if (!table_tuple_fetch_row_version(src_rel,
 												   &(event->ate_ctid1),
 												   SnapshotAny,
-												   src_slot))
+												   src_slot, bms_make_singleton(0)))
 					elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
 
 				/*
@@ -4377,7 +4389,7 @@ AfterTriggerExecute(EState *estate,
 				if (!table_tuple_fetch_row_version(dst_rel,
 												   &(event->ate_ctid2),
 												   SnapshotAny,
-												   dst_slot))
+												   dst_slot, bms_make_singleton(0)))
 					elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
 
 				/*
