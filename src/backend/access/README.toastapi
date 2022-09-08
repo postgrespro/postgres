@@ -7,6 +7,43 @@ Currently TOAST is a part of Heap AM (Core). Not extensible, has
 same strategy for all datatypes, and not effective for structured
 data (json) or data required special workflow (bytea).
 
+Reference TOAST has set of 4 strategies implemented as a part of
+Heap AM (as mention in comments in heaptoast.c):
+>>>
+ Compress and/or save external until data fits into target length
+
+	1: Inline compress attributes with attstorage EXTENDED, and store very
+	   large attributes with attstorage EXTENDED or EXTERNAL external
+	   immediately
+	2: Store attributes with attstorage EXTENDED or EXTERNAL external
+	3: Inline compress attributes with attstorage MAIN
+	4: Store attributes with attstorage MAIN external
+
+ Look for attributes with attstorage EXTENDED to compress.  Also find
+ large attributes with attstorage EXTENDED or EXTERNAL, and store them
+ external.
+
+ Attempt to compress it inline, if it has attstorage EXTENDED
+ otherwise has attstorage EXTERNAL, ignore on subsequent compression
+ passes
+
+ If this value is by itself more than maxDataLen (after compression
+ if any), push it out to the toast table immediately, if possible.
+ This avoids uselessly compressing other fields in the common case
+ where we have one long field and several short ones.
+
+ Second we look for attributes of attstorage EXTENDED or EXTERNAL that
+ are still inline, and make them external.  But skip this if there's no
+ toast table to push them to.
+
+ Round 3 - this time we take attributes with storage MAIN into
+ compression
+
+ Finally we store attributes of type MAIN externally.  At this point we
+ increase the target tuple size, so that MAIN attributes aren't stored
+ externally unless really necessary.
+<<<
+
 Pluggable TOAST propose storing a value outside Tuple, with means
 and storage depending on a specific entity incapsulating all storage
 mechanics and hiding it from Table AM which calls it - thi entity we
@@ -72,6 +109,7 @@ Please note: functions highlighted with "(!)" are mandatory and
 must be implemented. Other functions are optional.
 
 An example of get_vtable extended method set:
+
 static void *
 bytea_toaster_vtable(Datum toast_ptr)
 {
@@ -83,6 +121,8 @@ bytea_toaster_vtable(Datum toast_ptr)
 	return routine;
 }
 
+This method returns structure with references to functions available
+to call from outside the Toaster - i.e. "bytea_toaster_append".
 
 
 III. SQL Syntax and System Catalog
@@ -262,14 +302,12 @@ SELECT attnum, attname, atttypid, attstorage, tsrname
 (1 row)
 
 
-VI. Source Changes
+VI. Important Source Files
 
 Changed sources:
 src/include/access/toasterapi.h
 src/backend/access/index/toasterapi.c
 src/include/catalog/pg_toaster.h
-src/include/access/detoast.h
-src/backend/access/common/detoast.c
 src/include/postgres.h
 src/backend/access/common/toast_internals.c
 src/backend/access/heap/heaptoast.c
@@ -315,14 +353,7 @@ Implemented in
 Definition of system catalog pg_toaster table. All TOASTers reside here.
 TOASTers are available via Toaster OID (from C) or Toaster name (from SQL).
 
-4) src/include/access/detoast.h - deleted in Toast Snapshot commit
-Headers for higher-lever Detoast functions used in Heap AM, from where
-Toaster methods are called. Specific to internals of Heap AM, not affected
-by TOAST API.
-Implemented in
-5) src/backend/access/common/detoast.c - deleted in Toast Snapshot commit
-
-6) src/include/postgres.h
+4) src/include/postgres.h
 Here resides definition of TOAST Pointer structures, old (External)
 and new (Custom).
 Custom TOAST Pointer uses 16 bit alignment, and contains fields mandatory
@@ -406,57 +437,6 @@ to use in development:
 	((Size) VARHDRSZ_EXTERNAL + offsetof(varatt_custom, va_toasterdata) + (datalen))
 
 #define VARSIZE_CUSTOM(PTR)	VARATT_CUSTOM_SIZE(VARATT_CUSTOM_GET_DATA_SIZE(PTR))
-
-
-5) src/backend/access/common/toast_internals.c
-Here are internal functions currently used by Toasters, implementing storing
-and fetching data. Current Toasters implementations use Heap AM, but due to
-all storage mechanics is hidden from TAM that calls Toaster any Toaster could
-implement different storage techniques, with different AMs, and could even
-implement independent storage. The examples of different storage implementations
-within existing AM are Default Toaster implementation without usage of indexes
-and large objects toaster to store LOBs without limitations of pg_largeobject
-functionality.
-
-7) src/backend/access/heap/heaptoast.c
-Heap-specific definitions for external and compressed storage of variable size
-attributes. Insert, update and fetch. heap_toast_insert_or_update method contains
-Heap AM TOAST data storage strategies, deciding if TOAST will be used to store
-external and extended data according to overall Tuple size.
-Strategies explanation (from comments):
->>>
- Compress and/or save external until data fits into target length
-
-	1: Inline compress attributes with attstorage EXTENDED, and store very
-	   large attributes with attstorage EXTENDED or EXTERNAL external
-	   immediately
-	2: Store attributes with attstorage EXTENDED or EXTERNAL external
-	3: Inline compress attributes with attstorage MAIN
-	4: Store attributes with attstorage MAIN external
-
- Look for attributes with attstorage EXTENDED to compress.  Also find
- large attributes with attstorage EXTENDED or EXTERNAL, and store them
- external.
-
- Attempt to compress it inline, if it has attstorage EXTENDED
- otherwise has attstorage EXTERNAL, ignore on subsequent compression
- passes
-
- If this value is by itself more than maxDataLen (after compression
- if any), push it out to the toast table immediately, if possible.
- This avoids uselessly compressing other fields in the common case
- where we have one long field and several short ones.
-
- Second we look for attributes of attstorage EXTENDED or EXTERNAL that
- are still inline, and make them external.  But skip this if there's no
- toast table to push them to.
-
- Round 3 - this time we take attributes with storage MAIN into
- compression
-
- Finally we store attributes of type MAIN externally.  At this point we
- increase the target tuple size, so that MAIN attributes aren't stored
- externally unless really necessary.
 
 VI. Tests
 
