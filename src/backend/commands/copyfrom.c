@@ -1550,6 +1550,30 @@ BeginCopyFrom(ParseState *pstate,
 		cstate->raw_fields = (char **) palloc(attr_count * sizeof(char *));
 	}
 
+	/* Initialize safeCopyFromState for IGNORE_ERRORS option */
+	if (!cstate->opts.ignore_errors)
+		cstate->sfcstate = NULL;
+	else
+	{
+		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
+
+		cstate->sfcstate->replay_cxt = AllocSetContextCreate(
+													cstate->copycontext,
+													"Replay context",
+													ALLOCSET_DEFAULT_SIZES);
+
+		cstate->sfcstate->replay_buffer = (HeapTuple *)
+					MemoryContextAlloc(cstate->sfcstate->replay_cxt,
+										REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+
+		cstate->sfcstate->saved_tuples = 0;
+		cstate->sfcstate->replayed_tuples = 0;
+		cstate->sfcstate->errors = 0;
+		cstate->sfcstate->replay_is_active = false;
+		cstate->sfcstate->begin_subtransaction = true;
+		cstate->sfcstate->processed_remaining_tuples = false;
+	}
+
 	MemoryContextSwitchTo(oldcontext);
 
 	return cstate;

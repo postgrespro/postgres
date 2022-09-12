@@ -42,6 +42,7 @@ typedef struct CopyFormatOptions
 								 * -1 if not specified */
 	bool		binary;			/* binary format? */
 	bool		freeze;			/* freeze rows on loading? */
+	bool		ignore_errors;  /* ignore rows with errors */
 	bool		csv_mode;		/* Comma Separated Value format? */
 	CopyHeaderChoice header_line;	/* header line? */
 	char	   *null_print;		/* NULL marker string (server encoding!) */
