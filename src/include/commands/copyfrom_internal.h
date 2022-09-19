@@ -16,6 +16,7 @@
 
 #include "commands/copy.h"
 #include "commands/trigger.h"
+#include "utils/resowner.h"
 
 /*
  * Represents the different source cases we need to worry about at
@@ -66,6 +67,10 @@ typedef struct SafeCopyFromState
 	bool			skip_row;
 
 	MemoryContext	replay_cxt;
+
+	/* TODO: Some comments needed */
+	MemoryContext	oldcontext;
+	ResourceOwner	oldowner;
 } SafeCopyFromState;
 
 /*

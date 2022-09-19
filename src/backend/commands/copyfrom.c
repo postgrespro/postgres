@@ -1572,6 +1572,8 @@ BeginCopyFrom(ParseState *pstate,
 		cstate->sfcstate->replay_is_active = false;
 		cstate->sfcstate->begin_subtransaction = true;
 		cstate->sfcstate->processed_remaining_tuples = false;
+		cstate->sfcstate->oldowner = CurrentResourceOwner;
+		cstate->sfcstate->oldcontext = CurrentMemoryContext;
 	}
 
 	MemoryContextSwitchTo(oldcontext);
