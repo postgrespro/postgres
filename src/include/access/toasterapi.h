@@ -53,7 +53,7 @@ do { \
  */
 
 /* Create toast storage */
-typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
+typedef void (*toast_init)(Relation rel, Oid toasterid, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast);
 
 /* Toast function */
@@ -98,6 +98,9 @@ typedef bool (*toastervalidate_function) (Oid typeoid,
 										  char storage, char compression,
 										  Oid amoid, bool false_ok);
 
+#define TOASTREL_VACUUM_FULL_DISABLED 0x01
+typedef int (*toast_rel_info_function)(Relation toast_rel);
+
 /*
  * API struct for Toaster.  Note this must be stored in a single palloc'd
  * chunk of memory.
@@ -116,6 +119,7 @@ typedef struct TsrRoutine
 	get_vtable_function get_vtable;
 	reconstruct_toast_function reconstruct;
 	toastervalidate_function toastervalidate;
+	toast_rel_info_function relinfo;
 } TsrRoutine;
 
 /* Functions in access/index/toasterapi.c */

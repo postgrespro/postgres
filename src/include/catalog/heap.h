@@ -60,7 +60,8 @@ extern Relation heap_create(const char *relname,
 							bool allow_system_table_mods,
 							TransactionId *relfrozenxid,
 							MultiXactId *relminmxid,
-							bool create_storage);
+							bool create_storage,
+							Oid toastrelid);
 
 extern Oid	heap_create_with_catalog(const char *relname,
 									 Oid relnamespace,
@@ -78,6 +79,7 @@ extern Oid	heap_create_with_catalog(const char *relname,
 									 bool mapped_relation,
 									 OnCommitAction oncommit,
 									 Datum reloptions,
+									 Oid toastrelid,
 									 bool use_user_acl,
 									 bool allow_system_table_mods,
 									 bool is_internal,
@@ -104,7 +106,9 @@ extern void InsertPgClassTuple(Relation pg_class_desc,
 							   Relation new_rel_desc,
 							   Oid new_rel_oid,
 							   Datum relacl,
-							   Datum reloptions);
+								Datum reloptions,
+								Datum reltoasterids,
+								Datum reltoastrelids);
 
 extern List *AddRelationNewConstraints(Relation rel,
 									   List *newColDefaults,

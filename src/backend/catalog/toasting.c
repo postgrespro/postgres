@@ -25,13 +25,16 @@
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
+#include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "storage/lock.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -39,7 +42,7 @@
 
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
-									 Oid OIDOldToast);
+									 Relation old_heap);
 static bool needs_toast_table(Relation rel);
 
 
@@ -58,57 +61,68 @@ static bool needs_toast_table(Relation rel);
 void
 AlterTableCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode)
 {
-	CheckAndCreateToastTable(relOid, reloptions, lockmode, true, InvalidOid);
+	CheckAndCreateToastTable(relOid, reloptions, lockmode, true, NULL);
 }
 
 void
 NewHeapCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
-						Oid OIDOldToast)
+						Relation oldHeap)
 {
-	CheckAndCreateToastTable(relOid, reloptions, lockmode, false, OIDOldToast);
+	CheckAndCreateToastTable(relOid, reloptions, lockmode, false, oldHeap);
 }
 
 void
 NewRelationCreateToastTable(Oid relOid, Datum reloptions)
 {
 	CheckAndCreateToastTable(relOid, reloptions, AccessExclusiveLock, false,
-							 InvalidOid);
+							 NULL);
 }
 
 static void
 CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
-						 bool check, Oid OIDOldToast)
+						 bool check, Relation old_heap)
 {
-	Relation	rel;
-	int			i;
-	TupleDesc	tupDesc;
-	List	   *tsrOids = NIL;
+	Relation	rel = table_open(relOid, lockmode);
 
-	rel = table_open(relOid, lockmode);
-
-	tupDesc = RelationGetDescr(rel);
-
-	/*
-	 * Create toaster data storage (heap table for generic toaster), once per
-	 * table for each toster.
-	 */
-	for(i = 0; i < tupDesc->natts; i++)
+	if (old_heap)
 	{
-		FormData_pg_attribute   *attr = TupleDescAttr(tupDesc, i);
-		TsrRoutine				*tsr;
+		for (int i = 0; i < old_heap->rd_ntoasters; i++)
+		{
+			TsrRoutine *tsr = SearchTsrCache(old_heap->rd_toasterids[i]);
+				tsr->init(rel, old_heap->rd_toasterids[i],
+				InvalidOid, InvalidOid, reloptions,
+				lockmode, check, old_heap->rd_toastrelids[i]);
+		}
+	}
+	else
+	{
+		TupleDesc	tupDesc = RelationGetDescr(rel);
+		List			*tsrOids = NIL;
 
-		if (attr->attisdropped || !OidIsValid(attr->atttoaster))
-			continue;
+		/*
+		* Create toaster data storage (heap table for generic toaster), once per
+		* table for each toster.
+		*/
+		for (int i = 0; i < tupDesc->natts; i++)
+		{
+			FormData_pg_attribute   *attr = TupleDescAttr(tupDesc, i);
+			TsrRoutine	*tsr;
 
-		/* such toaster is already created its storage */
-		if (list_member_oid(tsrOids, attr->atttoaster))
-			continue;
+			if (attr->attisdropped || !OidIsValid(attr->atttoaster))
+				continue;
 
-		tsr = SearchTsrCache(attr->atttoaster);
+			/* such toaster is already created its storage */
+			if (list_member_oid(tsrOids, attr->atttoaster))
+				continue;
 
-		tsr->init(rel, InvalidOid, InvalidOid, reloptions, lockmode, check, OIDOldToast);
+			tsr = SearchTsrCache(attr->atttoaster);
 
-		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
+			tsr->init(rel, attr->atttoaster, InvalidOid, InvalidOid, reloptions, lockmode, check, InvalidOid);
+
+			tsrOids = lappend_oid(tsrOids, attr->atttoaster);
+		}
+
+		list_free(tsrOids);
 	}
 
 	table_close(rel, NoLock);
@@ -122,51 +136,159 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 void
 BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 {
-	Relation	rel;
-	TupleDesc	tupDesc;
-	List	   *tsrOids = NIL;
-
-	rel = table_openrv(makeRangeVar(NULL, relName, -1), AccessExclusiveLock);
+	Relation        rel = table_openrv(makeRangeVar(NULL, relName, -1), AccessExclusiveLock);
 
 	if (rel->rd_rel->relkind != RELKIND_RELATION &&
 		rel->rd_rel->relkind != RELKIND_MATVIEW)
 		elog(ERROR, "\"%s\" is not a table or materialized view",
 			 relName);
 
-	/* create_toast_table does all the work */
-	tupDesc = RelationGetDescr(rel);
-	for(int i = 0; i < tupDesc->natts; i++)
-	{
-		FormData_pg_attribute   *attr = TupleDescAttr(tupDesc, i);
-		TsrRoutine				*tsr;
-
-		if (attr->attisdropped || !OidIsValid(attr->atttoaster))
-			continue;
-
-		/* such toaster is already created its storage */
-		if (list_member_oid(tsrOids, attr->atttoaster))
-			continue;
-
-		tsr = SearchTsrCache(attr->atttoaster);
-
-		if (!tsr)
-			elog(ERROR, "\"%s\" does not require a toast table", relName);
-		else
-			tsr->init(rel, toastOid, toastIndexOid, (Datum) 0,
-								AccessExclusiveLock, false, InvalidOid);
-
-		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
-	}
-
-/*
-	if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0,
-							AccessExclusiveLock, false, InvalidOid))
+	if (!create_toast_table(rel, DEFAULT_TOASTER_OID,
+			toastOid, toastIndexOid, (Datum) 0,
+			AccessExclusiveLock, false, InvalidOid))
 		elog(ERROR, "\"%s\" does not require a toast table",
-			 relName);
-*/
+			relName);
+
 	table_close(rel, NoLock);
 }
 
+HeapTuple
+toast_modify_pg_class_tuple(Relation classrel, HeapTuple tuple,
+									 Datum reltoasterids, Datum reltoastrelids)
+{
+	Datum	repl_val[Natts_pg_class];
+	bool	repl_null[Natts_pg_class];
+	bool	repl_repl[Natts_pg_class];
+
+	/* Initialize buffers for new tuple values */
+	memset(repl_val, 0, sizeof(repl_val));
+	memset(repl_null, false, sizeof(repl_null));
+	memset(repl_repl, false, sizeof(repl_repl));
+
+	if (PointerIsValid(DatumGetPointer(reltoasterids)))
+		repl_val[Anum_pg_class_reltoasterids - 1] = reltoasterids;
+	else
+		repl_null[Anum_pg_class_reltoasterids - 1] = true;
+
+	if (PointerIsValid(DatumGetPointer(reltoastrelids)))
+		repl_val[Anum_pg_class_reltoastrelids - 1] = reltoastrelids;
+	else
+		repl_null[Anum_pg_class_reltoastrelids - 1] = true;
+
+	repl_repl[Anum_pg_class_reltoasterids - 1] = true;
+	repl_repl[Anum_pg_class_reltoastrelids - 1] = true;
+
+	/* Everything looks good - update the tuple */
+	return heap_modify_tuple(tuple, RelationGetDescr(classrel),
+									 repl_val, repl_null, repl_repl);
+}
+
+static HeapTuple
+add_toaster_to_class_tuple(Relation classrel, HeapTuple tuple,
+									Oid toasterid, Oid toastrelid)
+{
+	Datum	*old_toasterids;
+	Datum	*new_toasterids;
+	Datum	*old_toastrelids;
+	Datum	*new_toastrelids;
+	int	ntoasters = ExtractRelToastInfo(RelationGetDescr(classrel),
+													  tuple,
+													  &old_toasterids,
+													  &old_toastrelids);
+	Datum	reltoasterids;
+	Datum	reltoastrelids;
+
+	new_toasterids = memcpy(palloc(sizeof(Datum) * (ntoasters + 1)),
+		old_toasterids,
+		sizeof(Datum) * ntoasters);
+	new_toastrelids = memcpy(palloc(sizeof(Datum) * (ntoasters + 1)),
+		old_toastrelids,
+		sizeof(Datum) * ntoasters);
+
+	new_toasterids[ntoasters] = toasterid;
+	new_toastrelids[ntoasters] = toastrelid;
+
+	reltoasterids = (Datum)(construct_array_builtin(new_toasterids, ntoasters + 1, OIDOID));
+	reltoastrelids = (Datum)(construct_array_builtin(new_toastrelids, ntoasters + 1, OIDOID));
+
+	if (old_toasterids)
+		pfree(old_toasterids);
+	if (old_toastrelids)
+		pfree(old_toastrelids);
+	pfree(new_toasterids);
+	pfree(new_toastrelids);
+
+	return toast_modify_pg_class_tuple(classrel, tuple,
+												  reltoasterids, reltoastrelids);
+}
+
+void
+register_toast_table(Oid relid, Oid toasterid, Oid toastrelid)
+{
+	Relation		class_rel;
+	HeapTuple	reltup;
+	HeapTuple	newreltup;
+
+	/* While bootstrapping, pg_class tuple's toastrelid must have been already set */
+	if (IsBootstrapProcessingMode())
+		return;
+
+	/*
+	* Store the toast table's OID in the parent relation's pg_class row
+	*/
+	class_rel = table_open(RelationRelationId, RowExclusiveLock);
+
+	reltup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(reltup))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
+
+	newreltup = add_toaster_to_class_tuple(class_rel, reltup, toasterid, toastrelid);
+
+	if (!IsBootstrapProcessingMode())
+	{
+		/* normal case, use a transactional update */
+		CatalogTupleUpdate(class_rel, &reltup->t_self, newreltup);
+	}
+	else
+	{
+		/* While bootstrapping, we cannot UPDATE, so overwrite in-place */
+		heap_inplace_update(class_rel, newreltup);
+	}
+
+	heap_freetuple(reltup);
+	heap_freetuple(newreltup);
+
+	table_close(class_rel, RowExclusiveLock);
+
+	/*
+	* Register dependency from the toast table to the main, so that the toast
+	* table will be deleted if the main is.  Skip this in bootstrap mode.
+	*/
+	if (!IsBootstrapProcessingMode())
+	{
+		ObjectAddress baseobject;
+		ObjectAddress toastobject;
+
+		baseobject.classId = RelationRelationId;
+		baseobject.objectId = relid;
+		baseobject.objectSubId = 0;
+
+		if (OidIsValid(toastrelid))
+		{
+			toastobject.classId = RelationRelationId;
+			toastobject.objectId = toastrelid;
+			toastobject.objectSubId = 0;
+
+			recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
+		}
+
+		toastobject.classId = ToasterRelationId;
+		toastobject.objectId = toasterid;
+		toastobject.objectSubId = 0;
+
+		recordDependencyOn(&baseobject, &toastobject, DEPENDENCY_NORMAL);
+	}
+}
 
 /*
  * create_toast_table --- do main work
@@ -175,18 +297,16 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
  * toastOid and toastIndexOid are normally InvalidOid, but during
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
-bool
-create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
+static Oid
+create_toast_table_generic(Relation rel, Oid toasterid, Oid toastOid, Oid toastIndexOid,
 				   Datum reloptions, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)
 {
 	Oid			relOid = RelationGetRelid(rel);
-	HeapTuple	reltup;
 	TupleDesc	tupdesc;
 	bool		shared_relation;
 	bool		mapped_relation;
 	Relation	toast_rel;
-	Relation	class_rel;
 	Oid			toast_relid;
 	Oid			namespaceid;
 	char		toast_relname[NAMEDATALEN];
@@ -195,47 +315,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	Oid			collationObjectId[2];
 	Oid			classObjectId[2];
 	int16		coloptions[2];
-	ObjectAddress baseobject,
-				toastobject;
-
-	/*
-	 * Is it already toasted?
-	 */
-	if (rel->rd_rel->reltoastrelid != InvalidOid)
-		return false;
-
-	/*
-	 * Check to see whether the table actually needs a TOAST table.
-	 */
-	if (!IsBinaryUpgrade)
-	{
-		/* Normal mode, normal check */
-		if (!needs_toast_table(rel))
-			return false;
-	}
-	else
-	{
-		/*
-		 * In binary-upgrade mode, create a TOAST table if and only if
-		 * pg_upgrade told us to (ie, a TOAST table OID has been provided).
-		 *
-		 * This indicates that the old cluster had a TOAST table for the
-		 * current table.  We must create a TOAST table to receive the old
-		 * TOAST file, even if the table seems not to need one.
-		 *
-		 * Contrariwise, if the old cluster did not have a TOAST table, we
-		 * should be able to get along without one even if the new version's
-		 * needs_toast_table rules suggest we should have one.  There is a lot
-		 * of daylight between where we will create a TOAST table and where
-		 * one is really necessary to avoid failures, so small cross-version
-		 * differences in the when-to-create heuristic shouldn't be a problem.
-		 * If we tried to create a TOAST table anyway, we would have the
-		 * problem that it might take up an OID that will conflict with some
-		 * old-cluster table we haven't seen yet.
-		 */
-		if (!OidIsValid(binary_upgrade_next_toast_pg_class_oid))
-			return false;
-	}
 
 	/*
 	 * If requested check lockmode is sufficient. This is a cross check in
@@ -247,10 +326,20 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	/*
 	 * Create the toast table and its index
 	 */
-	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toast_%u", relOid);
-	snprintf(toast_idxname, sizeof(toast_idxname),
-			 "pg_toast_%u_index", relOid);
+	if (rel->rd_ntoasters > 0 && !IsBootstrapProcessingMode())
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+			"pg_toast_%u_%u", relOid, toasterid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+			"pg_toast_%u_%u_index", relOid, toasterid);
+	}
+	else
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+			"pg_toast_%u", relOid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+			"pg_toast_%u_index", relOid);
+	}
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -312,11 +401,12 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 										   mapped_relation,
 										   ONCOMMIT_NOOP,
 										   reloptions,
+											InvalidOid,
 										   false,
 										   true,
 										   true,
 										   OIDOldToast,
-										   NULL);
+										   NULL); /* XXX check args */
 	Assert(toast_relid != InvalidOid);
 
 	/* make the toast relation visible, else table_open will fail */
@@ -382,54 +472,155 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 
 	table_close(toast_rel, NoLock);
 
+	return toast_relid;
+}
+
+bool
+create_toast_table(Relation rel, Oid toasterid, Oid toastOid, Oid toastIndexOid,
+	Datum reloptions, LOCKMODE lockmode, bool check,
+	Oid OIDOldToast)
+{
+	Oid	relid = RelationGetRelid(rel);
+	Oid	toastrelid;
+
 	/*
-	 * Store the toast table's OID in the parent relation's pg_class row
-	 */
-	class_rel = table_open(RelationRelationId, RowExclusiveLock);
-
-	reltup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
-	if (!HeapTupleIsValid(reltup))
-		elog(ERROR, "cache lookup failed for relation %u", relOid);
-
-	((Form_pg_class) GETSTRUCT(reltup))->reltoastrelid = toast_relid;
-
-	if (!IsBootstrapProcessingMode())
+	* Is it already toasted?
+	*/
+	if (IsBootstrapProcessingMode())
 	{
-		/* normal case, use a transactional update */
-		CatalogTupleUpdate(class_rel, &reltup->t_self, reltup);
+
+		elog(NOTICE, "Bootstrap relation %u for toaster %u",
+		toastOid, toasterid);
+
+		elog(NOTICE, "Bootstrap toastrelid %u",
+		rel->rd_toastrelids[1]);
+
+		Assert(rel->rd_ntoasters == 1);
+		Assert(rel->rd_toasterids[0] == toasterid);
+		/* Assert(rel->rd_toastrelids[1] == toastOid); */
 	}
 	else
 	{
-		/* While bootstrapping, we cannot UPDATE, so overwrite in-place */
-		heap_inplace_update(class_rel, reltup);
+		for (int i = 0; i < rel->rd_ntoasters; i++)
+		{
+			if (rel->rd_toasterids[i] == toasterid)
+				return false;
+		}
 	}
-
-	heap_freetuple(reltup);
-
-	table_close(class_rel, RowExclusiveLock);
 
 	/*
-	 * Register dependency from the toast table to the main, so that the toast
-	 * table will be deleted if the main is.  Skip this in bootstrap mode.
+	 * Check to see whether the table actually needs a TOAST table.
 	 */
-	if (!IsBootstrapProcessingMode())
+	if (!IsBinaryUpgrade)
 	{
-		baseobject.classId = RelationRelationId;
-		baseobject.objectId = relOid;
-		baseobject.objectSubId = 0;
-		toastobject.classId = RelationRelationId;
-		toastobject.objectId = toast_relid;
-		toastobject.objectSubId = 0;
-
-		recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
+		/* Normal mode, normal check */
+		if (!needs_toast_table(rel))
+			return false;
+	}
+	else
+	{
+	/*
+	* In binary-upgrade mode, create a TOAST table if and only if
+	* pg_upgrade told us to (ie, a TOAST table OID has been provided).
+	*
+	* This indicates that the old cluster had a TOAST table for the
+	* current table.  We must create a TOAST table to receive the old
+	* TOAST file, even if the table seems not to need one.
+	*
+	* Contrariwise, if the old cluster did not have a TOAST table, we
+	* should be able to get along without one even if the new version's
+	* needs_toast_table rules suggest we should have one.  There is a lot
+	* of daylight between where we will create a TOAST table and where
+	* one is really necessary to avoid failures, so small cross-version
+	* differences in the when-to-create heuristic shouldn't be a problem.
+	* If we tried to create a TOAST table anyway, we would have the
+	* problem that it might take up an OID that will conflict with some
+	* old-cluster table we haven't seen yet.
+	*/
+		if (!OidIsValid(binary_upgrade_next_toast_pg_class_oid))
+			return false;
 	}
 
+	toastrelid = create_toast_table_generic(rel, toasterid,
+		toastOid, toastIndexOid,
+		reloptions, lockmode,
+		check, OIDOldToast);
+
+	register_toast_table(relid, toasterid, toastrelid);
 	/*
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
 
 	return true;
+}
+
+int
+ExtractRelToastInfo(TupleDesc pg_class_desc, HeapTuple pg_class_tuple,
+	Datum **toasterids, Datum **toastrelids)
+{
+	bool	isnull;
+	Datum	reltoastrelids;
+	Datum	reltoasterids = fastgetattr(pg_class_tuple,
+		Anum_pg_class_reltoasterids,
+		pg_class_desc,
+		&isnull);
+	bool	*toasterids_nulls;
+	bool	*toastrelids_nulls;
+	int	ntoasterids;
+	int	ntoastrelids;
+
+	if (isnull)
+	{
+		*toasterids = NULL;
+		*toastrelids = NULL;
+		return 0;
+	}
+
+	reltoastrelids = fastgetattr(pg_class_tuple,
+		Anum_pg_class_reltoastrelids,
+		pg_class_desc,
+		&isnull);
+	Assert(!isnull);
+
+	deconstruct_array_builtin(DatumGetArrayTypeP(reltoasterids), OIDOID,
+		toasterids, &toasterids_nulls, &ntoasterids);
+
+	deconstruct_array_builtin(DatumGetArrayTypeP(reltoastrelids), OIDOID,
+		toastrelids, &toastrelids_nulls, &ntoastrelids);
+
+	if (ntoasterids != ntoastrelids)
+		elog(ERROR, "number of relation toastrels does not equal to number of toasters");
+
+	pfree(toasterids_nulls);
+	pfree(toastrelids_nulls);
+
+	return ntoasterids;
+}
+
+Oid
+toast_find_relation_for_toaster(Relation rel, Oid toasterid, Oid *real_toastrelid)
+{
+	for (int i = 0; i < rel->rd_ntoasters; i++)
+	{
+		if (rel->rd_toasterids[i] == toasterid)
+		{
+			if (OidIsValid(rel->rd_toastrelids[i]))
+			{
+				if (real_toastrelid)
+					*real_toastrelid = rel->rd_toastoid ? rel->rd_toastoid[i] : rel->rd_toastrelids[i];
+
+				return rel->rd_toastrelids[i];
+			}
+
+			break;
+		}
+	}
+
+	elog(ERROR, "could not find toast relation of realtion %u for toaster %u",
+		RelationGetRelid(rel), toasterid);
+
+	return InvalidOid;
 }
 
 /*

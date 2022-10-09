@@ -19,7 +19,7 @@ setup
     SET allow_system_table_mods TO true;
     DO $$DECLARE r record;
       BEGIN
-      SELECT INTO r reltoastrelid::regclass::text AS table_name FROM pg_class
+      SELECT INTO r reltoastrelids[1]::regclass::text AS table_name FROM pg_class
         WHERE oid = 'reind_con_wide'::regclass;
       EXECUTE 'ALTER TABLE ' || r.table_name || ' RENAME TO reind_con_toast;';
       SELECT INTO r indexrelid::regclass::text AS index_name FROM pg_index

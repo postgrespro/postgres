@@ -47,6 +47,7 @@ sub ParseHeader
 	$catalog{other_oids}   = [];
 	$catalog{foreign_keys} = [];
 	$catalog{client_code}  = [];
+	$catalog{toastrel_oid_clause} = '';
 
 	open(my $ifh, '<', $input_file) || die "$input_file: $!";
 
@@ -95,6 +96,8 @@ sub ParseHeader
 		{
 			push @{ $catalog{toasting} },
 			  { parent_table => $1, toast_oid => $2, toast_index_oid => $3 };
+
+			$catalog{toastrel_oid_clause} = " toastrel_oid $2";
 		}
 		elsif (
 			/^DECLARE_TOAST_WITH_MACRO\(\s*(\w+),\s*(\d+),\s*(\d+),\s*(\w+),\s*(\w+)\)/
@@ -108,6 +111,8 @@ sub ParseHeader
 				toast_oid_macro       => $4,
 				toast_index_oid_macro => $5
 			  };
+
+			  $catalog{toastrel_oid_clause} = " toastrel_oid $2";
 		}
 		elsif (
 			/^DECLARE_(UNIQUE_)?INDEX(_PKEY)?\(\s*(\w+),\s*(\d+),\s*(\w+),\s*(.+)\)/

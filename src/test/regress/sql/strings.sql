@@ -551,7 +551,7 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect >0 blocks
-SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
+SELECT pg_relation_size(reltoastrelids[1]) = 0 AS is_empty
   FROM pg_class where relname = 'toasttest';
 
 TRUNCATE TABLE toasttest;
@@ -561,7 +561,7 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect 0 blocks
-SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
+SELECT pg_relation_size(reltoastrelids[1]) = 0 AS is_empty
   FROM pg_class where relname = 'toasttest';
 
 DROP TABLE toasttest;

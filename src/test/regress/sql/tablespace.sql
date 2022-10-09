@@ -79,7 +79,7 @@ SELECT relfilenode as toast_filenode FROM pg_class
     (SELECT i.indexrelid
        FROM pg_class c,
             pg_index i
-       WHERE i.indrelid = c.reltoastrelid AND
+       WHERE i.indrelid = ANY(c.reltoastrelids) AND
              c.relname = 'regress_tblspace_test_tbl') \gset
 REINDEX (TABLESPACE regress_tblspace) TABLE regress_tblspace_test_tbl;
 SELECT c.relname FROM pg_class c, pg_tablespace s
@@ -106,7 +106,7 @@ SELECT relfilenode = :toast_filenode as toast_same FROM pg_class
     (SELECT i.indexrelid
        FROM pg_class c,
             pg_index i
-       WHERE i.indrelid = c.reltoastrelid AND
+       WHERE i.indrelid = ANY(c.reltoastrelids) AND
              c.relname = 'regress_tblspace_test_tbl');
 DROP TABLE regress_tblspace_test_tbl;
 

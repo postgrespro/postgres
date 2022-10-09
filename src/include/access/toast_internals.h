@@ -54,9 +54,9 @@ extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
 extern void toast_delete_datum(Datum value, bool is_speculative);
-extern Datum toast_save_datum(Relation rel, Datum value,
+extern Datum toast_save_datum(Relation rel, Oid toasterid, Datum value,
 							  struct varlena *oldexternal, int options);
-extern Datum toast_save_datum_ext(Relation rel, Datum value,
+extern Datum toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 								  struct varlena *oldexternal, int options,
 								  void *chunk_header, int chunk_header_size);
 

@@ -212,7 +212,9 @@ typedef struct RelationData
 	uint16	   *rd_exclstrats;	/* exclusion ops' strategy numbers, if any */
 	Oid		   *rd_indcollation;	/* OIDs of index collations */
 	bytea	  **rd_opcoptions;	/* parsed opclass-specific options */
-
+	Oid		*rd_toasterids;      /* OIDs of attribute toasters, if any */
+	Oid		*rd_toastrelids;     /* OIDs of toast relations corresponding to toasters, if any */
+	int		rd_ntoasters;   /* number of toasters */
 	/*
 	 * rd_amcache is available for index and table AMs to cache private data
 	 * about the relation.  This must be just a cache since it may get reset
@@ -244,7 +246,7 @@ typedef struct RelationData
 	 * version of the main heap, not the toast table itself.)  This also
 	 * causes toast_save_datum() to try to preserve toast value OIDs.
 	 */
-	Oid			rd_toastoid;	/* Real TOAST table's OID, or InvalidOid */
+	Oid		*rd_toastoid;        /* Real TOAST table's OIDs, or NULL */
 
 	bool		pgstat_enabled; /* should relation stats be counted */
 	/* use "struct" here to avoid needing to include pgstat.h: */

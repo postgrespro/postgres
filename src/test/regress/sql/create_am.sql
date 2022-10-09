@@ -143,7 +143,7 @@ SELECT
     pc.relkind,
     pa.amname,
     CASE WHEN relkind = 't' THEN
-        (SELECT 'toast for ' || relname::regclass FROM pg_class pcm WHERE pcm.reltoastrelid = pc.oid)
+        (SELECT 'toast for ' || relname::regclass FROM pg_class pcm WHERE pc.oid = ANY(pcm.reltoastrelids))
     ELSE
         relname::regclass::text
     END COLLATE "C" AS relname
@@ -216,7 +216,7 @@ SELECT
     pc.relkind,
     pa.amname,
     CASE WHEN relkind = 't' THEN
-        (SELECT 'toast for ' || relname::regclass FROM pg_class pcm WHERE pcm.reltoastrelid = pc.oid)
+        (SELECT 'toast for ' || relname::regclass FROM pg_class pcm WHERE pc.oid = ANY(pcm.reltoastrelids))
     ELSE
         relname::regclass::text
     END COLLATE "C" AS relname

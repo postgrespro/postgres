@@ -738,7 +738,7 @@ CREATE VIEW pg_statio_all_tables AS
             X.idx_blks_read AS tidx_blks_read,
             X.idx_blks_hit AS tidx_blks_hit
     FROM pg_class C LEFT JOIN
-            pg_class T ON C.reltoastrelid = T.oid
+            pg_class T ON T.oid = ANY(C.reltoastrelids)
             LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
             LEFT JOIN LATERAL (
               SELECT sum(pg_stat_get_blocks_fetched(indexrelid) -

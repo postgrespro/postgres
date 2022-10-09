@@ -2290,7 +2290,7 @@ pg_statio_all_tables| SELECT c.oid AS relid,
     x.idx_blks_read AS tidx_blks_read,
     x.idx_blks_hit AS tidx_blks_hit
    FROM ((((pg_class c
-     LEFT JOIN pg_class t ON ((c.reltoastrelid = t.oid)))
+     LEFT JOIN pg_class t ON ((t.oid = ANY (c.reltoastrelids))))
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
      LEFT JOIN LATERAL ( SELECT (sum((pg_stat_get_blocks_fetched(pg_index.indexrelid) - pg_stat_get_blocks_hit(pg_index.indexrelid))))::bigint AS idx_blks_read,
             (sum(pg_stat_get_blocks_hit(pg_index.indexrelid)))::bigint AS idx_blks_hit
@@ -2713,11 +2713,11 @@ select xmin, * from rules_fooview;  -- fail, views don't have such a column
 ERROR:  column "xmin" does not exist
 LINE 1: select xmin, * from rules_fooview;
                ^
-select reltoastrelid, relkind, relfrozenxid
+select reltoastrelids, relkind, relfrozenxid
   from pg_class where oid = 'rules_fooview'::regclass;
- reltoastrelid | relkind | relfrozenxid 
----------------+---------+--------------
-             0 | v       |            0
+ reltoastrelids | relkind | relfrozenxid 
+----------------+---------+--------------
+                | v       |            0
 (1 row)
 
 drop view rules_fooview;
