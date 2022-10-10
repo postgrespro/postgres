@@ -19,6 +19,7 @@
 
 #include "access/toasterapi.h"
 #include "access/toast_compression.h"
+#include "access/generic_toaster.h"
 #include "common/pg_lzcompress.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
@@ -246,6 +247,362 @@ lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 	return result;
 #endif
 }
+
+/* ----------
+ * pglz_decompress -
+ *
+ *		Decompresses source into dest. Returns the number of bytes
+ *		decompressed into the destination buffer, or -1 if the
+ *		compressed data is corrupted.
+ *
+ *		If check_complete is true, the data is considered corrupted
+ *		if we don't exactly fill the destination buffer.  Callers that
+ *		are extracting a slice typically can't apply this check.
+ * ----------
+ */
+int32
+pglz_decompress_state(const char *source, int32 *slen, char *dest,
+					  int32 dlen, bool check_complete, bool last_cource_chunk,
+					  void **pstate)
+{
+	pglz_state *state = pstate ? *pstate : NULL;
+	const unsigned char *sp = (const unsigned char *) source;
+	const unsigned char *srcend = sp + *slen;
+	unsigned char *dp = (unsigned char *) dest;
+	unsigned char *destend = dp + dlen;
+	unsigned char ctrl;
+	int			ctrlc;
+	int32		len;
+	int32		remlen;
+	int32		off;
+
+	if (state)
+	{
+		ctrl = state->ctrl;
+		ctrlc = state->ctrlc;
+
+		if (state->len)
+		{
+			int32		copylen;
+
+			len = state->len;
+			off = state->off;
+
+			copylen = Min(len, destend - dp);
+			remlen = len - copylen;
+			while (copylen--)
+			{
+				*dp = dp[-off];
+				dp++;
+			}
+
+			if (dp >= destend)
+			{
+				state->len = remlen;
+				*slen = 0;
+				return (char *) dp - dest;
+			}
+
+			Assert(remlen == 0);
+		}
+
+		remlen = 0;
+		off = 0;
+
+		if (ctrlc < 8 && sp < srcend && dp < destend)
+			goto ctrl_loop;
+	}
+	else
+	{
+		ctrl = 0;
+		ctrlc = 8;
+		remlen = 0;
+		off = 0;
+	}
+
+	while (sp < srcend && dp < destend)
+	{
+		/*
+		 * Read one control byte and process the next 8 items (or as many as
+		 * remain in the compressed input).
+		 */
+		ctrl = *sp++;
+
+		for (ctrlc = 0; ctrlc < 8 && sp < srcend && dp < destend; ctrlc++)
+		{
+ctrl_loop:
+			if (ctrl & 1)
+			{
+				int32		copylen;
+
+				/*
+				 * Set control bit means we must read a match tag. The match
+				 * is coded with two bytes. First byte uses lower nibble to
+				 * code length - 3. Higher nibble contains upper 4 bits of the
+				 * offset. The next following byte contains the lower 8 bits
+				 * of the offset. If the length is coded as 18, another
+				 * extension tag byte tells how much longer the match really
+				 * was (0-255).
+				 */
+				len = (sp[0] & 0x0f) + 3;
+				off = ((sp[0] & 0xf0) << 4) | sp[1];
+				sp += 2;
+				if (len == 18)
+					len += *sp++;
+
+				/*
+				 * Check for corrupt data: if we fell off the end of the
+				 * source, or if we obtained off = 0, we have problems.  (We
+				 * must check this, else we risk an infinite loop below in the
+				 * face of corrupt data.)
+				 */
+				if (unlikely((sp > srcend && last_cource_chunk) || off == 0))
+					return -1;
+
+				/*
+				 * Don't emit more data than requested.
+				 */
+				copylen = Min(len, destend - dp);
+				remlen = len - copylen;
+
+				/*
+				 * Now we copy the bytes specified by the tag from OUTPUT to
+				 * OUTPUT (copy len bytes from dp - off to dp). The copied
+				 * areas could overlap; to prevent possible uncertainty, we
+				 * copy only non-overlapping regions.
+				 */
+				while (off < copylen)
+				{
+					/*
+					 * We can safely copy "off" bytes since that clearly
+					 * results in non-overlapping source and destination.
+					 */
+					memcpy(dp, dp - off, off);
+					copylen -= off;
+					dp += off;
+
+					/*----------
+					 * This bit is less obvious: we can double "off" after
+					 * each such step.  Consider this raw input:
+					 *		112341234123412341234
+					 * This will be encoded as 5 literal bytes "11234" and
+					 * then a match tag with length 16 and offset 4.  After
+					 * memcpy'ing the first 4 bytes, we will have emitted
+					 *		112341234
+					 * so we can double "off" to 8, then after the next step
+					 * we have emitted
+					 *		11234123412341234
+					 * Then we can double "off" again, after which it is more
+					 * than the remaining "len" so we fall out of this loop
+					 * and finish with a non-overlapping copy of the
+					 * remainder.  In general, a match tag with off < len
+					 * implies that the decoded data has a repeat length of
+					 * "off".  We can handle 1, 2, 4, etc repetitions of the
+					 * repeated string per memcpy until we get to a situation
+					 * where the final copy step is non-overlapping.
+					 *
+					 * (Another way to understand this is that we are keeping
+					 * the copy source point dp - off the same throughout.)
+					 *----------
+					 */
+					off += off;
+				}
+				memcpy(dp, dp - off, copylen);
+				dp += copylen;
+			}
+			else
+			{
+				/*
+				 * An unset control bit means LITERAL BYTE. So we just copy
+				 * one from INPUT to OUTPUT.
+				 */
+				*dp++ = *sp++;
+			}
+
+			/*
+			 * Advance the control bit
+			 */
+			ctrl >>= 1;
+		}
+	}
+
+	/*
+	 * If requested, check we decompressed the right amount.
+	 */
+	if (check_complete && (dp != destend || sp != srcend))
+		return -1;
+
+	if (pstate)
+	{
+		if (!state)
+			*pstate = state = palloc(sizeof(*state));
+
+		state->ctrl = ctrl;
+		state->ctrlc = ctrlc;
+		state->len = remlen;
+		state->off = off;
+
+		*slen = (const char *) sp - source;
+	}
+
+	/*
+	 * That's it.
+	 */
+	return (char *) dp - dest;
+}
+
+#if 0
+/* ----------
+ * pglz_decompress_iterate -
+ *
+ * This function is based on pglz_decompress(), with these additional
+ * requirements:
+ *
+ * 1. We need to save the current control byte and byte position for the
+ * caller's next iteration.
+ *
+ * 2. In pglz_decompress(), we can assume we have all the source bytes
+ * available. This is not the case when we decompress one chunk at a
+ * time, so we have to make sure that we only read bytes available in the
+ * current chunk.
+ * ----------
+ */
+void
+pglz_decompress_iterate(ToastBuffer *source, ToastBuffer *dest,
+						DetoastIterator iter, const char *destend)
+{
+	const unsigned char *sp;
+	const unsigned char *srcend;
+	unsigned char *dp;
+
+	/*
+	 * In the while loop, sp may be incremented such that it points beyond
+	 * srcend. To guard against reading beyond the end of the current chunk,
+	 * we set srcend such that we exit the loop when we are within four bytes
+	 * of the end of the current chunk. When source->limit reaches
+	 * source->capacity, we are decompressing the last chunk, so we can (and
+	 * need to) read every byte.
+	 */
+	srcend = (const unsigned char *)
+		(source->limit == source->capacity ? source->limit : (source->limit - 4));
+	sp = (const unsigned char *) source->position;
+	dp = (unsigned char *) dest->limit;
+	if (destend > (unsigned char *) dest->capacity)
+		destend = (unsigned char *) dest->capacity;
+
+	if (iter->len)
+	{
+		int32		len = iter->len;
+		int32		off = iter->off;
+		int32		copylen = Min(len, destend - dp);
+		int32		remlen = len - copylen;
+
+		while (copylen--)
+		{
+			*dp = dp[-off];
+			dp++;
+		}
+
+		iter->len = remlen;
+
+		if (dp >= destend)
+		{
+			dest->limit = (char *) dp;
+			return;
+		}
+
+		Assert(remlen == 0);
+	}
+
+	while (sp < srcend && dp < destend)
+	{
+		/*
+		 * Read one control byte and process the next 8 items (or as many as
+		 * remain in the compressed input).
+		 */
+		unsigned char ctrl;
+		int			ctrlc;
+
+		if (iter->ctrlc != INVALID_CTRLC)
+		{
+			ctrl = iter->ctrl;
+			ctrlc = iter->ctrlc;
+		}
+		else
+		{
+			ctrl = *sp++;
+			ctrlc = 0;
+		}
+
+		for (; ctrlc < INVALID_CTRLC && sp < srcend && dp < destend; ctrlc++)
+		{
+
+			if (ctrl & 1)
+			{
+				/*
+				 * Set control bit means we must read a match tag. The match
+				 * is coded with two bytes. First byte uses lower nibble to
+				 * code length - 3. Higher nibble contains upper 4 bits of the
+				 * offset. The next following byte contains the lower 8 bits
+				 * of the offset. If the length is coded as 18, another
+				 * extension tag byte tells how much longer the match really
+				 * was (0-255).
+				 */
+				int32		len;
+				int32		off;
+				int32		copylen;
+
+				len = (sp[0] & 0x0f) + 3;
+				off = ((sp[0] & 0xf0) << 4) | sp[1];
+				sp += 2;
+				if (len == 18)
+					len += *sp++;
+
+				/*
+				 * Now we copy the bytes specified by the tag from OUTPUT to
+				 * OUTPUT (copy len bytes from dp - off to dp). The copied
+				 * areas could overlap; to prevent possible uncertainty, we
+				 * copy only non-overlapping regions.
+				 */
+				copylen = Min(len, destend - dp);
+				iter->len = len - copylen;
+
+				while (off < copylen)
+				{
+					/* see comments in common/pg_lzcompress.c */
+					memcpy(dp, dp - off, off);
+					copylen -= off;
+					dp += off;
+					off += off;
+				}
+				memcpy(dp, dp - off, copylen);
+				dp += copylen;
+
+				iter->off = off;
+			}
+			else
+			{
+				/*
+				 * An unset control bit means LITERAL BYTE. So we just copy
+				 * one from INPUT to OUTPUT.
+				 */
+				*dp++ = *sp++;
+			}
+
+			/*
+			 * Advance the control bit
+			 */
+			ctrl >>= 1;
+		}
+
+		iter->ctrlc = ctrlc;
+		iter->ctrl = ctrl;
+	}
+
+	source->position = (char *) sp;
+	dest->limit = (char *) dp;
+}
+#endif
 
 /*
  * Extract compression ID from a varlena.
