@@ -5001,8 +5001,8 @@ binary_upgrade_set_pg_class_oids(Archive *fout,
 	appendPQExpBuffer(upgrade_query,
 					  "SELECT c.relkind, c.relfilenode, c.reltoastrelid, ct.relfilenode AS toast_relfilenode, i.indexrelid, cti.relfilenode AS toast_index_relfilenode "
 					  "FROM pg_catalog.pg_class c LEFT JOIN "
-					  "pg_catalog.pg_index i ON (c.reltoastrelid = i.indrelid AND i.indisvalid) "
-					  "LEFT JOIN pg_catalog.pg_class ct ON (c.reltoastrelid = ct.oid) "
+					  "pg_catalog.pg_index i ON (i.indrelid = ANY(c.reltoastrelids) AND i.indisvalid) "
+					  "LEFT JOIN pg_catalog.pg_class ct ON (ct.oid = ANY(c.reltoastrelids)) "
 					  "LEFT JOIN pg_catalog.pg_class AS cti ON (i.indexrelid = cti.oid) "
 					  "WHERE c.oid = '%u'::pg_catalog.oid;",
 					  pg_class_oid);

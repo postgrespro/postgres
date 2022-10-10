@@ -64,6 +64,8 @@
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_toaster.h"
+#include "catalog/toasting.h"
 #include "catalog/schemapg.h"
 #include "catalog/storage.h"
 #include "commands/policy.h"
@@ -1022,6 +1024,41 @@ equalRSDesc(RowSecurityDesc *rsdesc1, RowSecurityDesc *rsdesc2)
 	return true;
 }
 
+static void
+RelationInitToastInfo(Relation rel, HeapTuple pg_class_tuple)
+{
+	Datum      *toasterids;
+	Datum      *toastrelids;
+	int	ntoasters = ExtractRelToastInfo(GetPgClassDescriptor(),
+		pg_class_tuple,
+		&toasterids,
+		&toastrelids);
+
+	if (ntoasters <= 0)
+	{
+		rel->rd_toastrelids = NULL;
+		rel->rd_toasterids = NULL;
+		rel->rd_ntoasters = 0;
+		return;
+	}
+
+	rel->rd_toasterids = MemoryContextAlloc(CacheMemoryContext, sizeof(Oid) * ntoasters);
+	rel->rd_toastrelids = MemoryContextAlloc(CacheMemoryContext, sizeof(Oid) * ntoasters);
+	rel->rd_ntoasters = ntoasters;
+
+	elog(DEBUG1, "RelationInitToastInfo %s %p %p",
+		NameStr(rel->rd_rel->relname), rel->rd_toasterids, rel->rd_toastrelids);
+
+	for (int i = 0; i < ntoasters; i++)
+	{
+		rel->rd_toasterids[i] = DatumGetObjectId(toasterids[i]);
+		rel->rd_toastrelids[i] = DatumGetObjectId(toastrelids[i]);
+	}
+
+	pfree(toasterids);
+	pfree(toastrelids);
+}
+
 /*
  *		RelationBuildDesc
  *
@@ -1236,6 +1273,8 @@ retry:
 		RelationBuildRowSecurity(relation);
 	else
 		relation->rd_rsdesc = NULL;
+
+	RelationInitToastInfo(relation, pg_class_tuple);
 
 	/*
 	 * initialize the relation lock manager information
@@ -2005,6 +2044,8 @@ formrdesc(const char *relationName, Oid relationReltype,
 	relation->rd_rel->relam = HEAP_TABLE_AM_OID;
 	relation->rd_tableam = GetHeapamTableAmRoutine();
 
+   // FIXME RelationInitToastInfo(relation, ...);
+
 	/*
 	 * initialize the rel-has-index flag, using hardwired knowledge
 	 */
@@ -2403,6 +2444,8 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 {
 	Assert(RelationHasReferenceCountZero(relation));
 
+	elog(DEBUG1, "RelationDestroyRelation %s %p %p",
+		NameStr(relation->rd_rel->relname), relation->rd_toasterids, relation->rd_toastrelids);
 	/*
 	 * Make sure smgr and lower levels close the relation's files, if they
 	 * weren't closed already.  (This was probably done by caller, but let's
@@ -2468,6 +2511,10 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 		MemoryContextDelete(relation->rd_pddcxt);
 	if (relation->rd_partcheckcxt)
 		MemoryContextDelete(relation->rd_partcheckcxt);
+	if (relation->rd_toasterids)
+		pfree(relation->rd_toasterids);
+	if (relation->rd_toastrelids)
+		pfree(relation->rd_toastrelids);
 	pfree(relation);
 }
 
@@ -2493,6 +2540,9 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 static void
 RelationClearRelation(Relation relation, bool rebuild)
 {
+	elog(DEBUG1, "RelationClearRelation %s %p %p",
+		NameStr(relation->rd_rel->relname), relation->rd_toasterids, relation->rd_toastrelids);
+
 	/*
 	 * As per notes above, a rel to be rebuilt MUST have refcnt > 0; while of
 	 * course it would be an equally bad idea to blow away one with nonzero
@@ -2726,8 +2776,9 @@ RelationClearRelation(Relation relation, bool rebuild)
 		if (keep_policies)
 			SWAPFIELD(RowSecurityDesc *, rd_rsdesc);
 		/* toast OID override must be preserved */
-		SWAPFIELD(Oid, rd_toastoid);
-		/* pgstat_info / enabled must be preserved */
+		SWAPFIELD(Oid *, rd_toastoid);
+		//SWAPFIELD(Oid *, rd_toastrelids);     /* FIXME needed ??? */
+		//SWAPFIELD(Oid *, rd_toasterids);		/* pgstat_info / enabled must be preserved */
 		SWAPFIELD(struct PgStat_TableStatus *, pgstat_info);
 		SWAPFIELD(bool, pgstat_enabled);
 		/* preserve old partition key if we have one */
@@ -3472,7 +3523,8 @@ RelationBuildLocalRelation(const char *relname,
 						   bool shared_relation,
 						   bool mapped_relation,
 						   char relpersistence,
-						   char relkind)
+						   char relkind,
+						   Oid toastrelid)
 {
 	Relation	rel;
 	MemoryContext oldcxt;
@@ -3650,6 +3702,21 @@ RelationBuildLocalRelation(const char *relname,
 	RelationInitPhysicalAddr(rel);
 
 	rel->rd_rel->relam = accessmtd;
+
+	if (OidIsValid(toastrelid))
+	{
+		Assert(!rel->rd_ntoasters);
+
+		rel->rd_ntoasters = 1;
+		rel->rd_toasterids = palloc(sizeof(Oid));
+		rel->rd_toastrelids = palloc(sizeof(Oid));
+
+		rel->rd_toasterids[0] = DEFAULT_TOASTER_OID;
+		rel->rd_toastrelids[0] = toastrelid;
+
+		elog(DEBUG1, "RelationBuildLocalRelation %s %p %p",
+			NameStr(rel->rd_rel->relname), rel->rd_toasterids, rel->rd_toastrelids);
+	}
 
 	/*
 	 * RelationInitTableAccessMethod will do syscache lookups, so we mustn't
@@ -4212,6 +4279,8 @@ RelationCacheInitializePhase3(void)
 			if (relation->rd_options)
 				pfree(relation->rd_options);
 			RelationParseRelOptions(relation, htup);
+
+			RelationInitToastInfo(relation, htup);
 
 			/*
 			 * Check the values in rd_att were set up correctly.  (We cannot
@@ -6141,6 +6210,25 @@ load_relcache_init_file(bool shared)
 			if (rel->rd_isnailed)
 				nailed_indexes++;
 
+			/* Load toast-specific data */
+			if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
+				goto read_failed;
+
+			rel->rd_ntoasters = len;
+
+			if (rel->rd_ntoasters > 0)
+			{
+				int	size = sizeof(Oid) * rel->rd_ntoasters;
+
+				rel->rd_toasterids = palloc(size);
+				rel->rd_toastrelids = palloc(size);
+
+				if (fread(rel->rd_toasterids, 1, size, fp) != size)
+					goto read_failed;
+				if (fread(rel->rd_toastrelids, 1, size, fp) != size)
+					goto read_failed;
+			}
+
 			/* next, read the pg_index tuple */
 			if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
 				goto read_failed;
@@ -6563,6 +6651,19 @@ write_relcache_init_file(bool shared)
 				bytea	   *opt = rel->rd_opcoptions[i];
 
 				write_item(opt, opt ? VARSIZE(opt) : 0, fp);
+			}
+		}
+		else if (rel->rd_rel->relkind == RELKIND_RELATION)
+		{
+			/* write toast-specific data */
+			write_item(&rel->rd_ntoasters, sizeof(rel->rd_ntoasters), fp);
+
+			if (rel->rd_ntoasters > 0)
+			{
+				int	size = sizeof(Oid) * rel->rd_ntoasters;
+
+				write_item(rel->rd_toasterids, size, fp);
+				write_item(rel->rd_toastrelids, size, fp);
 			}
 		}
 	}

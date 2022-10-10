@@ -68,9 +68,6 @@ CATALOG(pg_class,1259,RelationRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(83,Relat
 	/* # of all-visible blocks (not always up-to-date) */
 	int32		relallvisible BKI_DEFAULT(0);
 
-	/* OID of toast table; 0 if none */
-	Oid			reltoastrelid BKI_DEFAULT(0) BKI_LOOKUP_OPT(pg_class);
-
 	/* T if has (or has had) any indexes */
 	bool		relhasindex BKI_DEFAULT(f);
 
@@ -138,6 +135,10 @@ CATALOG(pg_class,1259,RelationRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(83,Relat
 
 	/* partition bound node tree */
 	pg_node_tree relpartbound BKI_DEFAULT(_null_);
+
+	/* toasters and their toast tables */
+	Oid	reltoasterids[1] BKI_DEFAULT(_null_) BKI_LOOKUP(pg_toaster);
+	Oid	reltoastrelids[1] BKI_DEFAULT(_null_) BKI_LOOKUP_OPT(pg_class);
 #endif
 } FormData_pg_class;
 

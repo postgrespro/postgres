@@ -2384,7 +2384,7 @@ CREATE OR REPLACE FUNCTION create_relfilenode_part(relname text, indname text)
   BEGIN
   EXECUTE format('
     CREATE TABLE %I AS
-      SELECT oid, relname, relfilenode, relkind, reltoastrelid
+      SELECT oid, relname, relfilenode, relkind, reltoastrelids
       FROM pg_class
       WHERE oid IN
          (SELECT relid FROM pg_partition_tree(''%I''));',
@@ -2736,7 +2736,7 @@ ERROR:  REINDEX CONCURRENTLY cannot run inside a transaction block
 COMMIT;
 -- REINDEX SCHEMA processes all temporary relations
 CREATE TABLE reindex_temp_before AS
-SELECT oid, relname, relfilenode, relkind, reltoastrelid
+SELECT oid, relname, relfilenode, relkind, reltoastrelids
   FROM pg_class
   WHERE relname IN ('concur_temp_ind_1', 'concur_temp_ind_2');
 SELECT pg_my_temp_schema()::regnamespace as temp_schema_name \gset
@@ -2770,18 +2770,18 @@ CREATE MATERIALIZED VIEW matview AS SELECT col1 FROM table2;
 CREATE INDEX ON matview(col1);
 CREATE VIEW view AS SELECT col2 FROM table2;
 CREATE TABLE reindex_before AS
-SELECT oid, relname, relfilenode, relkind, reltoastrelid
+SELECT oid, relname, relfilenode, relkind, reltoastrelids
 	FROM pg_class
 	where relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'schema_to_reindex');
 INSERT INTO reindex_before
-SELECT oid, 'pg_toast_TABLE', relfilenode, relkind, reltoastrelid
+SELECT oid, 'pg_toast_TABLE', relfilenode, relkind, reltoastrelids
 FROM pg_class WHERE oid IN
-	(SELECT reltoastrelid FROM reindex_before WHERE reltoastrelid > 0);
+	(SELECT unnest(reltoastrelids) FROM reindex_before WHERE reltoastrelids IS NOT NULL);
 INSERT INTO reindex_before
-SELECT oid, 'pg_toast_TABLE_index', relfilenode, relkind, reltoastrelid
+SELECT oid, 'pg_toast_TABLE_index', relfilenode, relkind, reltoastrelids
 FROM pg_class where oid in
 	(select indexrelid from pg_index where indrelid in
-		(select reltoastrelid from reindex_before where reltoastrelid > 0));
+		(select unnest(reltoastrelids) from reindex_before where reltoastrelids IS NOT NULL));
 REINDEX SCHEMA schema_to_reindex;
 CREATE TABLE reindex_after AS SELECT oid, relname, relfilenode, relkind
 	FROM pg_class

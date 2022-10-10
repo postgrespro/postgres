@@ -30,7 +30,7 @@ $node->safe_psql('postgres',
 	'CREATE TABLE test1 (a text); CREATE INDEX test1x ON test1 (a);');
 # Collect toast table and index names of this relation, for later use.
 my $toast_table = $node->safe_psql('postgres',
-	"SELECT reltoastrelid::regclass FROM pg_class WHERE oid = 'test1'::regclass;"
+	"SELECT reltoastrelids[1]::regclass FROM pg_class WHERE oid = 'test1'::regclass;"
 );
 my $toast_index = $node->safe_psql('postgres',
 	"SELECT indexrelid::regclass FROM pg_index WHERE indrelid = '$toast_table'::regclass;"
@@ -47,7 +47,7 @@ $node->safe_psql('postgres',
 my $fetch_toast_relfilenodes =
   qq{SELECT b.oid::regclass, c.oid::regclass::text, c.oid, c.relfilenode
   FROM pg_class a
-    JOIN pg_class b ON (a.oid = b.reltoastrelid)
+    JOIN pg_class b ON (a.oid = ANY(b.reltoastrelids))
     JOIN pg_index i on (a.oid = i.indrelid)
     JOIN pg_class c on (i.indexrelid = c.oid)
   WHERE b.oid IN ('pg_constraint'::regclass, 'test1'::regclass)};

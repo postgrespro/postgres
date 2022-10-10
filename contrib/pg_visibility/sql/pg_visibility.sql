@@ -73,10 +73,10 @@ alter table regular_table alter column b set storage external;
 insert into regular_table values (1, repeat('one', 1000)), (2, repeat('two', 1000));
 vacuum (disable_page_skipping) regular_table;
 select count(*) > 0 from pg_visibility('regular_table');
-select count(*) > 0 from pg_visibility((select reltoastrelid from pg_class where relname = 'regular_table'));
+select count(*) > 0 from pg_visibility((select reltoastrelids[1] from pg_class where relname = 'regular_table'));
 truncate regular_table;
 select count(*) > 0 from pg_visibility('regular_table');
-select count(*) > 0 from pg_visibility((select reltoastrelid from pg_class where relname = 'regular_table'));
+select count(*) > 0 from pg_visibility((select reltoastrelids[1] from pg_class where relname = 'regular_table'));
 
 create materialized view matview_visibility_test as select * from regular_table;
 vacuum (disable_page_skipping) matview_visibility_test;

@@ -3484,11 +3484,15 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 				}
 
 				/* Also add the toast indexes */
-				if (OidIsValid(heapRelation->rd_rel->reltoastrelid))
+				for (int i = 0; i < heapRelation->rd_ntoasters; i++)
 				{
-					Oid			toastOid = heapRelation->rd_rel->reltoastrelid;
-					Relation	toastRelation = table_open(toastOid,
-														   ShareUpdateExclusiveLock);
+					Oid		toastOid = heapRelation->rd_toastrelids[i];
+					Relation	toastRelation;
+
+					if (!OidIsValid(toastOid))
+						continue;
+
+					toastRelation = table_open(toastOid, ShareUpdateExclusiveLock);
 
 					/* Save the list of relation OIDs in private context */
 					oldcontext = MemoryContextSwitchTo(private_context);

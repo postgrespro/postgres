@@ -28,6 +28,7 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/storage.h"
+#include "catalog/toasting.h"
 #include "commands/policy.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"

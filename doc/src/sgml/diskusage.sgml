@@ -61,13 +61,13 @@ SELECT pg_relation_filepath(oid), relpages FROM pg_class WHERE relname = 'custom
 <programlisting>
 SELECT relname, relpages
 FROM pg_class,
-     (SELECT reltoastrelid
+     (SELECT unnest(reltoastrelids) AS toastrelid
       FROM pg_class
       WHERE relname = 'customer') AS ss
-WHERE oid = ss.reltoastrelid OR
+WHERE oid = ss.toastrelid OR
       oid = (SELECT indexrelid
              FROM pg_index
-             WHERE indrelid = ss.reltoastrelid)
+             WHERE indrelid = ss.toastrelid)
 ORDER BY relname;
 
        relname        | relpages

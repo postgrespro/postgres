@@ -1015,6 +1015,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 										  false,
 										  stmt->oncommit,
 										  reloptions,
+										  InvalidOid,
 										  true,
 										  allowSystemTableMods,
 										  false,
@@ -2039,7 +2040,6 @@ ExecuteTruncateGuts(List *explicit_rels,
 		else
 		{
 			Oid			heap_relid;
-			Oid			toast_relid;
 			ReindexParams reindex_params = {0};
 
 			/*
@@ -2062,14 +2062,17 @@ ExecuteTruncateGuts(List *explicit_rels,
 			heap_relid = RelationGetRelid(rel);
 
 			/*
-			 * The same for the toast table, if any.
+			 * The same for the toast tables, if any.
 			 */
-			toast_relid = rel->rd_rel->reltoastrelid;
-			if (OidIsValid(toast_relid))
+			for (int i = 0; i < rel->rd_ntoasters; i++)
 			{
-				Relation	toastrel = relation_open(toast_relid,
-													 AccessExclusiveLock);
+				Oid		toast_relid = rel->rd_toastrelids[i];
+				Relation	toastrel;
 
+				if (!OidIsValid(toast_relid))
+					continue;
+
+				toastrel = relation_open(toast_relid, AccessExclusiveLock);
 				RelationSetNewRelfilenumber(toastrel,
 											toastrel->rd_rel->relpersistence);
 				table_close(toastrel, NoLock);
@@ -14086,10 +14089,13 @@ ATExecChangeOwner(Oid relationOid, Oid newOwnerId, bool recursing, LOCKMODE lock
 			list_free(index_oid_list);
 		}
 
-		/* If it has a toast table, recurse to change its ownership */
-		if (tuple_class->reltoastrelid != InvalidOid)
-			ATExecChangeOwner(tuple_class->reltoastrelid, newOwnerId,
-							  true, lockmode);
+		/* If it has toast tables, recurse to change its ownership */
+		for (int i = 0; i < target_rel->rd_ntoasters; i++)
+		{
+			if (OidIsValid(target_rel->rd_toastrelids[i]))
+				ATExecChangeOwner(target_rel->rd_toastrelids[i],
+				newOwnerId, true, lockmode);
+		}
 
 		/* If it has dependent sequences, recurse to change them too */
 		change_owner_recurse_to_sequences(relationOid, newOwnerId, lockmode);
@@ -14469,11 +14475,14 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 
 	ReleaseSysCache(tuple);
 
-	/* repeat the whole exercise for the toast table, if there's one */
-	if (OidIsValid(rel->rd_rel->reltoastrelid))
+	/* repeat the whole exercise for the toast tables, if there are any */
+	for (int i = 0; i <  rel->rd_ntoasters; i++)
 	{
 		Relation	toastrel;
-		Oid			toastid = rel->rd_rel->reltoastrelid;
+		Oid		toastid = rel->rd_toastrelids[i];
+
+		if (!OidIsValid(toastid))
+			continue;
 
 		toastrel = table_open(toastid, lockmode);
 
@@ -14542,7 +14551,6 @@ static void
 ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 {
 	Relation	rel;
-	Oid			reltoastrelid;
 	RelFileNumber newrelfilenumber;
 	RelFileLocator newrlocator;
 	List	   *reltoastidxids = NIL;
@@ -14562,14 +14570,20 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 		return;
 	}
 
-	reltoastrelid = rel->rd_rel->reltoastrelid;
 	/* Fetch the list of indexes on toast relation if necessary */
-	if (OidIsValid(reltoastrelid))
+	for (int i = 0; i < rel->rd_ntoasters; i++)
 	{
-		Relation	toastRel = relation_open(reltoastrelid, lockmode);
+		if (OidIsValid(rel->rd_toastrelids[i]))
+		{
+			Relation        toastRel = relation_open(rel->rd_toastrelids[i], lockmode);
+			List       *idxids = RelationGetIndexList(toastRel);
 
-		reltoastidxids = RelationGetIndexList(toastRel);
-		relation_close(toastRel, lockmode);
+			if (reltoastidxids == NIL)
+				reltoastidxids = idxids;
+			else
+			reltoastidxids = list_concat(reltoastidxids, idxids);
+			relation_close(toastRel, lockmode);
+		}
 	}
 
 	/*
@@ -14615,8 +14629,12 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	CommandCounterIncrement();
 
 	/* Move associated toast relation and/or indexes, too */
-	if (OidIsValid(reltoastrelid))
-		ATExecSetTableSpace(reltoastrelid, newTableSpace, lockmode);
+	for (int i = 0; i < rel->rd_ntoasters; i++)
+	{
+		if (OidIsValid(rel->rd_toastrelids[i]))
+			ATExecSetTableSpace(rel->rd_toastrelids[i], newTableSpace, lockmode);
+	}
+
 	foreach(lc, reltoastidxids)
 		ATExecSetTableSpace(lfirst_oid(lc), newTableSpace, lockmode);
 

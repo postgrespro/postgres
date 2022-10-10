@@ -441,10 +441,10 @@ get_rel_infos(ClusterInfo *cluster, DbInfo *dbinfo)
 	 */
 	snprintf(query + strlen(query), sizeof(query) - strlen(query),
 			 "  toast_heap (reloid, indtable, toastheap) AS ( "
-			 "  SELECT c.reltoastrelid, 0::oid, c.oid "
+			 "  SELECT unnest(c.reltoastrelids), 0::oid, c.oid "
 			 "  FROM regular_heap JOIN pg_catalog.pg_class c "
 			 "      ON regular_heap.reloid = c.oid "
-			 "  WHERE c.reltoastrelid != 0), ");
+			 "  WHERE c.reltoastrelids IS NOT NULL), ");
 
 	/*
 	 * Add a CTE that collects OIDs of all valid indexes on the previously

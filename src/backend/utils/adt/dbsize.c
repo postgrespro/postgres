@@ -422,10 +422,11 @@ calculate_table_size(Relation rel)
 										forkNum);
 
 	/*
-	 * Size of toast relation
+	 * Size of toast relations
 	 */
-	if (OidIsValid(rel->rd_rel->reltoastrelid))
-		size += calculate_toast_table_size(rel->rd_rel->reltoastrelid);
+	for (int i = 0; i < rel->rd_ntoasters; i++)
+		if (OidIsValid(rel->rd_toastrelids[i]))
+			size += calculate_toast_table_size(rel->rd_toastrelids[i]);
 
 	return size;
 }

@@ -27,9 +27,9 @@ SELECT exec(
 CREATE TABLE iamalargetable AS SELECT iamalongfunction() longfunctionoutput;
 
 -- verify toast usage
-SELECT pg_relation_size((SELECT reltoastrelid FROM pg_class WHERE oid = 'pg_proc'::regclass)) > 0;
-SELECT pg_relation_size((SELECT reltoastrelid FROM pg_class WHERE oid = 'pg_description'::regclass)) > 0;
-SELECT pg_relation_size((SELECT reltoastrelid FROM pg_class WHERE oid = 'pg_shdescription'::regclass)) > 0;
+SELECT pg_relation_size((SELECT reltoastrelids[1] FROM pg_class WHERE oid = 'pg_proc'::regclass)) > 0;
+SELECT pg_relation_size((SELECT reltoastrelids[1] FROM pg_class WHERE oid = 'pg_description'::regclass)) > 0;
+SELECT pg_relation_size((SELECT reltoastrelids[1] FROM pg_class WHERE oid = 'pg_shdescription'::regclass)) > 0;
 
 
 SELECT 'init' FROM pg_create_logical_replication_slot('regression_slot', 'test_decoding');

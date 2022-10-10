@@ -22,16 +22,28 @@
  */
 extern void NewRelationCreateToastTable(Oid relOid, Datum reloptions);
 extern void NewHeapCreateToastTable(Oid relOid, Datum reloptions,
-									LOCKMODE lockmode, Oid OIDOldToast);
+									LOCKMODE lockmode, Relation old_heap);
 extern void AlterTableCreateToastTable(Oid relOid, Datum reloptions,
 									   LOCKMODE lockmode);
 extern void BootstrapToastTable(char *relName,
 								Oid toastOid, Oid toastIndexOid);
 
+extern int ExtractRelToastInfo(TupleDesc pg_class_desc,
+	HeapTuple pg_class_tuple,
+	Datum **toasterids, Datum **toastrelids);
+
 /* generic toaster access */
-extern bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
+extern bool create_toast_table(Relation rel, Oid toasterid, Oid toastOid, Oid toastIndexOid,
 							   Datum reloptions, LOCKMODE lockmode, bool check,
 							   Oid OIDOldToast);
+
+extern void register_toast_table(Oid relid, Oid toasterid, Oid toastrelid);
+extern Oid toast_find_relation_for_toaster(Relation rel, Oid toasterid,
+	Oid *real_toastrelid);
+extern HeapTuple toast_modify_pg_class_tuple(Relation classrel,
+	HeapTuple tuple,
+	Datum reltoasterids,
+	Datum reltoastrelids);
 
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 extern int	toast_open_indexes(Relation toastrel,

@@ -623,7 +623,7 @@ vacuum_one_database(ConnParams *cparams,
 						 " JOIN pg_catalog.pg_namespace ns"
 						 " ON c.relnamespace OPERATOR(pg_catalog.=) ns.oid\n"
 						 " LEFT JOIN pg_catalog.pg_class t"
-						 " ON c.reltoastrelid OPERATOR(pg_catalog.=) t.oid\n");
+						 " ON t.oid OPERATOR(pg_catalog.=) ANY(c.reltoastrelids)\n");
 
 	/* Used to match the tables or schemas listed by the user */
 	if (objects_listed)

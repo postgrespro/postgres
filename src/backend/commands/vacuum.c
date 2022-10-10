@@ -34,11 +34,14 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "access/toasterapi.h"
 #include "catalog/namespace.h"
 #include "catalog/index.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_toaster.h"
+#include "catalog/toasting.h"
 #include "commands/cluster.h"
 #include "commands/defrem.h"
 #include "commands/vacuum.h"
@@ -1807,6 +1810,73 @@ vac_truncate_clog(TransactionId frozenXID,
 	LWLockRelease(WrapLimitsVacuumLock);
 }
 
+/* XXX Currently not used */
+/*
+static Oid
+get_toasterid_for_toast_rel(Oid toastrelid)
+{
+	Relation		class_rel = table_open(RelationRelationId, AccessShareLock);
+	SysScanDesc	scan = systable_beginscan(class_rel, InvalidOid, false,
+		NULL, 0, NULL);
+	HeapTuple	tup;
+	Oid			toasterid = InvalidOid;
+
+	while ((tup = systable_getnext(scan)) != NULL)
+	{
+		Datum	*toasterids;
+		Datum	*toastrelids;
+		int	ntoasters = ExtractRelToastInfo(RelationGetDescr(class_rel),
+			tup,
+			&toasterids,
+			&toastrelids);
+
+		for (int i = 0; i < ntoasters; i++)
+		{
+			if (DatumGetObjectId(toastrelids[i]) == toastrelid)
+			{
+				toasterid = DatumGetObjectId(toasterids[i]);
+					break;
+			}
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(class_rel, NoLock);
+
+	if (!OidIsValid(toasterid))
+		elog(ERROR, "could not find main relation for TOAST relation %u",
+			toastrelid);
+
+	return toasterid;
+}
+*/
+
+/* XXX Currently not used */
+/*
+static bool
+toastrel_vacuum_full_is_disabled(Relation toastrel, VacuumParams *params)
+{
+	Oid			toasterid = get_toasterid_for_toast_rel(RelationGetRelid(toastrel));
+	TsrRoutine 	*toaster;
+
+	if (!OidIsValid(toasterid))
+		return true;
+
+	toaster = SearchTsrCache(toasterid);
+
+	if (toaster->relinfo &&
+		(toaster->relinfo(toastrel) & TOASTREL_VACUUM_FULL_DISABLED))
+	{
+		ereport(WARNING,
+			(errmsg("skipping \"%s\" --- %s is disabled by toaster",
+				RelationGetRelationName(toastrel),
+				"VACUUM FULL")));
+		return true;
+	}
+
+	return false;
+}
+*/
 
 /*
  *	vacuum_rel() -- vacuum one heap relation
@@ -1833,7 +1903,8 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	LOCKMODE	lmode;
 	Relation	rel;
 	LockRelId	lockrelid;
-	Oid			toast_relid;
+	Oid			*toast_relids = NULL;
+	int			toast_nrelids = 0;
 	Oid			save_userid;
 	int			save_sec_context;
 	int			save_nestlevel;
@@ -2030,9 +2101,14 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 */
 	if ((params->options & VACOPT_PROCESS_TOAST) != 0 &&
 		(params->options & VACOPT_FULL) == 0)
-		toast_relid = rel->rd_rel->reltoastrelid;
-	else
-		toast_relid = InvalidOid;
+	{
+		toast_nrelids = rel->rd_ntoasters;
+
+		if (toast_nrelids > 0)
+			toast_relids = memcpy(MemoryContextAlloc(TopMemoryContext /* FIXME */, sizeof(Oid) * toast_nrelids),
+				rel->rd_toastrelids,
+				sizeof(Oid) * toast_nrelids);
+	}
 
 	/*
 	 * Switch to the table owner's userid, so that any index functions are run
@@ -2082,14 +2158,22 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	CommitTransactionCommand();
 
 	/*
-	 * If the relation has a secondary toast rel, vacuum that too while we
+	 * If the relation has secondary toast rels, vacuum that too while we
 	 * still hold the session lock on the main table.  Note however that
 	 * "analyze" will not get done on the toast table.  This is good, because
 	 * the toaster always uses hardcoded index access and statistics are
 	 * totally unimportant for toast relations.
 	 */
-	if (toast_relid != InvalidOid)
-		vacuum_rel(toast_relid, NULL, params);
+	if (toast_relids)
+	{
+		for (int i = 0; i < toast_nrelids; i++)
+		{
+			if (OidIsValid(toast_relids[i]))
+			vacuum_rel(toast_relids[i], NULL, params);
+		}
+
+		pfree(toast_relids);
+	}
 
 	/*
 	 * Now release the session-level lock on the main table.

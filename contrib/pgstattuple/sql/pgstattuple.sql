@@ -101,9 +101,9 @@ select pgstattuple_approx('test_partition');
 select pg_relpages('test_partition');
 
 -- toast tables should work
-select pgstattuple((select reltoastrelid from pg_class where relname = 'test'));
-select pgstattuple_approx((select reltoastrelid from pg_class where relname = 'test'));
-select pg_relpages((select reltoastrelid from pg_class where relname = 'test'));
+select pgstattuple((select reltoastrelids[1] from pg_class where relname = 'test'));
+select pgstattuple_approx((select reltoastrelids[1] from pg_class where relname = 'test'));
+select pg_relpages((select reltoastrelids[1] from pg_class where relname = 'test'));
 
 -- not for the index calls though, of course
 select pgstatindex('test_partition');

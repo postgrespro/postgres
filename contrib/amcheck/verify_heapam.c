@@ -114,7 +114,13 @@ typedef struct HeapCheckContext
 	Relation	toast_rel;
 	Relation   *toast_indexes;
 	Relation	valid_toast_index;
-	int			num_toast_indexes;
+   struct ToastRelContext
+   {
+      Relation	toast_rel;
+      Relation	*toast_indexes;
+      Relation	valid_toast_index;
+      int		num_toast_indexes;
+   } *toast_rels;
 
 	/* Values for iterating over pages in the relation */
 	BlockNumber blkno;
@@ -154,6 +160,7 @@ typedef struct HeapCheckContext
 /* Internal implementation */
 static void check_tuple(HeapCheckContext *ctx);
 static void check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
+							  struct ToastRelContext *toast_rel,
 							  ToastedAttribute *ta, int32 *expected_chunk_seq,
 							  uint32 extsize);
 
@@ -364,19 +371,40 @@ verify_heapam(PG_FUNCTION_ARGS)
 		last_block = (BlockNumber) lb;
 	}
 
+	/* XXX spaces */
 	/* Optionally open the toast relation, if any. */
-	if (ctx.rel->rd_rel->reltoastrelid && check_toast)
+	if (ctx.rel->rd_ntoasters > 0 && check_toast)
 	{
-		int			offset;
+		ctx.toast_rels = palloc(sizeof(*ctx.toast_rels) * ctx.rel->rd_ntoasters);
 
-		/* Main relation has associated toast relation */
-		ctx.toast_rel = table_open(ctx.rel->rd_rel->reltoastrelid,
-								   AccessShareLock);
-		offset = toast_open_indexes(ctx.toast_rel,
-									AccessShareLock,
-									&(ctx.toast_indexes),
-									&(ctx.num_toast_indexes));
-		ctx.valid_toast_index = ctx.toast_indexes[offset];
+      for (int i = 0; i < ctx.rel->rd_ntoasters; i++)
+      {
+         Oid toastrelid = ctx.rel->rd_toastrelids[i];
+
+         if (OidIsValid(toastrelid))
+         {
+            int                     offset;
+
+            /* Main relation has associated toast relation */
+            ctx.toast_rels[i].toast_rel =
+               table_open(toastrelid, AccessShareLock);
+
+            offset = toast_open_indexes(ctx.toast_rels[i].toast_rel,
+                                        AccessShareLock,
+                                        &(ctx.toast_rels[i].toast_indexes),
+                                        &(ctx.toast_rels[i].num_toast_indexes));
+
+            ctx.toast_rels[i].valid_toast_index =
+               ctx.toast_rels[i].toast_indexes[offset];
+         }
+         else
+         {
+            ctx.toast_rels[i].toast_rel = NULL;
+            ctx.toast_rels[i].toast_indexes = NULL;
+            ctx.toast_rels[i].num_toast_indexes = 0;
+            ctx.toast_rels[i].valid_toast_index = 0;
+         }
+      }
 	}
 	else
 	{
@@ -384,9 +412,7 @@ verify_heapam(PG_FUNCTION_ARGS)
 		 * Main relation has no associated toast relation, or we're
 		 * intentionally skipping it.
 		 */
-		ctx.toast_rel = NULL;
-		ctx.toast_indexes = NULL;
-		ctx.num_toast_indexes = 0;
+		ctx.toast_rels = NULL;
 	}
 
 	update_cached_xid_range(&ctx);
@@ -535,12 +561,21 @@ verify_heapam(PG_FUNCTION_ARGS)
 		ReleaseBuffer(vmbuffer);
 
 	/* Close the associated toast table and indexes, if any. */
-	if (ctx.toast_indexes)
-		toast_close_indexes(ctx.toast_indexes, ctx.num_toast_indexes,
-							AccessShareLock);
-	if (ctx.toast_rel)
-		table_close(ctx.toast_rel, AccessShareLock);
+   if (ctx.toast_rels)
+   {
+      for (int i = 0; i < ctx.rel->rd_ntoasters; i++)
+      {
+         if (ctx.toast_rels[i].toast_indexes)
+            toast_close_indexes(ctx.toast_rels[i].toast_indexes,
+               ctx.toast_rels[i].num_toast_indexes,
+               AccessShareLock);
 
+         if (ctx.toast_rels[i].toast_rel)
+            table_close(ctx.toast_rels[i].toast_rel, AccessShareLock);
+      }
+
+      pfree(ctx.toast_rels);
+   }
 	/* Close the main relation */
 	relation_close(ctx.rel, AccessShareLock);
 
@@ -1157,6 +1192,7 @@ check_tuple_visibility(HeapCheckContext *ctx)
  */
 static void
 check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
+				  struct ToastRelContext *toast_rel,
 				  ToastedAttribute *ta, int32 *expected_chunk_seq,
 				  uint32 extsize)
 {
@@ -1169,7 +1205,7 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 
 	/* Sanity-check the sequence number. */
 	chunk_seq = DatumGetInt32(fastgetattr(toasttup, 2,
-										  ctx->toast_rel->rd_att, &isnull));
+										  toast_rel->toast_rel->rd_att, &isnull));
 	if (isnull)
 	{
 		report_toast_corruption(ctx, ta,
@@ -1189,7 +1225,7 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 
 	/* Sanity-check the chunk data. */
 	chunk = DatumGetPointer(fastgetattr(toasttup, 3,
-										ctx->toast_rel->rd_att, &isnull));
+										toast_rel->toast_rel->rd_att, &isnull));
 	if (isnull)
 	{
 		report_toast_corruption(ctx, ta,
@@ -1328,7 +1364,7 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	{
 		uint8		va_tag = VARTAG_EXTERNAL(tp + ctx->offset);
 
-		if (va_tag != VARTAG_ONDISK)
+		if (va_tag != VARTAG_ONDISK && va_tag != VARTAG_CUSTOM)
 		{
 			report_corruption(ctx,
 							  psprintf("toasted attribute has unexpected TOAST tag %u",
@@ -1422,7 +1458,7 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	}
 
 	/* The relation better have a toast table */
-	if (!ctx->rel->rd_rel->reltoastrelid)
+	if (ctx->rel->rd_ntoasters <= 0)
 	{
 		report_corruption(ctx,
 						  psprintf("toast value %u is external but relation has no toast relation",
@@ -1431,7 +1467,7 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	}
 
 	/* If we were told to skip toast checking, then we're done. */
-	if (ctx->toast_rel == NULL)
+	if (ctx->toast_rels == NULL)
 		return true;
 
 	/*
@@ -1472,6 +1508,7 @@ check_toasted_attribute(HeapCheckContext *ctx, ToastedAttribute *ta)
 	uint32		extsize;
 	int32		expected_chunk_seq = 0;
 	int32		last_chunk_seq;
+	struct ToastRelContext *toast_rel = NULL;
 
 	extsize = VARATT_EXTERNAL_GET_EXTSIZE(ta->toast_pointer);
 	last_chunk_seq = (extsize - 1) / TOAST_MAX_CHUNK_SIZE;
@@ -1484,13 +1521,27 @@ check_toasted_attribute(HeapCheckContext *ctx, ToastedAttribute *ta)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ta->toast_pointer.va_valueid));
 
+   for (int i = 0; i < ctx->rel->rd_ntoasters; i++)
+   {
+      if (ta->toast_pointer.va_toastrelid == ctx->rel->rd_toastrelids[i])
+      {
+         toast_rel = &ctx->toast_rels[i];
+         break;
+      }
+   }
+
+   if (!toast_rel)
+      report_corruption(ctx,
+                        psprintf("toast pointer's va_toastrelid %u does not contain in reltoastrelids",
+                        ta->toast_pointer.va_toastrelid));
+
 	/*
 	 * Check if any chunks for this toasted object exist in the toast table,
 	 * accessible via the index.
 	 */
 	init_toast_snapshot(&SnapshotToast);
-	toastscan = systable_beginscan_ordered(ctx->toast_rel,
-										   ctx->valid_toast_index,
+	toastscan = systable_beginscan_ordered(toast_rel->toast_rel,
+										   toast_rel->valid_toast_index,
 										   &SnapshotToast, 1,
 										   &toastkey);
 	found_toasttup = false;
@@ -1499,7 +1550,7 @@ check_toasted_attribute(HeapCheckContext *ctx, ToastedAttribute *ta)
 									 ForwardScanDirection)) != NULL)
 	{
 		found_toasttup = true;
-		check_toast_tuple(toasttup, ctx, ta, &expected_chunk_seq, extsize);
+		check_toast_tuple(toasttup, ctx, toast_rel, ta, &expected_chunk_seq, extsize);
 	}
 	systable_endscan_ordered(toastscan);
 

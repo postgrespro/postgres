@@ -358,6 +358,18 @@ foreach my $row (@{ $catalog_data{pg_type} })
 	$types{ $row->{typname} } = $row;
 }
 
+# toaster lookups
+my %toasteroids;
+my %toasters;
+foreach my $row (@{ $catalog_data{pg_toaster} })
+{
+   # for OID macro substitutions
+   $toasteroids{ $row->{tsrname} } = $row->{oid};
+
+   # for pg_attribute copies of pg_type values
+   $toasters{ $row->{tsrname} } = $row;
+}
+
 # Encoding identifier lookup.  This uses the same replacement machinery
 # as for OIDs, but we have to dig the values out of pg_wchar.h.
 my %encids;
@@ -401,6 +413,7 @@ my %lookup_kind = (
 	pg_opfamily    => \%opfoids,
 	pg_proc        => \%procoids,
 	pg_tablespace  => \%tablespaceoids,
+	pg_toaster     => \%toasteroids,
 	pg_ts_config   => \%tsconfigoids,
 	pg_ts_dict     => \%tsdictoids,
 	pg_ts_parser   => \%tsparseroids,
@@ -504,7 +517,8 @@ EOM
 	print $bki "create $catname $catalog->{relation_oid}"
 	  . $catalog->{shared_relation}
 	  . $catalog->{bootstrap}
-	  . $catalog->{rowtype_oid_clause};
+	  . $catalog->{rowtype_oid_clause}
+	  . $catalog->{toastrel_oid_clause};
 
 	my $first = 1;
 
@@ -654,6 +668,19 @@ EOM
 			my $symbol = form_pg_type_symbol($bki_values{typname});
 			$bki_values{oid_symbol} = $symbol
 			  if defined $symbol;
+		}
+
+		# Special hack to write toast relation OID symbols for pg_type entries
+		if ($catname eq 'pg_class')
+		{
+			my $cat = $catalogs{$bki_values{relname}};
+
+			foreach my $toast (@{ $cat->{toasting} })
+			{
+				my $toastrelid = $toast->{toast_oid};
+				$bki_values{reltoasterids} = "{$DEFAULT_TOASTER_OID}";
+				$bki_values{reltoastrelids} = "{$toastrelid}";
+			}
 		}
 
 		# Write to postgres.bki

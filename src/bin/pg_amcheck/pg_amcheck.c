@@ -1868,14 +1868,14 @@ compile_relation_list_one_db(PGconn *conn, SimplePtrList *relations,
 
 	/* Append the relation CTE. */
 	appendPQExpBufferStr(&sql,
-						 " relation (pattern_id, oid, nspname, relname, reltoastrelid, relpages, is_heap, is_btree) AS ("
+						 " relation (pattern_id, oid, nspname, relname, reltoastrelids, relpages, is_heap, is_btree) AS ("
 						 "\nSELECT DISTINCT ON (c.oid");
 	if (!opts.allrel)
 		appendPQExpBufferStr(&sql, ", ip.pattern_id) ip.pattern_id,");
 	else
 		appendPQExpBufferStr(&sql, ") NULL::INTEGER AS pattern_id,");
 	appendPQExpBuffer(&sql,
-					  "\nc.oid, n.nspname, c.relname, c.reltoastrelid, c.relpages, "
+					  "\nc.oid, n.nspname, c.relname, c.reltoastrelids, c.relpages, "
 					  "c.relam = %u AS is_heap, "
 					  "c.relam = %u AS is_btree"
 					  "\nFROM pg_catalog.pg_class c "
@@ -1953,7 +1953,7 @@ compile_relation_list_one_db(PGconn *conn, SimplePtrList *relations,
 							 "\nSELECT t.oid, 'pg_toast', t.relname, t.relpages"
 							 "\nFROM pg_catalog.pg_class t "
 							 "INNER JOIN relation r "
-							 "ON r.reltoastrelid = t.oid");
+							 "ON t.oid = ANY(r.reltoastrelids)");
 		if (opts.excludetbl || opts.excludensp)
 			appendPQExpBufferStr(&sql,
 								 "\nLEFT OUTER JOIN exclude_pat ep"
