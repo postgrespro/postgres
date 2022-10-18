@@ -57,6 +57,7 @@
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_ts_config.h"
@@ -4075,6 +4076,26 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case OCLASS_TOASTREL:
+			{
+				HeapTuple	tup;
+
+				tup = SearchSysCache1(TOASTRELOID,
+									  ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tup))
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for toaster %u",
+							 object->objectId);
+					break;
+				}
+
+				appendStringInfo(&buffer, _("toastrel %s"),
+								 NameStr(((Form_pg_toastrel) GETSTRUCT(tup))->toastentname));
+				ReleaseSysCache(tup);
+				break;
+			}
+
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
@@ -4612,6 +4633,10 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 
 		case OCLASS_TOASTER:
 			appendStringInfoString(&buffer, "toaster");
+			break;
+
+		case OCLASS_TOASTREL:
+			appendStringInfoString(&buffer, "toastrel");
 			break;
 
 			/*
@@ -5965,6 +5990,24 @@ getObjectIdentityParts(const ObjectAddress *object,
 			break;
 
 		case OCLASS_TOASTER:
+			{
+				char	   *tsrname;
+
+				tsrname = get_toaster_name(object->objectId);
+				if (!tsrname)
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for toaster %u",
+							 object->objectId);
+					break;
+				}
+				appendStringInfoString(&buffer, quote_identifier(tsrname));
+				if (objname)
+					*objname = list_make1(tsrname);
+			}
+			break;
+
+		case OCLASS_TOASTREL:
 			{
 				char	   *tsrname;
 

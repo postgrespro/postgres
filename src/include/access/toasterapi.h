@@ -52,7 +52,7 @@ do { \
  */
 
 /* Create toast storage */
-typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
+typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast);
 
 /* Toast function */
@@ -60,6 +60,7 @@ typedef Datum (*toast_function) (Relation toast_rel,
 										   Oid toasterid,
 										   Datum value,
 										   Datum oldvalue,
+											int attnum,
 										   int max_inline_size,
 										   int options);
 
@@ -112,6 +113,29 @@ typedef struct TsrRoutine
 	toastervalidate_function toastervalidate;
 } TsrRoutine;
 
+typedef struct ToastrelData {
+	Oid			oid;			   /* oid */
+   Oid			toasteroid;		/* oid */
+   Oid			relid;		   /* oid */
+   Oid			toastentid;		/* oid */
+   int16			attnum;		   /* oid */
+   int16       version;
+   NameData	   relname;		   /* original table name */
+   NameData	   toastentname;	/* toast storage entity name */
+   char		   description;	/* Description */
+	char		   toastoptions;	/* Toast options */
+} ToastrelData;
+
+typedef struct ToastrelData *Toastrel;
+
+typedef struct ToastrelKey {
+   Oid			toastentid;		/* oid */
+	Oid			toasterid;		/* oid */
+   int16			attnum;		   /* oid */
+} ToastrelKey;
+
+typedef struct ToastrelKey *Toastkey;
+
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
@@ -119,4 +143,29 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
+extern Datum GetLastToastrel(Oid relid, int16 attnum, LOCKMODE lockmode);
+extern Datum GetFullToastrel(Oid relid, int16 attnum, LOCKMODE lockmode);
+
+extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 version, int16 attnum, LOCKMODE lockmode);
+extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
+extern bool
+UpdateToastRelation(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, char flag, LOCKMODE lockmode);
+
+
+extern Datum SearchToastrelCache(Oid	relid, int16 attnum, bool search_ind);
+extern Datum
+InsertToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int16 version, NameData relname, NameData toastentname, char toastoptions);
+extern Datum DeleteToastrelCache(Oid toasterid, Oid	relid, int16 attnum);
+extern Datum
+InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	NameData relname, NameData toastentname, char toastoptions);
+
+Datum
+relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
+Datum
+relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);
+
 #endif							/* TOASTERAPI_H */

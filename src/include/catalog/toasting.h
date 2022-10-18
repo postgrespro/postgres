@@ -29,8 +29,8 @@ extern void BootstrapToastTable(char *relName,
 								Oid toastOid, Oid toastIndexOid);
 
 /* generic toaster access */
-extern bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
-							   Datum reloptions, LOCKMODE lockmode, bool check,
+extern Oid create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid,
+							   Datum reloptions, int attnum, LOCKMODE lockmode, bool check,
 							   Oid OIDOldToast);
 
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);

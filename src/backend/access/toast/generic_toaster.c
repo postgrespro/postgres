@@ -51,6 +51,8 @@
 #include "access/toast_helper.h"
 #include "utils/fmgroids.h"
 #include "access/generic_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 
 /*
  * Callback function signatures --- see toaster.sgml for more info.
@@ -61,10 +63,10 @@
  * Default Toast mechanics uses heap storage mechanics
  */
 static void
-generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
+generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
 				 bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, toastoid, toastindexoid, reloptions, lockmode,
+	(void) create_toast_table(rel, toastoid, toastindexoid, DEFAULT_TOASTER_OID, reloptions, attnum, lockmode,
 							  check, OIDOldToast);
 }
 
@@ -74,14 +76,14 @@ generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptio
  */
 static Datum
 generic_toast(Relation toast_rel, Oid toasterid, Datum value, Datum oldvalue,
-			 int max_inline_size, int options)
+			 int attnum, int max_inline_size, int options)
 {
 	Datum result;
 
 	Assert(toast_rel != NULL);
 
-	result = toast_save_datum(toast_rel, value,
-							  (struct varlena *) DatumGetPointer(oldvalue),
+	result = toast_save_datum(toast_rel, value, toasterid,
+							  (struct varlena *) DatumGetPointer(oldvalue), attnum,
 							  options);
 	return result;
 }
