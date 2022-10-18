@@ -28,6 +28,61 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
+#include "access/toasterapi.h"
+#include "access/htup_details.h"
+#include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
+#include "commands/defrem.h"
+#include "lib/pairingheap.h"
+#include "utils/builtins.h"
+#include "utils/memutils.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
+
+#include "access/genam.h"
+#include "access/heapam.h"
+#include "access/heaptoast.h"
+#include "access/reloptions.h"
+#include "access/toasterapi.h"
+#include "access/table.h"
+#include "access/xact.h"
+#include "catalog/catalog.h"
+#include "catalog/indexing.h"
+#include "miscadmin.h"
+#include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "utils/snapmgr.h"
+#include "catalog/pg_namespace.h"
+#include "utils/guc.h"
+
+#include "catalog/binary_upgrade.h"
+#include "catalog/dependency.h"
+#include "catalog/heap.h"
+#include "catalog/index.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_opclass.h"
+#include "catalog/pg_type.h"
+#include "catalog/toasting.h"
+#include "nodes/makefuncs.h"
+#include "storage/lock.h"
+
+#include "access/multixact.h"
+#include "access/relation.h"
+#include "access/transam.h"
+#include "access/visibilitymap.h"
+#include "catalog/pg_am_d.h"
+#include "commands/vacuum.h"
+#include "funcapi.h"
+#include "miscadmin.h"
+#include "storage/bufmgr.h"
+#include "storage/freespace.h"
+#include "storage/lmgr.h"
+#include "storage/procarray.h"
+
+
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
@@ -45,8 +100,8 @@ static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
  * ----------
  */
 Datum
-toast_save_datum(Relation rel, Datum value,
-				 struct varlena *oldexternal, int options)
+toast_save_datum(Relation rel, Datum value, Oid toasterid,
+				 struct varlena *oldexternal, int attnum, int options)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -72,23 +127,34 @@ toast_save_datum(Relation rel, Datum value,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
+	Oid			trel = InvalidOid; // = NULL;
+//	bool			t_create_ind = false;
+	Toastkey		tkey = NULL;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
-
-	/*
-	 * Open the toast relation and its indexes.  We can use the index to check
-	 * uniqueness of the OID we assign to the toasted item, even though it has
-	 * additional columns besides OID.
-	 */
-	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
-	toasttupDesc = toastrel->rd_att;
-
-	/* Open all the toast indexes and look for the valid one */
-	validIndex = toast_open_indexes(toastrel,
-									RowExclusiveLock,
-									&toastidxs,
-									&num_indexes);
-
+/*
+	if( IsBootstrapProcessingMode() )
+	{
+		attnum = -1;
+	}
+*/
+	tkey = (Toastkey) DatumGetPointer(GetLastToastrel(rel->rd_id, attnum, AccessShareLock));
+		//GetLastToastrel(rel->rd_id, attnum, AccessShareLock));
+		//GetToastRelation(toasterid, rel->rd_id, InvalidOid, 0, 0, AccessShareLock));
+	if( tkey->toastentid == InvalidOid )
+	{
+		elog(ERROR, "No TOAST table, create new for rel %u", rel->rd_rel->oid);
+		// attnum = 0;
+//		trel = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, AccessExclusiveLock, false, InvalidOid);
+//		if(!t_create_ind)
+//			elog(ERROR, "Create TOAST table failed for rel %u", rel->rd_rel->oid);
+		
+//		tkey = (Toastkey) DatumGetPointer(GetLastToastrel(rel->rd_id, attnum, AccessShareLock));
+		//tkey = (Toastkey) DatumGetPointer( GetToastRelation(toasterid, rel->rd_id, InvalidOid, 0, 0, AccessShareLock));
+	}
+	trel = tkey->toastentid;
+//	tnum = tkey->attnum;
+	pfree(tkey);
 	/*
 	 * Get the data pointer and length, and compute va_rawsize and va_extinfo.
 	 *
@@ -128,6 +194,22 @@ toast_save_datum(Relation rel, Datum value,
 	}
 
 	/*
+	 * Open the toast relation and its indexes.  We can use the index to check
+	 * uniqueness of the OID we assign to the toasted item, even though it has
+	 * additional columns besides OID.
+	 */
+	
+	/* FIXME rel->rd_rel->reltoastrelid */
+	toastrel = table_open(trel, RowExclusiveLock);
+	toasttupDesc = toastrel->rd_att;
+
+	/* Open all the toast indexes and look for the valid one */
+	validIndex = toast_open_indexes(toastrel,
+									RowExclusiveLock,
+									&toastidxs,
+									&num_indexes);
+
+	/*
 	 * Insert the correct table OID into the result TOAST pointer.
 	 *
 	 * Normally this is the actual OID of the target toast table, but during
@@ -135,10 +217,13 @@ toast_save_datum(Relation rel, Datum value,
 	 * of the table's real permanent toast table instead.  rd_toastoid is set
 	 * if we have to substitute such an OID.
 	 */
+	/* FIXME */
+	/*
 	if (OidIsValid(rel->rd_toastoid))
 		toast_pointer.va_toastrelid = rel->rd_toastoid;
 	else
-		toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
+	*/
+	toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
 
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
@@ -152,8 +237,15 @@ toast_save_datum(Relation rel, Datum value,
 	 * options have been changed), we have to pick a value ID that doesn't
 	 * conflict with either new or existing toast value OIDs.
 	 */
-	if (!OidIsValid(rel->rd_toastoid))
+
+	if(IsBootstrapProcessingMode())
 	{
+		elog(DEBUG1, "isBootstrap save datum table %u", rel->rd_rel->oid);
+	}
+
+	if (trel != InvalidOid)
+	{
+		elog(DEBUG1, "toast_save_datum regular table %u", rel->rd_rel->oid);
 		/* normal case: just choose an unused OID */
 		toast_pointer.va_valueid =
 			GetNewOidWithIndex(toastrel,
@@ -166,15 +258,30 @@ toast_save_datum(Relation rel, Datum value,
 		toast_pointer.va_valueid = InvalidOid;
 		if (oldexternal != NULL)
 		{
-			struct varatt_external old_toast_pointer;
+			struct varatt_external *old_toast_pointer;
 
+			elog(DEBUG1, "toast_save_datum oldexternal table %u", rel->rd_rel->oid);
+
+			if(VARATT_IS_EXTERNAL(oldexternal))
+			{
+				elog(DEBUG1, "toast_save_datum vartag_external table %u", rel->rd_rel->oid);
+			}
 			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
 			/* Must copy to access aligned fields */
-			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
-			if (old_toast_pointer.va_toastrelid == rel->rd_toastoid)
+			if(VARATT_IS_EXTERNAL(oldexternal))
+			{
+				old_toast_pointer = palloc0(sizeof(varatt_external));
+				VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
+			}
+			else
+			{
+				old_toast_pointer = NULL;
+			}
+			
+			if (old_toast_pointer->va_toastrelid == toast_pointer.va_toastrelid) /* FIXME rel->rd_toastoid) */
 			{
 				/* This value came from the old toast table; reuse its OID */
-				toast_pointer.va_valueid = old_toast_pointer.va_valueid;
+				toast_pointer.va_valueid = old_toast_pointer->va_valueid;
 
 				/*
 				 * There is a corner case here: the table rewrite might have
@@ -199,6 +306,7 @@ toast_save_datum(Relation rel, Datum value,
 					/* Match, so short-circuit the data storage loop below */
 					data_todo = 0;
 				}
+				pfree(old_toast_pointer);
 			}
 		}
 		if (toast_pointer.va_valueid == InvalidOid)
@@ -213,7 +321,7 @@ toast_save_datum(Relation rel, Datum value,
 					GetNewOidWithIndex(toastrel,
 									   RelationGetRelid(toastidxs[validIndex]),
 									   (AttrNumber) 1);
-			} while (toastid_valueid_exists(rel->rd_toastoid,
+			} while (toastid_valueid_exists( toast_pointer.va_toastrelid, /* FIXME rel->rd_toastoid, */
 											toast_pointer.va_valueid));
 		}
 	}
