@@ -128,10 +128,11 @@ typedef enum ObjectClass
 	OCLASS_PUBLICATION_REL,		/* pg_publication_rel */
 	OCLASS_SUBSCRIPTION,		/* pg_subscription */
 	OCLASS_TRANSFORM,			/* pg_transform */
-	OCLASS_TOASTER				/* pg_toaster */
+	OCLASS_TOASTER,			/* pg_toaster */
+	OCLASS_TOASTREL			/* pg_toastrel */
 } ObjectClass;
 
-#define LAST_OCLASS		OCLASS_TOASTER
+#define LAST_OCLASS		OCLASS_TOASTREL
 
 /* flag bits for performDeletion/performMultipleDeletions: */
 #define PERFORM_DELETION_INTERNAL			0x0001	/* internal action */

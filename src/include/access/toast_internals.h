@@ -54,8 +54,8 @@ typedef struct toast_compress_header
 /* extern Datum toast_compress_datum(Datum value, char cmethod); */
 
 extern void toast_delete_datum(Datum value, bool is_speculative);
-extern Datum toast_save_datum(Relation rel, Datum value,
-							  struct varlena *oldexternal, int options);
+extern Datum toast_save_datum(Relation rel, Datum value, Oid toasterid,
+							  struct varlena *oldexternal, int attnum, int options);
 
 extern struct varlena *toast_fetch_datum(struct varlena *attr);
 extern struct varlena *toast_fetch_datum_slice(struct varlena *attr,

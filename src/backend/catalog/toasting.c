@@ -83,7 +83,10 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 	int			i;
 	TupleDesc	tupDesc;
 	List	   *tsrOids = NIL;
-
+/*
+	if(!IsBootstrapProcessingMode())
+		return;
+*/
 	rel = table_open(relOid, lockmode);
 
 	tupDesc = RelationGetDescr(rel);
@@ -106,7 +109,7 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 
 		tsr = SearchTsrCache(attr->atttoaster);
 
-		tsr->init(rel, InvalidOid, InvalidOid, reloptions, lockmode, check, OIDOldToast);
+		tsr->init(rel, InvalidOid, InvalidOid, reloptions, 0, lockmode, check, OIDOldToast);
 
 		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
 	}
@@ -152,7 +155,7 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 		if (!tsr)
 			elog(ERROR, "\"%s\" does not require a toast table", relName);
 		else
-			tsr->init(rel, toastOid, toastIndexOid, (Datum) 0,
+			tsr->init(rel, toastOid, toastIndexOid, (Datum) 0, i,
 								AccessExclusiveLock, false, InvalidOid);
 
 		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
@@ -175,9 +178,9 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
  * toastOid and toastIndexOid are normally InvalidOid, but during
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
-bool
-create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
-				   Datum reloptions, LOCKMODE lockmode, bool check,
+Oid
+create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid,
+				   Datum reloptions, int attnum, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)
 {
 	Oid			relOid = RelationGetRelid(rel);
@@ -187,7 +190,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	bool		mapped_relation;
 	Relation	toast_rel;
 	Relation	class_rel;
-	Oid			toast_relid;
+	Oid			toast_relid = InvalidOid;
 	Oid			namespaceid;
 	char		toast_relname[NAMEDATALEN];
 	char		toast_idxname[NAMEDATALEN];
@@ -197,13 +200,24 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	int16		coloptions[2];
 	ObjectAddress baseobject,
 				toastobject;
+	bool toastrel_insert_ind = false;
+	int16 version = 0;
+	NameData relname;
+	NameData toastentname;
+	char toastoptions = (char) 0;
+	Toastkey	tkey = NULL;
 
 	/*
 	 * Is it already toasted?
 	 */
-	if (rel->rd_rel->reltoastrelid != InvalidOid)
-		return false;
-
+	
+	if(IsBootstrapProcessingMode())
+	{
+		attnum = 0;
+		if (rel->rd_rel->reltoastrelid != InvalidOid)
+		return rel->rd_rel->reltoastrelid;
+	}
+	
 	/*
 	 * Check to see whether the table actually needs a TOAST table.
 	 */
@@ -211,7 +225,10 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	{
 		/* Normal mode, normal check */
 		if (!needs_toast_table(rel))
-			return false;
+		{
+			elog(NOTICE, "Does not need toast table.");
+			return toast_relid;
+		}
 	}
 	else
 	{
@@ -234,7 +251,10 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 		 * old-cluster table we haven't seen yet.
 		 */
 		if (!OidIsValid(binary_upgrade_next_toast_pg_class_oid))
-			return false;
+		{
+			elog(NOTICE, "Binary upgrade.");
+			return toast_relid;
+		}
 	}
 
 	/*
@@ -247,10 +267,39 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	/*
 	 * Create the toast table and its index
 	 */
+	/*
+	if (rel->rd_ntoasters > 0 && !IsBootstrapProcessingMode())
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+				 "pg_toast_%u_%u", relOid, toasterid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+				 "pg_toast_%u_%u_index", relOid, toasterid);
+	}
+	else
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+				 "pg_toast_%u", relOid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+				 "pg_toast_%u_index", relOid);
+	}
+	*/
+
+	{
+		elog(NOTICE, "BOOTSTRAP rel %u", relOid);
+		toast_relid = InvalidOid;
+		tkey = (Toastkey) DatumGetPointer(GetLastToastrel(rel->rd_id, attnum, AccessShareLock));
+			// GetToastRelation(toasteroid, relOid, InvalidOid, 0, 0, AccessShareLock));
+		if( tkey->toastentid != InvalidOid )
+		{
+			elog(NOTICE, "TOAST table already created rel %u", relOid);
+			return tkey->toastentid;
+		}
+		pfree(tkey);
+	}
 	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toast_%u", relOid);
+			 "pg_toast_%u_%u_%u", relOid, toasteroid, attnum);
 	snprintf(toast_idxname, sizeof(toast_idxname),
-			 "pg_toast_%u_index", relOid);
+			 "pg_toast_%u_%u_%u_index", relOid, toasteroid, attnum);
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -317,14 +366,15 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 										   true,
 										   OIDOldToast,
 										   NULL);
+	elog(NOTICE, "Create with catalog.");
 	Assert(toast_relid != InvalidOid);
-
+	elog(NOTICE, "Assert success.");
 	/* make the toast relation visible, else table_open will fail */
 	CommandCounterIncrement();
 
 	/* ShareLock is not really needed here, but take it anyway */
 	toast_rel = table_open(toast_relid, ShareLock);
-
+	elog(NOTICE, "Open new toast table.");
 	/*
 	 * Create unique index on chunk_id, chunk_seq.
 	 *
@@ -379,7 +429,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				 rel->rd_rel->reltablespace,
 				 collationObjectId, classObjectId, coloptions, (Datum) 0,
 				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);
-
+	elog(NOTICE, "Create index.");
 	table_close(toast_rel, NoLock);
 
 	/*
@@ -423,13 +473,23 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 
 		recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
 	}
+	elog(NOTICE, "Before toastrel insert");
+	/* XXX insert record into pg_toastrel */
+	namestrcpy(&relname, RelationGetRelationName(rel));
+	namestrcpy(&toastentname, toast_relname);
+	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
+		version, relname, toastentname, toastoptions, RowExclusiveLock);
 
+	if(!toastrel_insert_ind)
+	{
+		elog(NOTICE, "Insert into pg_toastrel failed for relation %u", relOid);
+	}
 	/*
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
-
-	return true;
+	elog(NOTICE, "toast table created");
+	return tkey->toastentid;
 }
 
 /*

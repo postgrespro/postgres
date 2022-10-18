@@ -2029,7 +2029,7 @@ heapam_relation_needs_toast_table(Relation rel)
 	bool		maxlength_unknown = false;
 	bool		has_toastable_attrs = false;
 	TupleDesc	tupdesc = rel->rd_att;
-	int32		tuple_length;
+//	int32		tuple_length;
 	int			i;
 
 	for (i = 0; i < tupdesc->natts; i++)
@@ -2061,10 +2061,12 @@ heapam_relation_needs_toast_table(Relation rel)
 		return false;			/* nothing to toast? */
 	if (maxlength_unknown)
 		return true;			/* any unlimited-length attrs? */
-	tuple_length = MAXALIGN(SizeofHeapTupleHeader +
+/*	tuple_length = MAXALIGN(SizeofHeapTupleHeader +
 							BITMAPLEN(tupdesc->natts)) +
 		MAXALIGN(data_length);
 	return (tuple_length > TOAST_TUPLE_THRESHOLD);
+*/
+	return true;
 }
 
 /*

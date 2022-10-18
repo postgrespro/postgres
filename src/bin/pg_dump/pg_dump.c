@@ -293,6 +293,7 @@ static void dumpPublicationTable(Archive *fout, const PublicationRelInfo *pubrin
 static void dumpSubscription(Archive *fout, const SubscriptionInfo *subinfo);
 static void dumpDatabase(Archive *fout);
 static void dumpToaster(Archive *fout, const ToasterInfo *tsrinfo);
+static void dumpToastrel(Archive *fout, const ToastrelInfo *tsrelinfo);
 static void dumpDatabaseConfig(Archive *AH, PQExpBuffer outbuf,
 							   const char *dbname, Oid dboid);
 static void dumpEncoding(Archive *AH);
@@ -1924,6 +1925,32 @@ selectDumpableAccessMethod(AccessMethodInfo *method, Archive *fout)
  */
 static void
 selectDumpableToaster(ToasterInfo *method, Archive *fout)
+{
+	if (checkExtensionMembership(&method->dobj, fout))
+		return;					/* extension membership overrides all else */
+
+	/*
+	 * This would be DUMP_COMPONENT_ACL for from-initdb toaster, but
+	 * they do not support ACLs currently.
+	 */
+	if (method->dobj.catId.oid <= (Oid) g_last_builtin_oid)
+		method->dobj.dump = DUMP_COMPONENT_NONE;
+	else
+		method->dobj.dump = fout->dopt->include_everything ?
+			DUMP_COMPONENT_ALL : DUMP_COMPONENT_NONE;
+}
+
+/*
+ * FIXME
+ * selectDumpableToastrel: policy-setting subroutine
+ *		Mark an toaster as to be dumped or not
+ *
+ * Toastrel do not belong to any particular namespace.  To identify
+ * built-in toasters, we must resort to checking whether the
+ * method's OID is in the range reserved for initdb.
+ */
+static void
+selectDumpableToastrel(ToastrelInfo *method, Archive *fout)
 {
 	if (checkExtensionMembership(&method->dobj, fout))
 		return;					/* extension membership overrides all else */
@@ -4788,6 +4815,60 @@ dumpToaster(Archive *fout, const ToasterInfo *tsrinfo)
 		dumpComment(fout, "TOASTER", qtsrname,
 					NULL, "",
 					tsrinfo->dobj.catId, 0, tsrinfo->dobj.dumpId);
+
+	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(delq);
+	free(qtsrname);
+}
+
+/*
+ * FIXME
+ * dumpToastrel
+ *	  write out a single toaster definition
+ */
+static void
+dumpToastrel(Archive *fout, const ToastrelInfo *tsrelinfo)
+{
+	DumpOptions *dopt = fout->dopt;
+	PQExpBuffer q;
+	PQExpBuffer delq;
+	char	   *qtsrname;
+
+	/* Do nothing in data-only dump */
+	if (dopt->dataOnly)
+		return;
+
+	q = createPQExpBuffer();
+	delq = createPQExpBuffer();
+
+	qtsrname = pg_strdup(fmtId(tsrelinfo->dobj.name));
+
+	appendPQExpBuffer(q, "INSERT INTO PG_TOASTREL %s ", qtsrname);
+
+	/* appendPQExpBuffer(q, "HANDLER %s;\n", tsrelinfo->toastentname); */
+
+	/*
+	 * Toast relation could not be dropped
+	 * appendPQExpBuffer(delq, "DROP PG_TOASTREL %s;\n",
+	 *				  qtsrname);
+	 */
+	if (dopt->binary_upgrade)
+		binary_upgrade_extension_member(q, &tsrelinfo->dobj,
+										"TOASTREL", qtsrname, NULL);
+
+	if (tsrelinfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+		ArchiveEntry(fout, tsrelinfo->dobj.catId, tsrelinfo->dobj.dumpId,
+					 ARCHIVE_OPTS(.tag = tsrelinfo->dobj.name,
+								  .description = "TOASTREL",
+								  .section = SECTION_PRE_DATA,
+								  .createStmt = q->data,
+								  .dropStmt = delq->data));
+
+	/* Dump Access Method Comments */
+	if (tsrelinfo->dobj.dump & DUMP_COMPONENT_COMMENT)
+		dumpComment(fout, "TOASTREL", qtsrname,
+					NULL, "",
+					tsrelinfo->dobj.catId, 0, tsrelinfo->dobj.dumpId);
 
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(delq);
@@ -9619,6 +9700,104 @@ getToasters(Archive *fout, int *numToasters)
 }
 
 /*
+ * getToastrels:
+ *	  read all existing TOAST dependencies in pg_toastrel and return
+ *	  them in the ToastrelInfo* structure
+ *
+ *	numAccessMethods is set to the number of access methods read in
+ */
+ToastrelInfo *
+getToastrels(Archive *fout, int *numToastrels)
+{
+	PGresult   *res;
+	int			ntups;
+	int			i;
+	PQExpBuffer query;
+	ToastrelInfo *tsrelinfo;
+	int			i_tableoid;
+	int			i_oid;
+	int			i_tsroid;
+	int			i_relid;
+	int			i_tsrentid;
+	int			i_attnum;
+	int			i_version;
+	int			i_relname; /* FIXME */
+	int			i_tsrentname;
+/* FIXME */
+
+	int			i_description;
+	int			i_toastoptions;
+
+	/* Before 9.6, there are no user-defined access methods */
+	if (fout->remoteVersion < 150000)
+	{
+		*numToastrels = 0;
+		return NULL;
+	}
+
+	query = createPQExpBuffer();
+
+	/* Select all toast dependencies from pg_toastrel table */
+	appendPQExpBufferStr(query, "SELECT tableoid, oid, toasteroid, relid, "
+						 "toastentid, attnum, version, relname, toastentname, "
+						 "description, toastoptions "
+						 "FROM pg_toastrel");
+
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	ntups = PQntuples(res);
+	*numToastrels = ntups;
+
+	tsrelinfo = (ToastrelInfo *) pg_malloc(ntups * sizeof(ToastrelInfo));
+
+	i_oid = PQfnumber(res, "oid");
+	i_tsroid = PQfnumber(res, "toasteroid");
+	i_relid = PQfnumber(res, "relid");
+	i_tsrentid = PQfnumber(res, "toastentid");
+	i_attnum = PQfnumber(res, "attnum");
+	i_version = PQfnumber(res, "version");
+	i_relname = PQfnumber(res, "relname");
+	i_tsrentname = PQfnumber(res, "toastentname");
+
+	i_description = PQfnumber(res, "description");
+	i_toastoptions = PQfnumber(res, "toastoptions");
+
+	i_tableoid = PQfnumber(res, "tableoid");
+
+	for (i = 0; i < ntups; i++)
+	{
+		tsrelinfo[i].dobj.objType = DO_TABLE_DATA;
+		tsrelinfo[i].dobj.catId.tableoid = atooid(PQgetvalue(res, i, i_tableoid));
+		tsrelinfo[i].dobj.catId.oid = atooid(PQgetvalue(res, i, i_oid));
+		AssignDumpId(&tsrelinfo[i].dobj);
+		tsrelinfo[i].dobj.name = pg_strdup(PQgetvalue(res, i, i_tableoid));
+		tsrelinfo[i].dobj.namespace = NULL;
+		tsrelinfo[i].oid = atooid(PQgetvalue(res, i, i_oid));
+		tsrelinfo[i].toasteroid = atooid(PQgetvalue(res, i, i_tsroid));
+		tsrelinfo[i].relid = atooid(PQgetvalue(res, i, i_relid));
+		tsrelinfo[i].toastentid = atooid(PQgetvalue(res, i, i_tsrentid));
+		tsrelinfo[i].attnum = atoi(PQgetvalue(res, i, i_attnum));
+		tsrelinfo[i].version = atoi(PQgetvalue(res, i, i_version));
+
+		strncpy((char *) &(tsrelinfo[i].relname.data), pg_strdup(PQgetvalue(res, i, i_relname)), NAMEDATALEN);
+		tsrelinfo[i].relname.data[NAMEDATALEN - 1] = '\0';
+		strncpy((char *) &(tsrelinfo[i].toastentname.data), pg_strdup(PQgetvalue(res, i, i_tsrentname)), NAMEDATALEN);
+		tsrelinfo[i].relname.data[NAMEDATALEN - 1] = '\0';
+		tsrelinfo[i].description = (PQgetvalue(res, i, i_description))[0];
+		tsrelinfo[i].toastoptions = (PQgetvalue(res, i, i_toastoptions))[0];
+
+		/* Decide whether we want to dump it */
+		selectDumpableToastrel(&(tsrelinfo[i]), fout);
+	}
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+
+	return tsrelinfo;
+}
+
+/*
  * dumpCommentExtended --
  *
  * This routine is used to dump any comments associated with the
@@ -10193,6 +10372,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 		case DO_TOASTER:
 			dumpToaster(fout, (const ToasterInfo *) dobj);
 			break;
+/*		case DO_TOASTREL:
+			dumpToastrel(fout, (const ToastrelInfo *) dobj);
+			break; */
 		case DO_PRE_DATA_BOUNDARY:
 		case DO_POST_DATA_BOUNDARY:
 			/* never dumped, nothing to do */
@@ -18139,6 +18321,7 @@ addBoundaryDependencies(DumpableObject **dobjs, int numObjs,
 			case DO_TRANSFORM:
 			case DO_LARGE_OBJECT:
 			case DO_TOASTER:
+/*			case DO_TOASTREL: */
 				/* Pre-data objects: must come before the pre-data boundary */
 				addObjectDependency(preDataBound, dobj->dumpId);
 				break;
