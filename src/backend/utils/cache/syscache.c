@@ -68,6 +68,7 @@
 #include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_config_map.h"
@@ -895,6 +896,17 @@ static const struct cachedesc cacheinfo[] = {
 			0
 		},
 		4
+	},
+	{ToastrelRelationId,	/* TOASTRELOID */
+		ToastrelOidIndexId,
+		1,
+		{
+			Anum_pg_toastrel_oid,
+			0,
+			0,
+			0
+		},
+		16
 	},
 	{TransformRelationId,		/* TRFOID */
 		TransformOidIndexId,

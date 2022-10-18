@@ -1059,6 +1059,7 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
 		case OCLASS_TOASTER:
+		case OCLASS_TOASTREL:
 			return true;
 
 			/*
