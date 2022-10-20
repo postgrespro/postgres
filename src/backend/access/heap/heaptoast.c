@@ -257,8 +257,9 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		 *
 		 * XXX maybe the threshold should be less than maxDataLen?
 		 */
-		if (toast_attr[biggest_attno].tai_size > maxDataLen &&
-			rel->rd_rel->reltoastrelid != InvalidOid)
+		/* FIXME set force_toast flag */
+		if (toast_attr[biggest_attno].tai_size > maxDataLen ) 
+			/* &&	rel->rd_rel->reltoastrelid != InvalidOid) */
 			heap_toast_tuple_externalize(&ttc, biggest_attno, maxDataLen, options);
 	}
 
@@ -267,9 +268,10 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 * are still inline, and make them external.  But skip this if there's no
 	 * toast table to push them to.
 	 */
+	/* FIXME force_toast flag */
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > maxDataLen &&
-		   rel->rd_rel->reltoastrelid != InvalidOid)
+								  toast_values, toast_isnull) > maxDataLen )
+			/* && rel->rd_rel->reltoastrelid != InvalidOid) */
 	{
 		int			biggest_attno;
 

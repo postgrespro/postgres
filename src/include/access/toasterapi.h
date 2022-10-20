@@ -52,7 +52,7 @@ do { \
  */
 
 /* Create toast storage */
-typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
+typedef void (*toast_init)(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast);
 
 /* Toast function */
@@ -60,6 +60,7 @@ typedef Datum (*toast_function) (Relation toast_rel,
 										   Oid toasterid,
 										   Datum value,
 										   Datum oldvalue,
+											int attnum,
 										   int max_inline_size,
 										   int options);
 
@@ -112,6 +113,21 @@ typedef struct TsrRoutine
 	toastervalidate_function toastervalidate;
 } TsrRoutine;
 
+typedef struct ToastrelData {
+	Oid			oid;			   /* oid */
+   Oid			toasteroid;		/* oid */
+   Oid			relid;		   /* oid */
+   Oid			toastentid;		/* oid */
+   int16			attnum;		   /* oid */
+   int16       version;
+   NameData	   relname;		   /* original table name */
+   NameData	   toastentname;	/* toast storage entity name */
+   char		   description;	/* Description */
+	char		   toastoptions;	/* Toast options */
+} ToastrelData;
+
+typedef struct ToastrelData *Toastrel;
+
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
@@ -119,4 +135,10 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
+extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum);
+extern Datum GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum);
+extern bool
+InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, NameData relname, NameData toastentname, char toastoptions);
+
 #endif							/* TOASTERAPI_H */

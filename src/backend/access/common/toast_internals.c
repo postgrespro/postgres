@@ -45,8 +45,8 @@ static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
  * ----------
  */
 Datum
-toast_save_datum(Relation rel, Datum value,
-				 struct varlena *oldexternal, int options)
+toast_save_datum(Relation rel, Datum value, Oid toasterid,
+				 struct varlena *oldexternal, int attnum, int options)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -72,15 +72,28 @@ toast_save_datum(Relation rel, Datum value,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
+	Toastrel		trel;
+	bool			t_create_ind = false;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
+
+	trel = GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum);
+	if( trel == NULL )
+	{
+		t_create_ind = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, ExclusiveLock, false, InvalidOid);
+		if(!t_create_ind)
+			elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
+		
+		trel = GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum);
+	}
 
 	/*
 	 * Open the toast relation and its indexes.  We can use the index to check
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
-	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
+	/* FIXME rel->rd_rel->reltoastrelid */
+	toastrel = table_open(trel, RowExclusiveLock);
 	toasttupDesc = toastrel->rd_att;
 
 	/* Open all the toast indexes and look for the valid one */
@@ -135,10 +148,13 @@ toast_save_datum(Relation rel, Datum value,
 	 * of the table's real permanent toast table instead.  rd_toastoid is set
 	 * if we have to substitute such an OID.
 	 */
+	/* FIXME */
+	/*
 	if (OidIsValid(rel->rd_toastoid))
 		toast_pointer.va_toastrelid = rel->rd_toastoid;
 	else
-		toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
+	*/
+	toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
 
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
@@ -152,7 +168,8 @@ toast_save_datum(Relation rel, Datum value,
 	 * options have been changed), we have to pick a value ID that doesn't
 	 * conflict with either new or existing toast value OIDs.
 	 */
-	if (!OidIsValid(rel->rd_toastoid))
+	
+	if (oldexternal == NULL) /* FIXME (!OidIsValid(rel->rd_toastoid)) */
 	{
 		/* normal case: just choose an unused OID */
 		toast_pointer.va_valueid =
@@ -171,7 +188,7 @@ toast_save_datum(Relation rel, Datum value,
 			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
 			/* Must copy to access aligned fields */
 			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
-			if (old_toast_pointer.va_toastrelid == rel->rd_toastoid)
+			if (old_toast_pointer.va_toastrelid == toast_pointer.va_toastrelid) /* FIXME rel->rd_toastoid) */
 			{
 				/* This value came from the old toast table; reuse its OID */
 				toast_pointer.va_valueid = old_toast_pointer.va_valueid;
@@ -213,7 +230,7 @@ toast_save_datum(Relation rel, Datum value,
 					GetNewOidWithIndex(toastrel,
 									   RelationGetRelid(toastidxs[validIndex]),
 									   (AttrNumber) 1);
-			} while (toastid_valueid_exists(rel->rd_toastoid,
+			} while (toastid_valueid_exists( toast_pointer.va_toastrelid, /* FIXME rel->rd_toastoid, */
 											toast_pointer.va_valueid));
 		}
 	}

@@ -341,6 +341,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen,
 				attr->tai_toaster->toast(ttc->ttc_rel,
 										 attr->tai_toasterid,
 										 old_value,
+										 attribute,
 										 PointerGetDatum(attr->tai_oldexternal),
 										 maxDataLen, options)
 			);

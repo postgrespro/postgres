@@ -106,7 +106,7 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 
 		tsr = SearchTsrCache(attr->atttoaster);
 
-		tsr->init(rel, InvalidOid, InvalidOid, reloptions, lockmode, check, OIDOldToast);
+		tsr->init(rel, InvalidOid, InvalidOid, reloptions, i, lockmode, check, OIDOldToast);
 
 		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
 	}
@@ -152,7 +152,7 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 		if (!tsr)
 			elog(ERROR, "\"%s\" does not require a toast table", relName);
 		else
-			tsr->init(rel, toastOid, toastIndexOid, (Datum) 0,
+			tsr->init(rel, toastOid, toastIndexOid, (Datum) 0, i,
 								AccessExclusiveLock, false, InvalidOid);
 
 		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
@@ -176,8 +176,8 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
 bool
-create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
-				   Datum reloptions, LOCKMODE lockmode, bool check,
+create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid,
+				   Datum reloptions, int attnum, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)
 {
 	Oid			relOid = RelationGetRelid(rel);
@@ -197,13 +197,19 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	int16		coloptions[2];
 	ObjectAddress baseobject,
 				toastobject;
+	bool toastrel_insert_ind = false;
+	int16 version = 0;
+	NameData relname;
+	NameData toastentname;
+	char toastoptions = (char) 0;
 
 	/*
 	 * Is it already toasted?
 	 */
+	/*
 	if (rel->rd_rel->reltoastrelid != InvalidOid)
 		return false;
-
+	*/
 	/*
 	 * Check to see whether the table actually needs a TOAST table.
 	 */
@@ -248,9 +254,9 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	 * Create the toast table and its index
 	 */
 	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toast_%u", relOid);
+			 "pg_toast_%u_%u", relOid, attnum);
 	snprintf(toast_idxname, sizeof(toast_idxname),
-			 "pg_toast_%u_index", relOid);
+			 "pg_toast_%u_%u_index", relOid, attnum);
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -424,6 +430,14 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 		recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
 	}
 
+	/* XXX insert record into pg_toastrel */
+	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
+		version, relname, toastentname, toastoptions);
+
+	if(!toastrel_insert_ind)
+	{
+		elog(ERROR, "Insert into pg_toastrel failed for relation %u", relOid);
+	}
 	/*
 	 * Make changes visible
 	 */

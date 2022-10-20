@@ -16,12 +16,27 @@
 #include "access/toasterapi.h"
 #include "access/htup_details.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 #include "commands/defrem.h"
 #include "lib/pairingheap.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+
+#include "access/genam.h"
+#include "access/heapam.h"
+#include "access/heaptoast.h"
+#include "access/table.h"
+#include "access/xact.h"
+#include "catalog/catalog.h"
+#include "catalog/indexing.h"
+#include "miscadmin.h"
+#include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "utils/snapmgr.h"
+
 
 
 /*
@@ -211,4 +226,259 @@ validateToaster(Oid toasteroid, Oid typeoid,
 	pfree(tsrroutine);
 
 	return result;
+}
+
+/* ----------
+ * GetToastRelation -
+ *
+ *	Retrieve single TOAST relation from pg_toastrel according to
+ *	given key. If not found create a new one
+ * ----------
+ */
+Datum
+GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum)
+{
+	Relation		pg_toastrel;
+	ScanKeyData key[4];
+	SysScanDesc scan;
+	HeapTuple	tup;
+	uint32      total_entries = 0;
+	Toastrel	  	rel = NULL;
+	MemoryContext myctx, oldctx;
+	int keys = 0;
+
+	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
+	oldctx = MemoryContextSwitchTo(myctx);
+
+	pg_toastrel = table_open(ToastrelRelationId, RowExclusiveLock);
+
+	if( toasteroid != InvalidOid )
+	{
+		ScanKeyInit(&key[0],
+				Anum_pg_toastrel_toasteroid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toasteroid));
+		keys++;
+	}
+
+	if( relid != InvalidOid )
+	{
+		ScanKeyInit(&key[1],
+				Anum_pg_toastrel_relid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+		keys++;
+	}
+
+	if( toastentid != InvalidOid )
+	{
+		ScanKeyInit(&key[2],
+				Anum_pg_toastrel_toastentid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toastentid));
+		keys++;
+	}
+
+	if( attnum >= 0 )
+	{
+		ScanKeyInit(&key[0],
+				Anum_pg_toastrel_attnum,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(attnum));
+		keys++;
+	}
+
+	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, true,
+							  NULL, keys, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		ToastrelData d;
+
+		d.oid = ((Form_pg_toastrel) GETSTRUCT(tup))->oid;
+		d.toasteroid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
+		d.relid = ((Form_pg_toastrel) GETSTRUCT(tup))->relid;
+		d.toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+		d.attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
+		d.version = ((Form_pg_toastrel) GETSTRUCT(tup))->version;
+		d.relname = ((Form_pg_toastrel) GETSTRUCT(tup))->relname;
+		d.toastentname = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentname;
+		d.description = ((Form_pg_toastrel) GETSTRUCT(tup))->description;
+		d.toastoptions = ((Form_pg_toastrel) GETSTRUCT(tup))->toastoptions;
+
+		total_entries++;
+
+		if( toasteroid != InvalidOid && relid != InvalidOid && attnum >= 0
+			&& d.toasteroid == toasteroid && d.relid == relid && d.attnum == attnum )
+		{
+			rel = palloc(sizeof(ToastrelData));
+			memcpy( rel, &d, sizeof(ToastrelData) );
+			break;
+		}
+
+	}
+
+	systable_endscan(scan);
+	table_close(pg_toastrel, RowExclusiveLock);
+
+	MemoryContextSwitchTo(oldctx);
+
+	return PointerGetDatum(rel);
+}
+
+/* ----------
+ * InsertToastRelation -
+ *
+ *	Insert single TOAST relation into pg_toastrel
+ * ----------
+ */
+bool
+InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, NameData relname, NameData toastentname, char toastoptions)
+{
+	Relation		pg_toastrel;
+	HeapTuple	tup;
+	Datum		values[Natts_pg_toastrel];
+	bool		nulls[Natts_pg_toastrel];
+
+	if (toasteroid == InvalidOid || relid == InvalidOid || toastentid == InvalidOid)
+	{
+		/* The list is empty; do nothing. */
+		return false;
+	}
+
+	memset(nulls, false, sizeof(nulls));
+
+	/*
+	 * We don't check the list of values for duplicates here. If there are
+	 * any, the user will get an unique-index violation.
+	 */
+
+	pg_toastrel = table_open(ToastrelRelationId, RowExclusiveLock);
+	{
+		Oid			oid = GetNewOidWithIndex(pg_toastrel, ToastrelOidIndexId,
+											 Anum_pg_toastrel_oid);
+
+		/*
+		 * Entries are stored in a name field, for easier syscache lookup, so
+		 * check the length to make sure it's within range.
+		 */
+/*
+		if (strlen(entry) > (NAMEDATALEN - 1))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_NAME),
+					 errmsg("invalid dict entry \"%s\"", entry),
+					 errdetail("Entries must be %d bytes or less.",
+							   NAMEDATALEN - 1)));
+*/
+		/* namestrcpy(&dictentry, entry); */
+
+		values[Anum_pg_toastrel_oid - 1] = ObjectIdGetDatum(oid);
+		values[Anum_pg_toastrel_toasteroid - 1] = ObjectIdGetDatum(toasteroid);
+		values[Anum_pg_toastrel_relid - 1] = ObjectIdGetDatum(relid);
+		values[Anum_pg_toastrel_toastentid - 1] = ObjectIdGetDatum(toastentid);
+		values[Anum_pg_toastrel_attnum - 1] = Int16GetDatum(attnum);
+		values[Anum_pg_toastrel_relname - 1] = NameGetDatum(&relname);
+		values[Anum_pg_toastrel_toastentname - 1] = NameGetDatum(&toastentname);
+		values[Anum_pg_toastrel_toastoptions - 1] = CharGetDatum(toastoptions);
+
+		tup = heap_form_tuple(RelationGetDescr(pg_toastrel), values, nulls);
+
+		CatalogTupleInsert(pg_toastrel, tup);
+		heap_freetuple(tup);
+	}
+
+	/* clean up */
+	table_close(pg_toastrel, RowExclusiveLock);
+	return true;
+}
+
+/* ----------
+ * GetToastRelationList -
+ *
+ *	Retrieve all TOAST relations from pg_toastrel according to
+ *	given key
+ * ----------
+ */
+Datum
+GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum)
+{
+	Relation		pg_toastrel;
+	ScanKeyData key[4];
+	SysScanDesc scan;
+	HeapTuple	tup;
+	uint32      total_entries = 0;
+	MemoryContext myctx, oldctx;
+	int keys = 0;
+	List *toastrel_list = NIL;
+
+	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
+	oldctx = MemoryContextSwitchTo(myctx);
+
+	pg_toastrel = table_open(ToastrelRelationId, RowExclusiveLock);
+
+	if( toasteroid != InvalidOid )
+	{
+		ScanKeyInit(&key[0],
+				Anum_pg_toastrel_toasteroid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toasteroid));
+		keys++;
+	}
+
+	if( relid != InvalidOid )
+	{
+		ScanKeyInit(&key[1],
+				Anum_pg_toastrel_relid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+		keys++;
+	}
+
+	if( toastentid != InvalidOid )
+	{
+		ScanKeyInit(&key[2],
+				Anum_pg_toastrel_toastentid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toastentid));
+		keys++;
+	}
+
+	if( attnum >= 0 )
+	{
+		ScanKeyInit(&key[0],
+				Anum_pg_toastrel_attnum,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(attnum));
+		keys++;
+	}
+
+	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, true,
+							  NULL, keys, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		ToastrelData d;
+
+		d.oid = ((Form_pg_toastrel) GETSTRUCT(tup))->oid;
+		d.toasteroid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
+		d.relid = ((Form_pg_toastrel) GETSTRUCT(tup))->relid;
+		d.toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+		d.attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
+		d.version = ((Form_pg_toastrel) GETSTRUCT(tup))->version;
+		d.relname = ((Form_pg_toastrel) GETSTRUCT(tup))->relname;
+		d.toastentname = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentname;
+		d.description = ((Form_pg_toastrel) GETSTRUCT(tup))->description;
+		d.toastoptions = ((Form_pg_toastrel) GETSTRUCT(tup))->toastoptions;
+
+		toastrel_list = lappend(toastrel_list, &d);
+		total_entries++;
+	}
+
+	systable_endscan(scan);
+	table_close(pg_toastrel, RowExclusiveLock);
+
+	MemoryContextSwitchTo(oldctx);
+
+	return PointerGetDatum(toastrel_list);
 }
