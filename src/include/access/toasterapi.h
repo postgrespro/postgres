@@ -135,10 +135,10 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
-extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum);
-extern Datum GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum);
+extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
+extern Datum GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
 extern bool
 InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	int version, NameData relname, NameData toastentname, char toastoptions);
+	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 
 #endif							/* TOASTERAPI_H */

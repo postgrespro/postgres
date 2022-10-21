@@ -72,19 +72,19 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
-	Toastrel		trel;
+	Oid			trel = InvalidOid; // = NULL;
 	bool			t_create_ind = false;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
 
-	trel = GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum);
-	if( trel == NULL )
+	trel = DatumGetObjectId( GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, AccessShareLock));
+	if( trel == InvalidOid )
 	{
-		t_create_ind = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, ExclusiveLock, false, InvalidOid);
+		t_create_ind = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, AccessExclusiveLock, false, InvalidOid);
 		if(!t_create_ind)
-			elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
+			elog(ERROR, "Create TOAST table failed for rel %u", rel->rd_rel->oid);
 		
-		trel = GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum);
+		trel = DatumGetObjectId( GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, AccessShareLock));
 	}
 
 	/*

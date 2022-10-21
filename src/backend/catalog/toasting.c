@@ -217,7 +217,10 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	{
 		/* Normal mode, normal check */
 		if (!needs_toast_table(rel))
+		{
+			elog(ERROR, "Does not need toast table.");
 			return false;
+		}
 	}
 	else
 	{
@@ -240,7 +243,10 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 		 * old-cluster table we haven't seen yet.
 		 */
 		if (!OidIsValid(binary_upgrade_next_toast_pg_class_oid))
+		{
+			elog(ERROR, "Binary upgrade.");
 			return false;
+		}
 	}
 
 	/*
@@ -253,10 +259,26 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	/*
 	 * Create the toast table and its index
 	 */
+	/*
+	if (rel->rd_ntoasters > 0 && !IsBootstrapProcessingMode())
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+				 "pg_toast_%u_%u", relOid, toasterid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+				 "pg_toast_%u_%u_index", relOid, toasterid);
+	}
+	else
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+				 "pg_toast_%u", relOid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+				 "pg_toast_%u_index", relOid);
+	}
+	*/
 	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toast_%u_%u", relOid, attnum);
+			 "pg_toast_%u_%u_%u", relOid, toasteroid, attnum);
 	snprintf(toast_idxname, sizeof(toast_idxname),
-			 "pg_toast_%u_%u_index", relOid, attnum);
+			 "pg_toast_%u_%u_%u_index", relOid, toasteroid, attnum);
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -323,14 +345,15 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 										   true,
 										   OIDOldToast,
 										   NULL);
+	elog(ERROR, "Create with catalog.");
 	Assert(toast_relid != InvalidOid);
-
+	elog(ERROR, "Assert success.");
 	/* make the toast relation visible, else table_open will fail */
 	CommandCounterIncrement();
 
 	/* ShareLock is not really needed here, but take it anyway */
 	toast_rel = table_open(toast_relid, ShareLock);
-
+	elog(ERROR, "Open new toast table.");
 	/*
 	 * Create unique index on chunk_id, chunk_seq.
 	 *
@@ -385,7 +408,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 				 rel->rd_rel->reltablespace,
 				 collationObjectId, classObjectId, coloptions, (Datum) 0,
 				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);
-
+	elog(ERROR, "Create index.");
 	table_close(toast_rel, NoLock);
 
 	/*
@@ -429,10 +452,10 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 
 		recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
 	}
-
+	elog(ERROR, "Before toastrel insert");
 	/* XXX insert record into pg_toastrel */
 	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
-		version, relname, toastentname, toastoptions);
+		version, relname, toastentname, toastoptions, RowExclusiveLock);
 
 	if(!toastrel_insert_ind)
 	{

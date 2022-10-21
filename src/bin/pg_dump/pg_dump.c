@@ -4793,7 +4793,7 @@ dumpToastrel(Archive *fout, const ToastrelInfo *tsrelinfo)
 
 	appendPQExpBuffer(q, "INSERT INTO PG_TOASTREL %s ", qtsrname);
 
-	appendPQExpBuffer(q, "HANDLER %s;\n", tsrelinfo->toastentname);
+	/* appendPQExpBuffer(q, "HANDLER %s;\n", tsrelinfo->toastentname); */
 
 	/*
 	 * Toast relation could not be dropped

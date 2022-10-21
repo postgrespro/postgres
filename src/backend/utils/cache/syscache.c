@@ -895,7 +895,18 @@ static const struct cachedesc cacheinfo[] = {
 			0,
 			0
 		},
-		4
+		16
+	},
+	{ToastrelRelationId,	/* TOASTRELOID */
+		ToastrelKeyIndexId,
+		4,
+		{
+			Anum_pg_toastrel_toasteroid,
+			Anum_pg_toastrel_relid,
+			Anum_pg_toastrel_toastentid,
+			Anum_pg_toastrel_attnum
+		},
+		16
 	},
 	{ToastrelRelationId,	/* TOASTRELOID */
 		ToastrelOidIndexId,
