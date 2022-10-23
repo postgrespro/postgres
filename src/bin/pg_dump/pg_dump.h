@@ -50,7 +50,7 @@ typedef enum
 	DO_COLLATION,
 	DO_CONVERSION,
 	DO_TOASTER,
-	DO_TOASTREL,
+/*	DO_TOASTREL, */
 	DO_TABLE,
 	DO_TABLE_ATTACH,
 	DO_ATTRDEF,
@@ -690,8 +690,8 @@ typedef struct _ToastrelInfo
    int16       version;
    NameData	   relname;
    NameData	   toastentname;
-   char		   *description;
-	char		   *toastoptions;
+   char		   description;
+	char		   toastoptions;
 } ToastrelInfo;
 
 /*

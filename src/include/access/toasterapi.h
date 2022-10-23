@@ -141,4 +141,9 @@ extern bool
 InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 
+Datum
+relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
+Datum
+relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);
+
 #endif							/* TOASTERAPI_H */

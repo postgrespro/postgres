@@ -77,6 +77,11 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
 
+	if( IsBootstrapProcessingMode() )
+	{
+		attnum = 0;
+	}
+
 	trel = DatumGetObjectId( GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, AccessShareLock));
 	if( trel == InvalidOid )
 	{

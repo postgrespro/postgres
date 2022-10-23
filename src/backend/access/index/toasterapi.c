@@ -28,6 +28,8 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
+#include "access/reloptions.h"
+#include "access/toasterapi.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -36,8 +38,24 @@
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "catalog/pg_namespace.h"
+#include "utils/guc.h"
 
-
+#include "catalog/binary_upgrade.h"
+#include "catalog/catalog.h"
+#include "catalog/dependency.h"
+#include "catalog/heap.h"
+#include "catalog/index.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_opclass.h"
+#include "catalog/pg_toaster.h"
+#include "catalog/pg_type.h"
+#include "catalog/toasting.h"
+#include "commands/defrem.h"
+#include "nodes/makefuncs.h"
+#include "storage/lock.h"
 
 /*
  * Toasters is very often called so syscache lookup and TsrRoutine allocation are
@@ -251,6 +269,7 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
 	oldctx = MemoryContextSwitchTo(myctx);
 */
+	elog(NOTICE, "GetToastRelation enter rel %u", relid);
 	pg_toastrel = table_open(ToastrelRelationId, lockmode);
 
 	if( toasteroid != InvalidOid )
@@ -271,6 +290,8 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 		keys++;
 	}
 
+	if(!IsBootstrapProcessingMode())
+	{
 	if( toastentid != InvalidOid )
 	{
 		ScanKeyInit(&key[keys],
@@ -288,10 +309,10 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 				Int16GetDatum(attnum));
 		keys++;
 	}
-
+	}
 	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, false,
 							  NULL, keys, key);
-
+	keys = 0;
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 /*		ToastrelData d;
@@ -308,13 +329,22 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 		d.toastoptions = ((Form_pg_toastrel) GETSTRUCT(tup))->toastoptions;
 */
 		total_entries++;
+		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->relid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->attnum);
 
-		if( toasteroid != InvalidOid && relid != InvalidOid && attnum >= 0
-			&& ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid == toasteroid 
-			&& ((Form_pg_toastrel) GETSTRUCT(tup))->relid== relid 
-			&& ((Form_pg_toastrel) GETSTRUCT(tup))->attnum == attnum )
+		if( ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid == toasteroid 
+			&& ((Form_pg_toastrel) GETSTRUCT(tup))->relid== relid )
 		{
-			trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+			if( ((Form_pg_toastrel) GETSTRUCT(tup))->relid >= keys )
+			{
+				keys = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
+				trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+			}
+			// toasteroid != InvalidOid && relid != InvalidOid && attnum >= 0
+			
 /*			rel = palloc(sizeof(ToastrelData));
 			memcpy( rel, &d, sizeof(ToastrelData) ); */
 			break;
@@ -485,4 +515,70 @@ GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LO
 	MemoryContextSwitchTo(oldctx);
 
 	return PointerGetDatum(toastrel_list);
+}
+
+Datum
+relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid)
+{
+	List	   *options_list = untransformRelOptions(reloptions);
+	ListCell   *cell;
+
+	foreach(cell, options_list)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+
+		if (strcmp(def->defname, "relationoid") == 0
+			|| strcmp(def->defname, "toasteroid") == 0)
+		{
+			char	   *value;
+			int			int_val;
+			bool		is_parsed;
+
+			value = defGetString(def);
+			is_parsed = parse_int(value, &int_val, 0, NULL);
+
+			if (!is_parsed)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("invalid value for integer option \"%s\": %s",
+								def->defname, value)));
+
+			if (int_val <= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("\"%s\" must be an integer value greater than zero",
+								def->defname)));
+			if(strcmp(def->defname, "relationoid") == 0)
+				*relid = int_val;
+			if(strcmp(def->defname, "toasteroid") == 0)
+				*toasterid = int_val;
+		}
+	}
+	return ObjectIdGetDatum(*relid);
+}
+
+Datum
+relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid)
+{
+	Datum toast_options;
+	List    *defList = NIL;
+	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+	AlterTableType operation = AT_SetRelOptions;
+/*	if(IsBootstrapProcessingMode())
+	{
+		defList = lappend(defList, makeDefElem("toasteroid", NULL, -1));
+		defList = lappend(defList, makeDefElem("toastrelid", NULL, -1));
+	}
+	else */
+	{
+		defList = lappend(defList, makeDefElem("toasteroid", (Node *) makeInteger(toasterid), -1));
+		defList = lappend(defList, makeDefElem("toastrelid", (Node *) makeInteger(relid), -1));
+	}
+
+	toast_options = transformRelOptions(reloptions,
+									 defList, NULL, validnsps, false,
+									 false);
+
+	(void) heap_reloptions(RELKIND_TOASTVALUE, toast_options, false);
+	return toast_options;
 }

@@ -9669,13 +9669,13 @@ getToastrels(Archive *fout, int *numToastrels)
 	int			i_tsrentid;
 	int			i_attnum;
 	int			i_version;
-/*	int			i_relname; */ /* FIXME */
+	int			i_relname; /* FIXME */
 	int			i_tsrentname;
 /* FIXME */
-/*
+
 	int			i_description;
 	int			i_toastoptions;
-*/
+
 	/* Before 9.6, there are no user-defined access methods */
 	if (fout->remoteVersion < 150000)
 	{
@@ -9704,31 +9704,33 @@ getToastrels(Archive *fout, int *numToastrels)
 	i_tsrentid = PQfnumber(res, "toastentid");
 	i_attnum = PQfnumber(res, "attnum");
 	i_version = PQfnumber(res, "version");
-/*	i_relname = PQfnumber(res, "relname");*/
+	i_relname = PQfnumber(res, "relname");
 	i_tsrentname = PQfnumber(res, "toastentname");
-/*
+
 	i_description = PQfnumber(res, "description");
 	i_toastoptions = PQfnumber(res, "toastoptions");
-*/
+
 	i_tableoid = PQfnumber(res, "tableoid");
 
 	for (i = 0; i < ntups; i++)
 	{
-		tsrelinfo[i].dobj.objType = DO_TOASTREL;
+		tsrelinfo[i].dobj.objType = DO_TABLE_DATA;
 		tsrelinfo[i].dobj.catId.tableoid = atooid(PQgetvalue(res, i, i_tableoid));
 		tsrelinfo[i].dobj.catId.oid = atooid(PQgetvalue(res, i, i_oid));
 		AssignDumpId(&tsrelinfo[i].dobj);
-		tsrelinfo[i].dobj.name = pg_strdup(PQgetvalue(res, i, i_tsrentname));
+		tsrelinfo[i].dobj.name = pg_strdup(PQgetvalue(res, i, i_tableoid));
 		tsrelinfo[i].dobj.namespace = NULL;
-		tsrelinfo[i].oid = i_oid;
-		tsrelinfo[i].toasteroid = i_tsroid;
-		tsrelinfo[i].relid = i_relid;
-		tsrelinfo[i].toastentid = i_tsrentid;
-		tsrelinfo[i].attnum = i_attnum;
-		tsrelinfo[i].version = i_version;
-/*
-		tsrelinfo[i].relname = pg_strdup(PQgetvalue(res, i, i_relname));
-		tsrelinfo[i].toastentname = pg_strdup(PQgetvalue(res, i, i_tsrentname));
+		tsrelinfo[i].oid = atooid(PQgetvalue(res, i, i_oid));
+		tsrelinfo[i].toasteroid = atooid(PQgetvalue(res, i, i_tsroid));
+		tsrelinfo[i].relid = atooid(PQgetvalue(res, i, i_relid));
+		tsrelinfo[i].toastentid = atooid(PQgetvalue(res, i, i_tsrentid));
+		tsrelinfo[i].attnum = atoi(PQgetvalue(res, i, i_attnum));
+		tsrelinfo[i].version = atoi(PQgetvalue(res, i, i_version));
+/*		
+		namestrcpy(&tsrelinfo[i].relname, pg_strdup(PQgetvalue(res, i, i_relname)));
+		namestrcpy(&tsrelinfo[i].toastentname, pg_strdup(PQgetvalue(res, i, i_tsrentname)));
+		tsrelinfo[i].description = (PQgetvalue(res, i, i_description))[0];
+		tsrelinfo[i].toastoptions = (PQgetvalue(res, i, i_toastoptions))[0];
 */
 		/* Decide whether we want to dump it */
 		selectDumpableToastrel(&(tsrelinfo[i]), fout);
@@ -10316,9 +10318,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 		case DO_TOASTER:
 			dumpToaster(fout, (const ToasterInfo *) dobj);
 			break;
-		case DO_TOASTREL:
+/*		case DO_TOASTREL:
 			dumpToastrel(fout, (const ToastrelInfo *) dobj);
-			break;
+			break; */
 		case DO_PRE_DATA_BOUNDARY:
 		case DO_POST_DATA_BOUNDARY:
 			/* never dumped, nothing to do */
@@ -18265,10 +18267,7 @@ addBoundaryDependencies(DumpableObject **dobjs, int numObjs,
 			case DO_TRANSFORM:
 			case DO_BLOB:
 			case DO_TOASTER:
-				/* Pre-data objects: must come before the pre-data boundary */
-				addObjectDependency(preDataBound, dobj->dumpId);
-				break;
-			case DO_TOASTREL:
+/*			case DO_TOASTREL: */
 				/* Pre-data objects: must come before the pre-data boundary */
 				addObjectDependency(preDataBound, dobj->dumpId);
 				break;

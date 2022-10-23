@@ -900,7 +900,7 @@ findToastrelByOid(Oid oid)
 	catId.tableoid = ToastrelRelationId;
 	catId.oid = oid;
 	dobj = findObjectByCatalogId(catId);
-	Assert(dobj == NULL || dobj->objType == DO_TOASTREL);
+	Assert(dobj == NULL || dobj->objType == DO_TABLE_DATA);
 	return (ToastrelInfo *) dobj;
 }
 
