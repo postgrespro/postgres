@@ -9726,12 +9726,14 @@ getToastrels(Archive *fout, int *numToastrels)
 		tsrelinfo[i].toastentid = atooid(PQgetvalue(res, i, i_tsrentid));
 		tsrelinfo[i].attnum = atoi(PQgetvalue(res, i, i_attnum));
 		tsrelinfo[i].version = atoi(PQgetvalue(res, i, i_version));
-/*		
-		namestrcpy(&tsrelinfo[i].relname, pg_strdup(PQgetvalue(res, i, i_relname)));
-		namestrcpy(&tsrelinfo[i].toastentname, pg_strdup(PQgetvalue(res, i, i_tsrentname)));
+
+		strncpy((char *) &(tsrelinfo[i].relname.data), pg_strdup(PQgetvalue(res, i, i_relname)), NAMEDATALEN);
+		tsrelinfo[i].relname.data[NAMEDATALEN - 1] = '\0';
+		strncpy((char *) &(tsrelinfo[i].toastentname.data), pg_strdup(PQgetvalue(res, i, i_tsrentname)), NAMEDATALEN);
+		tsrelinfo[i].relname.data[NAMEDATALEN - 1] = '\0';
 		tsrelinfo[i].description = (PQgetvalue(res, i, i_description))[0];
 		tsrelinfo[i].toastoptions = (PQgetvalue(res, i, i_toastoptions))[0];
-*/
+
 		/* Decide whether we want to dump it */
 		selectDumpableToastrel(&(tsrelinfo[i]), fout);
 	}

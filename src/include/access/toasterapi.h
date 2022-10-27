@@ -128,6 +128,13 @@ typedef struct ToastrelData {
 
 typedef struct ToastrelData *Toastrel;
 
+typedef struct ToastrelKey {
+   Oid			toastentid;		/* oid */
+   int16			attnum;		   /* oid */
+} ToastrelKey;
+
+typedef struct ToastrelKey *Toastkey;
+
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
@@ -137,8 +144,8 @@ extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
 extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
 extern Datum GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
-extern bool
-InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+extern bool TupeFitsRelation(Relation rel, int32 tuple_size);
+extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 
 Datum

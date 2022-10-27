@@ -42,7 +42,6 @@
 #include "utils/guc.h"
 
 #include "catalog/binary_upgrade.h"
-#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -50,12 +49,24 @@
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_opclass.h"
-#include "catalog/pg_toaster.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
-#include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "storage/lock.h"
+
+#include "access/multixact.h"
+#include "access/relation.h"
+#include "access/transam.h"
+#include "access/visibilitymap.h"
+#include "catalog/pg_am_d.h"
+#include "commands/vacuum.h"
+#include "funcapi.h"
+#include "miscadmin.h"
+#include "storage/bufmgr.h"
+#include "storage/freespace.h"
+#include "storage/lmgr.h"
+#include "storage/procarray.h"
+
 
 /*
  * Toasters is very often called so syscache lookup and TsrRoutine allocation are
@@ -262,9 +273,10 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 	HeapTuple	tup;
 	uint32      total_entries = 0;
 //	Toastrel	  	rel = NULL;
-	MemoryContext myctx, oldctx;
+/*	MemoryContext myctx, oldctx; */
 	int keys = 0;
 	Oid			trel_oid = InvalidOid;
+	Toastkey		tkey = NULL;
 /*
 	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
 	oldctx = MemoryContextSwitchTo(myctx);
@@ -313,21 +325,9 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, false,
 							  NULL, keys, key);
 	keys = 0;
+	elog(NOTICE, "Cycle start");
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-/*		ToastrelData d;
-
-		d.oid = ((Form_pg_toastrel) GETSTRUCT(tup))->oid;
-		d.toasteroid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
-		d.relid = ((Form_pg_toastrel) GETSTRUCT(tup))->relid;
-		d.toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
-		d.attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
-		d.version = ((Form_pg_toastrel) GETSTRUCT(tup))->version;
-		d.relname = ((Form_pg_toastrel) GETSTRUCT(tup))->relname;
-		d.toastentname = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentname;
-		d.description = ((Form_pg_toastrel) GETSTRUCT(tup))->description;
-		d.toastoptions = ((Form_pg_toastrel) GETSTRUCT(tup))->toastoptions;
-*/
 		total_entries++;
 		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
 			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
@@ -342,11 +342,10 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 			{
 				keys = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
 				trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+				tkey = palloc(sizeof(ToastrelKey));
+				tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+				tkey->attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
 			}
-			// toasteroid != InvalidOid && relid != InvalidOid && attnum >= 0
-			
-/*			rel = palloc(sizeof(ToastrelData));
-			memcpy( rel, &d, sizeof(ToastrelData) ); */
 			break;
 		}
 
@@ -357,7 +356,7 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 /*
 	MemoryContextSwitchTo(oldctx);
 */
-	return ObjectIdGetDatum(trel_oid); // PointerGetDatum(rel);
+	return PointerGetDatum(tkey); /* ObjectIdGetDatum(trel_oid); */
 }
 
 /* ----------
@@ -377,16 +376,10 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 
 	if (toasteroid == InvalidOid || relid == InvalidOid || toastentid == InvalidOid)
 	{
-		/* The list is empty; do nothing. */
 		return false;
 	}
 
 	memset(nulls, false, sizeof(nulls));
-
-	/*
-	 * We don't check the list of values for duplicates here. If there are
-	 * any, the user will get an unique-index violation.
-	 */
 
 	pg_toastrel = table_open(ToastrelRelationId, lockmode);
 	{
@@ -422,7 +415,6 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 		heap_freetuple(tup);
 	}
 
-	/* clean up */
 	table_close(pg_toastrel, lockmode);
 	return true;
 }
@@ -517,6 +509,142 @@ GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LO
 	return PointerGetDatum(toastrel_list);
 }
 
+/* Look if the relation has enough free space to fit tuple */
+bool
+TupeFitsRelation(Relation rel, int32 tuple_size) /* output_type *stat) */
+{
+	BlockNumber scanned,
+				nblocks,
+				blkno;
+	Buffer		vmbuffer = InvalidBuffer;
+	BufferAccessStrategy bstrategy;
+	TransactionId OldestXmin;
+	int32	totalfreespace = 0;
+	uint64		tuple_count = 0;
+	uint64		table_len = 0;
+	uint64		tuple_len;
+	bool			tuple_fit_ind = false;
+	OldestXmin = GetOldestNonRemovableTransactionId(rel);
+	bstrategy = GetAccessStrategy(BAS_BULKREAD);
+
+	nblocks = RelationGetNumberOfBlocks(rel);
+	scanned = 0;
+	elog(NOTICE,"Rel scan %u", rel->rd_rel->oid);
+	for (blkno = 0; blkno < nblocks; blkno++)
+	{
+		Buffer		buf;
+		Page		page;
+		OffsetNumber offnum,
+					maxoff;
+		Size		freespace;
+
+		CHECK_FOR_INTERRUPTS();
+
+		elog(NOTICE,"Block n %u", blkno);
+		/*
+		 * If the page has only visible tuples, then we can find out the free
+		 * space from the FSM and move on.
+		 */
+		if (VM_ALL_VISIBLE(rel, blkno, &vmbuffer))
+		{
+			freespace = GetRecordedFreeSpace(rel, blkno);
+			tuple_len += BLCKSZ - freespace;
+			totalfreespace += freespace;
+			continue;
+		}
+
+		buf = ReadBufferExtended(rel, MAIN_FORKNUM, blkno,
+								 RBM_NORMAL, bstrategy);
+
+		LockBuffer(buf, BUFFER_LOCK_SHARE);
+
+		page = BufferGetPage(buf);
+
+		/*
+		 * It's not safe to call PageGetHeapFreeSpace() on new pages, so we
+		 * treat them as being free space for our purposes.
+		 */
+		if (!PageIsNew(page))
+			totalfreespace += PageGetHeapFreeSpace(page);
+		else
+			totalfreespace += BLCKSZ - SizeOfPageHeaderData;
+
+		/* We may count the page as scanned even if it's new/empty */
+		scanned++;
+
+		if (PageIsNew(page) || PageIsEmpty(page))
+		{
+			UnlockReleaseBuffer(buf);
+			continue;
+		}
+/*
+		maxoff = PageGetMaxOffsetNumber(page);
+
+		for (offnum = FirstOffsetNumber;
+			 offnum <= maxoff;
+			 offnum = OffsetNumberNext(offnum))
+		{
+			ItemId		itemid;
+			HeapTupleData tuple;
+
+			itemid = PageGetItemId(page, offnum);
+
+			if (!ItemIdIsUsed(itemid) || ItemIdIsRedirected(itemid) ||
+				ItemIdIsDead(itemid))
+			{
+				continue;
+			}
+
+			Assert(ItemIdIsNormal(itemid));
+
+			ItemPointerSet(&(tuple.t_self), blkno, offnum);
+
+			tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
+			tuple.t_len = ItemIdGetLength(itemid);
+			tuple.t_tableOid = RelationGetRelid(rel);
+
+			switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
+			{
+				case HEAPTUPLE_LIVE:
+				case HEAPTUPLE_DELETE_IN_PROGRESS:
+					tuple_len += tuple.t_len;
+					tuple_count++;
+					break;
+				case HEAPTUPLE_DEAD:
+				case HEAPTUPLE_RECENTLY_DEAD:
+				case HEAPTUPLE_INSERT_IN_PROGRESS:
+					break;
+				default:
+					elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
+					break;
+			}
+		}
+*/
+		UnlockReleaseBuffer(buf);
+		if( totalfreespace >= tuple_size )
+		{
+			tuple_fit_ind = true;
+			break;
+		}
+
+	}
+
+	table_len = (uint64) nblocks * BLCKSZ;
+
+	tuple_count = vac_estimate_reltuples(rel, nblocks, scanned,
+											   tuple_count);
+
+	/* It's not clear if we could get -1 here, but be safe. */
+	tuple_count = Max(tuple_count, 0);
+
+	if (BufferIsValid(vmbuffer))
+	{
+		ReleaseBuffer(vmbuffer);
+		vmbuffer = InvalidBuffer;
+	}
+	return tuple_fit_ind;
+}
+
 Datum
 relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid)
 {
@@ -563,7 +691,7 @@ relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid)
 	Datum toast_options;
 	List    *defList = NIL;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
-	AlterTableType operation = AT_SetRelOptions;
+/*	AlterTableType operation = AT_SetRelOptions; */
 /*	if(IsBootstrapProcessingMode())
 	{
 		defList = lappend(defList, makeDefElem("toasteroid", NULL, -1));
