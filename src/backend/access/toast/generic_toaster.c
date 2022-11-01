@@ -66,7 +66,7 @@ static void
 generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
 				 bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, toastoid, toastindexoid, DEFAULT_TOASTER_OID, reloptions, attnum, lockmode,
+	Oid trel = create_toast_table(rel, toastoid, toastindexoid, DEFAULT_TOASTER_OID, reloptions, attnum, lockmode,
 							  check, OIDOldToast);
 }
 

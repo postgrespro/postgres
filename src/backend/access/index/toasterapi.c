@@ -61,7 +61,6 @@
 #include "catalog/pg_am_d.h"
 #include "commands/vacuum.h"
 #include "funcapi.h"
-#include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "storage/lmgr.h"
@@ -265,22 +264,25 @@ validateToaster(Oid toasteroid, Oid typeoid,
  * ----------
  */
 Datum
-GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
+GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, int32 tuplesize, LOCKMODE lockmode)
 {
 	Relation		pg_toastrel;
 	ScanKeyData key[4];
 	SysScanDesc scan;
 	HeapTuple	tup;
 	uint32      total_entries = 0;
-//	Toastrel	  	rel = NULL;
 /*	MemoryContext myctx, oldctx; */
 	int keys = 0;
-	Oid			trel_oid = InvalidOid;
+/* XXX	Oid			trel_oid = InvalidOid; */
 	Toastkey		tkey = NULL;
 /*
 	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
 	oldctx = MemoryContextSwitchTo(myctx);
 */
+	tkey = palloc(sizeof(ToastrelKey));
+	tkey->toastentid = InvalidOid;
+	tkey->attnum = 0;
+
 	elog(NOTICE, "GetToastRelation enter rel %u", relid);
 	pg_toastrel = table_open(ToastrelRelationId, lockmode);
 
@@ -329,6 +331,7 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
+		tkey->attnum = total_entries;
 		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
 			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
 			 ((Form_pg_toastrel) GETSTRUCT(tup))->relid,
@@ -338,17 +341,136 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMO
 		if( ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid == toasteroid 
 			&& ((Form_pg_toastrel) GETSTRUCT(tup))->relid== relid )
 		{
-			if( ((Form_pg_toastrel) GETSTRUCT(tup))->relid >= keys )
+
+			if( !IsBootstrapProcessingMode() && tuplesize > 0 )
 			{
-				keys = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
-				trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
-				tkey = palloc(sizeof(ToastrelKey));
+				int fs = 0;
+				Relation testrel = table_open(((Form_pg_toastrel) GETSTRUCT(tup))->toastentid, lockmode);
+				fs = TupeFitsRelation(testrel, tuplesize);
+				tkey->attnum = fs;
+				table_close(testrel, lockmode);
+				if(fs >= tuplesize)
+				{
+					tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+					tkey->attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
+					break;
+				}
+//				else continue;
+			}
+
+			if( ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid >= keys )
+			{
+				keys = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+				/* XXX trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid; */
 				tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
 				tkey->attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
+				break;
+			}
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(pg_toastrel, lockmode);
+/*
+	MemoryContextSwitchTo(oldctx);
+*/
+/*
+	if(!IsBootstrapProcessingMode())
+	{
+		elog(ERROR, "Found TOAST toasterid %u relid %u toastent %u scanned %u",
+			 toasteroid,
+			 relid,
+			 tkey->toastentid,
+			 total_entries);
+
+	}
+*/
+	return PointerGetDatum(tkey); /* ObjectIdGetDatum(trel_oid); */
+}
+
+/* ----------
+ * GetToastRelation -
+ *
+ *	Retrieve single TOAST relation from pg_toastrel according to
+ *	given key. If not found create a new one
+ * ----------
+ */
+Datum
+GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
+{
+	Relation		pg_toastrel;
+	ScanKeyData key[4];
+	SysScanDesc scan;
+	HeapTuple	tup;
+	uint32      total_entries = 0;
+//	Toastrel	  	rel = NULL;
+/*	MemoryContext myctx, oldctx; */
+	int keys = 0;
+	Oid			trel_oid = InvalidOid;
+	Toastkey		tkey = NULL;
+/*
+	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
+	oldctx = MemoryContextSwitchTo(myctx);
+*/
+	tkey = palloc(sizeof(ToastrelKey));
+	tkey->toastentid = InvalidOid;
+	tkey->attnum = attnum;
+
+	elog(NOTICE, "GetToastRelation enter rel %u", relid);
+	pg_toastrel = table_open(ToastrelRelationId, lockmode);
+
+	if( relid != InvalidOid )
+	{
+		ScanKeyInit(&key[keys],
+				Anum_pg_toastrel_relid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+		keys++;
+	}
+
+	if(!IsBootstrapProcessingMode())
+	{
+	if( toastentid != InvalidOid )
+	{
+		ScanKeyInit(&key[keys],
+				Anum_pg_toastrel_toastentid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toastentid));
+		keys++;
+	}
+
+	if( attnum >= 0 )
+	{
+		ScanKeyInit(&key[keys],
+				Anum_pg_toastrel_attnum,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(attnum));
+		keys++;
+	}
+	}
+	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, false,
+							  NULL, keys, key);
+	keys = 0;
+	elog(NOTICE, "Cycle start");
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		total_entries++;
+		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->relid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid,
+			 ((Form_pg_toastrel) GETSTRUCT(tup))->attnum);
+
+		if((((Form_pg_toastrel) GETSTRUCT(tup))->relid == relid )
+			&& ((Form_pg_toastrel) GETSTRUCT(tup))->attnum == attnum )
+		{
+			if( trel_oid == InvalidOid ) trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
+			if( trel_oid <= ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid )
+			{
+				tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
 			}
 			break;
 		}
-
 	}
 
 	systable_endscan(scan);
@@ -414,7 +536,7 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 		CatalogTupleInsert(pg_toastrel, tup);
 		heap_freetuple(tup);
 	}
-
+	// CommandCounterIncrement();
 	table_close(pg_toastrel, lockmode);
 	return true;
 }
@@ -510,8 +632,8 @@ GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LO
 }
 
 /* Look if the relation has enough free space to fit tuple */
-bool
-TupeFitsRelation(Relation rel, int32 tuple_size) /* output_type *stat) */
+int
+TupeFitsRelation(Relation rel, int32 tuple_size)
 {
 	BlockNumber scanned,
 				nblocks,
@@ -520,16 +642,18 @@ TupeFitsRelation(Relation rel, int32 tuple_size) /* output_type *stat) */
 	BufferAccessStrategy bstrategy;
 	TransactionId OldestXmin;
 	int32	totalfreespace = 0;
-	uint64		tuple_count = 0;
-	uint64		table_len = 0;
 	uint64		tuple_len;
-	bool			tuple_fit_ind = false;
+	bool fit_ind = false;
 	OldestXmin = GetOldestNonRemovableTransactionId(rel);
 	bstrategy = GetAccessStrategy(BAS_BULKREAD);
 
 	nblocks = RelationGetNumberOfBlocks(rel);
+
+	if(nblocks*BLCKSZ < F_MAX_INT2 - tuple_size)
+		return F_MAX_INT2 - tuple_size; //true;
+
 	scanned = 0;
-	elog(NOTICE,"Rel scan %u", rel->rd_rel->oid);
+	elog(NOTICE,"Rel scan %u for size %u", rel->rd_rel->oid, tuple_size);
 	for (blkno = 0; blkno < nblocks; blkno++)
 	{
 		Buffer		buf;
@@ -577,72 +701,26 @@ TupeFitsRelation(Relation rel, int32 tuple_size) /* output_type *stat) */
 			UnlockReleaseBuffer(buf);
 			continue;
 		}
-/*
-		maxoff = PageGetMaxOffsetNumber(page);
 
-		for (offnum = FirstOffsetNumber;
-			 offnum <= maxoff;
-			 offnum = OffsetNumberNext(offnum))
-		{
-			ItemId		itemid;
-			HeapTupleData tuple;
-
-			itemid = PageGetItemId(page, offnum);
-
-			if (!ItemIdIsUsed(itemid) || ItemIdIsRedirected(itemid) ||
-				ItemIdIsDead(itemid))
-			{
-				continue;
-			}
-
-			Assert(ItemIdIsNormal(itemid));
-
-			ItemPointerSet(&(tuple.t_self), blkno, offnum);
-
-			tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
-			tuple.t_len = ItemIdGetLength(itemid);
-			tuple.t_tableOid = RelationGetRelid(rel);
-
-			switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
-			{
-				case HEAPTUPLE_LIVE:
-				case HEAPTUPLE_DELETE_IN_PROGRESS:
-					tuple_len += tuple.t_len;
-					tuple_count++;
-					break;
-				case HEAPTUPLE_DEAD:
-				case HEAPTUPLE_RECENTLY_DEAD:
-				case HEAPTUPLE_INSERT_IN_PROGRESS:
-					break;
-				default:
-					elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
-					break;
-			}
-		}
-*/
 		UnlockReleaseBuffer(buf);
 		if( totalfreespace >= tuple_size )
 		{
-			tuple_fit_ind = true;
+			fit_ind = true;
 			break;
 		}
-
 	}
-
-	table_len = (uint64) nblocks * BLCKSZ;
-
-	tuple_count = vac_estimate_reltuples(rel, nblocks, scanned,
-											   tuple_count);
-
-	/* It's not clear if we could get -1 here, but be safe. */
-	tuple_count = Max(tuple_count, 0);
 
 	if (BufferIsValid(vmbuffer))
 	{
 		ReleaseBuffer(vmbuffer);
 		vmbuffer = InvalidBuffer;
 	}
-	return tuple_fit_ind;
+	elog(NOTICE,"FS %u", totalfreespace);
+/*
+	if(totalfreespace >= tuple_size) return true;
+	else return false;
+*/
+	return totalfreespace;
 }
 
 Datum
@@ -691,17 +769,9 @@ relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid)
 	Datum toast_options;
 	List    *defList = NIL;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
-/*	AlterTableType operation = AT_SetRelOptions; */
-/*	if(IsBootstrapProcessingMode())
-	{
-		defList = lappend(defList, makeDefElem("toasteroid", NULL, -1));
-		defList = lappend(defList, makeDefElem("toastrelid", NULL, -1));
-	}
-	else */
-	{
-		defList = lappend(defList, makeDefElem("toasteroid", (Node *) makeInteger(toasterid), -1));
-		defList = lappend(defList, makeDefElem("toastrelid", (Node *) makeInteger(relid), -1));
-	}
+
+	defList = lappend(defList, makeDefElem("toasteroid", (Node *) makeInteger(toasterid), -1));
+	defList = lappend(defList, makeDefElem("toastrelid", (Node *) makeInteger(relid), -1));
 
 	toast_options = transformRelOptions(reloptions,
 									 defList, NULL, validnsps, false,

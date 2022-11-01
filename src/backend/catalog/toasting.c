@@ -35,7 +35,9 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/lsyscache.h"
 #include "utils/snapmgr.h"
+#include "access/reloptions.h"
 
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
@@ -109,7 +111,7 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 
 		tsr = SearchTsrCache(attr->atttoaster);
 
-		tsr->init(rel, InvalidOid, InvalidOid, reloptions, 0, lockmode, check, OIDOldToast);
+		tsr->init(rel, InvalidOid, InvalidOid, reloptions, i, lockmode, check, OIDOldToast);
 
 		tsrOids = lappend_oid(tsrOids, attr->atttoaster);
 	}
@@ -178,7 +180,7 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
  * toastOid and toastIndexOid are normally InvalidOid, but during
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
-bool
+Oid
 create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid,
 				   Datum reloptions, int attnum, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)
@@ -206,14 +208,16 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	NameData toastentname;
 	char toastoptions = (char) 0;
 	Toastkey	tkey = NULL;
+	int tblnum = 0;
 
 	/*
 	 * Is it already toasted?
 	 */
+	
 	if(IsBootstrapProcessingMode())
 	{
 		if (rel->rd_rel->reltoastrelid != InvalidOid)
-		return false;
+		return rel->rd_rel->reltoastrelid;
 	}
 	
 	/*
@@ -225,7 +229,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 		if (!needs_toast_table(rel))
 		{
 			elog(NOTICE, "Does not need toast table.");
-			return false;
+			return InvalidOid;
 		}
 	}
 	else
@@ -251,7 +255,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 		if (!OidIsValid(binary_upgrade_next_toast_pg_class_oid))
 		{
 			elog(NOTICE, "Binary upgrade.");
-			return false;
+			return InvalidOid;
 		}
 	}
 
@@ -265,40 +269,26 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	/*
 	 * Create the toast table and its index
 	 */
-	/*
-	if (rel->rd_ntoasters > 0 && !IsBootstrapProcessingMode())
-	{
-		snprintf(toast_relname, sizeof(toast_relname),
-				 "pg_toast_%u_%u", relOid, toasterid);
-		snprintf(toast_idxname, sizeof(toast_idxname),
-				 "pg_toast_%u_%u_index", relOid, toasterid);
-	}
-	else
-	{
-		snprintf(toast_relname, sizeof(toast_relname),
-				 "pg_toast_%u", relOid);
-		snprintf(toast_idxname, sizeof(toast_idxname),
-				 "pg_toast_%u_index", relOid);
-	}
-	*/
 
 	if(IsBootstrapProcessingMode())
 	{
 		elog(NOTICE, "BOOTSTRAP rel %u", relOid);
+		tblnum = 0;
 		attnum = 0;
 		toast_relid = InvalidOid;
-		tkey = (Toastkey) DatumGetPointer( GetToastRelation(toasteroid, relOid, InvalidOid, 0, AccessShareLock));
-		if( tkey != NULL ) /* toast_relid != InvalidOid ) */
+		tkey = (Toastkey) DatumGetPointer(GetToastRelation(toasteroid, relOid, InvalidOid, tblnum, 0, AccessShareLock));
+		toast_relid = tkey->toastentid;
+		pfree(tkey);
+		if( toast_relid != InvalidOid )
 		{
-			pfree(tkey);
 			elog(NOTICE, "TOAST table already created rel %u", relOid);
-			return false;
+			return toast_relid;
 		}
 	}
 	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toast_%u_%u_%u", relOid, toasteroid, attnum);
+			 "pg_toast_%u_%u_%u", relOid, toasteroid, tblnum);
 	snprintf(toast_idxname, sizeof(toast_idxname),
-			 "pg_toast_%u_%u_%u_index", relOid, toasteroid, attnum);
+			 "pg_toast_%u_%u_%u_index", relOid, toasteroid, tblnum);
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -478,17 +468,83 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	namestrcpy(&toastentname, toast_relname);
 	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
 		version, relname, toastentname, toastoptions, RowExclusiveLock);
+/* FIXME - Update attoptions ??? */
+/*
+	{
+		Relation	attrelation;
+		HeapTuple	tuple,
+					newtuple;
+		Form_pg_attribute attrtuple;
+		Datum		datum,
+					newOptions;
+		bool		isnull;
 
+		List *o_list = NIL;
+		ListCell   *cell;
+		Datum o_datum, opts;
+		int l_idx = 0;
+		Datum		values[Natts_pg_attribute];
+		bool		nulls[Natts_pg_attribute];
+		bool		replaces[Natts_pg_attribute];
+
+		memset(nulls, false, sizeof(nulls));
+		memset(replaces, false, sizeof(replaces));
+		elog(NOTICE, "open pg_attribute");
+		attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+		
+		tuple = SearchSysCacheAttName(RelationGetRelid(rel), NameStr(rel->rd_att->attrs[attnum].attname));
+			//RelationGetRelid(rel), NameStr(rel->rd_att->attrs[attnum].attname));
+		
+		datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
+							&isnull);
+		elog(NOTICE, "get_attioptions");
+		o_datum = get_attoptions(RelationGetRelid(rel), attnum);
+		o_list = lappend(o_list, makeDefElem("toasteroid", (Node *) makeInteger(toasteroid), -1));
+
+		opts = transformRelOptions(datum,
+									 o_list, NULL, NULL, false,
+									 false);	
+		values[Anum_pg_attribute_attoptions - 1] = opts;
+		nulls[Anum_pg_attribute_attoptions - 1] = false;
+		replaces[Anum_pg_attribute_attoptions - 1] = true;
+		
+		elog(NOTICE, "modify");
+		
+		newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+									 values, nulls, replaces);
+	
+		elog(NOTICE, "update catalog");
+
+		if (!IsBootstrapProcessingMode())
+		{
+			CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
+		}
+		else
+		{
+			heap_inplace_update(attrelation, newtuple);
+		}
+
+		heap_freetuple(newtuple);
+
+		ReleaseSysCache(tuple);
+		elog(NOTICE, "close pg_attribute");
+		table_close(attrelation, RowExclusiveLock);
+	}
+*/
 	if(!toastrel_insert_ind)
 	{
 		elog(NOTICE, "Insert into pg_toastrel failed for relation %u", relOid);
+	}
+	else
+	{
+		elog(NOTICE, "Insert success rel %u toastrel %u", relOid, toast_relid);
 	}
 	/*
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
 	elog(NOTICE, "toast table created");
-	return true;
+	return toast_relid;
 }
 
 /*

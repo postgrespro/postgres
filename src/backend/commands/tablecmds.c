@@ -8467,6 +8467,7 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
 	ObjectAddress address;
+//	List *opts = NIL;
 
 	Assert(IsA(newValue, String));
 
@@ -8500,6 +8501,43 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("column data type %s should use toaster",
 						format_type_be(attrtuple->atttypid))));
+/* Update attoptions */
+	{
+		List *o_list = NIL;
+		ListCell   *cell;
+		Datum o_datum, opts;
+		int l_idx = 0;
+		Datum		values[Natts_pg_attribute] = {0};
+		bool		nulls[Natts_pg_attribute] = {0};
+		bool		replaces[Natts_pg_attribute] = {0};
+
+		memset(nulls, false, sizeof(nulls));
+		memset(replaces, false, sizeof(replaces));
+
+		o_datum = get_attoptions(rel->rd_id, attnum);
+		//opts =  untransformRelOptions(o_datum);
+		/*
+		foreach(cell, opts)
+		{
+			DefElem    *def = (DefElem *) lfirst(cell);
+			l_idx++;
+			if (strcmp(def->defname, "toasteroid") == 0)
+				opts = list_delete_nth_cell(opts, l_idx);
+		}*/
+
+		o_list = lappend(o_list, makeDefElem("toasteroid", (Node *) makeInteger(newToaster), -1));
+
+		opts = transformRelOptions(o_datum,
+									 o_list, NULL, NULL, false,
+									 false);	
+
+		values[Anum_pg_attribute_attoptions - 1] = opts;
+		nulls[Anum_pg_attribute_attoptions - 1] = false;
+		replaces[Anum_pg_attribute_attoptions - 1] = true;
+
+		tuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
+									 values, nulls, replaces);
+	}
 
 	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 

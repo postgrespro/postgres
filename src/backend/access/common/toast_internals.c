@@ -28,6 +28,57 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
+/**/
+#include "access/genam.h"
+#include "access/heapam.h"
+#include "access/heaptoast.h"
+#include "access/reloptions.h"
+#include "access/toasterapi.h"
+#include "access/table.h"
+#include "access/xact.h"
+#include "catalog/catalog.h"
+#include "catalog/indexing.h"
+#include "miscadmin.h"
+#include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "utils/snapmgr.h"
+#include "catalog/pg_namespace.h"
+#include "utils/guc.h"
+
+#include "catalog/binary_upgrade.h"
+#include "catalog/dependency.h"
+#include "catalog/heap.h"
+#include "catalog/index.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_opclass.h"
+#include "catalog/pg_type.h"
+#include "catalog/toasting.h"
+#include "nodes/makefuncs.h"
+#include "storage/lock.h"
+
+#include "access/multixact.h"
+#include "access/relation.h"
+#include "access/transam.h"
+#include "access/visibilitymap.h"
+#include "catalog/pg_am_d.h"
+#include "commands/vacuum.h"
+#include "funcapi.h"
+#include "storage/bufmgr.h"
+#include "storage/freespace.h"
+#include "storage/lmgr.h"
+#include "storage/procarray.h"
+#include "access/toasterapi.h"
+#include "access/htup_details.h"
+#include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
+
+
+
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 
@@ -73,32 +124,16 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 	int			num_indexes;
 	int			validIndex;
 	Oid			trel = InvalidOid; // = NULL;
-	int16 		tnum = 0;
-	bool			t_create_ind = false;
 	Toastkey		tkey = NULL;
-	bool 			tuple_fits_ind = false;
+	int			tuplesize = 0;
 
 	Assert(!(VARATT_IS_EXTERNAL(value)));
-/*
+
 	if( IsBootstrapProcessingMode() )
 	{
 		attnum = 0;
 	}
-*/
-	tkey = (Toastkey) DatumGetPointer( GetToastRelation(toasterid, rel->rd_id, InvalidOid, 0, AccessShareLock));
-	if( tkey == NULL ) /* trel == InvalidOid ) */
-	{
-		elog(NOTICE, "No TOAST table, create new for rel %u", rel->rd_rel->oid);
-		attnum = 0;
-		t_create_ind = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, AccessExclusiveLock, false, InvalidOid);
-		if(!t_create_ind)
-			elog(ERROR, "Create TOAST table failed for rel %u", rel->rd_rel->oid);
-		
-		tkey = (Toastkey) DatumGetPointer( GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, AccessShareLock));
-	}
-	trel = tkey->toastentid;
-	tnum = tkey->attnum;
-	pfree(tkey);
+
 	/*
 	 * Get the data pointer and length, and compute va_rawsize and va_extinfo.
 	 *
@@ -142,30 +177,30 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
-	
-	/* FIXME rel->rd_rel->reltoastrelid */
-	toastrel = table_open(trel, RowExclusiveLock);
-/*	
+
 	if(!IsBootstrapProcessingMode())
+		tuplesize = (data_todo + (data_todo / TOAST_MAX_CHUNK_SIZE + 1) * VARHDRSZ);
+
+	tkey = (Toastkey) DatumGetPointer(GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, tuplesize, AccessShareLock));
+	if( tkey->toastentid == InvalidOid ) /* trel == InvalidOid ) */
 	{
-		elog(NOTICE, "Call TupleFits for %u", data_todo);
-		tuple_fits_ind = TupeFitsRelation(toastrel, data_todo + (data_todo / TOAST_MAX_CHUNK_SIZE + 1) * VARHDRSZ);
-		if( !tuple_fits_ind )
-		{
-			table_close(toastrel, NoLock);
-			attnum = tnum + 1;
-			t_create_ind = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, AccessExclusiveLock, false, InvalidOid);
-			if(!t_create_ind)
-				elog(ERROR, "Value doesn't fit and create TOAST table failed for rel %u data %u", rel->rd_rel->oid, data_todo);
-		
-			tkey = (Toastkey) DatumGetPointer( GetToastRelation(toasterid, rel->rd_id, InvalidOid, attnum, AccessShareLock));
-			trel = tkey->toastentid;
-			tnum = tkey->attnum;
-			toastrel = table_open(trel, RowExclusiveLock);
-		}
+		int fs = 0;
+		elog(NOTICE, "No TOAST table, create new for rel %u", rel->rd_id);
+		attnum = 0;
+		fs = tkey->attnum;
+		pfree(tkey);
+		trel = create_toast_table(rel, InvalidOid, InvalidOid, toasterid, (Datum) 0, attnum, AccessExclusiveLock, false, InvalidOid);
+		if( trel == InvalidOid )
+			elog(ERROR, "Create TOAST table failed for rel %u tuple sz %u freespace %u", rel->rd_id, tuplesize, fs);
+	} else 
+	{
+		trel = tkey->toastentid;
 		pfree(tkey);
 	}
-*/
+
+	/* FIXME rel->rd_rel->reltoastrelid */
+	toastrel = table_open(trel, RowExclusiveLock);
+
 	toasttupDesc = toastrel->rd_att;
 
 	/* Open all the toast indexes and look for the valid one */

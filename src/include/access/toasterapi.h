@@ -135,6 +135,12 @@ typedef struct ToastrelKey {
 
 typedef struct ToastrelKey *Toastkey;
 
+typedef enum ToastOption 
+{
+	OPT_TOASTEROID,
+	OPT_TOASTRELID
+} ToastOption;
+
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
@@ -142,11 +148,13 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
-extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
+extern Datum GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, int32 tuplesize, LOCKMODE lockmode);
 extern Datum GetToastRelationList(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
-extern bool TupeFitsRelation(Relation rel, int32 tuple_size);
+extern int TupeFitsRelation(Relation rel, int32 tuple_size);
 extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
+extern Datum
+GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
 
 Datum
 relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
