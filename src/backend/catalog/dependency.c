@@ -59,6 +59,7 @@
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_toaster.h"
 #include "catalog/pg_toastrel.h"
+#include "catalog/pg_toaster_rel.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_ts_config.h"
@@ -192,6 +193,7 @@ static const Oid object_classes[] = {
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
 	TransformRelationId,		/* OCLASS_TRANSFORM */
 	ToasterRelationId,		/* OCLASS_TOASTER */
+	ToasterRelRelationId,		/* OCLASS_TOASTER_REL */
 	ToastrelRelationId		/* OCLASS_TOASTREL */
 };
 
@@ -1515,6 +1517,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_TOASTER:
 			elog(ERROR, "toaster cannot be deleted by doDeletion");
 			break;
+		case OCLASS_TOASTER_REL:
 		case OCLASS_TOASTREL:
 			elog(ERROR, "toaster cannot be deleted by doDeletion");
 			break;
@@ -2979,6 +2982,9 @@ getObjectClass(const ObjectAddress *object)
 
 		case ToasterRelationId:
 			return OCLASS_TOASTER;
+
+		case ToasterRelRelationId:
+			return OCLASS_TOASTER_REL;
 
 		case ToastrelRelationId:
 			return OCLASS_TOASTREL;

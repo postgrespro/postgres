@@ -46,6 +46,8 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toaster_rel.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -686,6 +688,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	LOCKMODE	parentLockmode;
 	const char *accessMethod = NULL;
 	Oid			accessMethodId = InvalidOid;
+	List		*tsr_list = NIL;
 
 	/*
 	 * Truncate relname to appropriate length (probably a waste of time, as
@@ -971,6 +974,15 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		else
 			attr->atttoaster = InvalidOid;
 
+		if(attr->atttoaster != InvalidOid)
+		{
+			/* FIXME toaster list */
+			Toastkey tkey = palloc0(sizeof(ToastrelKey));
+			tkey->toastentid = attr->atttoaster;
+			tkey->attnum = attnum - 1;
+			tsr_list = lappend(tsr_list, tkey);
+		}
+
 		if (OidIsValid(attr->atttoaster))
 			validateToaster(attr->atttoaster, attr->atttypid,
 							attr->attstorage, attr->attcompression,
@@ -1025,6 +1037,24 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	 * tuple visible for opening.
 	 */
 	CommandCounterIncrement();
+	/* FIXME pg_toastrel insert */
+	if(tsr_list != NIL)
+	{
+		NameData n_relname;
+		ListCell   *cell;
+		
+		namestrcpy(&n_relname, relname);
+
+		foreach(cell, tsr_list)
+		{
+			Toastkey tkey = (Toastkey) lfirst(cell);
+			
+			InsertToasterRelRelation(tkey->toastentid, relationId, tkey->attnum,
+			0, 0, RowExclusiveLock);
+		}
+		pfree(tsr_list);
+	}
+
 
 	/*
 	 * Open the new relation and acquire exclusive lock on it.  This isn't
@@ -8502,6 +8532,7 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 				 errmsg("column data type %s should use toaster",
 						format_type_be(attrtuple->atttypid))));
 /* Update attoptions */
+/*
 	{
 		List *o_list = NIL;
 		ListCell   *cell;
@@ -8516,14 +8547,14 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 
 		o_datum = get_attoptions(rel->rd_id, attnum);
 		//opts =  untransformRelOptions(o_datum);
-		/*
+		//XXX delete
 		foreach(cell, opts)
 		{
 			DefElem    *def = (DefElem *) lfirst(cell);
 			l_idx++;
 			if (strcmp(def->defname, "toasteroid") == 0)
 				opts = list_delete_nth_cell(opts, l_idx);
-		}*/
+		}
 
 		o_list = lappend(o_list, makeDefElem("toasteroid", (Node *) makeInteger(newToaster), -1));
 
@@ -8538,8 +8569,21 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 		tuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
 									 values, nulls, replaces);
 	}
-
+*/
 	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
+
+/* FIXME insert into pg_toastrel */
+	{
+//		NameData relname;
+		Toastkey tkey = NULL;
+		tkey = (Toastkey) DatumGetPointer(GetToasterRelToasterOid(rel->rd_id, InvalidOid, (attnum-1), -1, AccessShareLock));
+//GetToasterRelToasterOid(Oid relid, Oid toasteroid, int16 attnum, int16 version, LOCKMODE lockmode)
+//		namestrcpy(&relname, RelationGetRelationName(rel));
+
+		InsertToasterRelRelation(tkey->toastentid, rel->rd_id, (attnum-1), tkey->attnum,
+		0, RowExclusiveLock);
+		pfree(tkey);
+	}
 
 	InvokeObjectPostAlterHook(RelationRelationId,
 							  RelationGetRelid(rel),
@@ -12921,6 +12965,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
 			case OCLASS_TOASTER:
+			case OCLASS_TOASTER_REL:
 			case OCLASS_TOASTREL:
 
 				/*

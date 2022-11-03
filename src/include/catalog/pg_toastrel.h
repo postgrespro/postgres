@@ -39,6 +39,9 @@ CATALOG(pg_toastrel,9881,ToastrelRelationId)
    NameData	   toastentname;	/* toast storage entity name */
    char		   description;	/* Description */
 	char		   toastoptions;	/* Toast options */
+#ifdef CATALOG_VARLEN			/* variable-length fields start here */
+	timestamptz sys_creation_date;	/* password expiration time, if any */
+#endif
 } FormData_pg_toastrel;
 
 /* ----------------
@@ -50,6 +53,7 @@ typedef FormData_pg_toastrel *Form_pg_toastrel;
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_toastrel_oid_index, 9882, ToastrelOidIndexId, on pg_toastrel using btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_toastrel_name_index, 9883, ToastrelKeyIndexId, on pg_toastrel using btree(toasteroid oid_ops, relid oid_ops, toastentid oid_ops, attnum int2_ops));
+DECLARE_INDEX(pg_toastrel_tsr_index, 9884, ToastrelTsrIndexId, on pg_toastrel using btree(relid oid_ops, toastentid oid_ops, attnum int2_ops));
 /* DECLARE_INDEX(pg_toastrel_tsr_index, 9884, ToastrelTsrIndexId, on pg_toastrel using btree(toasteroid oid_ops));
 DECLARE_INDEX(pg_toastrel_rel_index, 9885, ToastrelRelIndexId, on pg_toastrel using btree(relid oid_ops)); */
 

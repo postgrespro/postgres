@@ -464,8 +464,9 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	}
 	elog(NOTICE, "Before toastrel insert");
 	/* XXX insert record into pg_toastrel */
-	namestrcpy(&relname, toast_relname);
+	namestrcpy(&relname, RelationGetRelationName(rel));
 	namestrcpy(&toastentname, toast_relname);
+
 	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
 		version, relname, toastentname, toastoptions, RowExclusiveLock);
 /* FIXME - Update attoptions ??? */

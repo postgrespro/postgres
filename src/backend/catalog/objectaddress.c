@@ -57,6 +57,7 @@
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toaster_rel.h"
 #include "catalog/pg_toastrel.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
@@ -4139,6 +4140,26 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case OCLASS_TOASTER_REL:
+			{
+				HeapTuple	tup;
+
+				tup = SearchSysCache1(TOASTERRELOID,
+									  ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tup))
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for rel %u",
+							 object->objectId);
+					break;
+				}
+
+				appendStringInfo(&buffer, _("toaster %u"),
+								 ((Form_pg_toaster_rel) GETSTRUCT(tup))->toasteroid);
+				ReleaseSysCache(tup);
+				break;
+			}
+
 		case OCLASS_TOASTREL:
 			{
 				HeapTuple	tup;
@@ -4720,6 +4741,10 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 
 		case OCLASS_TOASTER:
 			appendStringInfoString(&buffer, "toaster");
+			break;
+
+		case OCLASS_TOASTER_REL:
+			appendStringInfoString(&buffer, "toaster_rel");
 			break;
 
 		case OCLASS_TOASTREL:
@@ -6077,6 +6102,24 @@ getObjectIdentityParts(const ObjectAddress *object,
 			break;
 
 		case OCLASS_TOASTER:
+			{
+				char	   *tsrname;
+
+				tsrname = get_toaster_name(object->objectId);
+				if (!tsrname)
+				{
+					if (!missing_ok)
+						elog(ERROR, "cache lookup failed for toaster %u",
+							 object->objectId);
+					break;
+				}
+				appendStringInfoString(&buffer, quote_identifier(tsrname));
+				if (objname)
+					*objname = list_make1(tsrname);
+			}
+			break;
+
+		case OCLASS_TOASTER_REL:
 			{
 				char	   *tsrname;
 

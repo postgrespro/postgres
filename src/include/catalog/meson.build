@@ -64,6 +64,7 @@ catalog_headers = [
   'pg_subscription.h',
   'pg_subscription_rel.h',
   'pg_toaster.h',
+  'pg_toaster_rel.h',
   'pg_toastrel.h',
 ]
 

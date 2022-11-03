@@ -14,6 +14,8 @@
 
 #include "access/genam.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toaster_rel.h"
 
 /*
  * Macro to fetch the possibly-unaligned contents of an EXTERNAL datum
@@ -155,6 +157,11 @@ extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 extern Datum
 GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
+extern Datum
+GetRelColToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
+extern Datum GetToasterRelToasterOid(Oid relid, Oid toasteroid, int16 attnum, int16 version, LOCKMODE lockmode);
+extern bool InsertToasterRelRelation(Oid toasteroid, Oid relid, int16 attnum,
+	int version, char toastoptions, LOCKMODE lockmode);
 
 Datum
 relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);

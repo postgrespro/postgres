@@ -129,6 +129,7 @@ typedef enum ObjectClass
 	OCLASS_SUBSCRIPTION,		/* pg_subscription */
 	OCLASS_TRANSFORM,			/* pg_transform */
 	OCLASS_TOASTER,			/* pg_toaster */
+	OCLASS_TOASTER_REL,			/* pg_toaster_rel */
 	OCLASS_TOASTREL			/* pg_toastrel */
 } ObjectClass;
 
