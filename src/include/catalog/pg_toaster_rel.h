@@ -30,11 +30,15 @@
 CATALOG(pg_toaster_rel,9891,ToasterRelRelationId)
 {
 	Oid			oid;			   /* oid */
-   Oid			toasteroid;		/* oid */
-   Oid			relid;		   /* oid */
-   int16			attnum;		   /* oid */
-   int16       version;
-	char		   toastoptions;	/* Toast options */
+   Oid			toasteroid;		/* toaster oid */
+   Oid			relid;		   /* source relatin oid */
+   int16			attnum;		   /* source relation attribute index */
+   int16       version;       /* toaster version */
+/*	char		   toastoptions; */	/* Toast options */
+#ifdef CATALOG_VARLEN			/* variable-length fields start here */
+   text		   toastoptions[1] BKI_DEFAULT(_null_);
+	timestamptz sys_creation_date;	/* creation datetime */
+#endif
 } FormData_pg_toaster_rel;
 
 /* ----------------
@@ -46,5 +50,6 @@ typedef FormData_pg_toaster_rel *Form_pg_toaster_rel;
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_toaster_rel_oid_index, 9892, ToasterRelOidIndexId, on pg_toaster_rel using btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_toaster_rel_name_index, 9893, ToasterRelKeyIndexId, on pg_toaster_rel using btree(toasteroid oid_ops, relid oid_ops, attnum int2_ops, version int2_ops));
+DECLARE_INDEX(pg_toaster_rel_tsr_index, 9894, ToasterRelTsrIndexId, on pg_toaster_rel using btree(toasteroid oid_ops, version int2_ops));
 
 #endif							/* PG_TOASTER_REL_H */

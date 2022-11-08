@@ -380,99 +380,6 @@ GetToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum, int32 
 }
 
 /* ----------
- * GetToastRelation -
- *
- *	Retrieve single TOAST relation from pg_toastrel according to
- *	given key. If not found create a new one
- * ----------
- */
-Datum
-GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
-{
-	Relation		pg_toastrel;
-	ScanKeyData key[4];
-	SysScanDesc scan;
-	HeapTuple	tup;
-	uint32      total_entries = 0;
-//	Toastrel	  	rel = NULL;
-/*	MemoryContext myctx, oldctx; */
-	int keys = 0;
-	Oid			trel_oid = InvalidOid;
-	Toastkey		tkey = NULL;
-/*
-	myctx = AllocSetContextCreate(CurrentMemoryContext, "ToastrelCtx", ALLOCSET_DEFAULT_SIZES);
-	oldctx = MemoryContextSwitchTo(myctx);
-*/
-	tkey = palloc(sizeof(ToastrelKey));
-	tkey->toastentid = InvalidOid;
-	tkey->attnum = attnum;
-
-	elog(NOTICE, "GetToastRelToasterOid enter rel %u", relid);
-	pg_toastrel = table_open(ToastrelRelationId, lockmode);
-
-	if( relid != InvalidOid )
-	{
-		ScanKeyInit(&key[keys],
-				Anum_pg_toastrel_relid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-		keys++;
-	}
-
-	if(!IsBootstrapProcessingMode())
-	{
-	if( toastentid != InvalidOid )
-	{
-		ScanKeyInit(&key[keys],
-				Anum_pg_toastrel_toastentid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(toastentid));
-		keys++;
-	}
-
-	if( attnum >= 0 )
-	{
-		ScanKeyInit(&key[keys],
-				Anum_pg_toastrel_attnum,
-				BTEqualStrategyNumber, F_INT2EQ,
-				Int16GetDatum(attnum));
-		keys++;
-	}
-	}
-	scan = systable_beginscan(pg_toastrel, ToastrelKeyIndexId, false,
-							  NULL, keys, key);
-	keys = 0;
-	elog(NOTICE, "Cycle start");
-	while (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		total_entries++;
-		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->relid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->attnum);
-
-		if((((Form_pg_toastrel) GETSTRUCT(tup))->relid == relid )
-			&& ((Form_pg_toastrel) GETSTRUCT(tup))->attnum == attnum )
-		{
-			if( trel_oid == InvalidOid ) trel_oid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
-			if( trel_oid <= ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid )
-			{
-				tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid;
-			}
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-	table_close(pg_toastrel, lockmode);
-/*
-	MemoryContextSwitchTo(oldctx);
-*/
-	return PointerGetDatum(tkey); /* ObjectIdGetDatum(trel_oid); */
-}
-
-/* ----------
  * GetRelColToasterOid -
  *
  *	Retrieve single TOAST relation from pg_toastrel according to
@@ -480,9 +387,9 @@ GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode
  * ----------
  */
 Datum
-GetRelColToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
+GetRelColToasterOid(Oid relid, Oid toasteroid, int16 attnum, LOCKMODE lockmode)
 {
-	Relation		pg_toastrel;
+	Relation		pg_toaster_rel;
 	ScanKeyData key[3];
 	SysScanDesc scan;
 	HeapTuple	tup;
@@ -499,57 +406,57 @@ GetRelColToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
 	elog(NOTICE, "GetRelColToasterOid relid %u tentid %u attnum %u",
 			 relid, toastentid, attnum);
 
-	pg_toastrel = table_open(ToastrelRelationId, lockmode);
+	pg_toaster_rel = table_open(ToasterRelKeyIndexId, lockmode);
 
 	ScanKeyInit(&key[keys],
-				Anum_pg_toastrel_relid,
+				Anum_pg_toaster_rel_relid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 	keys++;
 
-	if(toastentid != InvalidOid)
+	if(toasteroid != InvalidOid)
 	{
 		ScanKeyInit(&key[keys],
-			Anum_pg_toastrel_toastentid,
+			Anum_pg_toaster_rel_toasteroid,
 			BTEqualStrategyNumber, F_OIDEQ,
-			ObjectIdGetDatum(toastentid));
+			ObjectIdGetDatum(toasteroid));
 	}
 	else
 	{
 		ScanKeyInit(&key[keys],
-			Anum_pg_toastrel_toastentid,
+			Anum_pg_toaster_rel_toasteroid,
 			BTEqualStrategyNumber, F_OIDEQ,
 			(Datum) 0);
 	}
 	keys++;
 
 	ScanKeyInit(&key[keys],
-				Anum_pg_toastrel_attnum,
+				Anum_pg_toaster_rel_attnum,
 				BTEqualStrategyNumber, F_INT2EQ,
 				Int16GetDatum(attnum));
 	keys++;
 
-	scan = systable_beginscan(pg_toastrel, ToastrelTsrIndexId, false,
+	scan = systable_beginscan(pg_toaster_rel, ToasterRelKeyIndexId, false,
 							  NULL, keys, key);
 	keys = 0;
 	elog(NOTICE, "Cycle start");
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
-		elog(NOTICE, "Found TOAST toasterid %u relid %u toastent %u attnum %u",
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->relid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid,
-			 ((Form_pg_toastrel) GETSTRUCT(tup))->attnum);
+		elog(NOTICE, "Found TOAST toasterid %u relid %u attnum %u version %u",
+			 ((Form_pg_toaster_rel) GETSTRUCT(tup))->toasteroid,
+			 ((Form_pg_toaster_rel) GETSTRUCT(tup))->relid,
+			 ((Form_pg_toaster_rel) GETSTRUCT(tup))->attnum,
+			 ((Form_pg_toaster_rel) GETSTRUCT(tup))->version);
 
-		if((((Form_pg_toastrel) GETSTRUCT(tup))->relid == relid )
-			&& ((Form_pg_toastrel) GETSTRUCT(tup))->attnum == attnum )
+		if((((Form_pg_toaster_rel) GETSTRUCT(tup))->relid == relid )
+			&& ((Form_pg_toaster_rel) GETSTRUCT(tup))->attnum == attnum )
 		{
-			if(((Form_pg_toastrel) GETSTRUCT(tup))->version >= version)
+			if(((Form_pg_toaster_rel) GETSTRUCT(tup))->version >= version)
 			{
-				version = ((Form_pg_toastrel) GETSTRUCT(tup))->version;
-				tkey->attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->version;
-				tkey->toastentid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
+				version = ((Form_pg_toaster_rel) GETSTRUCT(tup))->version;
+				tkey->attnum = ((Form_pg_toaster_rel) GETSTRUCT(tup))->version;
+				tkey->toastentid = ((Form_pg_toaster_rel) GETSTRUCT(tup))->toasteroid;
 			}
 		}
 	}
@@ -557,7 +464,7 @@ GetRelColToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode)
 	tkey->attnum++;
 
 	systable_endscan(scan);
-	table_close(pg_toastrel, lockmode);
+	table_close(pg_toaster_rel, lockmode);
 	return PointerGetDatum(tkey);
 }
 
@@ -645,7 +552,7 @@ GetToasterRelToasterOid(Oid relid, Oid toasteroid, int16 attnum, int16 version, 
  * ----------
  */
 bool
-InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+InsertToastRelation(Oid toasterrelid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode)
 {
 	Relation		pg_toastrel;
@@ -653,7 +560,108 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	Datum		values[Natts_pg_toastrel];
 	bool		nulls[Natts_pg_toastrel];
 
-	if (toasteroid == InvalidOid || relid == InvalidOid) /* || toastentid == InvalidOid) */
+	if (toasterrelid == InvalidOid || relid == InvalidOid) /* || toastentid == InvalidOid) */
+	{
+		return false;
+	}
+
+	memset(nulls, false, sizeof(nulls));
+
+	pg_toastrel = table_open(ToastrelRelationId, lockmode);
+	{
+		Oid			oid = GetNewOidWithIndex(pg_toastrel, ToastrelOidIndexId,
+											 Anum_pg_toastrel_oid);
+
+		values[Anum_pg_toastrel_oid - 1] = ObjectIdGetDatum(oid);
+		values[Anum_pg_toastrel_toasterrelid - 1] = ObjectIdGetDatum(toasterrelid);
+		values[Anum_pg_toastrel_relid - 1] = ObjectIdGetDatum(relid);
+		values[Anum_pg_toastrel_toastentid - 1] = ObjectIdGetDatum(toastentid);
+		values[Anum_pg_toastrel_attnum - 1] = Int16GetDatum(attnum);
+		values[Anum_pg_toastrel_relname - 1] = NameGetDatum(&relname);
+		values[Anum_pg_toastrel_version - 1] = Int16GetDatum(version);
+		values[Anum_pg_toastrel_toastentname - 1] = NameGetDatum(&toastentname);
+		values[Anum_pg_toastrel_toastoptions - 1] = CharGetDatum(toastoptions);
+		values[Anum_pg_toastrel_sys_creation_date - 1] = TimestampGetDatum(GetCurrentTimestamp());
+
+		tup = heap_form_tuple(RelationGetDescr(pg_toastrel), values, nulls);
+
+		elog(NOTICE, "Insert into pg_toastrel toasterid %u relid %u toastent %u attnum %u version %u",
+			 toasteroid,
+			 relid,
+			 toastentid,
+			 attnum,
+			 version);
+
+		CatalogTupleInsert(pg_toastrel, tup);
+		heap_freetuple(tup);
+	}
+	table_close(pg_toastrel, lockmode);
+	CommandCounterIncrement();
+	return true;
+}
+
+/* ----------
+ * InsertToasterRelRelation -
+ *
+ *	Insert single TOAST relation into pg_toaster_rel
+ * ----------
+ */
+Oid
+InsertToasterRelRelation(Oid toasteroid, Oid relid, int16 attnum,
+	int version, text *toastoptions, LOCKMODE lockmode)
+{
+	Relation		pg_toaster_rel;
+	HeapTuple	tup;
+	Datum		values[Natts_pg_toaster_rel];
+	bool		nulls[Natts_pg_toaster_rel];
+
+	memset(nulls, false, sizeof(nulls));
+
+	pg_toaster_rel = table_open(ToasterRelRelationId, lockmode);
+	{
+		Oid			oid = GetNewOidWithIndex(pg_toaster_rel, ToasterRelOidIndexId,
+											 Anum_pg_toaster_rel_oid);
+
+		values[Anum_pg_toaster_rel_oid - 1] = ObjectIdGetDatum(oid);
+		values[Anum_pg_toaster_rel_toasteroid - 1] = ObjectIdGetDatum(toasteroid);
+		values[Anum_pg_toaster_rel_relid - 1] = ObjectIdGetDatum(relid);
+		values[Anum_pg_toaster_rel_attnum - 1] = Int16GetDatum(attnum);
+		values[Anum_pg_toaster_rel_version - 1] = Int16GetDatum(version);
+		values[Anum_pg_toaster_rel_toastoptions - 1] = CStringGetDatum(text_to_cstring(toastoptions));
+		values[Anum_pg_toaster_rel_sys_creation_date - 1] = TimestampGetDatum(GetCurrentTimestamp());
+
+		tup = heap_form_tuple(RelationGetDescr(pg_toaster_rel), values, nulls);
+
+		elog(NOTICE, "Insert into pg_toaster_rel toasterid %u relid %u attnum %u version %u",
+			 toasteroid,
+			 relid,
+			 attnum,
+			 version);
+
+		CatalogTupleInsert(pg_toaster_rel, tup);
+		heap_freetuple(tup);
+	}
+	CommandCounterIncrement();
+	table_close(pg_toaster_rel, lockmode);
+	return true;
+}
+
+/* ----------
+ * InsertToastRelation -
+ *
+ *	Insert single TOAST relation into pg_toastrel
+ * ----------
+ */
+Datum
+CheckAndInsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode)
+{
+	Relation		pg_toastrel;
+	HeapTuple	tup;
+	Datum		values[Natts_pg_toastrel];
+	bool		nulls[Natts_pg_toastrel];
+
+	if (toasteroid == InvalidOid || relid == InvalidOid)
 	{
 		return false;
 	}
@@ -688,51 +696,6 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 		heap_freetuple(tup);
 	}
 	table_close(pg_toastrel, lockmode);
-	CommandCounterIncrement();
-	return true;
-}
-
-/* ----------
- * InsertToasterRelRelation -
- *
- *	Insert single TOAST relation into pg_toaster_rel
- * ----------
- */
-bool
-InsertToasterRelRelation(Oid toasteroid, Oid relid, int16 attnum,
-	int version, char toastoptions, LOCKMODE lockmode)
-{
-	Relation		pg_toaster_rel;
-	HeapTuple	tup;
-	Datum		values[Natts_pg_toaster_rel];
-	bool		nulls[Natts_pg_toaster_rel];
-
-	memset(nulls, false, sizeof(nulls));
-
-	pg_toaster_rel = table_open(ToasterRelRelationId, lockmode);
-	{
-		Oid			oid = GetNewOidWithIndex(pg_toaster_rel, ToasterRelOidIndexId,
-											 Anum_pg_toaster_rel_oid);
-
-		values[Anum_pg_toaster_rel_oid - 1] = ObjectIdGetDatum(oid);
-		values[Anum_pg_toaster_rel_toasteroid - 1] = ObjectIdGetDatum(toasteroid);
-		values[Anum_pg_toaster_rel_relid - 1] = ObjectIdGetDatum(relid);
-		values[Anum_pg_toaster_rel_attnum - 1] = Int16GetDatum(attnum);
-		values[Anum_pg_toaster_rel_version - 1] = Int16GetDatum(version);
-		values[Anum_pg_toaster_rel_toastoptions - 1] = CharGetDatum(toastoptions);
-
-		tup = heap_form_tuple(RelationGetDescr(pg_toaster_rel), values, nulls);
-
-		elog(NOTICE, "Insert into pg_toaster_rel toasterid %u relid %u attnum %u version %u",
-			 toasteroid,
-			 relid,
-			 attnum,
-			 version);
-
-		CatalogTupleInsert(pg_toaster_rel, tup);
-		heap_freetuple(tup);
-	}
-	table_close(pg_toaster_rel, lockmode);
 	CommandCounterIncrement();
 	return true;
 }

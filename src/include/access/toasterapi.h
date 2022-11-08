@@ -156,8 +156,6 @@ extern int TupeFitsRelation(Relation rel, int32 tuple_size);
 extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 extern Datum
-GetToastRelToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
-extern Datum
 GetRelColToasterOid(Oid relid, Oid toastentid, int16 attnum, LOCKMODE lockmode);
 extern Datum GetToasterRelToasterOid(Oid relid, Oid toasteroid, int16 attnum, int16 version, LOCKMODE lockmode);
 extern bool InsertToasterRelRelation(Oid toasteroid, Oid relid, int16 attnum,
