@@ -298,7 +298,9 @@ IsSharedRelation(Oid relationId)
 		relationId == PgSubscriptionToastTable ||
 		relationId == PgSubscriptionToastIndex ||
 		relationId == PgTablespaceToastTable ||
-		relationId == PgTablespaceToastIndex)
+		relationId == PgTablespaceToastIndex ||
+		relationId == PgAuthMemToastTable ||
+		relationId == PgAuthMemToastIndex)
 		return true;
 	return false;
 }

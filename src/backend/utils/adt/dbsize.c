@@ -15,11 +15,14 @@
 
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/toasterapi.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 #include "commands/dbcommands.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
@@ -424,9 +427,25 @@ calculate_table_size(Relation rel)
 	/*
 	 * Size of toast relation
 	 */
+	if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+	{
+		List *trelids = NIL;
+		ListCell *lc;
+
+			trelids = (List *) DatumGetPointer(GetToastrelList(trelids, rel->rd_id, 0, AccessShareLock));
+	// XXX PG_TOASTREL
+			foreach(lc, trelids)
+			{
+				Toastrel trel = (Toastrel) (lfirst(lc));
+				if (OidIsValid(trel->toastentid))
+					size += calculate_toast_table_size(trel->toastentid);
+			}
+	}
+
+/*
 	if (OidIsValid(rel->rd_rel->reltoastrelid))
 		size += calculate_toast_table_size(rel->rd_rel->reltoastrelid);
-
+*/
 	return size;
 }
 

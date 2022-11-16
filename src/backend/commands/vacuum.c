@@ -33,12 +33,15 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "access/toasterapi.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/index.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 #include "commands/cluster.h"
 #include "commands/defrem.h"
 #include "commands/vacuum.h"
@@ -1837,6 +1840,10 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	Oid			save_userid;
 	int			save_sec_context;
 	int			save_nestlevel;
+	List *trelids = NIL;
+	ListCell *lc;
+	Oid	t_arr[64];
+	int t_arr_rowcount = 0;
 
 	Assert(params != NULL);
 
@@ -2028,11 +2035,33 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 * us to process it.  In VACUUM FULL, though, the toast table is
 	 * automatically rebuilt by cluster_rel so we shouldn't recurse to it.
 	 */
+/*
 	if ((params->options & VACOPT_PROCESS_TOAST) != 0 &&
 		(params->options & VACOPT_FULL) == 0)
 		toast_relid = rel->rd_rel->reltoastrelid;
 	else
 		toast_relid = InvalidOid;
+*/
+	if ((params->options & VACOPT_PROCESS_TOAST) != 0 &&
+		(params->options & VACOPT_FULL) == 0)
+	{
+		if(HasToastrel(relid, 0, AccessShareLock))
+		{
+/*			int i = 0; */
+			trelids = (List *) DatumGetPointer(GetToastrelList(trelids, relid, 0, AccessShareLock));
+	// XXX PG_TOASTREL
+/*
+			foreach(lc, trelids)
+			{
+				Oid trel = (lfirst_oid(lc));
+				elog(NOTICE, "run %u oid %u", i, trel);
+				t_arr[i] = trel;
+				t_arr_rowcount++;
+				i++;
+			}
+*/
+		}
+	}
 
 	/*
 	 * Switch to the table owner's userid, so that any index functions are run
@@ -2088,9 +2117,51 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 * the toaster always uses hardcoded index access and statistics are
 	 * totally unimportant for toast relations.
 	 */
+	if ((params->options & VACOPT_PROCESS_TOAST) != 0 &&
+		(params->options & VACOPT_FULL) == 0)
+	{
+		if(HasToastrel(relid, 0, AccessShareLock))
+		{
+	// XXX PG_TOASTREL
+			foreach(lc, trelids)
+			{
+				vacuum_rel(lfirst_oid(lc), NULL, params);
+			}
+		}
+	}
+/*
+	if(t_arr_rowcount > 0)
+	{
+		for(int i = 0; i < t_arr_rowcount; i++)
+		{
+				vacuum_rel(t_arr[i], NULL, params);
+		}
+	}
+*/
+/*
+	if ((params->options & VACOPT_PROCESS_TOAST) != 0 &&
+		(params->options & VACOPT_FULL) == 0
+		&&  trelids)
+	{
+		int i = 0;
+		elog(NOTICE, "foreach init");
+		foreach(lc, trelids)
+		{
+			Oid trel = (lfirst_oid(lc));
+			elog(NOTICE, "run %u", i);
+			if (OidIsValid(trel))
+			{
+				elog(NOTICE, "vacuum_rel TOAST rel %u", trel);
+				vacuum_rel(trel, NULL, params);
+			}
+			i++;
+		}
+	}
+*/
+/*
 	if (toast_relid != InvalidOid)
 		vacuum_rel(toast_relid, NULL, params);
-
+*/
 	/*
 	 * Now release the session-level lock on the main table.
 	 */

@@ -4752,13 +4752,19 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	desc = RelationGetDescr(relation);
 
+	if(!HasToastrel(relation->rd_id, 0, AccessShareLock))
+	{
+		elog(ERROR, "could not open toast relation for base relation \"%s\"",
+			RelationGetRelationName(relation));
+	}
+/*
 	toast_rel = RelationIdGetRelation(relation->rd_rel->reltoastrelid);
 	if (!RelationIsValid(toast_rel))
 		elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
 			 relation->rd_rel->reltoastrelid, RelationGetRelationName(relation));
 
 	toast_desc = RelationGetDescr(toast_rel);
-
+*/
 	/* should we allocate from stack instead? */
 	attrs = palloc0(sizeof(Datum) * desc->natts);
 	isnull = palloc0(sizeof(bool) * desc->natts);
@@ -4782,6 +4788,8 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		dlist_iter	it;
 		Size		data_done = 0;
 
+		Oid trel;
+
 		/* system columns aren't toasted */
 		if (attr->attnum < 0)
 			continue;
@@ -4799,6 +4807,10 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 		/* ok, we know we have a toast datum */
 		varlena = (struct varlena *) DatumGetPointer(attrs[natt]);
+
+		/* FIXME Need to implement applying diffs for Custom TOAST Pointer */
+		if(VARATT_IS_CUSTOM(varlena))
+			continue;
 
 		/* no need to do anything if the tuple isn't external */
 		if (!VARATT_IS_EXTERNAL(varlena))
@@ -4825,6 +4837,15 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		reconstructed = palloc0(toast_pointer.va_rawsize);
 
 		ent->reconstructed = reconstructed;
+
+		/* PG_TOASTREL open toast table */
+		trel = DatumGetObjectId(GetActualToastrel(DEFAULT_TOASTER_OID, relation->rd_id, natt, AccessShareLock));
+		toast_rel = RelationIdGetRelation(trel);
+		if (!RelationIsValid(toast_rel))
+			elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
+				trel, RelationGetRelationName(relation));
+
+		toast_desc = RelationGetDescr(toast_rel);
 
 		/* stitch toast tuple back together from its parts */
 		dlist_foreach(it, &ent->chunks)
@@ -4863,6 +4884,9 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			   sizeof(redirect_pointer));
 
 		attrs[natt] = PointerGetDatum(new_datum);
+
+		/* PG_TOASTREL close toast table */
+		RelationClose(toast_rel);
 	}
 
 	/*
@@ -4881,7 +4905,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	 * free resources we won't further need, more persistent stuff will be
 	 * free'd in ReorderBufferToastReset().
 	 */
-	RelationClose(toast_rel);
+/*	RelationClose(toast_rel); */
 	pfree(tmphtup);
 	for (natt = 0; natt < desc->natts; natt++)
 	{
