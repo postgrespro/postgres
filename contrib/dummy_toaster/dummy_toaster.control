@@ -1,0 +1,5 @@
+# dummy_toaster extension
+comment = 'dummy_toaster - dummy toaster'
+default_version = '1.0'
+module_pathname = '$libdir/dummy_toaster'
+relocatable = true

@@ -72,10 +72,13 @@
 #include "access/reloptions.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "access/toasterapi.h"
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 #include "commands/dbcommands.h"
 #include "commands/vacuum.h"
 #include "lib/ilist.h"
@@ -2118,6 +2121,41 @@ do_autovacuum(void)
 		 * this whether or not the table is going to be vacuumed, because we
 		 * don't automatically vacuum toast tables along the parent table.
 		 */
+		if(HasToastrel(relid, 0, AccessShareLock))
+		{
+			List *trelids = NIL;
+			ListCell *lc;
+
+			trelids = (List *) DatumGetPointer(GetToastrelList(trelids, relid, 0, AccessShareLock));
+		// XXX PG_TOASTREL
+			foreach(lc, trelids)
+			{
+				Toastrel trel = (Toastrel) (lfirst(lc));
+				if (OidIsValid(trel->toastentid))
+				{
+					av_relation *hentry;
+					bool		found;
+
+					hentry = hash_search(table_toast_map,
+								 &(trel->toastentid),
+								 HASH_ENTER, &found);
+
+					if (!found)
+					{
+						hentry->ar_relid = relid;
+						hentry->ar_hasrelopts = false;
+						if (relopts != NULL)
+						{
+							hentry->ar_hasrelopts = true;
+							memcpy(&hentry->ar_reloptions, relopts,
+								   sizeof(AutoVacOpts));
+						}
+					}
+				}
+			}
+		}
+
+/*
 		if (OidIsValid(classForm->reltoastrelid))
 		{
 			av_relation *hentry;
@@ -2129,7 +2167,9 @@ do_autovacuum(void)
 
 			if (!found)
 			{
+*/
 				/* hash_search already filled in the key */
+/*
 				hentry->ar_relid = relid;
 				hentry->ar_hasrelopts = false;
 				if (relopts != NULL)
@@ -2140,6 +2180,7 @@ do_autovacuum(void)
 				}
 			}
 		}
+*/
 	}
 
 	table_endscan(relScan);

@@ -62,12 +62,14 @@
  * Init function. Creates Toast table for Toasted data storage
  * Default Toast mechanics uses heap storage mechanics
  */
-static void
-generic_toast_init(Relation rel, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
+static Datum
+generic_toast_init(Relation rel, Oid toasteroid, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
 				 bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, toastoid, toastindexoid, DEFAULT_TOASTER_OID, reloptions, attnum, lockmode,
+	Oid trel = InvalidOid;
+	trel = create_toast_table(rel, toastoid, toastindexoid, DEFAULT_TOASTER_OID, reloptions, attnum, lockmode,
 							  check, OIDOldToast);
+	return ObjectIdGetDatum(trel);
 }
 
 

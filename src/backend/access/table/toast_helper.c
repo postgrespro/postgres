@@ -56,14 +56,30 @@ toast_tuple_init(ToastTupleContext *ttc)
 		TsrRoutine *toaster;
 		Oid			toasterid;
 		bool		need_detoast = true;
+		Datum		dtrel = (Datum) 0;
 
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
 
-		toasterid = att->atttoaster;
+		dtrel = SearchToastrelCache(ttc->ttc_rel->rd_id, att->attnum, false);
+
+		if(dtrel == (Datum) 0)
+		{
+			elog(ERROR, "No PG_TOASTREL record for rel %u", ttc->ttc_rel->rd_id);
+		}
+		toasterid = ((Toastrel) DatumGetPointer(dtrel))->toasteroid;
+		if( toasterid == InvalidOid )
+		{
+			elog(ERROR, "No Toaster found for rel %u", ttc->ttc_rel->rd_id);
+		}
+
 		toaster = OidIsValid(toasterid) ?
-			SearchTsrCache(att->atttoaster) : NULL;
+			SearchTsrCache(toasterid) : NULL;
+
+/*		toasterid = att->atttoaster;
+		toaster = OidIsValid(toasterid) ?
+			SearchTsrCache(att->atttoaster) : NULL;*/
 
 		ttc->ttc_attr[i].tai_toaster = toaster;
 		ttc->ttc_attr[i].tai_toasterid = toasterid;
@@ -335,17 +351,32 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen,
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
+	TsrRoutine	*toaster;
+	Datum d = (Datum) 0;
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-	*value = (Datum)(
-				attr->tai_toaster->toast(ttc->ttc_rel,
+	d = SearchToastrelCache(ttc->ttc_rel->rd_id, attribute, false);
+
+	if(d != (Datum) 0)
+	{
+		Toastrel trel = (Toastrel) DatumGetPointer(d);
+		if(trel->toasteroid != InvalidOid)
+		{
+			toaster = SearchTsrCache(trel->toasteroid);
+			attr->tai_toasterid = trel->toasteroid;
+			attr->tai_toaster = toaster;
+
+			*value = (Datum)(toaster->toast(ttc->ttc_rel,
 										 attr->tai_toasterid,
 										 old_value,
 										 attribute,
 										 PointerGetDatum(attr->tai_oldexternal),
 										 maxDataLen, options)
 			);
-    if (*value == old_value)
+		}
+	}
+	
+   if (*value == old_value)
 	{
         return;
 	}
