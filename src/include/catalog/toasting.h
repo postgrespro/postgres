@@ -42,4 +42,6 @@ extern void toast_close_indexes(Relation *toastidxs, int num_indexes,
 								LOCKMODE lock);
 extern void init_toast_snapshot(Snapshot toast_snapshot);
 
+extern Oid GetLastToasterId(Oid relid, int16 attnum);
+
 #endif							/* TOASTING_H */

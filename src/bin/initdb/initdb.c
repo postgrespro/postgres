@@ -2684,10 +2684,22 @@ initialize_data_directory(void)
 	fflush(stdout);
 
 	snprintf(cmd, sizeof(cmd),
+			 "\"%s\" %s %s template1 %s",
+			 backend_exec, backend_options, extra_options,
+			 debug ? "-d 5" : "");
+/*
+	snprintf(cmd, sizeof(cmd),
 			 "\"%s\" %s %s template1 >%s",
 			 backend_exec, backend_options, extra_options,
 			 DEVNULL);
-
+	snprintf(cmd, sizeof(cmd),
+			 "\"%s\" --boot -X %d %s %s %s %s",
+			 backend_exec,
+			 wal_segment_size_mb * (1024 * 1024),
+			 data_checksums ? "-k" : "",
+			 boot_options, extra_options,
+			 debug ? "-d 5" : "");
+*/
 	PG_CMD_OPEN;
 
 	setup_auth(cmdfd);

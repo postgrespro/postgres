@@ -352,7 +352,7 @@ ConstructTupleDescriptor(Relation heapRelation,
 			to->attalign = from->attalign;
 			to->attstorage = from->attstorage;
 			to->attcompression = from->attcompression;
-			to->atttoaster = from->atttoaster;
+//			to->atttoaster = from->atttoaster;
 		}
 		else
 		{
@@ -471,8 +471,8 @@ ConstructTupleDescriptor(Relation heapRelation,
 			to->attstorage = typeTup->typstorage;
 			/* As above, use the default compression method in this case */
 			to->attcompression = InvalidCompressionMethod;
-			to->atttoaster = (TypeIsToastable(keyType)) ?
-				DEFAULT_TOASTER_OID : InvalidOid;
+/*			to->atttoaster = (TypeIsToastable(keyType)) ?
+				DEFAULT_TOASTER_OID : InvalidOid;*/
 
 			ReleaseSysCache(tuple);
 		}

@@ -19,6 +19,7 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "access/toasterapi.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -27,6 +28,8 @@
 #include "catalog/objectaccess.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_rewrite.h"
+#include "catalog/pg_toastrel.h"
+#include "catalog/pg_toastrel_d.h"
 #include "catalog/storage.h"
 #include "commands/policy.h"
 #include "miscadmin.h"
@@ -490,6 +493,110 @@ DefineQueryRewrite(const char *rulename,
 		 * rule.
 		 */
 		SetRelationRuleStatus(event_relid, true);
+	}
+
+	/* ---------------------------------------------------------------------
+	 * If the relation is becoming a view:
+	 * - delete the associated storage files
+	 * - get rid of any system attributes in pg_attribute; a view shouldn't
+	 *	 have any of those
+	 * - remove the toast table; there is no need for it anymore, and its
+	 *	 presence would make vacuum slightly more complicated
+	 * - set relkind to RELKIND_VIEW, and adjust other pg_class fields
+	 *	 to be appropriate for a view
+	 *
+	 * NB: we had better have AccessExclusiveLock to do this ...
+	 * ---------------------------------------------------------------------
+	 */
+	if (event_relation->rd_rel->relkind != RELKIND_VIEW &&
+		event_relation->rd_rel->relkind != RELKIND_MATVIEW)
+	{
+		Relation	relationRelation;
+		Oid			toastrelid;
+		HeapTuple	classTup;
+		Form_pg_class classForm;
+
+		relationRelation = table_open(RelationRelationId, RowExclusiveLock);
+
+		if(HasToastrel(event_relation->rd_id, 0, AccessShareLock))
+		{
+			List *trelids = NIL;
+			ListCell *lc;
+
+			trelids = (List *) DatumGetPointer(GetToastrelList(trelids, event_relation->rd_id, 0, AccessShareLock));
+	// XXX PG_TOASTREL
+			foreach(lc, trelids)
+			{
+				Toastrel trel = (Toastrel) (lfirst(lc));
+				toastrelid = trel->toastentid;
+
+/*		toastrelid = event_relation->rd_rel->reltoastrelid; */
+
+				/* drop storage while table still looks like a table  */
+				RelationDropStorage(event_relation);
+				DeleteSystemAttributeTuples(event_relid);
+
+				/*
+		 		* Drop the toast table if any.  (This won't take care of updating the
+		 		* toast fields in the relation's own pg_class entry; we handle that
+		 		* below.)
+		 		*/
+				if (OidIsValid(toastrelid))
+				{
+					ObjectAddress toastobject;
+
+					/*
+			 		* Delete the dependency of the toast relation on the main
+			 		* relation so we can drop the former without dropping the latter.
+			 		*/
+					deleteDependencyRecordsFor(RelationRelationId, toastrelid,
+									   false);
+
+					/* Make deletion of dependency record visible */
+					CommandCounterIncrement();
+
+					/* Now drop toast table, including its index */
+					toastobject.classId = RelationRelationId;
+					toastobject.objectId = toastrelid;
+					toastobject.objectSubId = 0;
+					performDeletion(&toastobject, DROP_RESTRICT,
+							PERFORM_DELETION_INTERNAL);
+				}
+
+				/*
+		 		* SetRelationRuleStatus may have updated the pg_class row, so we must
+		 		* advance the command counter before trying to update it again.
+			 	*/
+				CommandCounterIncrement();
+			}
+		}
+
+		/*
+		 * Fix pg_class entry to look like a normal view's, including setting
+		 * the correct relkind and removal of reltoastrelid of the toast table
+		 * we potentially removed above.
+		 */
+		classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(event_relid));
+		if (!HeapTupleIsValid(classTup))
+			elog(ERROR, "cache lookup failed for relation %u", event_relid);
+		classForm = (Form_pg_class) GETSTRUCT(classTup);
+
+		classForm->relam = InvalidOid;
+		classForm->reltablespace = InvalidOid;
+		classForm->relpages = 0;
+		classForm->reltuples = -1;
+		classForm->relallvisible = 0;
+		classForm->reltoastrelid = InvalidOid;
+		classForm->relhasindex = false;
+		classForm->relkind = RELKIND_VIEW;
+		classForm->relfrozenxid = InvalidTransactionId;
+		classForm->relminmxid = InvalidMultiXactId;
+		classForm->relreplident = REPLICA_IDENTITY_NOTHING;
+
+		CatalogTupleUpdate(relationRelation, &classTup->t_self, classTup);
+
+		heap_freetuple(classTup);
+		table_close(relationRelation, RowExclusiveLock);
 	}
 
 	ObjectAddressSet(address, RewriteRelationId, ruleId);

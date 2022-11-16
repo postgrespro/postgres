@@ -76,6 +76,15 @@ typedef struct ToastedAttribute
 	AttrNumber	attnum;			/* attribute in main table */
 } ToastedAttribute;
 
+typedef struct ToastRelationCtx
+{
+	Oid		toastrelid;
+	Relation	toast_rel;
+	Relation	*toast_indexes;
+	Relation	valid_toast_index;
+	int		num_toast_indexes;
+} ToastRelationCtx;
+
 /*
  * Struct holding the running context information during
  * a lifetime of a verify_heapam execution.
@@ -149,6 +158,10 @@ typedef struct HeapCheckContext
 	/* The descriptor and tuplestore for verify_heapam's result tuples */
 	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
+
+	/* PG_TOASTREL toast relations list */
+	List		*toastrelids;
+	List		*toastrels;
 } HeapCheckContext;
 
 /* Internal implementation */
@@ -364,12 +377,46 @@ verify_heapam(PG_FUNCTION_ARGS)
 		last_block = (BlockNumber) lb;
 	}
 
+	list_free(ctx.toastrelids);
+	list_free(ctx.toastrels);
+
+	ctx.toastrelids = (List *) DatumGetPointer(GetToastrelList(ctx.toastrelids, ctx.rel->rd_id, 0, AccessShareLock));
+
 	/* Optionally open the toast relation, if any. */
-	if (ctx.rel->rd_rel->reltoastrelid && check_toast)
+/*	if (ctx.rel->rd_rel->reltoastrelid && check_toast) */
+	if(ctx.toastrelids && check_toast)
 	{
 		int			offset;
+		ListCell		*lc;
+		Oid			entry;
 
+		foreach(lc, ctx.toastrelids)
+		{
+			ToastRelationCtx *trel_entry = palloc(sizeof(ToastRelationCtx));
+
+			entry = lfirst_oid(lc);
+			trel_entry->toastrelid = entry;
+			trel_entry->toast_rel = table_open(trel_entry->toastrelid,
+								   AccessShareLock);
+			offset = toast_open_indexes(trel_entry->toast_rel,
+									AccessShareLock,
+									&(trel_entry->toast_indexes),
+									&(trel_entry->num_toast_indexes));
+			trel_entry->valid_toast_index = trel_entry->toast_indexes[offset];
+
+			ctx.toastrels = lcons(trel_entry, ctx.toastrels);
+/*
+			ctx.toast_rel = table_open(ctx.rel->rd_rel->reltoastrelid,
+								   AccessShareLock);
+			offset = toast_open_indexes(ctx.toast_rel,
+									AccessShareLock,
+									&(ctx.toast_indexes),
+									&(ctx.num_toast_indexes));
+			ctx.valid_toast_index = ctx.toast_indexes[offset];
+*/
+		}
 		/* Main relation has associated toast relation */
+/* XXX PG_TOASTREL
 		ctx.toast_rel = table_open(ctx.rel->rd_rel->reltoastrelid,
 								   AccessShareLock);
 		offset = toast_open_indexes(ctx.toast_rel,
@@ -377,6 +424,7 @@ verify_heapam(PG_FUNCTION_ARGS)
 									&(ctx.toast_indexes),
 									&(ctx.num_toast_indexes));
 		ctx.valid_toast_index = ctx.toast_indexes[offset];
+*/
 	}
 	else
 	{
@@ -535,12 +583,34 @@ verify_heapam(PG_FUNCTION_ARGS)
 		ReleaseBuffer(vmbuffer);
 
 	/* Close the associated toast table and indexes, if any. */
+	/* Optionally open the toast relation, if any. */
+/*	if (ctx.rel->rd_rel->reltoastrelid && check_toast) */
+	if(ctx.toastrels)
+	{
+		ListCell		*lc;
+
+		foreach(lc, ctx.toastrels)
+		{
+			ToastRelationCtx *trel_entry = palloc(sizeof(ToastRelationCtx));
+
+			trel_entry = (ToastRelationCtx *) DatumGetPointer(lfirst(lc));
+
+			toast_close_indexes(trel_entry->toast_indexes, trel_entry->num_toast_indexes,
+							AccessShareLock);
+			if (trel_entry->toast_rel)
+				table_close(trel_entry->toast_rel, AccessShareLock);
+		}
+	}
+	list_free(ctx.toastrelids);
+	list_free(ctx.toastrels);
+
+/*	
 	if (ctx.toast_indexes)
 		toast_close_indexes(ctx.toast_indexes, ctx.num_toast_indexes,
 							AccessShareLock);
 	if (ctx.toast_rel)
 		table_close(ctx.toast_rel, AccessShareLock);
-
+*/
 	/* Close the main relation */
 	relation_close(ctx.rel, AccessShareLock);
 
@@ -1422,7 +1492,8 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	}
 
 	/* The relation better have a toast table */
-	if (!ctx->rel->rd_rel->reltoastrelid)
+/*	if (!ctx->rel->rd_rel->reltoastrelid) */
+	if (!HasToastrel(ctx->rel->rd_id, 0, AccessShareLock))
 	{
 		report_corruption(ctx,
 						  psprintf("toast value %u is external but relation has no toast relation",
