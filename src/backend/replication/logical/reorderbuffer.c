@@ -4755,12 +4755,13 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		struct varlena *varlena;
 
 		/* va_rawsize is the size of the original datum -- including header */
-		struct varatt_external toast_pointer;
+		struct varatt_long_external toast_pointer;
 		struct varatt_indirect redirect_pointer;
 		struct varlena *new_datum = NULL;
 		struct varlena *reconstructed;
 		dlist_iter	it;
 		Size		data_done = 0;
+		uint64	valueid = 0;
 
 		/* system columns aren't toasted */
 		if (attr->attnum < 0)
@@ -4784,14 +4785,15 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		if (!VARATT_IS_EXTERNAL(varlena))
 			continue;
 
-		VARATT_EXTERNAL_GET_POINTER(toast_pointer, varlena);
+		VARATT_EXTERNAL_GET_LONG_POINTER(toast_pointer, varlena);
 
 		/*
 		 * Check whether the toast tuple changed, replace if so.
 		 */
+		valueid = get_uint64align32(&toast_pointer.va_valueid);
 		ent = (ReorderBufferToastEnt *)
 			hash_search(txn->toast_hash,
-						(void *) &toast_pointer.va_valueid,
+						(void *) &valueid,
 						HASH_FIND,
 						NULL);
 		if (ent == NULL)

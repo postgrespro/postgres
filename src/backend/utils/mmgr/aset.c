@@ -1025,12 +1025,13 @@ AllocSetFree(void *pointer)
 #ifdef MEMORY_CONTEXT_CHECKING
 		{
 			Size		chunk_size = block->endptr - (char *) pointer;
-
 			/* Test for someone scribbling on unused space in chunk */
 			Assert(chunk->requested_size < chunk_size);
 			if (!sentinel_ok(pointer, chunk->requested_size))
-				elog(WARNING, "detected write past chunk end in %s %p",
-					 set->header.name, chunk);
+				elog(WARNING, "1 detected write past chunk end in %s %p req size %ld ch size %ld",
+					 set->header.name, chunk, chunk->requested_size, chunk_size);
+/*				elog(WARNING, "detected write past chunk end in %s %p",
+					 set->header.name, chunk); */
 		}
 #endif
 
@@ -1072,8 +1073,11 @@ AllocSetFree(void *pointer)
 		/* Test for someone scribbling on unused space in chunk */
 		if (chunk->requested_size < GetChunkSizeFromFreeListIdx(fidx))
 			if (!sentinel_ok(pointer, chunk->requested_size))
-				elog(WARNING, "detected write past chunk end in %s %p",
-					 set->header.name, chunk);
+				elog(WARNING, "2 detected write past chunk end in %s %p size %ld f size %ld",
+					 set->header.name, chunk, chunk->requested_size, GetChunkSizeFromFreeListIdx(fidx));
+
+/*				elog(WARNING, "detected write past chunk end in %s %p",
+					 set->header.name, chunk); */
 #endif
 
 #ifdef CLOBBER_FREED_MEMORY
@@ -1148,8 +1152,12 @@ AllocSetRealloc(void *pointer, Size size)
 		/* Test for someone scribbling on unused space in chunk */
 		Assert(chunk->requested_size < oldsize);
 		if (!sentinel_ok(pointer, chunk->requested_size))
+			elog(WARNING, "detected write past chunk end in %s %p  size %ld oldsize %ld",
+				 set->header.name, chunk, chunk->requested_size, oldsize);
+/*
 			elog(WARNING, "detected write past chunk end in %s %p",
 				 set->header.name, chunk);
+*/
 #endif
 
 #ifdef MEMORY_CONTEXT_CHECKING
@@ -1246,10 +1254,11 @@ AllocSetRealloc(void *pointer, Size size)
 
 #ifdef MEMORY_CONTEXT_CHECKING
 	/* Test for someone scribbling on unused space in chunk */
+//	elog(NOTICE, "write past chunk 4 req size %ld oldsize %ld", chunk->requested_size, oldsize);
 	if (chunk->requested_size < oldsize)
 		if (!sentinel_ok(pointer, chunk->requested_size))
-			elog(WARNING, "detected write past chunk end in %s %p",
-				 set->header.name, chunk);
+			elog(WARNING, "detected write past chunk end in %s %p size %ld oldsize %ld",
+				 set->header.name, chunk, chunk->requested_size, oldsize);
 #endif
 
 	/*
@@ -1603,9 +1612,12 @@ AllocSetCheck(MemoryContext context)
 			 */
 			if (dsize != InvalidAllocSize && dsize < chsize &&
 				!sentinel_ok(chunk, ALLOC_CHUNKHDRSZ + dsize))
-				elog(WARNING, "problem in alloc set %s: detected write past chunk end in block %p, chunk %p",
-					 name, block, chunk);
-
+				elog(WARNING, "problem in alloc set %s: detected write past chunk end in block %p, chunk %p size %ld oldsize %ld",
+					 name, block, chunk, dsize, chsize);
+/*
+				elog(WARNING, "problem in alloc set %s: detected write past chunk end in block %p, chunk %p size %ld oldsize %ld",
+					 name, block, chunk, dsize, chsize);
+*/
 			/*
 			 * If chunk is allocated, disallow external access to private part
 			 * of chunk header.

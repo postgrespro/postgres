@@ -72,9 +72,34 @@ typedef struct varatt_external
 	int32		va_rawsize;		/* Original data size (includes header) */
 	uint32		va_extinfo;		/* External saved size (without header) and
 								 * compression method */
-	Oid			va_valueid;		/* Unique ID of value within TOAST table */
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
+	Oid			va_valueid;		/* Unique ID of value within TOAST table */
 }			varatt_external;
+
+typedef struct uint64align32
+{
+	uint32	hi;
+	uint32	lo;
+} uint64align32;
+
+#define set_uint64align32(p, v)	\
+	( \
+		(p)->hi = (v) >> 32, \
+		(p)->lo = (v) & 0xffffffff \
+	)
+
+#define get_uint64align32(p)	\
+	(((uint64)((p)->hi)) << 32 | ((uint64)((p)->lo)))
+
+typedef struct varatt_long_external
+{
+	int32				va_rawsize;		/* Original data size (includes header) */
+	uint32			va_extinfo;		/* External saved size (without header) and */
+								 			/* compression method */
+	Oid				va_toastrelid;	/* RelID of TOAST table containing it */
+	uint64align32	va_valueid;		/* Unique ID of value within TOAST table */
+/* 	char				*inline_tail_data; */
+}			varatt_long_external;
 
 /*
  * These macros define the "saved size" portion of va_extinfo.  Its remaining
@@ -124,6 +149,7 @@ typedef enum vartag_external
 	VARTAG_INDIRECT = 1,
 	VARTAG_EXPANDED_RO = 2,
 	VARTAG_EXPANDED_RW = 3,
+	VARTAG_LONG_EXTERNAL = 4,
 	VARTAG_ONDISK = 18
 } vartag_external;
 
@@ -135,6 +161,7 @@ typedef enum vartag_external
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (tag) == VARTAG_LONG_EXTERNAL ? sizeof(varatt_long_external) : \
 	 (AssertMacro(false), 0))
 
 /*
@@ -313,6 +340,13 @@ typedef struct
  * Other macros here should usually be used only by tuple assembly/disassembly
  * code and code that specifically wants to work with still-toasted Datums.
  */
+/* , datalen) (datalen)*/
+/* (datalen)  + (datalen) */
+/* #define VARATT_LONG_SIZE		((Size) offsetof(varatt_long_external, inline_tail_data)) */
+
+#define VARATT_LONG_SIZE		((Size) sizeof(varatt_long_external))
+#define VARSIZE_LONG_EXTERNAL(PTR)		((Size) VARHDRSZ_EXTERNAL + VARATT_LONG_SIZE)
+
 #define VARDATA(PTR)						VARDATA_4B(PTR)
 #define VARSIZE(PTR)						VARSIZE_4B(PTR)
 
@@ -320,7 +354,10 @@ typedef struct
 #define VARDATA_SHORT(PTR)					VARDATA_1B(PTR)
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
-#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR)))
+#define VARSIZE_EXTERNAL(PTR)				(VARATT_IS_LONG_EXTERNAL(PTR) ? \
+													VARSIZE_LONG_EXTERNAL(PTR) : \
+													VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR)))
+
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
 
 #define VARATT_IS_COMPRESSED(PTR)			VARATT_IS_4B_C(PTR)
@@ -339,6 +376,8 @@ typedef struct
 	(VARATT_IS_EXTERNAL(PTR) && !VARTAG_IS_EXPANDED(VARTAG_EXTERNAL(PTR)))
 #define VARATT_IS_SHORT(PTR)				VARATT_IS_1B(PTR)
 #define VARATT_IS_EXTENDED(PTR)				(!VARATT_IS_4B_U(PTR))
+#define VARATT_IS_LONG_EXTERNAL(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_LONG_EXTERNAL)
 
 #define SET_VARSIZE(PTR, len)				SET_VARSIZE_4B(PTR, len)
 #define SET_VARSIZE_SHORT(PTR, len)			SET_VARSIZE_1B(PTR, len)

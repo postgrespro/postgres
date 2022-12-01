@@ -68,7 +68,7 @@ typedef enum SkipPages
  */
 typedef struct ToastedAttribute
 {
-	struct varatt_external toast_pointer;
+	struct varatt_long_external toast_pointer;
 	BlockNumber blkno;			/* block in main table */
 	OffsetNumber offnum;		/* offset in main table */
 	AttrNumber	attnum;			/* attribute in main table */
@@ -1171,16 +1171,16 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 	if (isnull)
 	{
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u has toast chunk with null sequence number",
-										 ta->toast_pointer.va_valueid));
+								psprintf("toast value %ld has toast chunk with null sequence number",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid))));
 		return;
 	}
 	if (chunk_seq != *expected_chunk_seq)
 	{
 		/* Either the TOAST index is corrupt, or we don't have all chunks. */
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u index scan returned chunk %d when expecting chunk %d",
-										 ta->toast_pointer.va_valueid,
+								psprintf("toast value %ld index scan returned chunk %d when expecting chunk %d",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 chunk_seq, *expected_chunk_seq));
 	}
 	*expected_chunk_seq = chunk_seq + 1;
@@ -1191,8 +1191,8 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 	if (isnull)
 	{
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u chunk %d has null data",
-										 ta->toast_pointer.va_valueid,
+								psprintf("toast value %ld chunk %d has null data",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 chunk_seq));
 		return;
 	}
@@ -1211,8 +1211,8 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 		uint32		header = ((varattrib_4b *) chunk)->va_4byte.va_header;
 
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u chunk %d has invalid varlena header %0x",
-										 ta->toast_pointer.va_valueid,
+								psprintf("toast value %ld chunk %d has invalid varlena header %0x",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 chunk_seq, header));
 		return;
 	}
@@ -1223,8 +1223,8 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 	if (chunk_seq > last_chunk_seq)
 	{
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u chunk %d follows last expected chunk %d",
-										 ta->toast_pointer.va_valueid,
+								psprintf("toast value %ld chunk %d follows last expected chunk %d",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 chunk_seq, last_chunk_seq));
 		return;
 	}
@@ -1234,8 +1234,8 @@ check_toast_tuple(HeapTuple toasttup, HeapCheckContext *ctx,
 
 	if (chunksize != expected_size)
 		report_toast_corruption(ctx, ta,
-								psprintf("toast value %u chunk %d has size %u, but expected size %u",
-										 ta->toast_pointer.va_valueid,
+								psprintf("toast value %ld chunk %d has size %u, but expected size %u",
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 chunk_seq, chunksize, expected_size));
 }
 
@@ -1267,7 +1267,8 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	char	   *tp;				/* pointer to the tuple data */
 	uint16		infomask;
 	Form_pg_attribute thisatt;
-	struct varatt_external toast_pointer;
+/*	struct varatt_external toast_pointer; */
+	struct varatt_long_external toast_pointer;
 
 	infomask = ctx->tuphdr->t_infomask;
 	thisatt = TupleDescAttr(RelationGetDescr(ctx->rel), ctx->attnum);
@@ -1326,7 +1327,7 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	{
 		uint8		va_tag = VARTAG_EXTERNAL(tp + ctx->offset);
 
-		if (va_tag != VARTAG_ONDISK)
+		if (va_tag != VARTAG_ONDISK && va_tag != VARTAG_LONG_EXTERNAL)
 		{
 			report_corruption(ctx,
 							  psprintf("toasted attribute has unexpected TOAST tag %u",
@@ -1373,13 +1374,15 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	/*
 	 * Must copy attr into toast_pointer for alignment considerations
 	 */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+/* XXX LONG */
+	VARATT_EXTERNAL_GET_LONG_POINTER(toast_pointer, attr);
+/*	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr); */
 
 	/* Toasted attributes too large to be untoasted should never be stored */
 	if (toast_pointer.va_rawsize > VARLENA_SIZE_LIMIT)
 		report_corruption(ctx,
-						  psprintf("toast value %u rawsize %d exceeds limit %d",
-								   toast_pointer.va_valueid,
+						  psprintf("toast value %ld rawsize %d exceeds limit %d",
+								   get_uint64align32(&toast_pointer.va_valueid),
 								   toast_pointer.va_rawsize,
 								   VARLENA_SIZE_LIMIT));
 
@@ -1406,16 +1409,16 @@ check_tuple_attribute(HeapCheckContext *ctx)
 		}
 		if (!valid)
 			report_corruption(ctx,
-							  psprintf("toast value %u has invalid compression method id %d",
-									   toast_pointer.va_valueid, cmid));
+							  psprintf("toast value %ld has invalid compression method id %d",
+									   get_uint64align32(&toast_pointer.va_valueid), cmid));
 	}
 
 	/* The tuple header better claim to contain toasted values */
 	if (!(infomask & HEAP_HASEXTERNAL))
 	{
 		report_corruption(ctx,
-						  psprintf("toast value %u is external but tuple header flag HEAP_HASEXTERNAL not set",
-								   toast_pointer.va_valueid));
+						  psprintf("toast value %ld is external but tuple header flag HEAP_HASEXTERNAL not set",
+								   get_uint64align32(&toast_pointer.va_valueid)));
 		return true;
 	}
 
@@ -1423,8 +1426,8 @@ check_tuple_attribute(HeapCheckContext *ctx)
 	if (!ctx->rel->rd_rel->reltoastrelid)
 	{
 		report_corruption(ctx,
-						  psprintf("toast value %u is external but relation has no toast relation",
-								   toast_pointer.va_valueid));
+						  psprintf("toast value %ld is external but relation has no toast relation",
+								   get_uint64align32(&toast_pointer.va_valueid)));
 		return true;
 	}
 
@@ -1443,7 +1446,7 @@ check_tuple_attribute(HeapCheckContext *ctx)
 
 		ta = (ToastedAttribute *) palloc0(sizeof(ToastedAttribute));
 
-		VARATT_EXTERNAL_GET_POINTER(ta->toast_pointer, attr);
+		VARATT_EXTERNAL_GET_LONG_POINTER(ta->toast_pointer, attr);
 		ta->blkno = ctx->blkno;
 		ta->offnum = ctx->offnum;
 		ta->attnum = ctx->attnum;
@@ -1477,10 +1480,16 @@ check_toasted_attribute(HeapCheckContext *ctx, ToastedAttribute *ta)
 	/*
 	 * Setup a scan key to find chunks in toast table with matching va_valueid
 	 */
+/*
 	ScanKeyInit(&toastkey,
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ta->toast_pointer.va_valueid));
+*/
+	ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_INT8EQ,
+				Int64GetDatum(get_uint64align32(&(ta->toast_pointer.va_valueid))));
 
 	/*
 	 * Check if any chunks for this toasted object exist in the toast table,
@@ -1504,11 +1513,11 @@ check_toasted_attribute(HeapCheckContext *ctx, ToastedAttribute *ta)
 	if (!found_toasttup)
 		report_toast_corruption(ctx, ta,
 								psprintf("toast value %u not found in toast table",
-										 ta->toast_pointer.va_valueid));
+										 get_uint64align32(&(ta->toast_pointer.va_valueid))));
 	else if (expected_chunk_seq <= last_chunk_seq)
 		report_toast_corruption(ctx, ta,
 								psprintf("toast value %u was expected to end at chunk %d, but ended while expecting chunk %d",
-										 ta->toast_pointer.va_valueid,
+										 get_uint64align32(&(ta->toast_pointer.va_valueid)),
 										 last_chunk_seq, expected_chunk_seq));
 }
 
