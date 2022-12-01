@@ -266,7 +266,6 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		biggest_attno = toast_tuple_find_biggest_attribute(&ttc, false, true);
 		if (biggest_attno < 0)
 			break;
-
 		toast_tuple_externalize(&ttc, biggest_attno, options);
 	}
 
@@ -329,9 +328,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	}
 	else
 		result_tuple = newtup;
-
 	toast_tuple_cleanup(&ttc);
-
 	return result_tuple;
 }
 
@@ -623,7 +620,7 @@ toast_build_flattened_tuple(TupleDesc tupleDesc,
  * result is the varlena into which the results should be written.
  */
 void
-heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
+heap_fetch_toast_slice(Relation toastrel, uint64 valueid, int32 attrsize,
 					   int32 sliceoffset, int32 slicelength,
 					   struct varlena *result)
 {
@@ -652,10 +649,16 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 	Assert(endchunk <= totalchunks);
 
 	/* Set up a scan key to fetch from the index. */
+/*
 	ScanKeyInit(&toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(valueid));
+*/
+	ScanKeyInit(&toastkey[0],
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_INT8EQ,
+				Int64GetDatum(valueid));
 
 	/*
 	 * No additional condition if fetching all chunks. Otherwise, use an
@@ -727,7 +730,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		else
 		{
 			/* should never happen */
-			elog(ERROR, "found toasted toast chunk for toast value %u in %s",
+			elog(ERROR, "found toasted toast chunk for toast value %ld in %s",
 				 valueid, RelationGetRelationName(toastrel));
 			chunksize = 0;		/* keep compiler quiet */
 			chunkdata = NULL;
@@ -739,13 +742,13 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		if (curchunk != expectedchunk)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk number %d (expected %d) for toast value %u in %s",
+					 errmsg_internal("unexpected chunk number %d (expected %d) for toast value %ld in %s",
 									 curchunk, expectedchunk, valueid,
 									 RelationGetRelationName(toastrel))));
 		if (curchunk > endchunk)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk number %d (out of range %d..%d) for toast value %u in %s",
+					 errmsg_internal("unexpected chunk number %d (out of range %d..%d) for toast value %ld in %s",
 									 curchunk,
 									 startchunk, endchunk, valueid,
 									 RelationGetRelationName(toastrel))));
@@ -754,7 +757,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 		if (chunksize != expected_size)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg_internal("unexpected chunk size %d (expected %d) in chunk %d of %d for toast value %u in %s",
+					 errmsg_internal("unexpected chunk size %d (expected %d) in chunk %d of %d for toast value %ld in %s",
 									 chunksize, expected_size,
 									 curchunk, totalchunks, valueid,
 									 RelationGetRelationName(toastrel))));
@@ -783,7 +786,7 @@ heap_fetch_toast_slice(Relation toastrel, Oid valueid, int32 attrsize,
 	if (expectedchunk != (endchunk + 1))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg_internal("missing chunk number %d for toast value %u in %s",
+				 errmsg_internal("missing chunk number %d for toast value %ld in %s",
 								 expectedchunk, valueid,
 								 RelationGetRelationName(toastrel))));
 

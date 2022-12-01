@@ -666,8 +666,13 @@ GenerationFree(void *pointer)
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(chunk->requested_size < chunksize);
 	if (!sentinel_ok(pointer, chunk->requested_size))
+		elog(WARNING, "detected write past chunk end in %s %p size %ld oldsize %ld",
+			 ((MemoryContext) block->context)->name, chunk, chunk->requested_size, chunksize);
+
+/*
 		elog(WARNING, "detected write past chunk end in %s %p",
 			 ((MemoryContext) block->context)->name, chunk);
+*/
 #endif
 
 #ifdef CLOBBER_FREED_MEMORY
@@ -775,8 +780,12 @@ GenerationRealloc(void *pointer, Size size)
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(chunk->requested_size < oldsize);
 	if (!sentinel_ok(pointer, chunk->requested_size))
+		elog(WARNING, "detected write past chunk end in %s %p size %ld oldsize %ld",
+			 ((MemoryContext) set)->name, chunk, chunk->requested_size, oldsize);
+/*
 		elog(WARNING, "detected write past chunk end in %s %p",
 			 ((MemoryContext) set)->name, chunk);
+*/
 #endif
 
 	/*

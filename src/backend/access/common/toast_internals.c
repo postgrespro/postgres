@@ -27,8 +27,168 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
+#include "access/htup_details.h"
+#include "commands/defrem.h"
+#include "lib/pairingheap.h"
+#include "utils/builtins.h"
+#include "utils/memutils.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
+
+#define InvalidInt64 0x0000000000000000
+
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+static bool toastrel_long_valueid_exists(Relation toastrel, uint64 valueid, bool long_ind);
+
+/* Toast Relation counters cache */
+typedef struct ToastCounterCacheEntry
+{
+	Oid			toastrelOid;
+	uint64		counter;
+} ToastCounterCacheEntry;
+
+static List	*ToastCounterCache = NIL;
+
+uint64
+SearchMinUnusedValueid(Oid	toastrelOid)
+{
+	ToastCounterCacheEntry  *entry;
+	bool	cnt_exists_ind = false;
+	Relation toast_rel;
+	uint64	valueid = 0;
+	uint64	hi_valueid = 0xffffffffffff;
+	uint64	lo_valueid = 0;
+	ScanKeyData toastkey;
+	SysScanDesc toastscan;
+	int			num_indexes;
+	int			validIndex;
+	Relation   *toastidxs;
+
+
+	toast_rel = table_open(toastrelOid, AccessShareLock);
+	validIndex = toast_open_indexes(toast_rel,
+									AccessShareLock,
+									&toastidxs,
+									&num_indexes);
+
+	ScanKeyInit(&toastkey,
+			(AttrNumber) 1,
+			BTEqualStrategyNumber, F_INT8EQ,
+			Int64GetDatum(lo_valueid + 1));
+	toastscan = systable_beginscan(toast_rel,
+								   RelationGetRelid(toastidxs[validIndex]),
+								   true, SnapshotAny, 1, &toastkey);
+
+	if (systable_getnext(toastscan) != NULL)
+		cnt_exists_ind = true;
+
+	systable_endscan(toastscan);
+	if(!cnt_exists_ind)
+		goto out;
+
+	while(true) //(hi_valueid - lo_valueid) > 0)
+	{
+		valueid = (lo_valueid + ((hi_valueid - lo_valueid) >> 1));
+		cnt_exists_ind = false;
+
+		ScanKeyInit(&toastkey,
+			(AttrNumber) 1,
+			BTEqualStrategyNumber, F_INT8EQ,
+			Int64GetDatum(valueid));
+		toastscan = systable_beginscan(toast_rel,
+								   RelationGetRelid(toastidxs[validIndex]),
+								   true, SnapshotAny, 1, &toastkey);
+
+		if (systable_getnext(toastscan) != NULL)
+			cnt_exists_ind = true;
+
+		systable_endscan(toastscan);
+
+		if( hi_valueid - lo_valueid == 0 )
+			goto out;
+
+		if(cnt_exists_ind)
+			lo_valueid = valueid + 1;
+		else
+			hi_valueid = valueid - 1;
+	}
+
+
+out:
+	toast_close_indexes(toastidxs, num_indexes, NoLock);
+
+	if(cnt_exists_ind) 
+		valueid++;
+
+	table_close(toast_rel, NoLock);
+
+	entry = palloc(sizeof(*entry));
+
+	entry->toastrelOid = toastrelOid;
+	entry->counter = valueid;
+
+	ToastCounterCache = lappend(ToastCounterCache, entry);
+
+	return valueid;
+}
+
+/*
+ * SearchTsrCache - get cached toaster routine, emits an error if toaster
+ * doesn't exist
+ */
+uint64
+SearchTrelCounterCache(Oid	toastrelOid)
+{
+	ListCell		   *lc;
+	ToastCounterCacheEntry  *entry;
+	MemoryContext		ctx;
+	uint64	valueid = 0;
+	ctx = MemoryContextSwitchTo(CacheMemoryContext);
+
+	foreach(lc, ToastCounterCache)
+	{
+		entry = (ToastCounterCacheEntry*)lfirst(lc);
+		if (entry->toastrelOid == toastrelOid)
+		{
+			if(entry->counter < 0xffffffffffffffff)
+				entry->counter++;
+			else
+				entry->counter = 1;
+			valueid = entry->counter;
+			goto out;
+		}
+	}
+
+out:
+	MemoryContextSwitchTo(ctx);
+
+	return valueid;
+}
+
+uint64
+InsertTrelCounterCache(Oid	toastrelOid)
+{
+	ToastCounterCacheEntry  *entry;
+	MemoryContext		ctx;
+	uint64	valueid = 0;
+	ctx = MemoryContextSwitchTo(CacheMemoryContext);
+
+	valueid = SearchMinUnusedValueid(toastrelOid);
+
+	/* did not find entry, make a new one */
+	entry = palloc(sizeof(*entry));
+
+	entry->toastrelOid = toastrelOid;
+	entry->counter = valueid;
+	ToastCounterCache = lappend(ToastCounterCache, entry);
+
+	MemoryContextSwitchTo(ctx);
+
+	return valueid;
+}
+
+/**/
 
 /* ----------
  * toast_compress_datum -
@@ -128,7 +288,7 @@ toast_save_datum(Relation rel, Datum value,
 	bool		t_isnull[3];
 	CommandId	mycid = GetCurrentCommandId(true);
 	struct varlena *result;
-	struct varatt_external toast_pointer;
+	struct varatt_long_external toast_pointer;
 	union
 	{
 		struct varlena hdr;
@@ -144,6 +304,7 @@ toast_save_datum(Relation rel, Datum value,
 	Pointer		dval = DatumGetPointer(value);
 	int			num_indexes;
 	int			validIndex;
+	bool			long_ind = false;
 
 	Assert(!VARATT_IS_EXTERNAL(value));
 
@@ -212,6 +373,16 @@ toast_save_datum(Relation rel, Datum value,
 	else
 		toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
 
+	if(TupleDescAttr(toasttupDesc, 0)->atttypid == OIDOID || TupleDescAttr(toasttupDesc, 0)->atttypid == INT4OID)
+	{
+/* regular toast pointer*/
+		long_ind = false;
+	}
+	else
+	{
+/* 64-bit id */
+		long_ind = true;
+	}
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
 	 *
@@ -226,27 +397,38 @@ toast_save_datum(Relation rel, Datum value,
 	 */
 	if (!OidIsValid(rel->rd_toastoid))
 	{
+		uint64 valueid = 0;
 		/* normal case: just choose an unused OID */
+/*		
 		toast_pointer.va_valueid =
 			GetNewOidWithIndex(toastrel,
 							   RelationGetRelid(toastidxs[validIndex]),
 							   (AttrNumber) 1);
+*/
+		valueid = SearchTrelCounterCache(rel->rd_rel->reltoastrelid);
+		if(valueid == 0)
+			valueid = InsertTrelCounterCache(rel->rd_rel->reltoastrelid);
+		set_uint64align32(&(toast_pointer.va_valueid), valueid);
 	}
 	else
 	{
+		uint64 zero_int8 = 0;
+		uint64 valueid = 0;
 		/* rewrite case: check to see if value was in old toast table */
-		toast_pointer.va_valueid = InvalidOid;
+		/* toast_pointer.va_valueid = InvalidOid; */
+		set_uint64align32(&(toast_pointer.va_valueid), zero_int8);
 		if (oldexternal != NULL)
 		{
-			struct varatt_external old_toast_pointer;
+			struct varatt_long_external old_toast_pointer;
 
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
+			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) || VARATT_IS_LONG_EXTERNAL(oldexternal));
 			/* Must copy to access aligned fields */
-			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
+			VARATT_EXTERNAL_GET_LONG_POINTER(old_toast_pointer, oldexternal);
 			if (old_toast_pointer.va_toastrelid == rel->rd_toastoid)
 			{
 				/* This value came from the old toast table; reuse its OID */
-				toast_pointer.va_valueid = old_toast_pointer.va_valueid;
+				/* toast_pointer.va_valueid = old_toast_pointer.va_valueid; */
+				set_uint64align32(&(toast_pointer.va_valueid), get_uint64align32(&(old_toast_pointer.va_valueid)));
 
 				/*
 				 * There is a corner case here: the table rewrite might have
@@ -265,35 +447,50 @@ toast_save_datum(Relation rel, Datum value,
 				 * copies belonging to already-deleted heap tuples would not
 				 * be reclaimed by VACUUM.
 				 */
+/*
 				if (toastrel_valueid_exists(toastrel,
 											toast_pointer.va_valueid))
+*/
+				if (toastrel_long_valueid_exists(toastrel,
+											get_uint64align32(&(toast_pointer.va_valueid)), long_ind))
 				{
 					/* Match, so short-circuit the data storage loop below */
 					data_todo = 0;
 				}
 			}
 		}
-		if (toast_pointer.va_valueid == InvalidOid)
+/*		if (toast_pointer.va_valueid == InvalidOid) */
+		if (get_uint64align32(&(toast_pointer.va_valueid)) == zero_int8)
 		{
+			bool exists_ind = false;
 			/*
 			 * new value; must choose an OID that doesn't conflict in either
 			 * old or new toast table
 			 */
 			do
 			{
+/*
 				toast_pointer.va_valueid =
 					GetNewOidWithIndex(toastrel,
 									   RelationGetRelid(toastidxs[validIndex]),
 									   (AttrNumber) 1);
-			} while (toastid_valueid_exists(rel->rd_toastoid,
-											toast_pointer.va_valueid));
+*/
+				valueid = SearchTrelCounterCache(rel->rd_rel->reltoastrelid);
+				if(valueid == 0)
+					valueid = InsertTrelCounterCache(rel->rd_rel->reltoastrelid);
+//				set_uint64align32(&(toast_pointer.va_valueid), valueid);
+
+//				set_uint64align32(&(toast_pointer.va_valueid), SearchTrelCounterCache(rel->rd_rel->reltoastrelid));
+				exists_ind = toastrel_long_valueid_exists(toastrel,
+											get_uint64align32(&(toast_pointer.va_valueid)), long_ind);
+			} while (!exists_ind);
+			set_uint64align32(&(toast_pointer.va_valueid), valueid);
 		}
 	}
-
 	/*
 	 * Initialize constant parts of the tuple data
 	 */
-	t_values[0] = ObjectIdGetDatum(toast_pointer.va_valueid);
+	t_values[0] = Int64GetDatum(get_uint64align32(&(toast_pointer.va_valueid))); //ObjectIdGetDatum(toast_pointer.va_valueid);
 	t_values[2] = PointerGetDatum(&chunk_data);
 	t_isnull[0] = false;
 	t_isnull[1] = false;
@@ -338,12 +535,14 @@ toast_save_datum(Relation rel, Datum value,
 		{
 			/* Only index relations marked as ready can be updated */
 			if (toastidxs[i]->rd_index->indisready)
+			{
 				index_insert(toastidxs[i], t_values, t_isnull,
 							 &(toasttup->t_self),
 							 toastrel,
 							 toastidxs[i]->rd_index->indisunique ?
 							 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
 							 false, NULL);
+			}
 		}
 
 		/*
@@ -365,14 +564,14 @@ toast_save_datum(Relation rel, Datum value,
 	 */
 	toast_close_indexes(toastidxs, num_indexes, NoLock);
 	table_close(toastrel, NoLock);
-
 	/*
 	 * Create the TOAST pointer value that we'll return
 	 */
-	result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
-	SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK);
-	memcpy(VARDATA_EXTERNAL(result), &toast_pointer, sizeof(toast_pointer));
-
+	// result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
+	result = (struct varlena *) palloc(VARSIZE_LONG_EXTERNAL(toast_pointer));
+/*	SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK); */
+	SET_VARTAG_EXTERNAL(result, VARTAG_LONG_EXTERNAL);
+	memcpy(VARDATA_EXTERNAL(result), &toast_pointer, VARATT_LONG_SIZE);
 	return PointerGetDatum(result);
 }
 
@@ -386,7 +585,7 @@ void
 toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 {
 	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
-	struct varatt_external toast_pointer;
+	struct varatt_long_external toast_pointer;
 	Relation	toastrel;
 	Relation   *toastidxs;
 	ScanKeyData toastkey;
@@ -396,11 +595,11 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	int			validIndex;
 	SnapshotData SnapshotToast;
 
-	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr) && !VARATT_IS_LONG_EXTERNAL(attr))
 		return;
 
 	/* Must copy to access aligned fields */
-	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+	VARATT_EXTERNAL_GET_LONG_POINTER(toast_pointer, attr);
 
 	/*
 	 * Open the toast relation and its indexes
@@ -416,10 +615,27 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	/*
 	 * Setup a scan key to find chunks with matching va_valueid
 	 */
-	ScanKeyInit(&toastkey,
+/*	if(VARATT_IS_LONG_EXTERNAL(attr))
+	{ */
+		ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_INT8EQ,
+				Int64GetDatum(get_uint64align32(&toast_pointer.va_valueid)));
+/*	}
+	else
+	{
+		ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum((&toast_pointer.va_valueid)->lo));
+*/
+/*
+		ScanKeyInit(&toastkey,
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(toast_pointer.va_valueid));
+*/
+/*	} */
 
 	/*
 	 * Find all the chunks.  (We don't actually care whether we see them in
@@ -449,6 +665,65 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	toast_close_indexes(toastidxs, num_indexes, NoLock);
 	table_close(toastrel, NoLock);
 }
+
+static bool
+toastrel_long_valueid_exists(Relation toastrel, uint64 valueid, bool long_ind)
+{
+	bool		result = false;
+	ScanKeyData toastkey;
+	SysScanDesc toastscan;
+	int			num_indexes;
+	int			validIndex;
+	Relation   *toastidxs;
+	TupleDesc	tupDesc;
+	uint32		short_valueid;
+
+	tupDesc = RelationGetDescr(toastrel);
+	/* Fetch a valid index relation */
+	validIndex = toast_open_indexes(toastrel,
+									RowExclusiveLock,
+									&toastidxs,
+									&num_indexes);
+
+	/*
+	 * Setup a scan key to find chunks with matching va_valueid
+	 */
+/*	
+	if(long_ind)
+	{*/
+		ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_INT8EQ,
+				Int64GetDatum(valueid));
+/*	}
+	else
+	{
+		short_valueid = (uint32) (valueid & 0xffffffff);
+
+		ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_OIDEQ,
+				Int32GetDatum(short_valueid));
+	}
+*/
+	/*
+	 * Is there any such chunk?
+	 */
+	toastscan = systable_beginscan(toastrel,
+								   RelationGetRelid(toastidxs[validIndex]),
+								   true, SnapshotAny, 1, &toastkey);
+
+	if (systable_getnext(toastscan) != NULL)
+		result = true;
+
+	systable_endscan(toastscan);
+
+	/* Clean up */
+	toast_close_indexes(toastidxs, num_indexes, RowExclusiveLock);
+
+	return result;
+}
+
 
 /* ----------
  * toastrel_valueid_exists -

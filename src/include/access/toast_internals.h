@@ -47,10 +47,15 @@ typedef struct toast_compress_header
 
 extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
+/* extern bool toastrel_long_valueid_exists(Relation toastrel, uint64 valueid, bool long_ind); */
 
 extern void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
 extern Datum toast_save_datum(Relation rel, Datum value,
 							  struct varlena *oldexternal, int options);
+
+extern uint64 SearchMinUnusedValueid(Oid	toastrelOid);
+extern uint64 SearchTrelCounterCache(Oid	toastrelOid);
+extern uint64 InsertTrelCounterCache(Oid	toastrelOid);
 
 extern int	toast_open_indexes(Relation toastrel,
 							   LOCKMODE lock,

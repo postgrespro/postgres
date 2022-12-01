@@ -3072,7 +3072,12 @@ initialize_data_directory(void)
 	 */
 	fputs(_("performing post-bootstrap initialization ... "), stdout);
 	fflush(stdout);
-
+/*
+	snprintf(cmd, sizeof(cmd),
+			 "\"%s\" %s %s template1 %s",
+			 backend_exec, backend_options, extra_options,
+			 debug ? "-d 5" : "");
+*/
 	snprintf(cmd, sizeof(cmd),
 			 "\"%s\" %s %s template1 >%s",
 			 backend_exec, backend_options, extra_options,

@@ -666,8 +666,12 @@ SlabFree(void *pointer)
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(slab->chunkSize < (slab->fullChunkSize - Slab_CHUNKHDRSZ));
 	if (!sentinel_ok(pointer, slab->chunkSize))
+		elog(WARNING, "detected write past chunk end in %s %p size %ld oldsize %ld",
+			 slab->header.name, chunk, slab->chunkSize, (slab->fullChunkSize - Slab_CHUNKHDRSZ));
+/*
 		elog(WARNING, "detected write past chunk end in %s %p",
 			 slab->header.name, chunk);
+*/
 #endif
 
 	/* push this chunk onto the head of the block's free list */

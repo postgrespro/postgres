@@ -204,9 +204,15 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
+/*
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1,
 					   "chunk_id",
 					   OIDOID,
+					   -1, 0);
+*/
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1,
+					   "chunk_id",
+					   INT8OID,
 					   -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2,
 					   "chunk_seq",
