@@ -655,7 +655,6 @@ heap_fetch_toast_slice(Relation toastrel, uint64 valueid, int32 attrsize,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(valueid));
 */
-	elog(NOTICE, "heap_fetch_toast_slice rel %u val %ld", toastrel->rd_id, valueid);
 	ScanKeyInit(&toastkey[0],
 				(AttrNumber) 1,
 				BTEqualStrategyNumber, F_INT8EQ,
