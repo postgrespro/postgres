@@ -174,7 +174,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 				struct varlena *new_val =
 					(struct varlena *) DatumGetPointer(toaster->copy_toast(ttc->ttc_rel, toasterid,
 										ttc->ttc_values[i],
-										false /* speculative */));
+										false /* speculative */,
+										i));
 
 				if (new_val)
 				{

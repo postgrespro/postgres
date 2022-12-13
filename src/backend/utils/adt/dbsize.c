@@ -427,7 +427,7 @@ calculate_table_size(Relation rel)
 	/*
 	 * Size of toast relation
 	 */
-	if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+	if(HasToastrel(InvalidOid, rel->rd_id, 0, AccessShareLock))
 	{
 		List *trelids = NIL;
 		ListCell *lc;

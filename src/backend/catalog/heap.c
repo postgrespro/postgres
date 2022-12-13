@@ -34,6 +34,7 @@
 #include "access/relation.h"
 #include "access/table.h"
 #include "access/tableam.h"
+#include "access/toasterapi.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
@@ -52,6 +53,7 @@
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_toastrel.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
 #include "commands/tablecmds.h"
@@ -1753,7 +1755,7 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
  * should never be called directly; go through performDeletion() instead.
  */
 void
-heap_drop_with_catalog(Oid relid)
+heap_drop_with_catalog(Oid relid, bool checkCache)
 {
 	Relation	rel;
 	HeapTuple	tuple;
@@ -1770,6 +1772,8 @@ heap_drop_with_catalog(Oid relid)
 	 * shared-cache-inval notice that will make them update their partition
 	 * descriptors.
 	 */
+	if(checkCache)
+	{
 	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for relation %u", relid);
@@ -1793,10 +1797,41 @@ heap_drop_with_catalog(Oid relid)
 	}
 
 	ReleaseSysCache(tuple);
+	} // if(checkCache)
+
+	rel = relation_open(relid, AccessExclusiveLock);
+
+	if(rel->rd_rel->relkind == RELKIND_TOASTVALUE && checkCache == true)
+	{
+		relation_close(rel, AccessExclusiveLock);
+		return;
+	}
+	relation_close(rel, AccessExclusiveLock);
+
+	if(HasToastrel(InvalidOid, relid, 0, AccessShareLock))
+	{
+		ListCell *lc;
+		List *toastrelids = NIL;
+		toastrelids = (List *) DatumGetPointer(GetToastrelList(toastrelids, relid, 0, AccessShareLock));
+		CommandCounterIncrement();
+/*FIXME remove logging*/
+// XXX PG_TOASTREL
+		foreach(lc, toastrelids)
+		{
+			Oid trel = lfirst_oid(lc);
+			heap_drop_with_catalog(trel, false);
+			CommandCounterIncrement();
+		}
+
+		DeleteToastRelation(InvalidOid, InvalidOid, relid, 0, 0,
+		0, RowExclusiveLock);
+		CommandCounterIncrement();
+	}
 
 	/*
 	 * Open and lock the relation.
 	 */
+
 	rel = relation_open(relid, AccessExclusiveLock);
 
 	/*
@@ -1804,7 +1839,8 @@ heap_drop_with_catalog(Oid relid)
 	 * might still have open queries or cursors, or pending trigger events, in
 	 * our own session.
 	 */
-	CheckTableNotInUse(rel, "DROP TABLE");
+	if(!(rel->rd_rel->relkind == RELKIND_TOASTVALUE && checkCache == false))
+		CheckTableNotInUse(rel, "DROP TABLE");
 
 	/*
 	 * This effectively deletes all rows in the table, and may be done in a
@@ -3042,7 +3078,9 @@ heap_truncate(List *relids)
 void
 heap_truncate_one_rel(Relation rel)
 {
-	Oid			toastrelid;
+/*	Oid			toastrelid; */
+	List			*toastrelids = NIL;
+	ListCell		*lc;
 
 	/*
 	 * Truncate the relation.  Partitioned tables have no storage, so there is
@@ -3058,10 +3096,14 @@ heap_truncate_one_rel(Relation rel)
 	RelationTruncateIndexes(rel);
 
 	/* If there is a toast table, truncate that too */
-	toastrelid = rel->rd_rel->reltoastrelid;
-	if (OidIsValid(toastrelid))
+	toastrelids = (List *) DatumGetPointer(GetToastrelList(toastrelids, rel->rd_id, 0, AccessShareLock));
+// XXX PG_TOASTREL
+//	toastrelid = rel->rd_rel->reltoastrelid;
+//	if (OidIsVal6id(toastrelid))
+	foreach(lc, toastrelids)
 	{
-		Relation	toastrel = table_open(toastrelid, AccessExclusiveLock);
+/*		Relation	toastrel = table_open(toastrelid, AccessExclusiveLock); */
+		Relation	toastrel = table_open(lfirst_oid(lc), AccessExclusiveLock);
 
 		table_relation_nontransactional_truncate(toastrel);
 		RelationTruncateIndexes(toastrel);

@@ -4732,7 +4732,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	desc = RelationGetDescr(relation);
 
-	if(!HasToastrel(relation->rd_id, 0, AccessShareLock))
+	if(HasToastrel(InvalidOid, relation->rd_id, 0, AccessShareLock))
 	{
 		elog(ERROR, "could not open toast relation for base relation \"%s\"",
 			RelationGetRelationName(relation));

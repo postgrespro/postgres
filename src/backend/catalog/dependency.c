@@ -1423,7 +1423,7 @@ doDeletion(const ObjectAddress *object, int flags)
 						RemoveAttributeById(object->objectId,
 											object->objectSubId);
 					else
-						heap_drop_with_catalog(object->objectId);
+						heap_drop_with_catalog(object->objectId, true);
 				}
 
 				/*
@@ -1522,7 +1522,7 @@ doDeletion(const ObjectAddress *object, int flags)
 			elog(ERROR, "toaster cannot be deleted by doDeletion");
 			break;
 		case OCLASS_TOASTREL:
-			elog(ERROR, "toaster cannot be deleted by doDeletion");
+			elog(ERROR, "toast relation cannot be deleted by doDeletion");
 			break;
 			/*
 			 * These global object types are not supported here.

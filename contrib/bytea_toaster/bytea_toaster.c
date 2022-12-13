@@ -176,7 +176,7 @@ bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative)
 }
 
 static Datum
-bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options)
+bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int attnum)
 {
 	Datum		detoasted_newval;
 	Datum		toasted_newval;
