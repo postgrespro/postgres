@@ -15,18 +15,22 @@
 
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "access/genam.h"
+#include "access/toasterapi.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_toaster.h"
+#include "catalog/pg_toastrel.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
@@ -57,7 +61,7 @@ CreateToaster(CreateToasterStmt *stmt)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to create toaster \"%s\"",
 						stmt->tsrname),
-				 errhint("Must be superuser to create an toaster.")));
+				 errhint("Must be superuser to create a toaster.")));
 
 	/* Check if name is used */
 	tsroid = GetSysCacheOid1(TOASTERNAME, Anum_pg_toaster_oid,
@@ -121,6 +125,82 @@ CreateToaster(CreateToasterStmt *stmt)
 	table_close(rel, RowExclusiveLock);
 
 	return myself;
+}
+
+/*
+ * DropToaster
+ *		Drops toaster.
+ */
+void
+DropToaster(DropToasterStmt *stmt)
+{
+	Relation	rel;
+	Oid			tsroid;
+	HeapTuple	tup;
+	SysScanDesc scan;
+	ScanKeyData key;
+
+	rel = table_open(ToasterRelationId, RowExclusiveLock);
+
+	/* Must be superuser */
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to drop toaster \"%s\"",
+						stmt->tsrname),
+				 errhint("Must be superuser to drop a toaster.")));
+
+	/* Check if name is used */
+	tsroid = GetSysCacheOid1(TOASTERNAME, Anum_pg_toaster_oid,
+							CStringGetDatum(stmt->tsrname));
+
+	if (tsroid == DEFAULT_TOASTER_OID || !OidIsValid(tsroid))
+	{
+		if (stmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("toaster \"%s\" doest not exist, skipping",
+							stmt->tsrname)));
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_NO_DATA_FOUND),
+					 errmsg("toaster \"%s\" cannot be dropped",
+							stmt->tsrname)));
+
+		table_close(rel, RowExclusiveLock);
+		return;
+	}
+
+	if(HasToastrel(tsroid, 0, 0, AccessShareLock))
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_NO_DATA_FOUND),
+			 errmsg("toaster \"%s\" has related TOAST tables and cannot be dropped",
+					stmt->tsrname)));
+	}
+
+	ScanKeyInit(&key,
+					Anum_pg_toaster_oid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(tsroid));
+
+	scan = systable_beginscan(rel, ToasterOidIndexId, true,
+								  NULL, 1, &key);
+
+	while (HeapTupleIsValid((tup = systable_getnext(scan))))
+	{
+		CatalogTupleDelete(rel, &tup->t_self);
+	}
+
+	systable_endscan(scan);
+
+	deleteDependencyRecordsFor(ToasterRelationId, tsroid, false);
+
+	InvokeObjectDropHookStr(ToasterRelationId, stmt->tsrname, 0);
+
+	table_close(rel, RowExclusiveLock);
 }
 
 /*

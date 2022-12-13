@@ -249,7 +249,7 @@ toast_save_datum_ext(Relation rel, Oid toasterid, Datum value,
 /*	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock); */
 
 	toastrel = table_open(trel->toastentid , RowExclusiveLock);
-
+	//pfree(trel);
 	/* Open all the toast indexes and look for the valid one */
 	validIndex = toast_open_indexes(toastrel,
 									RowExclusiveLock,
@@ -456,7 +456,6 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 	Assert(!(VARATT_IS_EXTERNAL(value)));
 
 	//tkey = (Toastkey) DatumGetPointer(GetActualToastrel(toasterid, rel->rd_id, attnum, AccessShareLock));
-//	elog(NOTICE, "toast_save_datum rel %u", rel->rd_rel->oid);
 	dtrel = SearchToastrelCache(rel->rd_id, attnum, false);
 
 	if(dtrel == (Datum) 0)
@@ -464,6 +463,7 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 		elog(ERROR, "No TOAST table, create new for rel %u toasterid %u", rel->rd_rel->oid, toasterid);
 	}
 	trel = ((Toastrel) DatumGetPointer(dtrel))->toastentid;
+	//pfree(dtrel);
 	//trel = DatumGetObjectId(GetActualToastrel(toasterid, rel->rd_id, attnum, AccessShareLock));
 	if( trel == InvalidOid )
 	{

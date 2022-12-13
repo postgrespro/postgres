@@ -142,12 +142,6 @@ dummy_toast_init(Relation rel, Oid toasteroid, Oid toastoid, Oid toastindexoid, 
 						   bool check, Oid OIDOldToast)
 {
 	Oid res = 1;
-	elog(NOTICE, "dummy_toast_init toasterid %u relid %u toastent %u attnum %u",
-			 toasteroid,
-			 1,
-			 toastoid,
-			 attnum);
-
 	return ObjectIdGetDatum(res);
 }
 

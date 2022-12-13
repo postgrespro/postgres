@@ -2638,6 +2638,13 @@ typedef struct CreateToasterStmt
 	bool		if_not_exists;
 } CreateToasterStmt;
 
+typedef struct DropToasterStmt
+{
+	NodeTag		type;
+	char	   *tsrname;			/* toaster name */
+	bool		if_not_exists;
+} DropToasterStmt;
+
 /* ----------------------
  *		Create TRIGGER Statement
  * ----------------------

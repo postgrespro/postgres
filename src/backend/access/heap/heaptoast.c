@@ -258,7 +258,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		 * XXX maybe the threshold should be less than maxDataLen?
 		 */
 		/* FIXME set force_toast flag */
-		if (toast_attr[biggest_attno].tai_size > maxDataLen ) 
+		if (toast_attr[biggest_attno].tai_size > maxDataLen
+			&& HasToastrel(InvalidOid, rel->rd_id, biggest_attno, AccessShareLock) )
 			/* &&	rel->rd_rel->reltoastrelid != InvalidOid) */
 			heap_toast_tuple_externalize(&ttc, biggest_attno, maxDataLen, options);
 	}
@@ -305,8 +306,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	maxDataLen = TOAST_TUPLE_TARGET_MAIN - hoff;
 
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > maxDataLen &&
-		   rel->rd_rel->reltoastrelid != InvalidOid)
+								  toast_values, toast_isnull) > maxDataLen) /* &&
+		   rel->rd_rel->reltoastrelid != InvalidOid) */
 	{
 		int			biggest_attno;
 
@@ -314,7 +315,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		if (biggest_attno < 0)
 			break;
 
-		heap_toast_tuple_externalize(&ttc, biggest_attno, maxDataLen, options);
+		if(HasToastrel(InvalidOid, rel->rd_id, biggest_attno, AccessShareLock))
+			heap_toast_tuple_externalize(&ttc, biggest_attno, maxDataLen, options);
 	}
 
 	/*
