@@ -518,7 +518,7 @@ DefineQueryRewrite(const char *rulename,
 
 		relationRelation = table_open(RelationRelationId, RowExclusiveLock);
 
-		if(HasToastrel(event_relation->rd_id, 0, AccessShareLock))
+		if(HasToastrel(InvalidOid, event_relation->rd_id, 0, AccessShareLock))
 		{
 			List *trelids = NIL;
 			ListCell *lc;

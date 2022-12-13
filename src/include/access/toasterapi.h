@@ -82,7 +82,8 @@ typedef Datum (*update_toast_function) (Relation toast_rel,
 typedef Datum (*copy_toast_function) (Relation toast_rel,
 												Oid toasterid,
 												Datum newvalue,
-												int options);
+												int options,
+												int attnum);
 
 /* Detoast function */
 typedef Datum (*detoast_function) (Datum toast_ptr,
@@ -161,6 +162,10 @@ extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
 extern bool UpdateToastRelationFlag(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, char flag, LOCKMODE lockmode);
+extern bool
+DeleteToastRelation(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
+	int version, LOCKMODE lockmode);
+
 
 extern Datum SearchToastrelCache(Oid	relid, int16 attnum, bool search_ind);
 extern Datum InsertToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
@@ -171,7 +176,7 @@ extern Datum InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid
 extern Datum
 GetToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode);
 extern bool
-HasToastrel(Oid relid, int16 attnum, LOCKMODE lockmode);
+HasToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
 extern Datum
 GetFullToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode);
 

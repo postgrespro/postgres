@@ -2121,12 +2121,13 @@ do_autovacuum(void)
 		 * this whether or not the table is going to be vacuumed, because we
 		 * don't automatically vacuum toast tables along the parent table.
 		 */
-		if(HasToastrel(relid, 0, AccessShareLock))
+		if(HasToastrel(InvalidOid, relid, 0, AccessShareLock))
 		{
 			List *trelids = NIL;
 			ListCell *lc;
 
-			trelids = (List *) DatumGetPointer(GetToastrelList(trelids, relid, 0, AccessShareLock));
+			// trelids = (List *) DatumGetPointer(GetToastrelList(trelids, relid, 0, AccessShareLock));
+			trelids = (List *) DatumGetPointer(GetFullToastrelList(trelids, relid, 0, AccessShareLock));
 		// XXX PG_TOASTREL
 			foreach(lc, trelids)
 			{

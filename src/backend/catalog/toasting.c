@@ -59,7 +59,6 @@ static bool needs_toast_table(Relation rel);
 void
 AlterTableCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode)
 {
-//	elog(NOTICE, "AlterTableCreateToastTable");
 	CheckAndCreateToastTable(relOid, reloptions, lockmode, true, InvalidOid);
 }
 
@@ -67,15 +66,12 @@ void
 NewHeapCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 						Oid OIDOldToast)
 {
-//	elog(NOTICE, "NewHeapCreateToastTable");
 	CheckAndCreateToastTable(relOid, reloptions, lockmode, false, OIDOldToast);
 }
 
 void
 NewRelationCreateToastTable(Oid relOid, Datum reloptions)
 {
-//	elog(NOTICE, "NewRelationCreateToastTable");
-
 	CheckAndCreateToastTable(relOid, reloptions, AccessExclusiveLock, false,
 							 InvalidOid);
 }
@@ -123,7 +119,6 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 		if(!TypeIsToastable(attr->atttypid))
 			continue;
 
-//		elog(NOTICE, "CheckAndCreateToastTable rel %u", relOid);
 /*
 		dtrel = SearchToastrelCache(rel->rd_id, attr->attnum, false);
 
@@ -138,20 +133,17 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 		if(OIDOldToast != InvalidOid)
 		{
 			Oid oldtoaster = DEFAULT_TOASTER_OID;
-//			elog(NOTICE, "Old Toast is not empty, call GetLastToaster rel %u", relOid);
 			oldtoaster = DatumGetObjectId(GetLastToaster(OIDOldToast, attr->attnum, AccessShareLock));
 			if(oldtoaster != InvalidOid)
 				toasterid = oldtoaster;
 		}
 
-//		elog(NOTICE, "SearchTsrCache tsr %u", toasterid);
 		tsr = SearchTsrCache(toasterid); //attr->atttoaster);
 
 		if (!tsr)
 			elog(ERROR, "\"%s\" does not require a toast table", RelationGetRelationName(rel));
 		else
 		{
-//			elog(NOTICE, "tsr->init tsr %u rel %u", toasterid, rel->rd_id);
 			trel = DatumGetObjectId(tsr->init(rel, toasterid, InvalidOid, InvalidOid, reloptions, attr->attnum,
 								lockmode, check, OIDOldToast));
 		}
@@ -162,28 +154,15 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 */
 		// trel = DatumGetObjectId(tsr->init(rel, attr->atttoaster, InvalidOid, InvalidOid, reloptions, attr->attnum, lockmode, check, OIDOldToast));
 
-//		elog(NOTICE, "Before toastrel insert, found trel %u attnum %u", trel, attr->attnum);
 		if(trel != InvalidOid)
 		{
 		/* XXX insert record into pg_toastrel */
-		namestrcpy(&relname, RelationGetRelationName(rel));
-		snprintf(toast_relname, sizeof(toast_relname),
+			namestrcpy(&relname, RelationGetRelationName(rel));
+			snprintf(toast_relname, sizeof(toast_relname),
 				 "pg_toast_%u", rel->rd_id);
-/*
-		elog(NOTICE, "CheckAndCreateToastTable toasteroid %u relid %u attnum %u",
-			 toasterid,
-			 rel->rd_id,
-			 attr->attnum);
-*/
-		namestrcpy(&tname, toast_relname);
-//		elog(NOTICE, "InsertToastRelation trel %u",trel);
-		InsertToastRelation(toasterid, rel->rd_id, trel, attr->attnum,
-			0, relname, tname, 0, RowExclusiveLock); //attr->atttoaster
-/*
-		if(!t_ind)
-		{
-			elog(NOTICE, "Insert into pg_toastrel failed for relation %u", rel->rd_id);
-		} */
+			namestrcpy(&tname, toast_relname);
+			InsertToastRelation(toasterid, rel->rd_id, trel, attr->attnum,
+				0, relname, tname, 0, RowExclusiveLock); //attr->atttoaster
 		}
 		tsrOids = lappend_oid(tsrOids, toasterid); // attr->atttoaster);
 		CommandCounterIncrement();
@@ -241,27 +220,15 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 			trel = DatumGetObjectId(tsr->init(rel, DEFAULT_TOASTER_OID, toastOid, toastIndexOid, (Datum) 0, attr->attnum,
 								AccessExclusiveLock, false, InvalidOid)); //attr->atttoaster
 
-//		elog(NOTICE, "BootstrapToastTable Before toastrel insert trel %u", trel);
 		/* XXX insert record into pg_toastrel */
 		if(trel != InvalidOid)
 		{
 			namestrcpy(&relname, relName);
 			snprintf(toast_relname, sizeof(toast_relname),
 				 "pg_toast_%u", rel->rd_id);
-/*
-			elog(NOTICE, "BootstrapToastTable toasteroid %u relid %u attnum %u",
-			 DEFAULT_TOASTER_OID,
-			 rel->rd_id,
-			 attr->attnum);
-*/
 			namestrcpy(&tname, toast_relname);
 			InsertToastRelation(DEFAULT_TOASTER_OID, rel->rd_id, trel, attr->attnum,
 				0, relname, tname, 0, RowExclusiveLock); // attr->atttoaster
-/*
-			if(!t_ind)
-			{
-				elog(NOTICE, "BootstrapToastTable Insert into pg_toastrel failed for relation %u", rel->rd_id);
-			} */
 		}
 		tsrOids = lappend_oid(tsrOids, DEFAULT_TOASTER_OID);//attr->atttoaster);
 	}
@@ -359,13 +326,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 			return InvalidOid;
 		}
 	}
-/*
-	elog(NOTICE, "create TOAST toasterid %u relid %u toastent %u attnum %u",
-			 toasteroid,
-			 rel->rd_id,
-			 toastOid,
-			 attnum);
-*/
 	/*
 	 * If requested check lockmode is sufficient. This is a cross check in
 	 * case of errors or conflicting decisions in earlier code.
@@ -394,15 +354,12 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	*/
 
 	{
-//		elog(NOTICE, "create_toast_table for rel %u", relOid);
 		toast_relid = InvalidOid;
 		trel = DatumGetObjectId(GetActualToastrel(toasteroid, relOid, attnum, AccessShareLock));
 		if( trel != InvalidOid )
 		{
-//			elog(NOTICE, "TOAST table %u already created for rel %u", trel, relOid);
 			return trel;
 		}
-//		elog(NOTICE, "TOAST table %u for rel %u", trel, relOid); 
 	}
 	snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toast_%u_%u_%u", relOid, toasteroid, attnum);
@@ -453,24 +410,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 
 	/* It's mapped if and only if its parent is, too */
 	mapped_relation = RelationIsMapped(rel);
-/*	
-	if(rel->rd_rel->relisshared)
-	{
-		elog(NOTICE, "rel->rd_rel->relisshared TRUE");
-	}
-	else
-	{
-		elog(NOTICE, "rel->rd_rel->relisshared FALSE");
-	}
-	if(shared_relation)
-	{
-		elog(NOTICE, "shared_relation TRUE");
-	}
-	else
-	{
-		elog(NOTICE, "shared_relation FALSE");
-	}
-*/
+
 	toast_relid = heap_create_with_catalog(toast_relname,
 										   namespaceid,
 										   rel->rd_rel->reltablespace,
@@ -578,7 +518,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	heap_freetuple(reltup);
 
 	table_close(class_rel, RowExclusiveLock);
-//	elog(NOTICE, "table_close for rel %u", relOid);
 	/*
 	 * Register dependency from the toast table to the main, so that the toast
 	 * table will be deleted if the main is.  Skip this in bootstrap mode.
@@ -594,25 +533,11 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 
 		recordDependencyOn(&toastobject, &baseobject, DEPENDENCY_INTERNAL);
 	}
-//	elog(NOTICE, "toast rel %u", toast_relid);
-/*
-	elog(NOTICE, "Before toastrel insert");
-	namestrcpy(&relname, RelationGetRelationName(rel));
-	namestrcpy(&toastentname, toast_relname);
-	toastrel_insert_ind = InsertToastRelation(toasteroid, relOid, toast_relid, attnum,
-		version, relname, toastentname, toastoptions, RowExclusiveLock);
-
-	if(!toastrel_insert_ind)
-	{
-		elog(NOTICE, "Insert into pg_toastrel failed for relation %u", relOid);
-	}
-*/
 	/*
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
-//	elog(NOTICE, "toast table created");
-	return toast_relid; //tkey->toastentid;
+	return toast_relid;
 }
 
 /*

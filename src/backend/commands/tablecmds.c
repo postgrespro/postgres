@@ -1061,7 +1061,8 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 						stmt->relation->relpersistence,
 						stmt->partbound != NULL,
 						&old_constraints, accessMethodId, attr->attname, attr->atttypid));
-
+/* XXX PG_TOASTREL */
+/* FIXME check tsroid assignment */
 		if (colDef->toaster)
 			tsroid = get_toaster_oid(colDef->toaster, false);
 		else if (OidIsValid(tsroid) && (TypeIsToastable(attr->atttypid)))
@@ -1076,7 +1077,6 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 							accessMethodId, false);
 			namestrcpy(&relnamedata, relname);
 			namestrcpy(&trelnamedata, "");
-
 			InsertToastRelation(tsroid, relationId, InvalidOid, attnum,
 				0, relnamedata, trelnamedata, 0, RowExclusiveLock);
 		}
@@ -2119,12 +2119,12 @@ ExecuteTruncateGuts(List *explicit_rels,
 			 * The same for the toast table, if any.
 			 */
 
-			if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+			if(HasToastrel(InvalidOid, rel->rd_id, 0, AccessShareLock))
 			{
 				List *trelids = NIL;
 				ListCell *lc;
 
-				trelids = (List *) DatumGetPointer(GetToastrelList(trelids, rel->rd_id, 0, AccessShareLock));
+				trelids = (List *) DatumGetPointer(GetFullToastrelList(trelids, rel->rd_id, 0, AccessShareLock));
 			// XXX PG_TOASTREL
 				foreach(lc, trelids)
 				{
@@ -2732,7 +2732,7 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				defTsrId = DatumGetObjectId(GetLastToaster(relation->rd_id, attribute->attnum, AccessShareLock));
 				if (def->toaster)
 				{ // &&
-/*					elog(NOTICE, "Inherited column <%u> defined <%u>", defTsrId, get_toaster_oid(def->toaster, false));*/
+/*					PG_TOASTREL elog(NOTICE, "Inherited column <%u> defined <%u>", defTsrId, get_toaster_oid(def->toaster, false));*/
 					if(get_toaster_oid(def->toaster, false) != defTsrId)  // attribute->atttoaster)
 					{
 						ereport(ERROR,
@@ -5071,7 +5071,6 @@ ATRewriteCatalogs(List **wqueue, LOCKMODE lockmode,
 		 * not modify anything about it that will change its toasting
 		 * requirement, so no need to check.
 		 */
-/*		elog(NOTICE, "ATRewriteCatalogs");*/
 		/*
 		if (((tab->relkind == RELKIND_RELATION ||
 			  tab->relkind == RELKIND_PARTITIONED_TABLE) &&
@@ -7030,8 +7029,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 							rel->rd_rel->relam, false);
 			namestrcpy(&relnamedata, RelationGetRelationName(rel));
 			namestrcpy(&trelnamedata, "");
-/* XXX PG_TOASTREL
-*/
+/* XXX PG_TOASTREL */
 			InsertToastRelation(tsroid, myrelid, InvalidOid, attribute.attnum,
 				0, relnamedata, trelnamedata, 0, RowExclusiveLock);
 		}
@@ -8471,12 +8469,6 @@ SetIndexStorageProperties(Relation rel, Relation attrelation,
 				namestrcpy(&trelnamedata, "");
 
 				treloid = DatumGetObjectId(GetActualToastrel(toasterOid, rel->rd_id, attrtuple->attnum, AccessShareLock));
-
-			elog(NOTICE, "SetIndexStorageProperties toasteroid %u relid %u attnum %u",
-			 toasterOid,
-			 indrel->rd_id,
-			 attrtuple->attnum);
-
 				InsertToastRelation(toasterOid, indrel->rd_id, treloid, attrtuple->attnum,
 					0, relnamedata, trelnamedata, 0, RowExclusiveLock);
 			}
@@ -8626,7 +8618,6 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	table_close(attrelation, RowExclusiveLock);
 /* Insert new relation into PG_TOASTREL */
 	treloid = DatumGetObjectId(GetActualToastrel(newToaster, rel->rd_id, attnum, AccessShareLock));
-	elog(NOTICE, "ATExecSetToaster tsr %u relid %u attnum %u", newToaster, rel->rd_id, attnum);
 	if(treloid == InvalidOid)
 	{
 		TsrRoutine *tsr = SearchTsrCache(newToaster);
@@ -8637,11 +8628,6 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	
 	namestrcpy(&relname, RelationGetRelationName(rel));
 	namestrcpy(&trelname, "");
-			elog(NOTICE, "ATExecSetToaster toasteroid %u relid %u attnum %u",
-			 newToaster,
-			 rel->rd_id,
-			 attnum);
-
 	InsertToastRelation(newToaster, rel->rd_id, treloid, attnum,
 		0, relname, trelname, 0, RowExclusiveLock);
 
@@ -13198,8 +13184,6 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 		if(treloid == InvalidOid)
 		{
 			TsrRoutine *tsr = SearchTsrCache(tsroid);
-
-			elog(NOTICE, "Create new TOAST table for %u", rel->rd_id);
 		
 			treloid = DatumGetObjectId(tsr->init(rel, tsroid, InvalidOid, InvalidOid, (Datum) 0, attnum,
 						AccessExclusiveLock, false, InvalidOid));
@@ -13207,12 +13191,6 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 
 		namestrcpy(&relnamedata, RelationGetRelationName(rel));
 		namestrcpy(&trelnamedata, "");
-
-			elog(NOTICE, "ATExecAlterColumnType toasteroid %u relid %u attnum %u",
-			 tsroid,
-			 rel->rd_id,
-			 attTup->attnum);
-
 		InsertToastRelation(tsroid, rel->rd_id, treloid, attTup->attnum,
 			0, relnamedata, trelnamedata, 0, RowExclusiveLock);
 	}
@@ -14274,7 +14252,7 @@ ATExecChangeOwner(Oid relationOid, Oid newOwnerId, bool recursing, LOCKMODE lock
 
 		/* If it has a toast table, recurse to change its ownership */
 
-		if(HasToastrel(relationOid, 0, AccessShareLock))
+		if(HasToastrel(InvalidOid, relationOid, 0, AccessShareLock))
 		{
 			List *trelids = NIL;
 			ListCell *lc;
@@ -14680,7 +14658,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 
 	/* repeat the whole exercise for the toast table, if there's one */
 
-	if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+	if(HasToastrel(InvalidOid, rel->rd_id, 0, AccessShareLock))
 	{
 		List *trelids = NIL;
 		ListCell *lc;
@@ -14849,7 +14827,7 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	reltoastrelid = rel->rd_rel->reltoastrelid;
 */
 	/* Fetch the list of indexes on toast relation if necessary */
-	if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+	if(HasToastrel(InvalidOid, rel->rd_id, 0, AccessShareLock))
 	{
 		List *trelids = NIL;
 
@@ -14920,7 +14898,7 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	CommandCounterIncrement();
 
 	/* Move associated toast relation and/or indexes, too */
-	if(HasToastrel(rel->rd_id, 0, AccessShareLock))
+	if(HasToastrel(InvalidOid, rel->rd_id, 0, AccessShareLock))
 	{
 		List *trelids = NIL;
 
