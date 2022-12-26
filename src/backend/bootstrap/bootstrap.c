@@ -533,9 +533,6 @@ DefineAttr(char *name, char *type, int attnum, int nullness)
 		attrtypes[attnum]->attbyval = Ap->am_typ.typbyval;
 		attrtypes[attnum]->attalign = Ap->am_typ.typalign;
 		attrtypes[attnum]->attstorage = Ap->am_typ.typstorage;
-/*		attrtypes[attnum]->atttoaster =
-			(Ap->am_typ.typstorage == TYPSTORAGE_PLAIN) ?
-				InvalidOid : DEFAULT_TOASTER_OID;*/
 		attrtypes[attnum]->attcompression = InvalidCompressionMethod;
 		attrtypes[attnum]->attcollation = Ap->am_typ.typcollation;
 		/* if an array type, assume 1-dimensional attribute */
@@ -551,7 +548,6 @@ DefineAttr(char *name, char *type, int attnum, int nullness)
 		attrtypes[attnum]->attbyval = TypInfo[typeoid].byval;
 		attrtypes[attnum]->attalign = TypInfo[typeoid].align;
 		attrtypes[attnum]->attstorage = TypInfo[typeoid].storage;
-//		attrtypes[attnum]->atttoaster = TypInfo[typeoid].toaster;
 		attrtypes[attnum]->attcompression = InvalidCompressionMethod;
 		attrtypes[attnum]->attcollation = TypInfo[typeoid].collation;
 		/* if an array type, assume 1-dimensional attribute */

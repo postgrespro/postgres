@@ -981,19 +981,6 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 							attr->attstorage, attr->attcompression,
 							accessMethodId, false);
 
-/*
-		if (colDef->toaster)
-			attr->atttoaster = get_toaster_oid(colDef->toaster, false);
-		else if (TypeIsToastable(attr->atttypid))
-			attr->atttoaster = DEFAULT_TOASTER_OID;
-		else
-			attr->atttoaster = InvalidOid;
-
-		if (OidIsValid(attr->atttoaster))
-			validateToaster(attr->atttoaster, attr->atttypid,
-							attr->attstorage, attr->attcompression,
-							accessMethodId, false);
-*/
 	}
 
 	/*
@@ -2731,9 +2718,8 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				/* Copy/check toaster parameter */
 				defTsrId = DatumGetObjectId(GetLastToaster(relation->rd_id, attribute->attnum, AccessShareLock));
 				if (def->toaster)
-				{ // &&
-/*					PG_TOASTREL elog(NOTICE, "Inherited column <%u> defined <%u>", defTsrId, get_toaster_oid(def->toaster, false));*/
-					if(get_toaster_oid(def->toaster, false) != defTsrId)  // attribute->atttoaster)
+				{
+					if(get_toaster_oid(def->toaster, false) != defTsrId)
 					{
 						ereport(ERROR,
 							(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -2741,14 +2727,14 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 									attributeName),
 							 errdetail("%s versus %s",
 									   (def->toaster),
-									   get_toaster_name(defTsrId)))); //attribute->atttoaster))));
+									   get_toaster_name(defTsrId))));
 					}
-				if (OidIsValid(defTsrId)) //attribute->atttoaster))
+				if (OidIsValid(defTsrId))
 				{
 					validateToaster(defTsrId, attribute->atttypid,
 									attribute->attstorage, attribute->attcompression,
 									accessMethodId, false);
-					def->toaster = get_toaster_name(defTsrId); // attribute->atttoaster);
+					def->toaster = get_toaster_name(defTsrId);
 				}
 				else
 					def->toaster = NULL;
@@ -2783,10 +2769,10 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				def->is_from_type = false;
 				def->storage = attribute->attstorage;
 				defTsrId = DatumGetObjectId(GetLastToaster(relation->rd_id, attribute->attnum, AccessShareLock));
-				if (OidIsValid(defTsrId))  //attribute->atttoaster))
+				if (OidIsValid(defTsrId))
 				{
-					def->toaster = get_toaster_name(defTsrId); //attribute->);
-					validateToaster(defTsrId, //attribute->atttoaster,
+					def->toaster = get_toaster_name(defTsrId);
+					validateToaster(defTsrId,
 									attribute->atttypid,
 									attribute->attstorage, attribute->attcompression,
 									accessMethodId, false);
@@ -6996,19 +6982,6 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		attribute.attstorage = tform->typstorage;
 	attribute.attcompression = GetAttributeCompression(typeOid,
 													   colDef->compression);
-/*
-	if (colDef->toaster)
-		attribute.atttoaster = get_toaster_oid(colDef->toaster, false);
-	else if (TypeIsToastable(attribute.atttypid))
-		attribute.atttoaster = DEFAULT_TOASTER_OID;
-	else
-		attribute.atttoaster = InvalidOid;
-
-	if (OidIsValid(attribute.atttoaster))
-		validateToaster(attribute.atttoaster, attribute.atttypid,
-						attribute.attstorage, attribute.attcompression,
-						rel->rd_rel->relam, false);
-*/
 /* Add PG_TOASTREL rows for table */
 	{
 		Oid tsroid = InvalidOid;
@@ -8472,7 +8445,6 @@ SetIndexStorageProperties(Relation rel, Relation attrelation,
 				InsertToastRelation(toasterOid, indrel->rd_id, treloid, attrtuple->attnum,
 					0, relnamedata, trelnamedata, 0, RowExclusiveLock);
 			}
-			//	attrtuple->atttoaster = toasterOid;
 
 			CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 
@@ -8585,18 +8557,6 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
 						colName)));
-/*
-	attrtuple->atttoaster = newToaster;
-	if (OidIsValid(newToaster))
-		validateToaster(attrtuple->atttoaster, attrtuple->atttypid,
-						attrtuple->attstorage, attrtuple->attcompression,
-						rel->rd_rel->relam, false);
-	else if (TypeIsToastable(attrtuple->atttypid))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("column data type %s should use toaster",
-						format_type_be(attrtuple->atttypid))));
-*/
 	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 
 	InvokeObjectPostAlterHook(RelationRelationId,
@@ -13161,14 +13121,8 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	attTup->attcompression = InvalidCompressionMethod;
 
 	/* set default toaster for toastable type */
-/*	if (tform->typstorage == TYPSTORAGE_PLAIN)
-		attTup->atttoaster = InvalidOid;
-	else
-	{
-*/
 	if (tform->typstorage != TYPSTORAGE_PLAIN)
 	{
-/*		attTup->atttoaster = DEFAULT_TOASTER_OID; */
 /* Add PG_TOASTREL rows for table */
 		Oid tsroid = DEFAULT_TOASTER_OID;
 		Oid treloid = InvalidOid;

@@ -1910,7 +1910,6 @@ describeOneTableDetails(const char *schemaname,
 */
 			appendPQExpBuffer(&buf, ",\n  (SELECT tsr.tsrname FROM pg_toaster tsr, pg_toastrel trel "
 				"WHERE tsr.oid = trel.toasteroid AND trel.relid = '%s' and trel.attnum = a.attnum ORDER BY trel.version DESC LIMIT 1) AS atttoaster",	oid);
-				//and  a.atttoaster) AS atttoaster");
 			atttoaster_col = cols++;
 		}
 
