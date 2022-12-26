@@ -104,32 +104,19 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 		NameData relname;
 		NameData tname;
 		char		toast_relname[NAMEDATALEN];
-//		bool t_ind = false;
-//		Datum dtrel = (Datum) 0;
 		Oid toasterid = DEFAULT_TOASTER_OID;
 
-		if (attr->attisdropped) // || !OidIsValid(attr->atttoaster))
+		if (attr->attisdropped)
 			continue;
 
 		/* such toaster is already created its storage */
 		/* XXX search toaster assigned to data type */
-		if (list_member_oid(tsrOids, DEFAULT_TOASTER_OID)) // attr->atttoaster))
+		if (list_member_oid(tsrOids, DEFAULT_TOASTER_OID))
 			continue;
 
 		if(!TypeIsToastable(attr->atttypid))
 			continue;
 
-/*
-		dtrel = SearchToastrelCache(rel->rd_id, attr->attnum, false);
-
-		if(dtrel == (Datum) 0)
-		{
-			elog(ERROR, "No PG_TOASTREL record for rel %u", rel->rd_id);
-		}
-		toasterid = ((Toastrel) DatumGetPointer(dtrel))->toasteroid;
-		if( toasterid == InvalidOid )
-			toasterid = DEFAULT_TOASTER_OID;
-*/
 		if(OIDOldToast != InvalidOid)
 		{
 			Oid oldtoaster = DEFAULT_TOASTER_OID;
@@ -138,7 +125,7 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 				toasterid = oldtoaster;
 		}
 
-		tsr = SearchTsrCache(toasterid); //attr->atttoaster);
+		tsr = SearchTsrCache(toasterid);
 
 		if (!tsr)
 			elog(ERROR, "\"%s\" does not require a toast table", RelationGetRelationName(rel));
@@ -147,12 +134,6 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 			trel = DatumGetObjectId(tsr->init(rel, toasterid, InvalidOid, InvalidOid, reloptions, attr->attnum,
 								lockmode, check, OIDOldToast));
 		}
-/*
-		{
-			elog(ERROR, "No Toaster found for rel %u", rel->rd_id);
-		}
-*/
-		// trel = DatumGetObjectId(tsr->init(rel, attr->atttoaster, InvalidOid, InvalidOid, reloptions, attr->attnum, lockmode, check, OIDOldToast));
 
 		if(trel != InvalidOid)
 		{
@@ -162,9 +143,9 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 				 "pg_toast_%u", rel->rd_id);
 			namestrcpy(&tname, toast_relname);
 			InsertToastRelation(toasterid, rel->rd_id, trel, attr->attnum,
-				0, relname, tname, 0, RowExclusiveLock); //attr->atttoaster
+				0, relname, tname, 0, RowExclusiveLock);
 		}
-		tsrOids = lappend_oid(tsrOids, toasterid); // attr->atttoaster);
+		tsrOids = lappend_oid(tsrOids, toasterid);
 		CommandCounterIncrement();
 	}
 
@@ -200,25 +181,24 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 		NameData relname;
 		NameData tname;
 		char		toast_relname[NAMEDATALEN];
-//		bool t_ind = false;
 
-		if (attr->attisdropped ) //|| !OidIsValid(attr->atttoaster))
+		if (attr->attisdropped )
 			continue;
 
 		if(!TypeIsToastable(attr->atttypid))
 			continue;
 
 		/* such toaster is already created its storage */
-		if (list_member_oid(tsrOids, DEFAULT_TOASTER_OID)) //attr->atttoaster))
+		if (list_member_oid(tsrOids, DEFAULT_TOASTER_OID))
 			continue;
 
-		tsr = SearchTsrCache(DEFAULT_TOASTER_OID); //attr->atttoaster);
+		tsr = SearchTsrCache(DEFAULT_TOASTER_OID);
 
 		if (!tsr)
 			elog(ERROR, "\"%s\" does not require a toast table", relName);
 		else
 			trel = DatumGetObjectId(tsr->init(rel, DEFAULT_TOASTER_OID, toastOid, toastIndexOid, (Datum) 0, attr->attnum,
-								AccessExclusiveLock, false, InvalidOid)); //attr->atttoaster
+								AccessExclusiveLock, false, InvalidOid));
 
 		/* XXX insert record into pg_toastrel */
 		if(trel != InvalidOid)
@@ -228,17 +208,11 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 				 "pg_toast_%u", rel->rd_id);
 			namestrcpy(&tname, toast_relname);
 			InsertToastRelation(DEFAULT_TOASTER_OID, rel->rd_id, trel, attr->attnum,
-				0, relname, tname, 0, RowExclusiveLock); // attr->atttoaster
+				0, relname, tname, 0, RowExclusiveLock);
 		}
-		tsrOids = lappend_oid(tsrOids, DEFAULT_TOASTER_OID);//attr->atttoaster);
+		tsrOids = lappend_oid(tsrOids, DEFAULT_TOASTER_OID);
 	}
 
-/*
-	if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0,
-							AccessExclusiveLock, false, InvalidOid))
-		elog(ERROR, "\"%s\" does not require a toast table",
-			 relName);
-*/
 	table_close(rel, NoLock);
 }
 
@@ -280,9 +254,18 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	
 	if(IsBootstrapProcessingMode())
 	{
-		attnum = 0;
+		if(HasToastrel(toasteroid, rel->rd_id, attnum, AccessShareLock))
+		{
+			trel = DatumGetObjectId(GetActualToastrel(toasteroid, relOid, attnum, AccessShareLock));
+			if( trel != InvalidOid )
+			{
+				return trel;
+			}
+		}
+/*
 		if (rel->rd_rel->reltoastrelid != InvalidOid)
 		return rel->rd_rel->reltoastrelid;
+*/
 	}
 	
 	/*
@@ -336,22 +319,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	/*
 	 * Create the toast table and its index
 	 */
-	/*
-	if (rel->rd_ntoasters > 0 && !IsBootstrapProcessingMode())
-	{
-		snprintf(toast_relname, sizeof(toast_relname),
-				 "pg_toast_%u_%u", relOid, toasterid);
-		snprintf(toast_idxname, sizeof(toast_idxname),
-				 "pg_toast_%u_%u_index", relOid, toasterid);
-	}
-	else
-	{
-		snprintf(toast_relname, sizeof(toast_relname),
-				 "pg_toast_%u", relOid);
-		snprintf(toast_idxname, sizeof(toast_idxname),
-				 "pg_toast_%u_index", relOid);
-	}
-	*/
 
 	{
 		toast_relid = InvalidOid;

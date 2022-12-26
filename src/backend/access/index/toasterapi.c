@@ -357,7 +357,7 @@ GetActualToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode)
 }
 /**/
 
-/* Get actual TOAST Rel for table and toaster */
+/* Get last assigned TOAST Rel for table and toaster */
 Datum
 GetLastToaster(Oid relid, int16 attnum, LOCKMODE lockmode)
 {
@@ -594,8 +594,7 @@ InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 /* ----------
  * GetToastrelList -
  *
- *	Retrieves single TOAST relation from pg_toastrel according to
- *	given key.
+ *	Retrieves PG_TOASTREL toast entities OIDs according to given key
  * ----------
  */
 Datum
@@ -645,10 +644,9 @@ GetToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode)
 }
 
 /* ----------
- * GetToastrelList -
+ * GetFullToastrelList -
  *
- *	Retrieves single TOAST relation from pg_toastrel according to
- *	given key.
+ *	Retrieves list of PG_TOASTREL rows according to given key
  * ----------
  */
 Datum
@@ -731,7 +729,7 @@ GetFullToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode)
  * HasToastrel -
  *
  *	Checks pg_toastrel if there are TOAST relations for
- *	given relation OID.
+ *	given Toaster OID, relation OID and attribute index
  * ----------
  */
 bool
@@ -804,9 +802,7 @@ HasToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode)
 /* ----------
  * DeleteToastRelation -
  *
- *	Updates pg_toastrel record field with passed value. Used to set pg_toastrel
- * row to not actual (for deleted Toasters)
- * ----------
+ *	Removes row from PG_TOASTREL
  */
 bool
 DeleteToastRelation(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
@@ -1016,7 +1012,7 @@ InsertToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int1
 }
 
 /*
- * DeleteToastrelCache - get cached pg_toastrel record
+ * DeleteToastrelCache - delete cached pg_toastrel record
  */
 Datum
 DeleteToastrelCache(Oid toasterid, Oid	relid, int16 attnum)
@@ -1061,7 +1057,8 @@ out:
 }
 
 /*
- * SearchToastrelCache - get cached pg_toastrel record
+ * SearchToastrelCache - search cached pg_toastrel record
+ * by base relid, attribute index
  */
 Datum
 SearchToastrelCache(Oid	relid, int16 attnum, bool search_ind)
@@ -1166,6 +1163,7 @@ InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toasten
 					&& entry->attnum == attnum)
 				{
 					version = entry->tkey->version;
+					pfree(entry->tkey);
 					foreach_delete_current(ToastrelCache, lc);
 					break;
 				}

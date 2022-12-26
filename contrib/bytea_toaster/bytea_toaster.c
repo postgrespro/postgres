@@ -222,7 +222,6 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 			elog(ERROR, "No TOAST table, create new for rel %u toasterid %u", rel->rd_rel->oid, toasterid);
 		}
 		toastrelid = ((Toastrel) DatumGetPointer(dtrel))->toastentid;
-		//trel = DatumGetObjectId(GetActualToastrel(toasterid, rel->rd_id, attnum, AccessShareLock));
 		if( toastrelid == InvalidOid )
 		{
 			elog(ERROR, "No TOAST table, create new for rel %u toasterid %u", rel->rd_rel->oid, toasterid);

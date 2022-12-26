@@ -78,10 +78,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 		toaster = OidIsValid(toasterid) ?
 			SearchTsrCache(toasterid) : NULL;
 
-/*		toasterid = att->atttoaster;
-		toaster = OidIsValid(toasterid) ?
-			SearchTsrCache(att->atttoaster) : NULL;*/
-
 		ttc->ttc_attr[i].tai_toaster = toaster;
 		ttc->ttc_attr[i].tai_toasterid = toasterid;
 
