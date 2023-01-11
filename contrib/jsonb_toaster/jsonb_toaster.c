@@ -2914,6 +2914,9 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 		JsonContainer *jc;
 		JsonbContainerHeader *jbc;
 
+		Datum value_to_toast;
+		bool compress_chunks;
+
 		for (i = 0; i < nkeys; i++)
 		{
 			if (pairs[i].value.type == jbvBinary &&
@@ -3045,9 +3048,6 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 		if (!jsonb_toast_fields)
 			goto exit;
 
-		Datum value_to_toast;
-		bool compress_chunks;
-
 		if (jsonb_compress_chunks && orig_val)
 		{
 			compress_chunks = true;
@@ -3108,8 +3108,8 @@ jsonb_toaster_save_object(Relation rel, Oid toasterid, JsonContainer *root,
 
 		//Assert(VARSIZE_ANY(toasted_val) == TOAST_POINTER_SIZE);
 
-		fields[max_key_idx].orig_value = (Datum) 0;
-		fields[max_key_idx].value = (Datum) 0;
+		fields[max_key_idx].orig_value = NULL;
+		fields[max_key_idx].value = NULL;
 		fields[max_key_idx].size = offsetof(JsonbToastedContainerPointer, data) + VARSIZE_ANY(toasted_val); //TOAST_POINTER_SIZE;
 		fields[max_key_idx].status = 't';
 		pairs[max_key_idx].value.val.binary.data = jsonxzInitContainerFromDatum(jc, toasted_val);
@@ -3652,7 +3652,7 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 									  NULL, options, NULL, NULL, false);
 }
 
-static struct varlena *
+static Datum
 jsonb_toaster_toast(Relation rel, Oid toasterid,
 					Datum new_val, Datum old_val,
 					int max_inline_size, int options)
@@ -3678,10 +3678,10 @@ jsonb_toaster_toast(Relation rel, Oid toasterid,
 
 	jsonbFreeIterators();
 
-	return (struct varlena *) DatumGetPointer(res);
+	return res;
 }
 
-static struct varlena *
+static Datum
 jsonb_toaster_update_toast(Relation rel, Oid toasterid,
 						   Datum new_val, Datum old_val,
 						   int options)
@@ -3699,10 +3699,10 @@ jsonb_toaster_update_toast(Relation rel, Oid toasterid,
 
 	jsonbFreeIterators();
 
-	return (struct varlena *) DatumGetPointer(res);
+	return res;
 }
 
-static struct varlena *
+static Datum
 jsonb_toaster_copy_toast(Relation rel, Oid toasterid,
 						 Datum new_val, int options)
 {
@@ -3717,7 +3717,7 @@ jsonb_toaster_copy_toast(Relation rel, Oid toasterid,
 
 	jsonbFreeIterators();
 
-	return (struct varlena *) DatumGetPointer(res);
+	return res;
 }
 
 static void
@@ -3733,11 +3733,11 @@ jsonb_toaster_delete_toast(Datum val, bool is_speculative)
 	jsonbFreeIterators();
 }
 
-static struct varlena *
+static Datum
 jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 {
 	struct varlena *result;
-	Json		jsbuf;
+	//Json		jsbuf;
 	Json	   *js;
 	JsonValue	bin;
 	void	   *detoasted;
@@ -3758,7 +3758,7 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 	jsonbFreeIterators();
 
 	if (sliceoffset == 0 && (slicelength < 0 || slicelength >= len))
-		return detoasted;
+		return PointerGetDatum(detoasted);
 
 	if (sliceoffset < 0)
 		sliceoffset = 0;
@@ -3774,7 +3774,7 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 
 	pfree(detoasted);
 
-	return result;
+	return PointerGetDatum(result);
 }
 
 static void *
@@ -3789,10 +3789,11 @@ jsonb_toaster_vtable(Datum toast_ptr)
 }
 
 static void
-jsonb_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
+jsonb_toaster_init(Relation rel, Oid toastoid, Oid toastindexoid,
+				   Datum reloptions, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast)
 {
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions,
+	(void) create_toast_table(rel, toastoid, toastindexoid, reloptions,
 							  lockmode, check, OIDOldToast);
 }
 
