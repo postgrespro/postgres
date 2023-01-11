@@ -900,6 +900,7 @@ jsonx_toast_delete_datum(Datum value, bool is_speculative)
 	table_close(toastrel, NoLock);
 }
 
+#if 0
 static void
 jsonx_process_toast_chunk(Relation toastrel, Oid valueid, struct varlena *result,
 					int chunk_data_size, int attrsize, int chunksize,
@@ -953,6 +954,7 @@ jsonx_process_toast_chunk(Relation toastrel, Oid valueid, struct varlena *result
 		   chunkdata + chcpystrt,
 		   (chcpyend - chcpystrt) + 1);
 }
+#endif
 
 static void
 jsonx_create_fetch_datum_iterator_scan(JsonxFetchDatumIterator iter, int32 first_chunkno)
