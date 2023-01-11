@@ -242,7 +242,15 @@ fill_val(Form_pg_attribute att,
 			else
 			{
 				*infomask |= HEAP_HASEXTERNAL;
-				/* no alignment, since it's short by definition */
+
+				/*
+				 * Align custom TOAST pointers.  Ordinary pointers have
+				 * no alignment, since they are short by definition.
+				 */
+				if (VARATT_IS_CUSTOM(val))
+					data = (char *) att_align_nominal(data,
+													  att->attalign);
+
 				data_length = VARSIZE_EXTERNAL(val);
 				memcpy(data, val, data_length);
 			}
