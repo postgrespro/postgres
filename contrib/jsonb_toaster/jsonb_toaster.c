@@ -3652,6 +3652,103 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 									  NULL, options, NULL, NULL, false);
 }
 
+/* #define JSONB_TOASTER_TRACK_NESTING 1  FIXME this needs PG_TRY/PG_CATCH */
+
+#ifdef JSONB_TOASTER_TRACK_NESTING
+static int jsonb_toaster_nesting_level;
+#endif
+
+static MemoryContext jsonb_toaster_parent_cxt;
+static MemoryContext jsonb_toaster_temp_cxt;
+
+static void
+jsonb_toaster_temp_context_reset_callback(void *arg)
+{
+	if (jsonb_toaster_temp_cxt == arg)
+		jsonb_toaster_temp_cxt = NULL;
+}
+
+static void
+jsonb_toaster_register_temp_context_callback(MemoryContext temp_cxt)
+{
+	MemoryContextCallback *cb;
+
+	cb = MemoryContextAlloc(temp_cxt, sizeof(*cb));
+	cb->func = jsonb_toaster_temp_context_reset_callback;
+	cb->arg = temp_cxt;
+
+	MemoryContextRegisterResetCallback(temp_cxt, cb);
+}
+
+static void
+jsonb_toaster_init_temp_context()
+{
+#ifdef JSONB_TOASTER_TRACK_NESTING
+	if (jsonb_toaster_nesting_level++ > 0)
+		return;
+#endif
+
+	if (!jsonb_toaster_temp_cxt ||
+		jsonb_toaster_parent_cxt != CurrentMemoryContext)
+	{
+		MemoryContext temp_cxt;
+
+		if (jsonb_toaster_temp_cxt)
+		{
+			temp_cxt = jsonb_toaster_temp_cxt;
+			jsonb_toaster_temp_cxt = NULL;
+			MemoryContextDelete(temp_cxt);
+		}
+
+		temp_cxt = AllocSetContextCreate(CurrentMemoryContext,
+										 "jsonb_toaster temp context",
+										 ALLOCSET_DEFAULT_SIZES);
+
+		jsonb_toaster_register_temp_context_callback(temp_cxt);
+
+		jsonb_toaster_parent_cxt = CurrentMemoryContext;
+		jsonb_toaster_temp_cxt = temp_cxt;
+	}
+
+	MemoryContextSwitchTo(jsonb_toaster_temp_cxt);
+
+	jsonbInitIterators();
+}
+
+static Datum
+jsonb_toaster_free_temp_context(Datum result)
+{
+	MemoryContext temp_cxt;
+
+#ifdef JSONB_TOASTER_TRACK_NESTING
+	if (jsonb_toaster_nesting_level-- > 1)
+		return;
+#endif
+
+	Assert(CurrentMemoryContext == jsonb_toaster_temp_cxt);
+
+	jsonbFreeIterators();
+
+	MemoryContextSwitchTo(jsonb_toaster_parent_cxt);
+
+	/* Copy result from from temporary context, if any */
+	if (result)
+	{
+		int			size = VARSIZE_ANY(result);
+
+		result = PointerGetDatum(memcpy(palloc(size), DatumGetPointer(result), size));
+	}
+
+	temp_cxt = jsonb_toaster_temp_cxt;
+	MemoryContextReset(temp_cxt);
+
+	/* Restore jsonb_toaster_temp_cxt after reset callback execution */
+	jsonb_toaster_temp_cxt = temp_cxt;
+	jsonb_toaster_register_temp_context_callback(temp_cxt);
+
+	return result;
+}
+
 static Datum
 jsonb_toaster_toast(Relation rel, Oid toasterid,
 					Datum new_val, Datum old_val,
@@ -3661,7 +3758,7 @@ jsonb_toaster_toast(Relation rel, Oid toasterid,
 	Datum		res;
 	char		cmethod = TOAST_PGLZ_COMPRESSION;
 
-	jsonbInitIterators();
+	jsonb_toaster_init_temp_context();
 
 	new_js = DatumGetJsonbPC(new_val, NULL /* FIXME alloca */, false);
 
@@ -3674,9 +3771,13 @@ jsonb_toaster_toast(Relation rel, Oid toasterid,
 										  new_val, new_js,
 										  max_inline_size, options);
 
-	res = res == (Datum) 0 ? new_val : res;
-
-	jsonbFreeIterators();
+	if (res == (Datum) 0 || res == new_val)
+	{
+		res = new_val;
+		jsonb_toaster_free_temp_context(0);
+	}
+	else
+		res = jsonb_toaster_free_temp_context(res);
 
 	return res;
 }
@@ -3691,13 +3792,13 @@ jsonb_toaster_update_toast(Relation rel, Oid toasterid,
 	Datum		res;
 	char		cmethod = TOAST_PGLZ_COMPRESSION;
 
-	jsonbInitIterators();
+	jsonb_toaster_init_temp_context();
 
 	new_js = DatumGetJsonbPC(new_val, NULL, false);
 	old_js = DatumGetJsonbPC(old_val, NULL, false);
 	res = jsonb_toaster_cmp(rel, toasterid, JsonRoot(new_js), JsonRoot(old_js), cmethod);
 
-	jsonbFreeIterators();
+	res = jsonb_toaster_free_temp_context(res);
 
 	return res;
 }
@@ -3710,12 +3811,12 @@ jsonb_toaster_copy_toast(Relation rel, Oid toasterid,
 	Datum		res;
 	char		cmethod = TOAST_PGLZ_COMPRESSION;
 
-	jsonbInitIterators();
+	jsonb_toaster_init_temp_context();
 
 	new_js = DatumGetJsonbPC(new_val, NULL, false);
 	res = jsonb_toaster_copy(rel, toasterid, JsonRoot(new_js), cmethod, true);
 
-	jsonbFreeIterators();
+	res = jsonb_toaster_free_temp_context(res);
 
 	return res;
 }
@@ -3725,12 +3826,12 @@ jsonb_toaster_delete_toast(Datum val, bool is_speculative)
 {
 	Json	   *js;
 
-	jsonbInitIterators();
+	jsonb_toaster_init_temp_context();
 
 	js = DatumGetJsonbPC(val, NULL, false);
 	jsonb_toaster_delete_recursive(NULL /* XXX rel */, JsonRoot(js), false, is_speculative);
 
-	jsonbFreeIterators();
+	jsonb_toaster_free_temp_context(0);
 }
 
 static Datum
@@ -3742,10 +3843,11 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 	JsonValue	bin;
 	void	   *detoasted;
 	int			len;
+	MemoryContext mcxt = CurrentMemoryContext;
 
 	Assert(VARATT_IS_CUSTOM(toastptr));
 
-	jsonbInitIterators();
+	jsonb_toaster_init_temp_context();
 
 	//js = DatumGetJson(toastptr, &jsonxContainerOps, &jsbuf);
 	js = JsonExpand(NULL /* FIXME &jsbuf */, toastptr, false, &jsonxContainerOps);
@@ -3755,10 +3857,8 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 	detoasted = JsonEncode(&bin, JsonbEncode, NULL);
 	len = VARSIZE_ANY_EXHDR(detoasted);
 
-	jsonbFreeIterators();
-
 	if (sliceoffset == 0 && (slicelength < 0 || slicelength >= len))
-		return PointerGetDatum(detoasted);
+		return jsonb_toaster_free_temp_context(PointerGetDatum(detoasted));
 
 	if (sliceoffset < 0)
 		sliceoffset = 0;
@@ -3768,11 +3868,12 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 	if (slicelength < 0 || sliceoffset + slicelength > len)
 		slicelength = len - sliceoffset;
 
-	result = palloc(VARHDRSZ + slicelength);
+	result = MemoryContextAlloc(mcxt, VARHDRSZ + slicelength);
 	SET_VARSIZE(result, VARHDRSZ + slicelength);
 	memcpy(VARDATA(result), (char *) VARDATA_ANY(detoasted) + sliceoffset, slicelength);
 
 	pfree(detoasted);
+	jsonb_toaster_free_temp_context(0);
 
 	return PointerGetDatum(result);
 }
