@@ -1201,7 +1201,7 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 		add_jsonb(args[i + 1], nulls[i + 1], &result, types[i + 1], false);
 	}
 
-	pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
+	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
 
 	PG_RETURN_JSONB_VALUE_P(result.res);
 }
