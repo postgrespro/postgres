@@ -527,8 +527,7 @@ DefineQueryRewrite(const char *rulename,
 	// XXX PG_TOASTREL
 			foreach(lc, trelids)
 			{
-				Toastrel trel = (Toastrel) (lfirst(lc));
-				toastrelid = trel->toastentid;
+				toastrelid = lfirst_oid(lc);
 
 /*		toastrelid = event_relation->rd_rel->reltoastrelid; */
 

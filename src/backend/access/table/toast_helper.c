@@ -64,18 +64,21 @@ toast_tuple_init(ToastTupleContext *ttc)
 
 		dtrel = SearchToastrelCache(ttc->ttc_rel->rd_id, att->attnum, false);
 
-		if(dtrel == (Datum) 0)
+		if (dtrel == (Datum) 0)
 		{
-			elog(ERROR, "No PG_TOASTREL record for rel %u", ttc->ttc_rel->rd_id);
+			toaster = NULL;
+			toasterid = InvalidOid;
 		}
-		toasterid = ((Toastrel) DatumGetPointer(dtrel))->toasteroid;
-		if( toasterid == InvalidOid )
+		else
 		{
-			elog(ERROR, "No Toaster found for rel %u", ttc->ttc_rel->rd_id);
-		}
+			toasterid = ((Toastrel) DatumGetPointer(dtrel))->toasteroid;
 
-		toaster = OidIsValid(toasterid) ?
-			SearchTsrCache(toasterid) : NULL;
+			if (toasterid == InvalidOid)
+				elog(ERROR, "No Toaster found for rel %u", ttc->ttc_rel->rd_id);
+
+			toaster = OidIsValid(toasterid) ?
+				SearchTsrCache(toasterid) : NULL;
+		}
 
 		ttc->ttc_attr[i].tai_toaster = toaster;
 		ttc->ttc_attr[i].tai_toasterid = toasterid;
@@ -356,35 +359,20 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen,
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
-	TsrRoutine	*toaster;
-	Datum d = (Datum) 0;
+	TsrRoutine *toaster = attr->tai_toaster;
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-	d = SearchToastrelCache(ttc->ttc_rel->rd_id, attribute, false);
 
-	if(d != (Datum) 0)
-	{
-		Toastrel trel = (Toastrel) DatumGetPointer(d);
-		if(trel->toasteroid != InvalidOid)
-		{
-			toaster = SearchTsrCache(trel->toasteroid);
-			attr->tai_toasterid = trel->toasteroid;
-			attr->tai_toaster = toaster;
+	*value = (Datum) toaster->toast(ttc->ttc_rel,
+									attr->tai_toasterid,
+									old_value,
+									attribute,
+									PointerGetDatum(attr->tai_oldexternal),
+									maxDataLen, options);
 
-			*value = (Datum)(toaster->toast(ttc->ttc_rel,
-										 attr->tai_toasterid,
-										 old_value,
-										 attribute,
-										 PointerGetDatum(attr->tai_oldexternal),
-										 maxDataLen, options)
-			);
-		}
-	}
-	
-   if (*value == old_value)
-	{
-        return;
-	}
+	if (*value == old_value)
+		return;
+
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;

@@ -90,6 +90,12 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 */
 	rel = table_open(relOid, lockmode);
 
+	if (rel->rd_rel->relkind != RELKIND_RELATION)
+	{
+		table_close(rel, NoLock);
+		return;
+	}
+
 	tupDesc = RelationGetDescr(rel);
 
 	/*

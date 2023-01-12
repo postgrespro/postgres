@@ -132,7 +132,7 @@ SearchTsrCache(Oid	toasterOid)
 			/* decision is to be made */
 			/* remove entry from list, it will be added in a head of list below */
 			/*
-			foreach_delete_current(ToasterCache, lc);
+			ToasterCache = foreach_delete_current(ToasterCache, lc);
 			*/
 			goto out;
 		}
@@ -492,13 +492,13 @@ GetFullToastrel(Oid relid, int16 attnum, LOCKMODE lockmode)
 			BTEqualStrategyNumber, F_OIDEQ,
 			ObjectIdGetDatum(relid));
 	keys++;
-/*
+
 	ScanKeyInit(&key[keys],
 			Anum_pg_toastrel_attnum,
 			BTEqualStrategyNumber, F_INT2EQ,
 			Int16GetDatum(attnum));
 	keys++;
-*/
+
 	scan = systable_beginscan(pg_toastrel, ToastrelRelIndexId, false,
 							  NULL, keys, key);
 	keys = 0;
@@ -710,7 +710,7 @@ GetFullToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode)
 					&& ((Form_pg_toastrel) GETSTRUCT(tup))->version >= tcell->version)
 				{
 					del_itms++;
-					foreach_delete_current(trel_list, lc);
+					trel_list = foreach_delete_current(trel_list, lc);
 					break;
 				}
 				else found_itms++;
@@ -1085,7 +1085,7 @@ DeleteToastrelCache(Oid toasterid, Oid	relid, int16 attnum)
 			&& entry->tkey->toasteroid == toasterid)
 		{
 			result = PointerGetDatum(entry->tkey);
-			foreach_delete_current(ToastrelCache, lc);
+			ToastrelCache = foreach_delete_current(ToastrelCache, lc);
 			goto out;
 		}
 	}
@@ -1204,7 +1204,7 @@ InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toasten
 				{
 					version = entry->tkey->version;
 					pfree(entry->tkey);
-					foreach_delete_current(ToastrelCache, lc);
+					ToastrelCache = foreach_delete_current(ToastrelCache, lc);
 					break;
 				}
 			}

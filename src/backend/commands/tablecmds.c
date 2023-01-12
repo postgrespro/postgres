@@ -14789,10 +14789,11 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	// XXX PG_TOASTREL
 		foreach(lc, trelids)
 		{
-			Toastrel trel = (Toastrel) (lfirst(lc));
-			if (OidIsValid(trel->toastentid))
+			Oid			toastentid = lfirst_oid(lc);
+
+			if (OidIsValid(toastentid))
 			{
-				Relation	toastRel = relation_open(trel->toastentid, lockmode);
+				Relation	toastRel = relation_open(toastentid, lockmode);
 
 				reltoastidxids = RelationGetIndexList(toastRel);
 				relation_close(toastRel, lockmode);
@@ -14860,9 +14861,10 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	// XXX PG_TOASTREL
 		foreach(lc, trelids)
 		{
-			Toastrel trel = (Toastrel) (lfirst(lc));
-			if (OidIsValid(trel->toastentid))
-				ATExecSetTableSpace(trel->toastentid, newTableSpace, lockmode);
+			Oid			toastentid = lfirst_oid(lc);
+
+			if (OidIsValid(toastentid))
+				ATExecSetTableSpace(toastentid, newTableSpace, lockmode);
 		}
 	}
 

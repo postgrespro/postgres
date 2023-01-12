@@ -258,9 +258,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		 * XXX maybe the threshold should be less than maxDataLen?
 		 */
 		/* FIXME set force_toast flag */
-		if (toast_attr[biggest_attno].tai_size > maxDataLen
-			&& HasToastrel(InvalidOid, rel->rd_id, biggest_attno, AccessShareLock) )
-			/* &&	rel->rd_rel->reltoastrelid != InvalidOid) */
+		if (toast_attr[biggest_attno].tai_size > maxDataLen &&
+			ttc.ttc_attr[biggest_attno].tai_toaster)
 			heap_toast_tuple_externalize(&ttc, biggest_attno, maxDataLen, options);
 	}
 
