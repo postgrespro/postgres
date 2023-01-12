@@ -35,7 +35,6 @@ SUBDIRS = \
 		old_snapshot	\
 		pageinspect	\
 		passwordcheck	\
-		pg_bt		\
 		pg_buffercache	\
 		pg_freespacemap \
 		pg_prewarm	\
