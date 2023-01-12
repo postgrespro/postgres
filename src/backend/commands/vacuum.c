@@ -1811,6 +1811,7 @@ vac_truncate_clog(TransactionId frozenXID,
 	LWLockRelease(WrapLimitsVacuumLock);
 }
 
+#if 0
 static Oid
 get_main_rel_for_toast_rel(Oid toastrelid)
 {
@@ -1840,44 +1841,28 @@ get_main_rel_for_toast_rel(Oid toastrelid)
 
 	return relid;
 }
+#endif
 
 static bool
 toastrel_vacuum_full_is_disabled(Relation toastrel, VacuumParams *params)
 {
-	Oid			mainrelid = get_main_rel_for_toast_rel(RelationGetRelid(toastrel));
-	Relation	mainrel = vacuum_open_relation(mainrelid, NULL, params->options,
-											   params->log_min_duration >= 0,
-											   AccessShareLock);
-	TupleDesc	maindesc;
+	Oid			toasterid = GetToasterForEntityRel(RelationGetRelid(toastrel), AccessShareLock);
 	bool		res = false;
 
-	if (!mainrel)
-		return true;
-
-	maindesc = RelationGetDescr(mainrel);
-
-	for (int i = 0; i < maindesc->natts; i++)
+	if (OidIsValid(toasterid))
 	{
-		Oid			toasterid = TupleDescAttr(maindesc, i)->atttoaster;
+		TsrRoutine *toaster = SearchTsrCache(toasterid);
 
-		if (OidIsValid(toasterid))
+		if (toaster->relinfo &&
+			(toaster->relinfo(toastrel) & TOASTREL_VACUUM_FULL_DISABLED))
 		{
-			TsrRoutine *toaster = SearchTsrCache(toasterid);
-
-			if (toaster->relinfo &&
-				(toaster->relinfo(toastrel) & TOASTREL_VACUUM_FULL_DISABLED))
-			{
-				ereport(WARNING,
-						(errmsg("skipping \"%s\" --- %s is disabled by toaster",
-								RelationGetRelationName(toastrel),
-								"VACUUM FULL")));
-				res = true;
-				break;
-			}
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- %s is disabled by toaster",
+							RelationGetRelationName(toastrel),
+							"VACUUM FULL")));
+			res = true;
 		}
 	}
-
-	relation_close(mainrel, AccessShareLock);
 
 	return res;
 }
