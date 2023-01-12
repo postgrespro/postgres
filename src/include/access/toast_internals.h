@@ -63,4 +63,7 @@ extern void toast_close_indexes(Relation *toastidxs, int num_indexes,
 								LOCKMODE lock);
 extern void init_toast_snapshot(Snapshot toast_snapshot);
 
+extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
+extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+
 #endif							/* TOAST_INTERNALS_H */
