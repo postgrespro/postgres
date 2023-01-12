@@ -162,7 +162,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 
 	jb = PG_GETARG_JSONB_P(0);
 	jtext = makeStringInfo();
-	
+
 	(void) JsonToCString(JsonbRoot(jb), jtext);
 
 	jsonbFreeIterators();
