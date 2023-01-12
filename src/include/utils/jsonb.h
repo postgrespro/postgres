@@ -381,12 +381,18 @@ extern JsonbIterator *JsonbIteratorInit(JsonbContainer *container);
 extern JsonbIteratorToken JsonbIteratorNext(JsonbIterator **it, JsonbValue *val,
 											bool skipNested);
 extern void JsonbToJsonbValue(Jsonb *jsonb, JsonbValue *val);
-extern Jsonb *JsonbValueToJsonb(JsonbValue *val);
+extern Jsonb *JsonbValueToJsonbSafe(JsonbValue *val, Node *escontext);
 extern bool JsonbDeepContains(JsonbIterator **val,
 							  JsonbIterator **mContained);
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
 extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
 										 uint64 *hash, uint64 seed);
+
+static inline Jsonb *
+JsonbValueToJsonb(JsonbValue *val)
+{
+	return JsonbValueToJsonbSafe(val, NULL);
+}
 
 /* jsonb.c support functions */
 extern char *JsonbToCString(StringInfo out, JsonbContainer *in,

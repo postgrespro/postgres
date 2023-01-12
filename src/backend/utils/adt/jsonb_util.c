@@ -85,11 +85,11 @@ static void fillJsonbValue(const JsonbContainer *container, int index,
 						   JsonbValue *result);
 static bool equalsJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
 static int	compareJsonbScalarValue(const JsonbValue *a, const JsonbValue *b);
-static Jsonb *convertToJsonb(const JsonbValue *val);
-static void convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
-static void convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
-static void convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level);
-static void convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal);
+static Jsonb *convertToJsonb(const JsonbValue *val, Node *escontext);
+static bool convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
+static bool convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
+static bool convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext);
+static bool convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal, Node *escontext);
 
 static int	reserveFromBuffer(StringInfo buffer, int len);
 static void appendToBuffer(StringInfo buffer, const char *data, int len);
@@ -134,7 +134,7 @@ JsonbToJsonbValue(Jsonb *jsonb, JsonbValue *val)
  * where it would be inconvenient to deal with a great amount of other state.
  */
 Jsonb *
-JsonbValueToJsonb(JsonbValue *val)
+JsonbValueToJsonbSafe(JsonbValue *val, Node *escontext)
 {
 	Jsonb	   *out;
 
@@ -143,11 +143,11 @@ JsonbValueToJsonb(JsonbValue *val)
 		/* Scalar value */
 		JsonbParseState *pstate = NULL;
 		JsonbValue *res = pushSingleScalarJsonbValue(&pstate, val);
-		out = convertToJsonb(res);
+		out = convertToJsonb(res, escontext);
 	}
 	else if (val->type == jbvObject || val->type == jbvArray)
 	{
-		out = convertToJsonb(val);
+		out = convertToJsonb(val, escontext);
 	}
 	else
 	{
@@ -1656,7 +1656,7 @@ padBufferToInt(StringInfo buffer)
  * Given a JsonbValue, convert to Jsonb. The result is palloc'd.
  */
 static Jsonb *
-convertToJsonb(const JsonbValue *val)
+convertToJsonb(const JsonbValue *val, Node *escontext)
 {
 	StringInfoData buffer;
 	JEntry		jentry;
@@ -1671,7 +1671,8 @@ convertToJsonb(const JsonbValue *val)
 	/* Make room for the varlena header */
 	reserveFromBuffer(&buffer, VARHDRSZ);
 
-	convertJsonbValue(&buffer, &jentry, val, 0);
+	if (!convertJsonbValue(&buffer, &jentry, val, 0, escontext))
+		return NULL;
 
 	/*
 	 * Note: the JEntry of the root is discarded. Therefore the root
@@ -1697,13 +1698,13 @@ convertToJsonb(const JsonbValue *val)
  * If the value is an array or an object, this recurses. 'level' is only used
  * for debugging purposes.
  */
-static void
-convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level)
+static bool
+convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext)
 {
 	check_stack_depth();
 
 	if (!val)
-		return;
+		return true;
 
 	/*
 	 * A JsonbValue passed as val should never have a type of jbvBinary, and
@@ -1713,17 +1714,20 @@ convertJsonbValue(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 	 */
 
 	if (IsAJsonbScalar(val))
-		convertJsonbScalar(buffer, header, val);
+		return convertJsonbScalar(buffer, header, val, escontext);
 	else if (val->type == jbvArray)
-		convertJsonbArray(buffer, header, val, level);
+		return convertJsonbArray(buffer, header, val, level, escontext);
 	else if (val->type == jbvObject)
-		convertJsonbObject(buffer, header, val, level);
+		return convertJsonbObject(buffer, header, val, level, escontext);
 	else
+	{
 		elog(ERROR, "unknown type of jsonb container to convert");
+		return false;
+	}
 }
 
-static void
-convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level)
+static bool
+convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext)
 {
 	int			base_offset;
 	int			jentry_offset;
@@ -1766,7 +1770,8 @@ convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 		 * Convert element, producing a JEntry and appending its
 		 * variable-length data to buffer
 		 */
-		convertJsonbValue(buffer, &meta, elem, level + 1);
+		if (!convertJsonbValue(buffer, &meta, elem, level + 1, escontext))
+			return false;
 
 		len = JBE_OFFLENFLD(meta);
 		totallen += len;
@@ -1777,7 +1782,7 @@ convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 		 * once at the end, to forestall possible integer overflow.
 		 */
 		if (totallen > JENTRY_OFFLENMASK)
-			ereport(ERROR,
+			ereturn(escontext, false,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("total size of jsonb array elements exceeds the maximum of %u bytes",
 							JENTRY_OFFLENMASK)));
@@ -1797,17 +1802,19 @@ convertJsonbArray(StringInfo buffer, JEntry *header, const JsonbValue *val, int 
 
 	/* Check length again, since we didn't include the metadata above */
 	if (totallen > JENTRY_OFFLENMASK)
-		ereport(ERROR,
+		ereturn(escontext, false,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("total size of jsonb array elements exceeds the maximum of %u bytes",
 						JENTRY_OFFLENMASK)));
 
 	/* Initialize the header of this node in the container's JEntry array */
 	*header = JENTRY_ISCONTAINER | totallen;
+
+	return true;
 }
 
-static void
-convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level)
+static bool
+convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int level, Node *escontext)
 {
 	int			base_offset;
 	int			jentry_offset;
@@ -1847,7 +1854,8 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		 * Convert key, producing a JEntry and appending its variable-length
 		 * data to buffer
 		 */
-		convertJsonbScalar(buffer, &meta, &pair->key);
+		if (!convertJsonbScalar(buffer, &meta, &pair->key, escontext))
+			return false;
 
 		len = JBE_OFFLENFLD(meta);
 		totallen += len;
@@ -1858,7 +1866,7 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		 * once at the end, to forestall possible integer overflow.
 		 */
 		if (totallen > JENTRY_OFFLENMASK)
-			ereport(ERROR,
+			ereturn(escontext, false,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("total size of jsonb object elements exceeds the maximum of %u bytes",
 							JENTRY_OFFLENMASK)));
@@ -1882,7 +1890,8 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		 * Convert value, producing a JEntry and appending its variable-length
 		 * data to buffer
 		 */
-		convertJsonbValue(buffer, &meta, &pair->value, level + 1);
+		if (!convertJsonbValue(buffer, &meta, &pair->value, level + 1, escontext))
+			return false;
 
 		len = JBE_OFFLENFLD(meta);
 		totallen += len;
@@ -1893,7 +1902,7 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 		 * once at the end, to forestall possible integer overflow.
 		 */
 		if (totallen > JENTRY_OFFLENMASK)
-			ereport(ERROR,
+			ereturn(escontext, false,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("total size of jsonb object elements exceeds the maximum of %u bytes",
 							JENTRY_OFFLENMASK)));
@@ -1913,17 +1922,19 @@ convertJsonbObject(StringInfo buffer, JEntry *header, const JsonbValue *val, int
 
 	/* Check length again, since we didn't include the metadata above */
 	if (totallen > JENTRY_OFFLENMASK)
-		ereport(ERROR,
+		ereturn(escontext, false,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("total size of jsonb object elements exceeds the maximum of %u bytes",
 						JENTRY_OFFLENMASK)));
 
 	/* Initialize the header of this node in the container's JEntry array */
 	*header = JENTRY_ISCONTAINER | totallen;
+
+	return true;
 }
 
-static void
-convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal)
+static bool
+convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVal, Node *escontext)
 {
 	int			numlen;
 	short		padlen;
@@ -1936,11 +1947,11 @@ convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVa
 
 		case jbvString:
 			if (scalarVal->val.string.len > JENTRY_OFFLENMASK)
-					ereport(ERROR,
-							(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-							 errmsg("string too long to represent as jsonb string"),
-							 errdetail("Due to an implementation restriction, jsonb strings cannot exceed %d bytes.",
-									   JENTRY_OFFLENMASK)));
+				ereturn(escontext, false,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("string too long to represent as jsonb string"),
+						 errdetail("Due to an implementation restriction, jsonb strings cannot exceed %d bytes.",
+								   JENTRY_OFFLENMASK)));
 
 			appendToBuffer(buffer, scalarVal->val.string.val,
 							scalarVal->val.string.len);
@@ -1981,6 +1992,8 @@ convertJsonbScalar(StringInfo buffer, JEntry *header, const JsonbValue *scalarVa
 		default:
 			elog(ERROR, "invalid jsonb scalar type");
 	}
+
+	return true;
 }
 
 /*

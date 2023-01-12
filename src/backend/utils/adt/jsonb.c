@@ -260,6 +260,7 @@ jsonb_from_cstring(char *json, int len, Node *escontext)
 	JsonLexContext *lex;
 	JsonbInState state;
 	JsonSemAction sem;
+	Jsonb	   *jb;
 
 	memset(&state, 0, sizeof(state));
 	memset(&sem, 0, sizeof(sem));
@@ -279,7 +280,12 @@ jsonb_from_cstring(char *json, int len, Node *escontext)
 		return (Datum) 0;
 
 	/* after parsing, the item member has the composed jsonb structure */
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(state.res));
+	jb = JsonbValueToJsonbSafe(state.res, escontext);
+
+	if (jb)
+		PG_RETURN_JSONB_P(jb);
+	else
+		return (Datum) 0;
 }
 
 static JsonParseErrorType
