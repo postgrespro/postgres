@@ -83,9 +83,6 @@
 #include "storage/procarray.h"
 
 
-static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
-static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
-
 static void
 toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
 						   Oid valueid, HeapTuple ttup, int32 *seqno,
@@ -804,7 +801,7 @@ toast_delete_datum(Datum value, bool is_speculative)
  *	toast rows with that ID; see notes for GetNewOidWithIndex().
  * ----------
  */
-static bool
+bool
 toastrel_valueid_exists(Relation toastrel, Oid valueid)
 {
 	bool		result = false;
@@ -852,7 +849,7 @@ toastrel_valueid_exists(Relation toastrel, Oid valueid)
  *	As above, but work from toast rel's OID not an open relation
  * ----------
  */
-static bool
+bool
 toastid_valueid_exists(Oid toastrelid, Oid valueid)
 {
 	bool		result;

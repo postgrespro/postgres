@@ -96,4 +96,8 @@ toast_update_datum(Datum value,
 extern Size toast_datum_size(Datum value);
 extern Size toast_raw_datum_size(Datum value);
 */
+
+extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
+extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+
 #endif							/* TOAST_INTERNALS_H */
