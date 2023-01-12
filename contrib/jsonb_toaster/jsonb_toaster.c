@@ -34,6 +34,7 @@
 #include "utils/builtins.h"
 #include "utils/builtins.h"
 #include "utils/datetime.h"
+#include "utils/guc.h"
 #include "utils/json.h"
 #include "utils/jsonfuncs.h"
 #include "utils/json_generic.h"
@@ -887,8 +888,8 @@ padBufferToInt(StringInfo buffer)
 	return padlen;
 }
 
-static void
-JsonxEncode(StringInfoData *buffer, const JsonbValue *val, void *cxt)
+static bool
+JsonxEncode(StringInfoData *buffer, const JsonbValue *val, void *cxt, Node *escontext)
 {
 	JEntry		jentry;
 	int32		header_len;
@@ -907,6 +908,8 @@ JsonxEncode(StringInfoData *buffer, const JsonbValue *val, void *cxt)
 									   jsonb_len, jsonb_len);
 
 	SET_VARSIZE(buffer->data + header_len - VARHDRSZ, jsonb_len);
+
+	return true;
 }
 
 static void *
@@ -918,7 +921,7 @@ jsonxEncode(JsonValue *jv, JsonContainerOps *ops, Oid toasterid)
 		bool		compressed;
 
 		if (JsonValueContainsToastedOrCompressed(jv, &toasted, &compressed))
-			return JsonEncode(jv, JsonxEncode, (void *)(intptr_t) toasterid);
+			return JsonEncode(jv, JsonxEncode, (void *)(intptr_t) toasterid, NULL);
 	}
 
 	return NULL;
@@ -3151,7 +3154,8 @@ jsonb_toaster_save(Relation rel, Oid toasterid, Json *js,
 
 		jb = PointerGetDatum(JsonValueFlatten(&object, JsonxEncode,
 											  &jsonxContainerOps,
-											  (void *)(intptr_t) toasterid));
+											  (void *)(intptr_t) toasterid,
+											  NULL));
 
 		pfree(object.val.object.pairs);
 
@@ -3630,7 +3634,7 @@ jsonb_toaster_default_toast(Relation rel, Oid toasterid, char cmethod,
 
 		JsonValueInitBinary(&jbv, JsonRoot(new_js));
 
-		new_val = PointerGetDatum(JsonEncode(&jbv, JsonbEncode, NULL));
+		new_val = PointerGetDatum(JsonEncode(&jbv, JsonbEncode, NULL, NULL));
 	}
 
 	if (0 && !VARATT_IS_COMPRESSED(new_val))
@@ -3751,7 +3755,7 @@ jsonb_toaster_free_temp_context(Datum result)
 
 static Datum
 jsonb_toaster_toast(Relation rel, Oid toasterid,
-					Datum new_val, Datum old_val,
+					Datum new_val, Datum old_val, int attnum,
 					int max_inline_size, int options)
 {
 	Json	   *new_js;
@@ -3805,7 +3809,7 @@ jsonb_toaster_update_toast(Relation rel, Oid toasterid,
 
 static Datum
 jsonb_toaster_copy_toast(Relation rel, Oid toasterid,
-						 Datum new_val, int options)
+						 Datum new_val, int options, int attnum)
 {
 	Json	   *new_js;
 	Datum		res;
@@ -3854,7 +3858,7 @@ jsonb_toaster_detoast(Datum toastptr, int sliceoffset, int slicelength)
 	jsonxInit(JsonRoot(js), toastptr);
 
 	JsonValueInitBinary(&bin, JsonRoot(js));
-	detoasted = JsonEncode(&bin, JsonbEncode, NULL);
+	detoasted = JsonEncode(&bin, JsonbEncode, NULL, NULL);
 	len = VARSIZE_ANY_EXHDR(detoasted);
 
 	if (sliceoffset == 0 && (slicelength < 0 || slicelength >= len))
@@ -3889,13 +3893,17 @@ jsonb_toaster_vtable(Datum toast_ptr)
 	return routine;
 }
 
-static void
-jsonb_toaster_init(Relation rel, Oid toastoid, Oid toastindexoid,
-				   Datum reloptions, LOCKMODE lockmode,
+static Datum
+jsonb_toaster_init(Relation rel, Oid toasteroid, Oid toastoid, Oid toastindexoid,
+				   Datum reloptions, int attnum, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast)
+
 {
-	(void) create_toast_table(rel, toastoid, toastindexoid, reloptions,
-							  lockmode, check, OIDOldToast);
+	Oid			toastrelid =
+		create_toast_table(rel, toastoid, toastindexoid, toasteroid,
+						   reloptions, attnum, lockmode, check, OIDOldToast);
+
+	return ObjectIdGetDatum(toastrelid);
 }
 
 static int
