@@ -798,6 +798,46 @@ HasToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode)
 	return has_toastrel;
 }
 
+Oid
+GetToasterForEntityRel(Oid toastentid, LOCKMODE lockmode)
+{
+	Relation	pg_toastrel;
+	ScanKeyData key[4];
+	SysScanDesc scan;
+	HeapTuple	tup;
+	int			keys = 0;
+	Toastrel	tkey;
+	Oid			toasteroid = InvalidOid;
+
+	tkey = palloc(sizeof(ToastrelData));
+	tkey->toastentid = toastentid;
+	tkey->toasteroid = InvalidOid;
+	tkey->attnum = 0;
+	tkey->version = 0;
+
+	pg_toastrel = table_open(ToastrelRelationId, lockmode);
+
+	ScanKeyInit(&key[keys],
+			Anum_pg_toastrel_toastentid,
+			BTEqualStrategyNumber, F_OIDEQ,
+			ObjectIdGetDatum(toastentid));
+	keys++;
+
+	scan = systable_beginscan(pg_toastrel, ToastrelEntIndexId, false,
+							  NULL, keys, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		toasteroid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
+		break; /* XXX returned first matched toastrel */
+	}
+
+	systable_endscan(scan);
+	table_close(pg_toastrel, lockmode);
+
+	return toasteroid;
+}
+
 
 /* ----------
  * DeleteToastRelation -

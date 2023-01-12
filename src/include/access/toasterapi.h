@@ -162,6 +162,7 @@ extern Datum GetFullToastrel(Oid relid, int16 attnum, LOCKMODE lockmode);
 extern Datum GetActualToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
 extern Datum GetAttVersionToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
 extern Datum GetLastToaster(Oid relid, int16 attnum, LOCKMODE lockmode);
+extern Oid GetToasterForEntityRel(Oid toastentid, LOCKMODE lockmode);
 
 extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
 	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);

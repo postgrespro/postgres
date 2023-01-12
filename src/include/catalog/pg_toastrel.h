@@ -52,5 +52,6 @@ DECLARE_UNIQUE_INDEX_PKEY(pg_toastrel_oid_index, 9882, ToastrelOidIndexId, on pg
 DECLARE_UNIQUE_INDEX(pg_toastrel_name_index, 9883, ToastrelKeyIndexId, on pg_toastrel using btree(toasteroid oid_ops, relid oid_ops, version int2_ops, attnum int2_ops));
 DECLARE_INDEX(pg_toastrel_rel_index, 9884, ToastrelRelIndexId, on pg_toastrel using btree(relid oid_ops, attnum int2_ops));
 DECLARE_INDEX(pg_toastrel_tsr_index, 9885, ToastrelTsrIndexId, on pg_toastrel using btree(toasteroid oid_ops));
+DECLARE_INDEX(pg_toastrel_ent_index, 9886, ToastrelEntIndexId, on pg_toastrel using btree(toastentid oid_ops));
 
 #endif							/* PG_TOASTREL_H */
