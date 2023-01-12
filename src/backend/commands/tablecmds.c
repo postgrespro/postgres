@@ -8581,11 +8581,11 @@ ATExecSetToaster(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	if(treloid == InvalidOid)
 	{
 		TsrRoutine *tsr = SearchTsrCache(newToaster);
-		
+
 		treloid = DatumGetObjectId(tsr->init(rel, newToaster, InvalidOid, InvalidOid, (Datum) 0, attnum,
 						AccessExclusiveLock, false, InvalidOid));
 	}
-	
+
 	namestrcpy(&relname, RelationGetRelationName(rel));
 	namestrcpy(&trelname, "");
 	InsertToastRelation(newToaster, rel->rd_id, treloid, attnum,
@@ -13138,7 +13138,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 		if(treloid == InvalidOid)
 		{
 			TsrRoutine *tsr = SearchTsrCache(tsroid);
-		
+
 			treloid = DatumGetObjectId(tsr->init(rel, tsroid, InvalidOid, InvalidOid, (Datum) 0, attnum,
 						AccessExclusiveLock, false, InvalidOid));
 		}
@@ -14626,7 +14626,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 			{
 				Relation	toastrel;
 				Oid			toastid = trel->toastentid;
-				
+
 				toastrel = table_open(toastid, lockmode);
 				tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(toastid));
 				if (!HeapTupleIsValid(tuple))

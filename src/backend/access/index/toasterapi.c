@@ -630,7 +630,7 @@ GetToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode)
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
-		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x' 
+		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x'
 			&& ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid != InvalidOid)
 		{
 			if(!list_member_oid(trel_list, ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid))
@@ -687,13 +687,13 @@ GetFullToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode)
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
-		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x' 
+		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x'
 			&& ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid != InvalidOid)
 		{
 			del_itms = 0;
 			found_itms = 0;
 			trel = palloc(sizeof(ToastrelData));
-	
+
 			trel->toasteroid = ((Form_pg_toastrel) GETSTRUCT(tup))->toasteroid;
 			trel->relid = ((Form_pg_toastrel) GETSTRUCT(tup))->relid;
 			trel->attnum = ((Form_pg_toastrel) GETSTRUCT(tup))->attnum;
@@ -784,7 +784,7 @@ HasToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode)
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
-		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x' 
+		if(((Form_pg_toastrel) GETSTRUCT(tup))->flag != 'x'
 			&& ((Form_pg_toastrel) GETSTRUCT(tup))->toastentid != InvalidOid)
 		{
 			has_toastrel = true;
@@ -1035,7 +1035,7 @@ InsertToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int1
 
 	entry = palloc(sizeof(*entry));
 	entry->tkey = palloc(sizeof(ToastrelData));
-	
+
 	entry->tkey->toasteroid = toasteroid;
 	entry->tkey->relid = relid;
 	entry->tkey->attnum = attnum;
@@ -1189,7 +1189,7 @@ InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toasten
 	Toastkey tkey = NULL;
 
 	ctx = MemoryContextSwitchTo(CacheMemoryContext);
-	
+
 	if (list_length(ToastrelCache) > 0)
 	{
 		entry = (ToastrelCacheEntry*)linitial(ToastrelCache);
@@ -1213,7 +1213,7 @@ InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toasten
 
 	entry = palloc(sizeof(ToastrelCacheEntry));
 	entry->tkey = palloc(sizeof(ToastrelData));
-	
+
 	entry->tkey->toasteroid = toasteroid;
 	entry->tkey->relid = relid;
 	entry->tkey->attnum = attnum;

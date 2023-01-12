@@ -251,7 +251,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 	/*
 	 * Is it already toasted?
 	 */
-	
+
 	if(IsBootstrapProcessingMode())
 	{
 		if(HasToastrel(toasteroid, rel->rd_id, attnum, AccessShareLock))
@@ -267,7 +267,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Oid toasteroid
 		return rel->rd_rel->reltoastrelid;
 */
 	}
-	
+
 	/*
 	 * Check to see whether the table actually needs a TOAST table.
 	 */

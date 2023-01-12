@@ -505,7 +505,7 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
-	
+
 	/* FIXME rel->rd_rel->reltoastrelid */
 	toastrel = table_open(trel, RowExclusiveLock);
 	toasttupDesc = toastrel->rd_att;
@@ -584,7 +584,7 @@ toast_save_datum(Relation rel, Datum value, Oid toasterid,
 			{
 				old_toast_pointer = NULL;
 			}
-			
+
 			if (old_toast_pointer->va_toastrelid == toast_pointer.va_toastrelid) /* FIXME rel->rd_toastoid) */
 			{
 				/* This value came from the old toast table; reuse its OID */

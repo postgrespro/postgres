@@ -271,7 +271,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 */
 	/* FIXME force_toast flag */
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > maxDataLen )
+								  toast_values, toast_isnull) > maxDataLen)
 			/* && rel->rd_rel->reltoastrelid != InvalidOid) */
 	{
 		int			biggest_attno;
