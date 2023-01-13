@@ -57,7 +57,7 @@ do { \
 } while (0)
 
 static void
-bytea_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
+bytea_toaster_init(Relation rel, Oid toastoid,  Oid toastindexoid, Datum reloptions, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast)
 {
 	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions,
