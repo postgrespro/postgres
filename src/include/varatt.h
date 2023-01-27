@@ -86,8 +86,12 @@ typedef enum vartag_external
 	VARTAG_INDIRECT = 1,
 	VARTAG_EXPANDED_RO = 2,
 	VARTAG_EXPANDED_RW = 3,
+	VARTAG_CUSTOM = 4,
 	VARTAG_ONDISK = 18
 } vartag_external;
+
+typedef Datum (*Toastapi_size_hook_type) (uint8 va_tag);
+extern PGDLLIMPORT Toastapi_size_hook_type Toastapi_size_hook;
 
 /* this test relies on the specific tag values above */
 #define VARTAG_IS_EXPANDED(tag) \
@@ -97,6 +101,7 @@ typedef enum vartag_external
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (tag) == VARTAG_CUSTOM ? (Toastapi_size_hook != NULL ? Toastapi_size_hook(tag) : 0) : \
 	 (AssertMacro(false), 0))
 
 /*
@@ -253,6 +258,7 @@ typedef struct
 #define VARHDRSZ_EXTERNAL		offsetof(varattrib_1b_e, va_data)
 #define VARHDRSZ_COMPRESSED		offsetof(varattrib_4b, va_compressed.va_data)
 #define VARHDRSZ_SHORT			offsetof(varattrib_1b, va_data)
+#define VARHDRSZ_CUSTOM			offsetof(varattrib_1b_e, va_data)
 
 #define VARATT_SHORT_MAX		0x7F
 #define VARATT_CAN_MAKE_SHORT(PTR) \
@@ -297,6 +303,8 @@ typedef struct
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_EXPANDED_RW)
 #define VARATT_IS_EXTERNAL_EXPANDED(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_IS_EXPANDED(VARTAG_EXTERNAL(PTR)))
+#define VARATT_IS_CUSTOM(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_CUSTOM)
 #define VARATT_IS_EXTERNAL_NON_EXPANDED(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && !VARTAG_IS_EXPANDED(VARTAG_EXTERNAL(PTR)))
 #define VARATT_IS_SHORT(PTR)				VARATT_IS_1B(PTR)

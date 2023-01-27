@@ -34,6 +34,9 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "access/toast_hook.h"
+
+Toastapi_init_hook_type Toastapi_init_hook = NULL;
 
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
@@ -85,8 +88,16 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 	rel = table_open(relOid, lockmode);
 
 	/* create_toast_table does all the work */
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
-							  check, OIDOldToast);
+	if(Toastapi_init_hook)
+	{
+		(void) (Toastapi_init_hook(relOid, InvalidOid, InvalidOid, reloptions, 0, lockmode,
+			check, OIDOldToast));
+	}
+	else
+	{
+		(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
+			check, OIDOldToast);
+	}
 
 	table_close(rel, NoLock);
 }
@@ -109,10 +120,18 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 			 relName);
 
 	/* create_toast_table does all the work */
-	if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0,
+	if(Toastapi_init_hook)
+	{
+		(void) (Toastapi_init_hook(RelationGetRelid(rel), toastOid, toastIndexOid, (Datum) 0, AccessExclusiveLock, 0,
+			false, InvalidOid));
+	}
+	else
+	{
+		if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0,
 							AccessExclusiveLock, false, InvalidOid))
-		elog(ERROR, "\"%s\" does not require a toast table",
-			 relName);
+			elog(ERROR, "\"%s\" does not require a toast table",
+				relName);
+	}
 
 	table_close(rel, NoLock);
 }

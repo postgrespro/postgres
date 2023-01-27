@@ -20,7 +20,9 @@
 #include "access/toast_internals.h"
 #include "catalog/pg_type_d.h"
 #include "varatt.h"
+#include "access/toast_hook.h"
 
+Toastapi_toast_hook_type Toastapi_toast_hook = NULL;
 
 /*
  * Prepare to TOAST a tuple.
@@ -261,8 +263,17 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
-							  options);
+	elog(NOTICE,"before toast hook call");
+	if(Toastapi_toast_hook)
+	{
+		elog(NOTICE,"toast hook call");
+		*value = Toastapi_toast_hook(ttc, attribute, 0, options);
+	}
+	else
+	{
+		*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
+			options);
+	}
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;

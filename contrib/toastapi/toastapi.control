@@ -1,0 +1,5 @@
+# toastapi extension
+comment = 'toastapi - Pluggable TOAST API'
+default_version = '1.0'
+module_pathname = '$libdir/toastapi'
+relocatable = true

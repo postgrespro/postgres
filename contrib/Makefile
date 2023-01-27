@@ -48,6 +48,7 @@ SUBDIRS = \
 		tablefunc	\
 		tcn		\
 		test_decoding	\
+		toastapi	\
 		tsm_system_rows \
 		tsm_system_time \
 		unaccent	\

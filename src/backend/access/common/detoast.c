@@ -21,6 +21,9 @@
 #include "common/pg_lzcompress.h"
 #include "utils/expandeddatum.h"
 #include "utils/rel.h"
+#include "access/toast_hook.h"
+
+Toastapi_detoast_hook_type Toastapi_detoast_hook = NULL;
 
 static struct varlena *toast_fetch_datum(struct varlena *attr);
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
@@ -92,10 +95,13 @@ detoast_external_attr(struct varlena *attr)
 	}
 	else
 	{
+		if(Toastapi_detoast_hook)
+			result = (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), 0, 0));
+		else
 		/*
 		 * This is a plain value inside of the main tuple - why am I called?
 		 */
-		result = attr;
+			result = attr;
 	}
 
 	return result;
