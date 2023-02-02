@@ -22,7 +22,7 @@
 #include "access/toast_helper.h"
 
 /* Hook for plugins to get control in Toast, Detoast and TOAST init() */
-typedef Datum (*Toastapi_init_hook_type) (Oid, Oid, Oid, Datum, LOCKMODE, int,
+typedef Datum (*Toastapi_init_hook_type) (Oid, Datum, LOCKMODE, int,
 						   bool, Oid);
 typedef Datum (*Toastapi_toast_hook_type) (ToastTupleContext *, int, int,
 						int);

@@ -94,14 +94,16 @@ extern Oid insert_toaster(const char *tsrname, const char *tsrhandler);
 
 extern Oid insert_toastrel(Oid tsroid, Oid relid, Oid toastrelid, int16 attnum, int16 version, char opts, char flag);
 
-extern void
-open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid);
+extern void open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid);
 
-extern Datum
-add_toaster(PG_FUNCTION_ARGS);
+extern Datum add_toaster(PG_FUNCTION_ARGS);
 
-extern Datum
-set_toaster(PG_FUNCTION_ARGS);
+extern Datum set_toaster(PG_FUNCTION_ARGS);
 
-extern Datum
-drop_toaster(PG_FUNCTION_ARGS);
+extern Datum drop_toaster(PG_FUNCTION_ARGS);
+
+extern Datum get_toaster(PG_FUNCTION_ARGS);
+
+extern Datum list_toasters(PG_FUNCTION_ARGS);
+
+extern Datum list_toastrels(PG_FUNCTION_ARGS);

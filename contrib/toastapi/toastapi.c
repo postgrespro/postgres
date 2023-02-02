@@ -89,19 +89,62 @@ static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
 static Toastapi_size_hook_type toastapi_size_hook = NULL;
 
-static Datum toastapi_init (Oid reloid, Oid toastOid, Oid toastIdxOid, Datum reloptions, int attnum, LOCKMODE lockmode,
+static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast)
 {
-   Datum result = (Datum) 0;
+   Datum result;
+	FormData_pg_attribute *pg_attr;
+	Datum d;
+	Datum tsrd;
+	// Oid tsroid;
+	TsrRoutine *toaster = NULL;
+	Relation rel;
+
    elog(NOTICE, "toastapi_init hook");
+
+	rel = table_open(reloid, RowExclusiveLock);
+	pg_attr = &rel->rd_att->attrs[attnum];
+	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), "toasthandler");
+	tsrd = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), "toasteroid");
+
+	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
+	result = toaster->init(rel,
+									atoi(DatumGetCString(tsrd)),
+									reloptions,
+									attnum,
+									lockmode,
+									check,
+									OIDOldToast);
+	table_close(rel, RowExclusiveLock);
    return result;
 }
 
 static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataLen,
 						int options)
 {
-   Datum result = (Datum) 0;
+   Datum result;
+	Datum	   *value = &ttc->ttc_values[attribute];
+	Datum		old_value = *value;
+	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
+	FormData_pg_attribute *pg_attr = &ttc->ttc_rel->rd_att->attrs[attribute];
+	Datum d;
+	// Datum tsrd;
+	// Oid tsroid;
+	TsrRoutine *toaster = NULL;
+
    elog(NOTICE, "toastapi_toast hook");
+
+	d = attopts_get_toaster_opts(ttc->ttc_rel->rd_id, NameStr(pg_attr->attname), "toasthandler");
+	// tsrd = attopts_get_toaster_opts(ttc->ttc_rel->rd_id, NameStr(pg_attr->attname), "toasteroid");
+
+	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
+	result = toaster->toast(ttc->ttc_rel,
+										atoi(DatumGetCString(d)),
+										old_value,
+										PointerGetDatum(attr->tai_oldexternal),
+										attribute,
+										maxDataLen, options);
+
    return result;
 }
 
@@ -115,6 +158,8 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 {
 	struct varlena *value;
 	Datum result = toast_ptr;
+	// char * attname = "";
+	// int attnum = 0;
 
    elog(NOTICE, "toastapi_detoast hook");
 	value = (struct varlena *) DatumGetPointer(toast_ptr);
@@ -124,10 +169,33 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 	}
 	if(VARATT_IS_CUSTOM(value))
 	{
+		// Datum d;
+		TsrRoutine *toaster = NULL;
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
-		TsrRoutine *toaster = SearchTsrCache(toasterid);
 		
 		elog(NOTICE, "custom tp");
+/*
+		d = attopts_get_toaster_opts(relid, attname, "toasterid");
+		if(d != (Datum) 0)
+		{
+			char *s;
+			int l;
+			char *t;
+
+			s = DatumGetCString(d);
+			l = pg_ltoa(toasterid, t);
+			if(strcmp(s, t) == 0)
+			{
+				d = attopts_get_toaster_opts(relid, attname, "toasterhandler");
+				toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
+			}
+		}
+		if(toaster == NULL)
+		{
+			toaster = SearchTsrCache(toasterid);
+		}
+*/
+		toaster = GetTsrRoutine(toasterid); //atoi(DatumGetCString(d)));
 		return toaster->detoast(PointerGetDatum(value), 0, -1);
 	}
 
@@ -136,9 +204,10 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 
 void _PG_init(void)
 {
+	elog(NOTICE, "create pg_toaster");
 	create_pg_toaster();
-	create_pg_toastrel();
-
+	// create_pg_toastrel();
+	elog(NOTICE, "set hooks");
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;
    toastapi_detoast_hook = Toastapi_detoast_hook;

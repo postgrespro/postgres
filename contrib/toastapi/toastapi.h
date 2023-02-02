@@ -44,8 +44,10 @@
 
 static const char *pg_toaster_name = "pg_toaster";
 static const char *pg_toastrel_name = "pg_toastrel";
+/*
 static Oid pg_toaster_idx_oid = InvalidOid;
 static Oid pg_toastrel_idx_oid = InvalidOid;
+*/
 
 /*
  * Macro to fetch the possibly-unaligned contents of an EXTERNAL datum
@@ -91,7 +93,7 @@ typedef struct ByteaToastRoutine
  */
 
 /* Create toast storage */
-typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Oid toastoid, Oid toastindexoid, Datum reloptions, int attnum, LOCKMODE lockmode,
+typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast);
 
 /* Toast function */
@@ -108,7 +110,8 @@ typedef Datum (*update_toast_function) (Relation toast_rel,
 												  Oid toasterid,
 												  Datum newvalue,
 												  Datum oldvalue,
-												  int options);
+												  int options,
+												  int attnum);
 
 /* Copy toast function, optional */
 typedef Datum (*copy_toast_function) (Relation toast_rel,
@@ -152,6 +155,9 @@ typedef struct TsrRoutine
 	get_vtable_function get_vtable;
 	toastervalidate_function toastervalidate;
 } TsrRoutine;
+
+#define T_TsrRoutine 999
+#define makeTsrNode()		((TsrRoutine *) newNode(sizeof(TsrRoutine),T_TsrRoutine))
 
 typedef struct ToastrelData {
 	Oid			oid;			   /* oid */

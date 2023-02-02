@@ -1,6 +1,7 @@
 #include "postgres.h"
 #include "varatt.h"
 #include "fmgr.h"
+#include "toastapi_internals.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "commands/defrem.h"
@@ -17,6 +18,7 @@
 #include "catalog/pg_am.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "miscadmin.h"
@@ -31,7 +33,6 @@
 #include "utils/varlena.h"
 #include "utils/guc.h"
 #include "parser/parse_func.h"
-#include "toastapi_internals.h"
 
 Relation
 get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode)
@@ -51,17 +52,17 @@ get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode)
 
 	return rel;
 }
-
-void load_toaster_cache(void)
+/*
+void load_toaster_cache()
 {
 	return;
 }
 
-void load_toastrel_cache(void)
+void load_toastrel_cache()
 {
 	return;
 }
-
+*/
 /*
  * Convert a handler function name to an Oid.  If the return type of the
  * function doesn't match the given toaster type, an error is raised.
@@ -81,14 +82,14 @@ lookup_toaster_handler_func(List *handler_name)
 
 	/* handlers have one argument of type internal */
 	handlerOid = LookupFuncName(handler_name, 1, funcargtypes, false);
-
+/*
 	if (get_func_rettype(handlerOid) != TOASTER_HANDLEROID)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("function %s must return type %s",
 						get_func_name(handlerOid),
 						format_type_extended(TOASTER_HANDLEROID, -1, 0))));
-
+*/
 	return handlerOid;
 }
 
@@ -103,8 +104,9 @@ relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
 
-		if (strcmp(def->defname, "relationoid") == 0
-			|| strcmp(def->defname, "toasteroid") == 0)
+		if (strcmp(def->defname, "toastrelid") == 0
+			|| strcmp(def->defname, "toasteroid") == 0
+			|| strcmp(def->defname, "toasthandler") == 0)
 		{
 			char	   *value;
 			int			int_val;
@@ -124,7 +126,7 @@ relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid)
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("\"%s\" must be an integer value greater than zero",
 								def->defname)));
-			if(strcmp(def->defname, "relationoid") == 0)
+			if(strcmp(def->defname, "toastrelid") == 0)
 				*relid = int_val;
 			if(strcmp(def->defname, "toasteroid") == 0)
 				*toasterid = int_val;
@@ -151,25 +153,196 @@ relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid)
 	return toast_options;
 }
 
+Datum
+attopts_get_toaster_opts(Oid relOid, char *attname, char *optname)
+{
+	List *o_list = NIL;
+	ListCell   *cell;
+	Datum o_datum;
+	int l_idx = 0;
+	char *str = NULL;
+	int attnum = 0;
+
+	o_datum = get_attoptions(relOid, attnum);
+	o_list =  untransformRelOptions(o_datum);
+	
+	foreach(cell, o_list)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+		l_idx++;
+		if (strcmp(def->defname, optname) == 0)
+		{
+			str = defGetString(def);
+			break;
+		}
+	}
+	return CStringGetDatum(str);
+}
+
+
+Datum
+attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
+{
+	Relation	attrelation;
+	HeapTuple	tuple,
+				newtuple;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	bool		isnull;
+	Datum		repl_val[Natts_pg_attribute];
+	bool		repl_null[Natts_pg_attribute];
+	bool		repl_repl[Natts_pg_attribute];
+	Datum opts, o_datum;
+	List *o_list;
+	ListCell *cell;
+	int l_idx = 0;
+	Datum res = (Datum) 0;
+
+	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+
+	tuple = SearchSysCacheAttName(relOid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(attrelation))));
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
+
+	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
+							&isnull);
+
+	o_list = untransformRelOptions(o_datum);
+
+	memset(repl_null, false, sizeof(repl_null));
+	memset(repl_repl, false, sizeof(repl_repl));
+
+	l_idx = 0;
+
+	foreach(cell, o_list)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+		l_idx++;
+		if (strcmp(def->defname, optname) == 0)
+			o_list = list_delete_nth_cell(o_list, l_idx);
+	}
+
+	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
+
+	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
+									 o_list, NULL, NULL, false,
+									 false);	
+
+	if (opts != (Datum) 0)
+		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
+	else
+		repl_null[Anum_pg_attribute_attoptions - 1] = true;
+	repl_repl[Anum_pg_attribute_attoptions - 1] = true;
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+								 repl_val, repl_null, repl_repl);
+
+	CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
+
+	heap_freetuple(newtuple);
+
+	ReleaseSysCache(tuple);
+
+	table_close(attrelation, RowExclusiveLock);
+	return res;
+/*
+	Relation	rel;
+	ScanKeyData skey[2];
+	SysScanDesc sscan;
+	HeapTuple	tuple;
+	char	   *scontext;
+	char	   *tcontext;
+	char	   *ncontext;
+	ObjectAddress object;
+	Form_pg_attribute attForm;
+	StringInfoData audit_name;
+
+	rel = table_open(AttributeRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey[0],
+				Anum_pg_attribute_attrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relOid));
+	ScanKeyInit(&skey[1],
+				Anum_pg_attribute_attnum,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(attnum));
+
+	sscan = systable_beginscan(rel, AttributeRelidNumIndexId, true,
+							   SnapshotSelf, 2, &skey[0]);
+
+	tuple = systable_getnext(sscan);
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "could not find tuple for column %d of relation %u",
+			 attnum, relOid);
+
+	attForm = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	List *o_list = NIL;
+	ListCell   *cell;
+	Datum o_datum, opts;
+	int l_idx = 0;
+	Datum		values[Natts_pg_attribute] = {0};
+	bool		nulls[Natts_pg_attribute] = {0};
+	bool		replaces[Natts_pg_attribute] = {0};
+
+	memset(nulls, false, sizeof(nulls));
+	memset(replaces, false, sizeof(replaces));
+
+	o_datum = get_attoptions(relOid, attnum);
+	opts =  untransformRelOptions(o_datum);
+	
+	foreach(cell, opts)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+		l_idx++;
+		if (strcmp(def->defname, optname) == 0)
+			opts = list_delete_nth_cell(opts, l_idx);
+	}
+
+	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeInteger(newToaster), -1));
+
+	opts = transformRelOptions(o_datum,
+									 o_list, NULL, NULL, false,
+									 false);	
+
+	values[Anum_pg_attribute_attoptions - 1] = opts;
+	nulls[Anum_pg_attribute_attoptions - 1] = false;
+	replaces[Anum_pg_attribute_attoptions - 1] = true;
+
+	tuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
+								 values, nulls, replaces);
+
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
+								 values, nulls, replaces);
+	CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
+*/
+/*
+	systable_endscan(sscan);
+	table_close(rel, AccessShareLock);
+*/
+}
+
 void create_pg_toaster(void)
 {
-	Relation rel;
-	Oid toastOid;
-	Oid toastIndexOid;
-	Oid toasteroid;
 	Datum reloptions = (Datum) 0;
-	int attnum;
-	LOCKMODE lockmode;
-	bool check;
-	Oid OIDOldToast;
 	Oid ownerId;
-	HeapTuple	reltup;
 	TupleDesc	tupdesc;
 	bool		shared_relation;
 	bool		mapped_relation;
 	Relation	toast_rel;
-	Relation	class_rel;
-	Oid			pgtoaster_relid;
+	Oid			pgtoaster_relid = InvalidOid;
 	Oid			namespaceid;
 	char		toast_relname[NAMEDATALEN];
 	char		toast_idxname[NAMEDATALEN];
@@ -177,19 +350,36 @@ void create_pg_toaster(void)
 	Oid			collationObjectId[2];
 	Oid			classObjectId[2];
 	int16		coloptions[2];
-	ObjectAddress baseobject,
-				toastobject;
-	bool toastrel_insert_ind = false;
-	int16 version = 0;
-	NameData relname;
-	NameData toastentname;
-	char toastoptions = (char) 0;
-	int tblnum = 0;
+	RangeVar   *relvar;
+	Relation	rel;
+
 
 	snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toaster");
 	snprintf(toast_idxname, sizeof(toast_idxname),
 			 "pg_toaster_index");
+	
+	PG_TRY();
+	{
+		relvar = makeRangeVarFromNameList(textToQualifiedNameList(cstring_to_text(toast_relname)));
+		rel = table_openrv(relvar, AccessShareLock);
+		if(rel)
+		{
+			pgtoaster_relid = RelationGetRelid(rel);
+			table_close(rel, AccessShareLock);
+		}
+	}
+	PG_CATCH();
+	{
+		pgtoaster_relid = InvalidOid;
+		rel = NULL;
+	}
+	PG_END_TRY();
+
+	if(OidIsValid(pgtoaster_relid))
+	{
+		return;
+	}
 
 	tupdesc = CreateTemplateTupleDesc(3);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1,
@@ -214,10 +404,10 @@ void create_pg_toaster(void)
 	TupleDescAttr(tupdesc, 2)->attcompression = InvalidCompressionMethod;
 
 	/* create pg_toaster in pg_toast namespace */
-	namespaceid = PG_TOAST_NAMESPACE;
+	namespaceid = PG_PUBLIC_NAMESPACE;
 
 	/* Toast table is shared if and only if its parent is. */
-	shared_relation = true;
+	shared_relation = false;
 
 	/* It's mapped if and only if its parent is, too */
 	mapped_relation = false;
@@ -278,7 +468,7 @@ void create_pg_toaster(void)
 	indexInfo->ii_Context = CurrentMemoryContext;
 
 	collationObjectId[0] = InvalidOid;
-	collationObjectId[1] = InvalidOid;
+	collationObjectId[1] = DEFAULT_COLLATION_OID;
 
 	classObjectId[0] = OID_BTREE_OPS_OID;
 	classObjectId[1] = TEXT_BTREE_OPS_OID;
@@ -302,14 +492,11 @@ void create_pg_toaster(void)
 
 void create_pg_toastrel(void)
 {
-	bool check;
 	Oid ownerId;
-	HeapTuple	reltup;
 	TupleDesc	tupdesc;
 	bool		shared_relation;
 	bool		mapped_relation;
 	Relation	toast_rel;
-	Relation	class_rel;
 	Oid			pgtoastrel_relid;
 	Oid			namespaceid;
 	char		toast_relname[NAMEDATALEN];
@@ -318,13 +505,6 @@ void create_pg_toastrel(void)
 	Oid			collationObjectId[4];
 	Oid			classObjectId[4];
 	int16		coloptions[4];
-	ObjectAddress baseobject,
-				toastobject;
-	bool toastrel_insert_ind = false;
-	int16 version = 0;
-	NameData relname;
-	char toastoptions = (char) 0;
-	int tblnum = 0;
 
 	snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toastrel");
@@ -384,9 +564,9 @@ void create_pg_toastrel(void)
 	TupleDescAttr(tupdesc, 7)->attcompression = InvalidCompressionMethod;
 
 	/* create pg_toastrel in pg_toast namespace */
-	namespaceid = PG_TOAST_NAMESPACE;
+	namespaceid = PG_PUBLIC_NAMESPACE;
 
-	shared_relation = true;
+	shared_relation = false;
 
 	mapped_relation = false;
 	

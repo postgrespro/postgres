@@ -45,6 +45,9 @@ typedef struct toast_compress_header
 			(len) | ((uint32) (cm_method) << VARLENA_EXTSIZE_BITS); \
 	} while (0)
 
+extern bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
+extern bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
+
 extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid	toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 

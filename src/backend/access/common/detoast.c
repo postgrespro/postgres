@@ -24,6 +24,7 @@
 #include "access/toast_hook.h"
 
 Toastapi_detoast_hook_type Toastapi_detoast_hook = NULL;
+Toastapi_size_hook_type Toastapi_size_hook = NULL;
 
 static struct varlena *toast_fetch_datum(struct varlena *attr);
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
