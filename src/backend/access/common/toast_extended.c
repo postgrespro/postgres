@@ -78,7 +78,8 @@ toast_save_datum_ext(Relation rel, Oid toastrelid, Oid toasteroid, Datum value,
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
-	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
+	toastrel = table_open(toastrelid, RowExclusiveLock);
+	// toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
 
 	/* Open all the toast indexes and look for the valid one */
 	validIndex = toast_open_indexes(toastrel,

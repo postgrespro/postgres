@@ -263,10 +263,9 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-	elog(NOTICE,"before toast hook call");
+
 	if(Toastapi_toast_hook)
 	{
-		elog(NOTICE,"toast hook call");
 		*value = Toastapi_toast_hook(ttc, attribute, 0, options);
 	}
 	else

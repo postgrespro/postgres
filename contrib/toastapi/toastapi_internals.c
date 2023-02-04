@@ -102,14 +102,13 @@ attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 	Datum o_datum;
 	int l_idx = 0;
 	char *str = NULL;
-elog(NOTICE, "attopts_get_toaster_opts 1 rel %u att %u opt %s", relOid, attnum, optname);
+
 	o_datum = get_attoptions(relOid, attnum);
    if(o_datum == (Datum) 0)
       return (Datum) 0;
-	
+
    o_list =  untransformRelOptions(o_datum);
-elog(NOTICE, "attopts_get_toaster_opts 2");
-   
+
 	foreach(cell, o_list)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);

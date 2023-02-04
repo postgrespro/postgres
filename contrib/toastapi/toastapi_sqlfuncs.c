@@ -100,7 +100,6 @@ Oid insert_toaster(const char *tsrname, const char *tsrhandler)
 	bool		found = false;
 	List	   *indexlist;
 	ListCell   *lc;
-	// int num_indexes = 0;
 	Relation relindx;
 	Oid relid = InvalidOid;
 	Oid idx_oid = InvalidOid;
@@ -116,8 +115,6 @@ Oid insert_toaster(const char *tsrname, const char *tsrhandler)
 	indexlist = RelationGetIndexList(pg_toaster);
 	
 	Assert(indexlist != NIL);
-
-	// num_indexes = list_length(indexlist);
 
 	foreach(lc, indexlist)
 	{
@@ -281,8 +278,6 @@ add_toaster(PG_FUNCTION_ARGS)
 	uint32      total_entries = 0;
 	int keys = 0;
 
-	elog(NOTICE, "add_toaster 1 enter");
-
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -295,8 +290,6 @@ add_toaster(PG_FUNCTION_ARGS)
 	tsrname = PG_GETARG_CSTRING(0);
 	tsrhandler = PG_GETARG_CSTRING(1);
 
-	elog(NOTICE, "add_toaster 2 user check");
-
 	/* Must be superuser */
 	if (!superuser())
 		ereport(ERROR,
@@ -305,26 +298,19 @@ add_toaster(PG_FUNCTION_ARGS)
 					tsrname),
 			errhint("Must be superuser to create a toaster.")));
 
-	elog(NOTICE, "add_toaster 3 handler");
-
 	namelist = stringToQualifiedNameList(tsrhandler, NULL);
 
 	/*
 	 * Get the handler function oid, verifying the toaster type while at it.
 	 */
 
-	elog(NOTICE, "add_toaster 4 handler retrieval");
-
 	tsroid = lookup_toaster_handler_func(namelist);
-
-/*	tsroid = LookupFuncName(namelist, 0, NULL, false); */
 
 	if(!RegProcedureIsValid(tsroid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Toaster handler %s is not valid", tsrhandler)));
 
-	elog(NOTICE, "add_toaster 5 pg_toaster open");
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
 	if(!rel)
@@ -336,8 +322,6 @@ add_toaster(PG_FUNCTION_ARGS)
 	
 	Assert(indexlist != NIL);
 
-	//num_indexes = list_length(indexlist);
-
 	foreach(lc, indexlist)
 	{
 		relindx = index_open(lfirst_oid(lc), AccessShareLock);
@@ -347,7 +331,7 @@ add_toaster(PG_FUNCTION_ARGS)
 	}
 
 	list_free(indexlist);
-elog(NOTICE, "add_toaster 6 index check");
+
 	if (!found)
 	{
 		index_close(relindx, AccessShareLock);
@@ -362,13 +346,12 @@ elog(NOTICE, "add_toaster 6 index check");
 			BTEqualStrategyNumber, F_TEXTEQ,
 			CStringGetDatum(tsrname));
 	keys++;
-elog(NOTICE, "add_toaster 7 scan");
+
 	scan = systable_beginscan(rel, idx_oid, false,
 							  NULL, keys, key);
 	keys = 0;
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		elog(NOTICE, "add_toaster 8 entry check");
 		total_entries++;
 		ex_tsroid = ((Form_pg_toaster) GETSTRUCT(tup))->oid;
 		break;
@@ -377,7 +360,6 @@ elog(NOTICE, "add_toaster 7 scan");
 	if(OidIsValid(ex_tsroid))
 	{
 		if(ex_tsroid != tsroid)
-		elog(NOTICE, "add_toaster 9 found existing");
 		index_close(relindx, AccessShareLock);
 		table_close(rel, RowExclusiveLock);
 		return ObjectIdGetDatum(ex_tsroid);
@@ -386,29 +368,22 @@ elog(NOTICE, "add_toaster 7 scan");
 	/*
 	 * Insert tuple into pg_toaster.
 	 */
-	elog(NOTICE, "add_toaster 10 insert new");
 	memset(values, 0, sizeof(values));
 	memset(nulls, false, sizeof(nulls));
 
 	{
 		NameData tsrnmdata;
-		elog(NOTICE, "add_toaster 10-0 name data");
 		namestrcpy(&tsrnmdata, tsrname);
-		elog(NOTICE, "add_toaster 10-0 get index");
 		ex_tsroid = GetNewObjectId();
-		//GetNewOidWithIndex(rel, idx_oid,
-//											 Anum_pg_toaster_oid);
 
 		values[Anum_pg_toaster_oid - 1] = ObjectIdGetDatum(ex_tsroid);
 		values[Anum_pg_toaster_tsrname - 1] = NameGetDatum(&tsrnmdata);
 		values[Anum_pg_toaster_tsrhandler - 1] = ObjectIdGetDatum(tsroid); // Datum regprocin(PG_FUNCTION_ARGS) CString Datum(tsrhandler);
-		elog(NOTICE, "add_toaster 10-1 heap_form");
 		tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
-		elog(NOTICE, "add_toaster 10-2 insert");
 		CatalogTupleInsert(rel, tup);
 		heap_freetuple(tup);
 	}
-	elog(NOTICE, "add_toaster 11 close");
+
 	index_close(relindx, AccessShareLock);
 	table_close(rel, RowExclusiveLock);
 
@@ -456,7 +431,6 @@ set_toaster(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Attribute name cannot be null")));
-	elog(NOTICE, "set_toaster 1 arg check");
 
 	tsrname = (char *) PG_GETARG_CSTRING(0);
 	relname = (char *) PG_GETARG_CSTRING(1);
@@ -468,14 +442,14 @@ set_toaster(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	if(strlen(attname) == 0)
 		PG_RETURN_NULL();
-	elog(NOTICE, "set_toaster 2 null check");
+
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 			 	errmsg("permission denied to create toaster \"%s\"",
 					tsrname),
 			errhint("Must be superuser to create a toaster.")));
-	elog(NOTICE, "set_toaster 3 user check");
+
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
@@ -486,9 +460,8 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("Cannot retrieve oid for table %s", relname)));
 		return (Datum) 0;
 	}
-	elog(NOTICE, "set_toaster 4 get relid");
+
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
-	elog(NOTICE, "set_toaster 5 get pg_toaster rel");
 	if(!tsrrel)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
@@ -499,20 +472,17 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
 	{
-		elog(NOTICE, "set_toaster 5-1 scan %u tsr <%s> compare to <%s>", total_entries, NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname),tsrname);
 		total_entries++;
 		if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
 		{
 			tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
 			tsrhandler = ((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrhandler;
-			elog(NOTICE, "set_toaster 5-2 found %u h %u", tsroid, tsrhandler);
 			break;
 		}
 	}
 
 	systable_endscan(scan);
 	table_close(tsrrel, AccessShareLock);
-	elog(NOTICE, "set_toaster 6 pg_toaster scan");
 	if(!OidIsValid(tsroid))
 	{
 		ereport(ERROR,
@@ -530,11 +500,10 @@ set_toaster(PG_FUNCTION_ARGS)
 
 		return (Datum) 0;
 	}
-	elog(NOTICE, "set_toaster 7 opn pg_attribute");
+
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
-	elog(NOTICE, "set_toaster 8 search attribute");
 	tuple = SearchSysCacheAttName(relid, attname);
-	elog(NOTICE, "set_toaster 9 syscache");
+
 	if (!HeapTupleIsValid(tuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
@@ -551,7 +520,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	
 	ReleaseSysCache(tuple);
 
-	elog(NOTICE, "set_toaster 10 get toater opts ");
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTER_NAME);
 	if(d != (Datum) 0)
 	{
@@ -560,7 +528,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTREL_NAME);
 	if(d != (Datum) 0)
 	{
-		elog(NOTICE, "set_toaster 10-2 tsrel <%s> found", DatumGetCString(d));
 		table_close(attrelation, RowExclusiveLock);
 		return res;
 	}
@@ -568,7 +535,6 @@ set_toaster(PG_FUNCTION_ARGS)
 		/* Call tsr->init */
 		TsrRoutine *tsr;
 			
-		elog(NOTICE, "set_toaster 11 datum check");
 		d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
 		if(d != (Datum) 0)
 		{
@@ -578,7 +544,7 @@ set_toaster(PG_FUNCTION_ARGS)
 		tsr = GetTsrRoutine(tsrhandler);
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
-elog(NOTICE, "set_toaster 12 call tsr init");
+
 		d = tsr->init(rel,
 								tsroid,
 								(Datum) 0,
@@ -591,23 +557,19 @@ elog(NOTICE, "set_toaster 12 call tsr init");
 	}
 
 	table_close(attrelation, RowExclusiveLock);
-elog(NOTICE, "set_toaster 13 set opts");
-	elog(NOTICE, "set_toaster 13-1 rel %u attname %s", relid, attname);
+
 	if(OidIsValid(trelid))
 	{
 		len = pg_ltoa(trelid, str);
-		elog(NOTICE, "set_toaster 13-1 rel %u attname %s", relid, attname);
 		d = attopts_set_toaster_opts(relid, attname, ATT_TOASTREL_NAME, str);
 	}
 
-	elog(NOTICE, "set_toaster 13-1 set v1 int %u", tsroid);
 	len = pg_ltoa(tsroid, str);
 	Assert(len!=0);
-	elog(NOTICE, "set_toaster 13-1 set v1 <%s>", str);
 	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, str);
 	len = pg_ltoa(tsrhandler, str);
-	elog(NOTICE, "set_toaster 13-1 set v2 <%s>", str);
 	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str);
+
 	return res;
 }
 	

@@ -110,9 +110,9 @@ bytea_toaster_make_pointer(Oid toasterid, struct varatt_external *ptr,
 	result_data.ptr = *ptr;
 	result_data.version = version;
 	result_data.inline_tail_size = inline_tail_size;
-
+elog(NOTICE, "bytea_toaster_make_pointer toastrel %u val %u", ptr->va_toastrelid,ptr->va_valueid);
 	memcpy(VARATT_CUSTOM_GET_DATA(result), &result_data, VARATT_CUSTOM_APPENDABLE_HDRSZ);
-
+elog(NOTICE, "bytea_toaster_make_pointer toastrel %u val %u", ptr->va_toastrelid,ptr->va_valueid);
 	if (pdata)
 		*pdata = VARATT_CUSTOM_GET_DATA(result) + VARATT_CUSTOM_APPENDABLE_HDRSZ;
 
@@ -209,14 +209,14 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
-
+elog(NOTICE, "bytea_toaster_copy toaster %u toastrel %u attnum %u",  toasterid, atoi(DatumGetCString(d)), attnum);
 	toasted_newval = toast_save_datum_ext(rel, atoi(DatumGetCString(d)), toasterid, detoasted_newval,
 										  NULL, options, attnum,
 										  &version, sizeof(version));
 
 	Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_newval));
 	VARATT_EXTERNAL_GET_POINTER(toast_ptr, DatumGetPointer(toasted_newval));
-
+elog(NOTICE, "toast_save_datum_ext toastrel %u val %u", toast_ptr.va_toastrelid,toast_ptr.va_valueid);
 	pfree(DatumGetPointer(toasted_newval));
 
 	return PointerGetDatum(bytea_toaster_make_pointer(toasterid, &toast_ptr, version, 0, NULL));
@@ -241,19 +241,6 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 		AppendableToastData old_data;
 		AppendableToastData new_data;
 		Oid			toastrelid = rel->rd_rel->reltoastrelid;
-/*
-		Datum	dtrel = SearchToastrelCache(rel->rd_id, attnum, false);
-
-		if(dtrel == (Datum) 0)
-		{
-			elog(ERROR, "No TOAST table, create new for rel %u toasterid %u", rel->rd_rel->oid, toasterid);
-		}
-		toastrelid = ((Toastrel) DatumGetPointer(dtrel))->toastentid;
-		if( toastrelid == InvalidOid )
-		{
-			elog(ERROR, "No TOAST table, create new for rel %u toasterid %u", rel->rd_rel->oid, toasterid);
-		}
-*/
 
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(newval, new_data);
@@ -313,6 +300,7 @@ bytea_toaster_detoast(Datum toastptr,
 	int32		attrsize;
 	int32		inline_size;
 	int32		toasted_size;
+	varatt_custom *cptr;
 
 	Assert(VARATT_IS_CUSTOM(toastptr));
 	VARATT_CUSTOM_GET_APPENDABLE_DATA(toastptr, data);
@@ -321,7 +309,9 @@ bytea_toaster_detoast(Datum toastptr,
 	inline_size = data.inline_tail_size;
 
 	attrsize = toasted_size + inline_size;
-
+	cptr = (varatt_custom*) (DatumGetPointer(toastptr));
+	elog(NOTICE, "bytea_toaster_detoast custom toid %u size %u", VARATT_CUSTOM_GET_TOASTERID(cptr), VARATT_CUSTOM_GET_DATA_RAW_SIZE(cptr));
+	elog(NOTICE, "bytea_toaster_detoast val %u trel %u", data.ptr.va_valueid, data.ptr.va_toastrelid);
 	if (sliceoffset >= attrsize)
 	{
 		sliceoffset = 0;

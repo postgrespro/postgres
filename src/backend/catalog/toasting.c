@@ -86,7 +86,6 @@ Datum ToastCreateToastTable(Relation rel, Oid toasterOid, Datum reloptions,
 
 	(void) create_toast_table(rel, toasterOid, attnum, reloptions, lockmode,
 		false, InvalidOid, true, &newToast);
-	elog(NOTICE, "ToastCreateToastTable created %u", newToast);
 
 	return ObjectIdGetDatum(newToast);
 }
@@ -187,7 +186,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	/*
 	 * Is it already toasted?
 	 */
-	elog(NOTICE, "create_toast_table 1");
 	if (rel->rd_rel->reltoastrelid != InvalidOid)
 	{
 		*OIDNewToast = rel->rd_rel->reltoastrelid;
@@ -234,7 +232,6 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	 */
 	if (check && lockmode != AccessExclusiveLock)
 		elog(ERROR, "AccessExclusiveLock required to add toast table.");
-elog(NOTICE, "create_toast_table 2");
 	/*
 	 * Create the toast table and its index
 	 */
@@ -322,7 +319,7 @@ elog(NOTICE, "create_toast_table 2");
 										   NULL);
 	*OIDNewToast = toast_relid;
 	Assert(toast_relid != InvalidOid);
-elog(NOTICE, "create_toast_table 3 created %u", *OIDNewToast);
+
 	/* make the toast relation visible, else table_open will fail */
 	CommandCounterIncrement();
 
@@ -432,7 +429,7 @@ elog(NOTICE, "create_toast_table 3 created %u", *OIDNewToast);
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
-elog(NOTICE, "create_toast_table 4");
+
 	return true;
 }
 
