@@ -166,7 +166,7 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 	uint32      total_entries = 0;
 	int keys = 0;
 
-	rel = get_rel_from_relname(cstring_to_text(pg_toaster_name), RowExclusiveLock, ACL_INSERT);
+	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
 	if(!rel)
 		ereport(ERROR,

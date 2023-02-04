@@ -22,21 +22,9 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "access/relation.h"
-#include "access/attoptions.h"
 #include "access/genam.h"
-#include "toastapi.h"
 
-extern Relation
-get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode);
-
-/*
-extern void load_toaster_cache();
-extern void load_toastrel_cache();
-*/
-
+extern Datum relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
+extern Datum relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);
 extern Datum attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname);
 extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval);
-
-extern Oid lookup_toaster_handler_func(List *handler_name);
-extern void create_pg_toaster(void);
-extern void create_pg_toastrel(void);

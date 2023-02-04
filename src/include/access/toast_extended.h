@@ -27,7 +27,7 @@ typedef bool (*ToastChunkVisibilityCheck)(void *cxt, char **chunkdata,
 										  int32 *chunksize,
 										  ItemPointer tid);
 
-extern Datum toast_save_datum_ext(Relation rel, Oid toasteroid, Datum value,
+extern Datum toast_save_datum_ext(Relation rel, Oid toastrelid, Oid toasteroid, Datum value,
 								  struct varlena *oldexternal, int options, int attnum,
 								  void *chunk_header, int chunk_header_size);
 

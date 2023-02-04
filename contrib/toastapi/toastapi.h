@@ -23,6 +23,7 @@
 #include "utils/builtins.h"
 #include "utils/syscache.h"
 #include "access/toast_compression.h"
+#include "access/attoptions.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -42,8 +43,12 @@
 
 #define TOASTER_HANDLEROID 8888
 
-static const char *pg_toaster_name = "pg_toaster";
-static const char *pg_toastrel_name = "pg_toastrel";
+#define PG_TOASTER_NAME "pg_toaster"
+#define PG_TOASTREL_NAME "pg_toastrel"
+
+#define ATT_TOASTER_NAME "toasteroid"
+#define ATT_HANDLER_NAME "toasthandler"
+#define ATT_TOASTREL_NAME "toastreloid"
 /*
 static Oid pg_toaster_idx_oid = InvalidOid;
 static Oid pg_toastrel_idx_oid = InvalidOid;

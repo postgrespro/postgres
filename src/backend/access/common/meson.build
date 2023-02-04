@@ -2,6 +2,7 @@
 
 backend_sources += files(
   'attmap.c',
+  'attoptions.c',
   'bufmask.c',
   'detoast.c',
   'heaptuple.c',

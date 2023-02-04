@@ -14,6 +14,9 @@
 
 #include "postgres.h"
 #include "varatt.h"
+#include "varatt_custom.h"
+#include "toastapi.h"
+#include "access/attoptions.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/table.h"
@@ -27,8 +30,6 @@
 #include "utils/memutils.h"
 #include "utils/varlena.h"
 #include "access/detoast.h"
-#include "varatt_custom.h"
-#include "toastapi.h"
 
 PG_MODULE_MAGIC;
 
@@ -64,14 +65,16 @@ static Datum
 bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast)
 {
+	Datum toastrelid = (Datum) 0;
 
-	NewHeapCreateToastTable(RelationGetRelid(rel), reloptions, lockmode,
+	toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode,
 						 OIDOldToast);
+
 /*
-	create_toast_table(rel, toasteroid, InvalidOid, InvalidOid, reloptions, attnum,
-							  lockmode, check, OIDOldToast);
+	(void) create_toast_table(rel, toasteroid, InvalidOid, reloptions, attnum,
+							  lockmode, check, OIDOldToast, &toastrelid);
 */
-	return (Datum) 0;
+	return toastrelid;
 }
 
 static bool
@@ -190,11 +193,24 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 {
 	Datum		detoasted_newval;
 	Datum		toasted_newval;
+	Datum d;
+	Oid toastrelid = InvalidOid;
 	struct varatt_external toast_ptr;
 	AppendableToastVersion version = BYTEA_FIRST_VERSION;
 
 	detoasted_newval = PointerGetDatum(detoast_attr((struct varlena *) DatumGetPointer(newval)));
-	toasted_newval = toast_save_datum_ext(rel, toasterid, detoasted_newval,
+	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_TOASTREL_NAME);
+	if(d == (Datum) 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("No TOAST table for relation %u and toaster %u", RelationGetRelid(rel), toasterid)));
+	toastrelid = atoi(DatumGetCString(d));
+	if(!OidIsValid(toastrelid))
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
+
+	toasted_newval = toast_save_datum_ext(rel, atoi(DatumGetCString(d)), toasterid, detoasted_newval,
 										  NULL, options, attnum,
 										  &version, sizeof(version));
 

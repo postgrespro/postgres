@@ -27,6 +27,7 @@
 #include "access/genam.h"
 #include "access/table.h"
 #include "access/reloptions.h"
+#include "access/attoptions.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
 #include "utils/lsyscache.h"
@@ -93,92 +94,40 @@ lookup_toaster_handler_func(List *handler_name)
 	return handlerOid;
 }
 
-
 Datum
-relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid)
-{
-	List	   *options_list = untransformRelOptions(reloptions);
-	ListCell   *cell;
-
-	foreach(cell, options_list)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-
-		if (strcmp(def->defname, "toastrelid") == 0
-			|| strcmp(def->defname, "toasteroid") == 0
-			|| strcmp(def->defname, "toasthandler") == 0)
-		{
-			char	   *value;
-			int			int_val;
-			bool		is_parsed;
-
-			value = defGetString(def);
-			is_parsed = parse_int(value, &int_val, 0, NULL);
-
-			if (!is_parsed)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("invalid value for integer option \"%s\": %s",
-								def->defname, value)));
-
-			if (int_val <= 0)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("\"%s\" must be an integer value greater than zero",
-								def->defname)));
-			if(strcmp(def->defname, "toastrelid") == 0)
-				*relid = int_val;
-			if(strcmp(def->defname, "toasteroid") == 0)
-				*toasterid = int_val;
-		}
-	}
-	return ObjectIdGetDatum(*relid);
-}
-
-Datum
-relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid)
-{
-	Datum toast_options;
-	List    *defList = NIL;
-	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
-
-	defList = lappend(defList, makeDefElem("toasteroid", (Node *) makeInteger(toasterid), -1));
-	defList = lappend(defList, makeDefElem("toastrelid", (Node *) makeInteger(relid), -1));
-
-	toast_options = transformRelOptions(reloptions,
-									 defList, NULL, validnsps, false,
-									 false);
-
-	(void) heap_reloptions(RELKIND_TOASTVALUE, toast_options, false);
-	return toast_options;
-}
-
-Datum
-attopts_get_toaster_opts(Oid relOid, char *attname, char *optname)
+attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 {
 	List *o_list = NIL;
 	ListCell   *cell;
 	Datum o_datum;
 	int l_idx = 0;
 	char *str = NULL;
-	int attnum = 0;
-
+elog(NOTICE, "attopts_get_toaster_opts 1 rel %u att %u opt %s", relOid, attnum, optname);
 	o_datum = get_attoptions(relOid, attnum);
-	o_list =  untransformRelOptions(o_datum);
+   if(o_datum == (Datum) 0)
+      return (Datum) 0;
 	
+   o_list =  untransformRelOptions(o_datum);
+elog(NOTICE, "attopts_get_toaster_opts 2");
+   
 	foreach(cell, o_list)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
 		l_idx++;
+		elog(NOTICE, "att <%s>", def->defname);
 		if (strcmp(def->defname, optname) == 0)
 		{
-			str = defGetString(def);
+			str = palloc(strlen(defGetString(def)));
+			memcpy(str, defGetString(def), strlen(defGetString(def)));
 			break;
 		}
 	}
+	pfree(o_list);
+	pfree(DatumGetPointer(o_datum));
+	if(str == NULL)
+		return (Datum) 0;
 	return CStringGetDatum(str);
 }
-
 
 Datum
 attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
@@ -199,7 +148,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	Datum res = (Datum) 0;
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
-
 	tuple = SearchSysCacheAttName(relOid, attname);
 
 	if (!HeapTupleIsValid(tuple))
@@ -207,6 +155,7 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("column \"%s\" of relation \"%s\" does not exist",
 						attname, RelationGetRelationName(attrelation))));
+
 	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
 
 	attnum = attrtuple->attnum;
@@ -215,7 +164,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
 						attname)));
-
 	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
 							&isnull);
 
@@ -235,7 +183,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	}
 
 	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
-
 	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
 									 o_list, NULL, NULL, false,
 									 false);	
@@ -247,7 +194,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	repl_repl[Anum_pg_attribute_attoptions - 1] = true;
 	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
 								 repl_val, repl_null, repl_repl);
-
 	CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
 
 	heap_freetuple(newtuple);
@@ -255,7 +201,11 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	ReleaseSysCache(tuple);
 
 	table_close(attrelation, RowExclusiveLock);
+	CommandCounterIncrement();
 	return res;
+
+}
+
 /*
 	Relation	rel;
 	ScanKeyData skey[2];
@@ -332,7 +282,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	systable_endscan(sscan);
 	table_close(rel, AccessShareLock);
 */
-}
 
 void create_pg_toaster(void)
 {
@@ -347,9 +296,9 @@ void create_pg_toaster(void)
 	char		toast_relname[NAMEDATALEN];
 	char		toast_idxname[NAMEDATALEN];
 	IndexInfo  *indexInfo;
-	Oid			collationObjectId[2];
-	Oid			classObjectId[2];
-	int16		coloptions[2];
+	Oid			collationObjectId[1];
+	Oid			classObjectId[1];
+	int16		coloptions[1];
 	RangeVar   *relvar;
 	Relation	rel;
 
@@ -443,10 +392,10 @@ void create_pg_toaster(void)
 	toast_rel = table_open(pgtoaster_relid, ShareLock);
 
 	indexInfo = makeNode(IndexInfo);
-	indexInfo->ii_NumIndexAttrs = 2;
-	indexInfo->ii_NumIndexKeyAttrs = 2;
+	indexInfo->ii_NumIndexAttrs = 1;
+	indexInfo->ii_NumIndexKeyAttrs = 1;
 	indexInfo->ii_IndexAttrNumbers[0] = 1;
-	indexInfo->ii_IndexAttrNumbers[1] = 1;
+//	indexInfo->ii_IndexAttrNumbers[1] = 1;
 	indexInfo->ii_Expressions = NIL;
 	indexInfo->ii_ExpressionsState = NIL;
 	indexInfo->ii_Predicate = NIL;
@@ -468,23 +417,23 @@ void create_pg_toaster(void)
 	indexInfo->ii_Context = CurrentMemoryContext;
 
 	collationObjectId[0] = InvalidOid;
-	collationObjectId[1] = DEFAULT_COLLATION_OID;
+//	collationObjectId[1] = DEFAULT_COLLATION_OID;
 
 	classObjectId[0] = OID_BTREE_OPS_OID;
-	classObjectId[1] = TEXT_BTREE_OPS_OID;
+//	classObjectId[1] = TEXT_BTREE_OPS_OID;
 
 	coloptions[0] = 0;
-	coloptions[1] = 0;
+//	coloptions[1] = 0;
 
 	index_create(toast_rel, toast_idxname, InvalidOid, InvalidOid,
 				 InvalidOid, InvalidOid,
 				 indexInfo,
-				 list_make2("tsroid","tsrname"),
+				 list_make1("tsroid"), // ,"tsrname"),
 				 BTREE_AM_OID,
 				 InvalidOid,
 				 collationObjectId, classObjectId, coloptions, (Datum) 0,
 				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);
-	table_close(toast_rel, NoLock);
+	table_close(toast_rel, ShareLock);
 
 	CommandCounterIncrement();
 	// return pgtoaster_relid;

@@ -49,12 +49,25 @@ struct varlena *
 detoast_external_attr(struct varlena *attr)
 {
 	struct varlena *result;
+elog(NOTICE, "detoast_external_attr 0");
+	if(VARATT_IS_CUSTOM(attr))
+	{
+		if(Toastapi_detoast_hook)
+		{
+			elog(NOTICE, "detoast_external_attr Toastapi_detoast_hook");
+			result = (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), 0, 0));
+		}
+		else
+		{
 
+		}
+	}
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
 		/*
 		 * This is an external stored plain value
 		 */
+		elog(NOTICE, "detoast_external_attr toast_fetch_datum");
 		result = toast_fetch_datum(attr);
 	}
 	else if (VARATT_IS_EXTERNAL_INDIRECT(attr))
@@ -69,7 +82,7 @@ detoast_external_attr(struct varlena *attr)
 
 		/* nested indirect Datums aren't allowed */
 		Assert(!VARATT_IS_EXTERNAL_INDIRECT(attr));
-
+elog(NOTICE, "detoast_external_attr VARATT_IS_EXTERNAL_INDIRECT");
 		/* recurse if value is still external in some other way */
 		if (VARATT_IS_EXTERNAL(attr))
 			return detoast_external_attr(attr);
@@ -88,7 +101,7 @@ detoast_external_attr(struct varlena *attr)
 		 */
 		ExpandedObjectHeader *eoh;
 		Size		resultsize;
-
+elog(NOTICE, "detoast_external_attr VARATT_IS_EXTERNAL_EXPANDED");
 		eoh = DatumGetEOHP(PointerGetDatum(attr));
 		resultsize = EOH_get_flat_size(eoh);
 		result = (struct varlena *) palloc(resultsize);
@@ -96,12 +109,10 @@ detoast_external_attr(struct varlena *attr)
 	}
 	else
 	{
-		if(Toastapi_detoast_hook)
-			result = (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), 0, 0));
-		else
 		/*
 		 * This is a plain value inside of the main tuple - why am I called?
 		 */
+		elog(NOTICE, "detoast_external_attr plain value inside of the main tuple");
 			result = attr;
 	}
 
@@ -122,11 +133,18 @@ detoast_external_attr(struct varlena *attr)
 struct varlena *
 detoast_attr(struct varlena *attr)
 {
-	if (VARATT_IS_EXTERNAL_ONDISK(attr))
+	elog(NOTICE, "detoast_attr 0");
+	if (VARATT_IS_CUSTOM(attr))
+	{
+		elog(NOTICE, "detoast_attr VARATT_IS_CUSTOM");
+		attr = detoast_external_attr(attr);
+	}
+	else if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
 		/*
 		 * This is an externally stored datum --- fetch it back from there
 		 */
+		elog(NOTICE, "detoast_attr VARATT_IS_EXTERNAL_ONDISK");
 		attr = toast_fetch_datum(attr);
 		/* If it's compressed, decompress it */
 		if (VARATT_IS_COMPRESSED(attr))
@@ -143,7 +161,7 @@ detoast_attr(struct varlena *attr)
 		 * This is an indirect pointer --- dereference it
 		 */
 		struct varatt_indirect redirect;
-
+elog(NOTICE, "detoast_attr VARATT_IS_EXTERNAL_INDIRECT");
 		VARATT_EXTERNAL_GET_POINTER(redirect, attr);
 		attr = (struct varlena *) redirect.pointer;
 
@@ -168,6 +186,7 @@ detoast_attr(struct varlena *attr)
 		/*
 		 * This is an expanded-object pointer --- get flat format
 		 */
+		elog(NOTICE, "detoast_attr VARATT_IS_EXTERNAL_INDIRECT");
 		attr = detoast_external_attr(attr);
 		/* flatteners are not allowed to produce compressed/short output */
 		Assert(!VARATT_IS_EXTENDED(attr));

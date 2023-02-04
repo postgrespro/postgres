@@ -28,6 +28,7 @@
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/reloptions.h"
+#include "access/attoptions.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "miscadmin.h"
@@ -92,7 +93,7 @@ static Toastapi_size_hook_type toastapi_size_hook = NULL;
 static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast)
 {
-   Datum result;
+   Datum result = (Datum) 0;
 	FormData_pg_attribute *pg_attr;
 	Datum d;
 	Datum tsrd;
@@ -100,50 +101,83 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 	TsrRoutine *toaster = NULL;
 	Relation rel;
 
-   elog(NOTICE, "toastapi_init hook");
+   elog(NOTICE, "toastapi_init");
 
 	rel = table_open(reloid, RowExclusiveLock);
 	pg_attr = &rel->rd_att->attrs[attnum];
-	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), "toasthandler");
-	tsrd = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), "toasteroid");
+	elog(NOTICE, "toastapi_init 1 get opts for att %u", attnum);
+	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_HANDLER_NAME);
+	tsrd = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_TOASTER_NAME);
 
+	table_close(rel, RowExclusiveLock);
+
+	if(d == (Datum) 0)
+	{
+		elog(NOTICE, "No toaster handler assigned to table");
+		return d;
+	}
+	if(tsrd == (Datum) 0)
+	{
+		elog(NOTICE, "No toaster assigned to table");
+		return tsrd;
+	}
+
+	elog(NOTICE, "toastapi_init 2 get routine");
+	elog(NOTICE, "toastapi_init get routine for <%s>", DatumGetCString(d));
 	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-	result = toaster->init(rel,
+	elog(NOTICE, "toastapi_init 3 init");
+	if(toaster != NULL)
+		result = toaster->init(rel,
 									atoi(DatumGetCString(tsrd)),
 									reloptions,
 									attnum,
 									lockmode,
 									check,
 									OIDOldToast);
-	table_close(rel, RowExclusiveLock);
+	else
+		elog(NOTICE, "No routine found");
    return result;
 }
 
 static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataLen,
 						int options)
 {
-   Datum result;
+   Datum result = (Datum) 0;
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 	FormData_pg_attribute *pg_attr = &ttc->ttc_rel->rd_att->attrs[attribute];
 	Datum d;
+	Relation rel;
 	// Datum tsrd;
 	// Oid tsroid;
 	TsrRoutine *toaster = NULL;
 
    elog(NOTICE, "toastapi_toast hook");
 
-	d = attopts_get_toaster_opts(ttc->ttc_rel->rd_id, NameStr(pg_attr->attname), "toasthandler");
+	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
+
+	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), NameStr(pg_attr->attname), attribute+1, ATT_HANDLER_NAME);
 	// tsrd = attopts_get_toaster_opts(ttc->ttc_rel->rd_id, NameStr(pg_attr->attname), "toasteroid");
 
+	table_close(rel, RowExclusiveLock);
+
+	if(d == (Datum) 0)
+	{
+		toastapi_init(RelationGetRelid(ttc->ttc_rel), (Datum) 0, attribute+1, RowExclusiveLock, false, InvalidOid);
+	}
+	elog(NOTICE, "toastapi_toast get routine for <%s>", DatumGetCString(d));
 	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-	result = toaster->toast(ttc->ttc_rel,
+	elog(NOTICE, "toastapi_toast toast");
+	if(toaster != NULL)
+		result = toaster->toast(ttc->ttc_rel,
 										atoi(DatumGetCString(d)),
 										old_value,
 										PointerGetDatum(attr->tai_oldexternal),
-										attribute,
+										attribute+1,
 										maxDataLen, options);
+	else
+		elog(NOTICE, "No routine found");
 
    return result;
 }
@@ -173,7 +207,7 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 		TsrRoutine *toaster = NULL;
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 		
-		elog(NOTICE, "custom tp");
+		elog(NOTICE, "custom tp toaster %u", toasterid);
 /*
 		d = attopts_get_toaster_opts(relid, attname, "toasterid");
 		if(d != (Datum) 0)

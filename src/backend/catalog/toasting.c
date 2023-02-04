@@ -43,7 +43,7 @@ static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 Oid OIDOldToast);
 static bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 							   Datum reloptions, LOCKMODE lockmode, bool check,
-							   Oid OIDOldToast);
+							   Oid OIDOldToast, bool extended, Oid *OIDNewToast);
 static bool needs_toast_table(Relation rel);
 
 
@@ -79,25 +79,39 @@ NewRelationCreateToastTable(Oid relOid, Datum reloptions)
 							 InvalidOid);
 }
 
+Datum ToastCreateToastTable(Relation rel, Oid toasterOid, Datum reloptions,
+									   int attnum, LOCKMODE lockmode, Oid OIDOldTOast)
+{
+	Oid newToast = InvalidOid;
+
+	(void) create_toast_table(rel, toasterOid, attnum, reloptions, lockmode,
+		false, InvalidOid, true, &newToast);
+	elog(NOTICE, "ToastCreateToastTable created %u", newToast);
+
+	return ObjectIdGetDatum(newToast);
+}
+
 static void
 CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 						 bool check, Oid OIDOldToast)
 {
+	Oid newToast = InvalidOid;
 	Relation	rel;
 
 	rel = table_open(relOid, lockmode);
 
 	/* create_toast_table does all the work */
+	/*
 	if(Toastapi_init_hook)
 	{
-		(void) (Toastapi_init_hook(relOid, InvalidOid, InvalidOid, reloptions, 0, lockmode,
+		(void) (Toastapi_init_hook(relOid, reloptions, 0, lockmode,
 			check, OIDOldToast));
 	}
 	else
-	{
+	{*/
 		(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode,
-			check, OIDOldToast);
-	}
+			check, OIDOldToast, false, &newToast);
+	/*}*/
 
 	table_close(rel, NoLock);
 }
@@ -110,6 +124,7 @@ CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode,
 void
 BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 {
+	Oid newToast = InvalidOid;
 	Relation	rel;
 
 	rel = table_openrv(makeRangeVar(NULL, relName, -1), AccessExclusiveLock);
@@ -120,18 +135,20 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 			 relName);
 
 	/* create_toast_table does all the work */
+	/*
 	if(Toastapi_init_hook)
 	{
-		(void) (Toastapi_init_hook(RelationGetRelid(rel), toastOid, toastIndexOid, (Datum) 0, AccessExclusiveLock, 0,
+		(void) (Toastapi_init_hook(RelationGetRelid(rel), (Datum) 0, AccessExclusiveLock, 0,
 			false, InvalidOid));
 	}
 	else
-	{
+	{*/
+	/* if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0, */
 		if (!create_toast_table(rel, toastOid, toastIndexOid, (Datum) 0,
-							AccessExclusiveLock, false, InvalidOid))
+							AccessExclusiveLock, false, InvalidOid, false, &newToast))
 			elog(ERROR, "\"%s\" does not require a toast table",
 				relName);
-	}
+	/*}*/
 
 	table_close(rel, NoLock);
 }
@@ -147,7 +164,7 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
 static bool
 create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				   Datum reloptions, LOCKMODE lockmode, bool check,
-				   Oid OIDOldToast)
+				   Oid OIDOldToast, bool extended, Oid *OIDNewToast)
 {
 	Oid			relOid = RelationGetRelid(rel);
 	HeapTuple	reltup;
@@ -156,7 +173,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	bool		mapped_relation;
 	Relation	toast_rel;
 	Relation	class_rel;
-	Oid			toast_relid;
+	Oid			toast_relid = InvalidOid;
 	Oid			namespaceid;
 	char		toast_relname[NAMEDATALEN];
 	char		toast_idxname[NAMEDATALEN];
@@ -170,9 +187,14 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	/*
 	 * Is it already toasted?
 	 */
+	elog(NOTICE, "create_toast_table 1");
 	if (rel->rd_rel->reltoastrelid != InvalidOid)
-		return false;
-
+	{
+		*OIDNewToast = rel->rd_rel->reltoastrelid;
+		if(!extended)
+			return false;
+	}
+	
 	/*
 	 * Check to see whether the table actually needs a TOAST table.
 	 */
@@ -212,14 +234,26 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	 */
 	if (check && lockmode != AccessExclusiveLock)
 		elog(ERROR, "AccessExclusiveLock required to add toast table.");
-
+elog(NOTICE, "create_toast_table 2");
 	/*
 	 * Create the toast table and its index
 	 */
-	snprintf(toast_relname, sizeof(toast_relname),
+	if(extended)
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
+			 "pg_toast_%u_%u_%u", relOid, toastOid, toastIndexOid);
+		snprintf(toast_idxname, sizeof(toast_idxname),
+			 "pg_toast_%u_%u_%u_index", relOid, toastOid, toastIndexOid);
+		toastOid = InvalidOid;
+		toastIndexOid = InvalidOid;
+	}
+	else
+	{
+		snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toast_%u", relOid);
-	snprintf(toast_idxname, sizeof(toast_idxname),
+		snprintf(toast_idxname, sizeof(toast_idxname),
 			 "pg_toast_%u_index", relOid);
+	}
 
 	/* this is pretty painful...  need a tuple descriptor */
 	tupdesc = CreateTemplateTupleDesc(3);
@@ -286,8 +320,9 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 										   true,
 										   OIDOldToast,
 										   NULL);
+	*OIDNewToast = toast_relid;
 	Assert(toast_relid != InvalidOid);
-
+elog(NOTICE, "create_toast_table 3 created %u", *OIDNewToast);
 	/* make the toast relation visible, else table_open will fail */
 	CommandCounterIncrement();
 
@@ -397,7 +432,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	 * Make changes visible
 	 */
 	CommandCounterIncrement();
-
+elog(NOTICE, "create_toast_table 4");
 	return true;
 }
 
