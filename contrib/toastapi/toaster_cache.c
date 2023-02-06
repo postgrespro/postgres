@@ -29,7 +29,6 @@ typedef struct ToastrelCacheEntry
 {
 	Oid 		relid;
 	int16 	attnum;
-	Toastrel	tkey;
 } ToastrelCacheEntry;
 
 static List	*ToastrelCache = NIL;

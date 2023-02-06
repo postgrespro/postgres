@@ -96,39 +96,55 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
    Datum result = (Datum) 0;
 	FormData_pg_attribute *pg_attr;
 	Datum d;
-	Datum tsrd;
 	TsrRoutine *toaster = NULL;
 	Relation rel;
+	int ntoasters = 0;
 
 	rel = table_open(reloid, RowExclusiveLock);
 	pg_attr = &rel->rd_att->attrs[attnum];
-	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_HANDLER_NAME);
-	tsrd = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_TOASTER_NAME);
 
-	table_close(rel, RowExclusiveLock);
-
+	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_NTOASTERS_NAME);
 	if(d == (Datum) 0)
 	{
-		elog(NOTICE, "No toaster handler assigned to table");
-		return d;
-	}
-	if(tsrd == (Datum) 0)
-	{
+		ntoasters = 0;
 		elog(NOTICE, "No toaster assigned to table");
-		return tsrd;
+		return (Datum) 0;
+	}
+	else
+	{
+		ntoasters = atoi(DatumGetCString(d));
+	}
+
+	{
+		char *handler;
+		int len = 0;
+		char str[12];
+
+		len = pg_ltoa(ntoasters, str);
+		handler = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+		
+		memcpy(handler, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+		memcpy(handler+strlen(ATT_HANDLER_NAME), str, len);
+		
+		handler[strlen(ATT_HANDLER_NAME) + len] = '\0';
+		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, handler);
 	}
 
 	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-	if(toaster != NULL)
-		result = toaster->init(rel,
-									atoi(DatumGetCString(tsrd)),
+	if(toaster == NULL)
+	{
+		elog(NOTICE, "No routine found");
+		return (Datum) 0;
+	}
+
+	result = toaster->init(rel,
+									atoi(DatumGetCString(d)),
 									reloptions,
 									attnum,
 									lockmode,
 									check,
 									OIDOldToast);
-	else
-		elog(NOTICE, "No routine found");
+	table_close(rel, RowExclusiveLock);
    return result;
 }
 
@@ -143,12 +159,51 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Datum d;
 	Relation rel;
 	TsrRoutine *toaster = NULL;
-
-   elog(NOTICE, "toastapi_toast hook");
+	char *ntoasters_str;
+	char *tmp;
+	int ntoasters = 0;
+	int len;
+	char str[12];
+	Oid tsrhandler = InvalidOid;
 
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
 
-	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), NameStr(pg_attr->attname), attribute+1, ATT_HANDLER_NAME);
+	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
+	{
+		elog(NOTICE, "No Toasters for rel <%u>", RelationGetRelid(ttc->ttc_rel));
+		table_close(rel, RowExclusiveLock);
+		return *value;
+	}
+
+	ntoasters_str = DatumGetCString(d);
+	ntoasters = atoi(ntoasters_str);
+	len = pg_ltoa(ntoasters, str);
+
+	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+	memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+	memcpy(tmp + strlen(ATT_HANDLER_NAME), str, len);
+	tmp[strlen(ATT_HANDLER_NAME) + strlen(str)] = '\0';
+
+	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), NameStr(pg_attr->attname), attribute+1, tmp);
+		
+	if(d == (Datum) 0)
+	{
+		elog(NOTICE, "No Toasters for rel <%u>", RelationGetRelid(ttc->ttc_rel));
+		table_close(rel, RowExclusiveLock);
+		return *value;
+	}
+	else
+	{
+		tsrhandler = atoi(DatumGetCString(d));
+		toaster = GetTsrRoutine(tsrhandler);
+	}
+
+	tmp = palloc(strlen(ATT_TOASTREL_NAME) + len + 1);
+	memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
+	memcpy(tmp + strlen(ATT_TOASTREL_NAME), str, len);
+	tmp[strlen(ATT_TOASTREL_NAME) + strlen(ntoasters_str)] = '\0';
+	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), NameStr(pg_attr->attname), attribute+1, tmp);
 
 	table_close(rel, RowExclusiveLock);
 
@@ -156,20 +211,24 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	{
 		toastapi_init(RelationGetRelid(ttc->ttc_rel), (Datum) 0, attribute+1, RowExclusiveLock, false, InvalidOid);
 	}
-	elog(NOTICE, "toastapi_toast get routine for <%s>", DatumGetCString(d));
-	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-	elog(NOTICE, "toastapi_toast toast");
+	pfree(tmp);
+
 	if(toaster != NULL)
+	{
 		result = toaster->toast(ttc->ttc_rel,
-										atoi(DatumGetCString(d)),
+										tsrhandler,
 										old_value,
 										PointerGetDatum(attr->tai_oldexternal),
 										attribute+1,
 										maxDataLen, options);
+	}
 	else
+	{
 		elog(NOTICE, "No routine found");
-
-   return result;
+		return *value;
+	}
+	
+	return result;
 }
 
 static Size toastapi_size (uint8 tag, const void *ptr)
@@ -182,10 +241,7 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 {
 	struct varlena *value;
 	Datum result = toast_ptr;
-	// char * attname = "";
-	// int attnum = 0;
 
-   elog(NOTICE, "toastapi_detoast hook");
 	value = (struct varlena *) DatumGetPointer(toast_ptr);
 	if(VARATT_IS_EXTERNAL_ONDISK(value))
 	{
@@ -193,45 +249,82 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 	}
 	if(VARATT_IS_CUSTOM(value))
 	{
-		// Datum d;
 		TsrRoutine *toaster = NULL;
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
-		
-		elog(NOTICE, "custom tp toaster %u", toasterid);
-/*
-		d = attopts_get_toaster_opts(relid, attname, "toasterid");
-		if(d != (Datum) 0)
-		{
-			char *s;
-			int l;
-			char *t;
+		toaster = GetTsrRoutine(toasterid);
 
-			s = DatumGetCString(d);
-			l = pg_ltoa(toasterid, t);
-			if(strcmp(s, t) == 0)
-			{
-				d = attopts_get_toaster_opts(relid, attname, "toasterhandler");
-				toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-			}
-		}
-		if(toaster == NULL)
-		{
-			toaster = SearchTsrCache(toasterid);
-		}
-*/
-		toaster = GetTsrRoutine(toasterid); //atoi(DatumGetCString(d)));
 		return toaster->detoast(toast_ptr, offset, length);
 	}
 
    return result;
 }
 
+bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
+{
+	Datum d;
+	char str[12];
+	char *tmp;
+	char *ntoasters_str;
+	int len = 0;
+	bool all_found_ind = true;
+
+	*ntoasters = 0;
+	*toasteroid = InvalidOid;
+	*toastrelid = InvalidOid;
+	*handlerid = InvalidOid;
+	str[0] = '\0';
+
+	d = attopts_get_toaster_opts(relid, "", attnum, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
+		all_found_ind = false;
+	else
+	{
+		ntoasters_str = DatumGetCString(d);
+		*ntoasters = atoi(ntoasters_str);
+		len = pg_ltoa(*ntoasters, str);
+	}
+
+	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+	memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+	memcpy(tmp + strlen(ATT_HANDLER_NAME), str, len);
+	tmp[strlen(ATT_HANDLER_NAME) + strlen(str)] = '\0';
+
+	d = attopts_get_toaster_opts(relid, "", attnum, tmp);
+		
+	if(d == (Datum) 0)
+		all_found_ind = false;
+	else
+		*handlerid = atoi(DatumGetCString(d));
+
+	tmp = palloc(strlen(ATT_TOASTER_NAME) + len + 1);
+	memcpy(tmp, ATT_TOASTER_NAME, strlen(ATT_TOASTER_NAME));
+	memcpy(tmp + strlen(ATT_TOASTER_NAME), str, len);
+	tmp[strlen(ATT_TOASTER_NAME) + len] = '\0';
+	d = attopts_get_toaster_opts(relid, "", attnum, tmp);
+
+	if(d == (Datum) 0)
+		all_found_ind = false;
+	else
+		*toasteroid = atoi(DatumGetCString(d));
+
+	tmp = palloc(strlen(ATT_TOASTREL_NAME) + len + 1);
+	memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
+	memcpy(tmp + strlen(ATT_TOASTREL_NAME), str, len);
+	tmp[strlen(ATT_TOASTREL_NAME) + len] = '\0';
+	d = attopts_get_toaster_opts(relid, "", attnum, tmp);
+
+	if(d == (Datum) 0)
+		all_found_ind = false;
+	else
+		*toastrelid = atoi(DatumGetCString(d));
+
+	return all_found_ind;
+}
+
 void _PG_init(void)
 {
-	elog(NOTICE, "create pg_toaster");
 	create_pg_toaster();
 	// create_pg_toastrel();
-	elog(NOTICE, "set hooks");
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;
    toastapi_detoast_hook = Toastapi_detoast_hook;

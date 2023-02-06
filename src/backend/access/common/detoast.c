@@ -130,10 +130,8 @@ detoast_external_attr(struct varlena *attr)
 struct varlena *
 detoast_attr(struct varlena *attr)
 {
-	elog(NOTICE, "detoast_attr in");
 	if (VARATT_IS_CUSTOM(attr))
 	{
-		elog(NOTICE, "detoast_attr VARATT_IS_CUSTOM");
 		attr = detoast_external_attr(attr);
 	}
 	else if (VARATT_IS_EXTERNAL_ONDISK(attr))
@@ -500,12 +498,12 @@ toast_decompress_datum(struct varlena *attr)
 	ToastCompressionId cmid;
 
 	Assert(VARATT_IS_COMPRESSED(attr));
-
 	/*
 	 * Fetch the compression method id stored in the compression header and
 	 * decompress the data using the appropriate decompression routine.
 	 */
 	cmid = TOAST_COMPRESS_METHOD(attr);
+
 	switch (cmid)
 	{
 		case TOAST_PGLZ_COMPRESSION_ID:

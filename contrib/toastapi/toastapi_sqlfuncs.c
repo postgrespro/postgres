@@ -217,7 +217,7 @@ open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid)
 	List	   *indexlist;
 	ListCell   *lc;
 	int num_indexes = 0;
-	Relation **relindxs;
+	Relation *relindxs;
 	Oid relid = InvalidOid;
 
 	relid = RelationGetRelid(rel);
@@ -228,13 +228,13 @@ open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid)
 
 	num_indexes = list_length(indexlist);
 
-	*relindxs = (Relation *) palloc(num_indexes * sizeof(Relation));
+	relindxs = (Relation *) palloc(num_indexes * sizeof(Relation));
 	foreach(lc, indexlist)
-		(*relindxs)[i++] = index_open(lfirst_oid(lc), lock);
+		relindxs[i++] = index_open(lfirst_oid(lc), lock);
 
 	for (i = 0; i < num_indexes; i++)
 	{
-		Relation	toastidx = (*relindxs)[i];
+		Relation	toastidx = relindxs[i];
 
 		if (toastidx->rd_index->indisvalid)
 		{
@@ -324,8 +324,7 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	foreach(lc, indexlist)
 	{
-		relindx = index_open(lfirst_oid(lc), AccessShareLock);
-		idx_oid = RelationGetRelid(relindx);
+		idx_oid = lfirst_oid(lc);
 		found = true;
 		break;
 	}
@@ -334,11 +333,15 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	if (!found)
 	{
-		index_close(relindx, AccessShareLock);
 		table_close(rel, RowExclusiveLock);
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_FUNCTION),
 				 errmsg("no valid index found for toast relation with Oid %u", relid)));
+	}
+	else
+	{
+		relindx = index_open(idx_oid, AccessShareLock);
+		idx_oid = RelationGetRelid(relindx);
 	}
 
 	ScanKeyInit(&key[keys],
@@ -359,8 +362,9 @@ add_toaster(PG_FUNCTION_ARGS)
 	systable_endscan(scan);
 	if(OidIsValid(ex_tsroid))
 	{
-		if(ex_tsroid != tsroid)
-		index_close(relindx, AccessShareLock);
+		if(ex_tsroid != tsroid && relindx)
+			index_close(relindx, AccessShareLock);
+
 		table_close(rel, RowExclusiveLock);
 		return ObjectIdGetDatum(ex_tsroid);
 	}
@@ -413,9 +417,12 @@ set_toaster(PG_FUNCTION_ARGS)
 	AttrNumber	attnum;
 	SysScanDesc scan;
 	uint32      total_entries = 0;
-	// char *str;
 	char str[12];
+	char nstr[12];
 	Oid trelid = InvalidOid;
+	int ntoasters;
+	char *tmp;
+
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -520,31 +527,73 @@ set_toaster(PG_FUNCTION_ARGS)
 	
 	ReleaseSysCache(tuple);
 
-	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTER_NAME);
-	if(d != (Datum) 0)
+	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
 	{
-		elog(NOTICE, "set_toaster 10-1 tsr <%s> found", DatumGetCString(d));
+		ntoasters = 0;
 	}
-	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTREL_NAME);
-	if(d != (Datum) 0)
+	else
 	{
-		table_close(attrelation, RowExclusiveLock);
-		return res;
+		ntoasters = atoi(DatumGetCString(d));
 	}
+
+	len = 0;
+/*
+	len = pg_ltoa((ntoasters+1), str);
+	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+	memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+	memcpy(tmp+strlen(ATT_HANDLER_NAME), str, len);
+	tmp[strlen(ATT_HANDLER_NAME) + len] = '\0';
+*/
+	len = pg_ltoa((ntoasters+1), str);
+	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+
+	for(int i = 1; i <= ntoasters; i++)
+	{
+		int tlen = 0;
+		char tind[12];
+		tlen = pg_ltoa(i, tind);
+		memcpy(tmp, ATT_TOASTER_NAME, strlen(ATT_TOASTER_NAME));
+		memcpy(tmp+strlen(ATT_TOASTER_NAME), tind, tlen);
+		tmp[strlen(ATT_TOASTER_NAME) + tlen] = '\0';
+		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
+
+		len = pg_ltoa(i, str);
+		tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
+		memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+		memcpy(tmp+strlen(ATT_HANDLER_NAME), str, len);
+		tmp[strlen(ATT_HANDLER_NAME) + len] = '\0';
+		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
+
+		if(d != (Datum) 0)
+		{
+			if(strcmp(DatumGetCString(d), str))
+			{
+				memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
+				memcpy(tmp+strlen(ATT_TOASTREL_NAME), tind, tlen);
+				tmp[strlen(ATT_TOASTREL_NAME) + tlen] = '\0';
+				d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
+				if(d == (Datum) 0)
+				{
+					trelid = InvalidOid;
+				}
+				else
+				{
+					trelid = atoi(DatumGetCString(d));
+					break;
+				}
+			}
+		}
+	}
+
+	if(!OidIsValid(trelid))
 	{
 		/* Call tsr->init */
 		TsrRoutine *tsr;
-			
-		d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
-		if(d != (Datum) 0)
-		{
-			elog(NOTICE, "set_toaster 11-1 handler <%s> found", DatumGetCString(d));
-		}
-
 		tsr = GetTsrRoutine(tsrhandler);
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
-
+		
 		d = tsr->init(rel,
 								tsroid,
 								(Datum) 0,
@@ -557,19 +606,37 @@ set_toaster(PG_FUNCTION_ARGS)
 	}
 
 	table_close(attrelation, RowExclusiveLock);
+	ntoasters++;
+
+	/* Set toaster variables - oid, toast relation id, handler for fast access */
+	len = 0;
+	len = pg_ltoa((ntoasters), nstr);
 
 	if(OidIsValid(trelid))
 	{
+		memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
+		memcpy(tmp+strlen(ATT_TOASTREL_NAME), nstr, len);
+		tmp[strlen(ATT_TOASTREL_NAME) + len] = '\0';
 		len = pg_ltoa(trelid, str);
-		d = attopts_set_toaster_opts(relid, attname, ATT_TOASTREL_NAME, str);
+		d = attopts_set_toaster_opts(relid, attname, tmp, str);
 	}
 
+	memcpy(tmp, ATT_TOASTER_NAME, strlen(ATT_TOASTER_NAME));
+	memcpy(tmp+strlen(ATT_TOASTER_NAME), nstr, len);
+	tmp[strlen(ATT_TOASTER_NAME) + len] = '\0';
 	len = pg_ltoa(tsroid, str);
 	Assert(len!=0);
-	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, str);
-	len = pg_ltoa(tsrhandler, str);
-	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str);
+	d = attopts_set_toaster_opts(relid, attname, tmp, str);
 
+	memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
+	memcpy(tmp+strlen(ATT_HANDLER_NAME), nstr, len);
+	tmp[strlen(ATT_HANDLER_NAME) + len] = '\0';
+	len = pg_ltoa(tsrhandler, str);
+	d = attopts_set_toaster_opts(relid, attname, tmp, str);
+
+	d = attopts_set_toaster_opts(relid, attname, ATT_NTOASTERS_NAME, nstr);
+
+	pfree(tmp);
 	return res;
 }
 	
@@ -591,7 +658,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	HeapTuple	tup;
 	HeapTuple	tsrtup;
 	uint32      total_entries = 0;
-	char *s_tsrid;
+	char s_tsrid[12];
 	int len = 0;
 
 	if (PG_ARGISNULL(0))
@@ -636,7 +703,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	{
 		return (Datum) 0;
 	}
-	s_tsrid = "";
+
 	len = pg_ltoa(tsroid, s_tsrid);
 	found = false;
 
@@ -654,15 +721,16 @@ drop_toaster(PG_FUNCTION_ARGS)
 			o_datum = SysCacheGetAttr(ATTNAME, tup, Anum_pg_attribute_attoptions,
 								&isnull);
 			o_list = untransformRelOptions(o_datum);
-		
+
 			foreach(cell, o_list)
 			{
 				DefElem    *def = (DefElem *) lfirst(cell);
 
 				char *str;
 				l_idx++;
+/*
 				if (strcmp(def->defname, tsrname) == 0)
-				{
+				{*/
 					str = defGetString(def);
 
 					if(str && strcmp(s_tsrid, str) == 0)
@@ -670,7 +738,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 						found = true;
 						break;
 					}
-				}
+/*				}*/
 			}
 			total_entries++;
 		}

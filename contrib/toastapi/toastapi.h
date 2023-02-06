@@ -46,9 +46,13 @@
 #define PG_TOASTER_NAME "pg_toaster"
 #define PG_TOASTREL_NAME "pg_toastrel"
 
+#define REL_TOASTER_NAME "toasteroid"
+#define REL_BASEREL_NAME "basereloid"
+
 #define ATT_TOASTER_NAME "toasteroid"
 #define ATT_HANDLER_NAME "toasthandler"
 #define ATT_TOASTREL_NAME "toastreloid"
+#define ATT_NTOASTERS_NAME "ntoasters"
 /*
 static Oid pg_toaster_idx_oid = InvalidOid;
 static Oid pg_toastrel_idx_oid = InvalidOid;
@@ -164,30 +168,6 @@ typedef struct TsrRoutine
 #define T_TsrRoutine 999
 #define makeTsrNode()		((TsrRoutine *) newNode(sizeof(TsrRoutine),T_TsrRoutine))
 
-typedef struct ToastrelData {
-	Oid			oid;			   /* oid */
-   Oid			toasteroid;		/* oid */
-   Oid			relid;		   /* oid */
-   Oid			toastentid;		/* oid */
-   int16			attnum;		   /* oid */
-   int16       version;
-   NameData	   relname;		   /* original table name */
-   NameData	   toastentname;	/* toast storage entity name */
-   char		   description;	/* Description */
-	char		   toastoptions;	/* Toast options */
-} ToastrelData;
-
-typedef struct ToastrelData *Toastrel;
-
-typedef struct ToastrelKey {
-   Oid			toastentid;		/* oid */
-	Oid			toasterid;		/* oid */
-   int16			attnum;		   /* oid */
-	int16			version;		   /* oid */
-} ToastrelKey;
-
-typedef struct ToastrelKey *Toastkey;
-
 /* Functions in access/index/toasterapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
@@ -195,38 +175,7 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
-
-extern Datum GetFullToastrel(Oid relid, int16 attnum, LOCKMODE lockmode);
-extern Datum GetActualToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
-extern Datum GetAttVersionToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
-extern Datum GetLastToaster(Oid relid, int16 attnum, LOCKMODE lockmode);
-
-extern bool InsertToastRelation(Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	int version, NameData relname, NameData toastentname, char toastoptions, LOCKMODE lockmode);
-extern bool UpdateToastRelationFlag(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	int version, char flag, LOCKMODE lockmode);
-extern bool
-DeleteToastRelation(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	int version, LOCKMODE lockmode);
-
-
-extern Datum SearchToastrelCache(Oid	relid, int16 attnum, bool search_ind);
-extern Datum InsertToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	int16 version, char toastoptions);
-extern Datum DeleteToastrelCache(Oid toasterid, Oid	relid, int16 attnum);
-extern Datum InsertOrReplaceToastrelCache(Oid treloid, Oid toasteroid, Oid relid, Oid toastentid, int16 attnum,
-	char toastoptions);
-extern Datum
-GetToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode);
-extern bool
-HasToastrel(Oid toasterid, Oid relid, int16 attnum, LOCKMODE lockmode);
-extern Datum
-GetFullToastrelList(List *trel_list, Oid relid, int16 attnum, LOCKMODE lockmode);
-
-extern Datum
-GetInheritedToaster(List *schema, List *supers, char relpersistence,
-				bool is_partition, List **supconstr,
-				Oid accessMethodId, NameData attname, Oid typid);
+extern bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
 
 Datum relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
 Datum relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);

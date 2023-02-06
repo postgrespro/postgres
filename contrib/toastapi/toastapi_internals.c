@@ -112,17 +112,15 @@ attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 	foreach(cell, o_list)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
-		l_idx++;
-		elog(NOTICE, "att <%s>", def->defname);
 		if (strcmp(def->defname, optname) == 0)
 		{
-			str = palloc(strlen(defGetString(def)));
-			memcpy(str, defGetString(def), strlen(defGetString(def)));
+			str = palloc(strlen(defGetString(def))+1);
+			memcpy(str, defGetString(def), strlen(defGetString(def))+1);
 			break;
 		}
+		l_idx++;
 	}
-	pfree(o_list);
-	pfree(DatumGetPointer(o_datum));
+
 	if(str == NULL)
 		return (Datum) 0;
 	return CStringGetDatum(str);
@@ -176,9 +174,11 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 	foreach(cell, o_list)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
-		l_idx++;
 		if (strcmp(def->defname, optname) == 0)
+		{
 			o_list = list_delete_nth_cell(o_list, l_idx);
+		}
+		l_idx++;
 	}
 
 	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
