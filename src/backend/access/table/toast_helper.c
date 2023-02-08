@@ -27,6 +27,7 @@ Toastapi_update_hook_type Toastapi_update_hook = NULL;
 Toastapi_copy_hook_type Toastapi_copy_hook = NULL;
 Toastapi_delete_hook_type Toastapi_delete_hook = NULL;
 Toastapi_size_hook_type Toastapi_size_hook = NULL;
+Toastapi_vtable_hook_type Toastapi_vtable_hook = NULL;
 
 /*
  * Prepare to TOAST a tuple.
