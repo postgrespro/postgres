@@ -354,6 +354,9 @@ add_toaster(PG_FUNCTION_ARGS)
 	scan = systable_beginscan(rel, idx_oid, false,
 							  NULL, keys, key);
 	keys = 0;
+
+	tsroid = InvalidOid;
+
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
@@ -361,8 +364,8 @@ add_toaster(PG_FUNCTION_ARGS)
 		break;
 	}
 	systable_endscan(scan);
-	table_close(rel, RowExclusiveLock);
-	if(OidIsValid(tsroid))
+
+	if (OidIsValid(tsroid))
 	{
 		table_close(rel, RowExclusiveLock);
 		return tsroid;
