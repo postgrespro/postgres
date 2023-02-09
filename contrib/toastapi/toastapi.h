@@ -42,8 +42,9 @@
 
 #define TOASTER_HANDLEROID 8888
 
-static const char *pg_toaster_name = "pg_toaster";
-static const char *pg_toastrel_name = "pg_toastrel";
+#define pg_toaster_name "pg_toaster"
+#define pg_toastrel_name "pg_toastrel"
+
 /*
 static Oid pg_toaster_idx_oid = InvalidOid;
 static Oid pg_toastrel_idx_oid = InvalidOid;
