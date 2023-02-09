@@ -41,9 +41,6 @@ Toastapi_init_hook_type Toastapi_init_hook = NULL;
 static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 									 LOCKMODE lockmode, bool check,
 									 Oid OIDOldToast);
-static bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
-							   Datum reloptions, LOCKMODE lockmode, bool check,
-							   Oid OIDOldToast);
 static bool needs_toast_table(Relation rel);
 
 
@@ -144,7 +141,7 @@ BootstrapToastTable(char *relName, Oid toastOid, Oid toastIndexOid)
  * toastOid and toastIndexOid are normally InvalidOid, but during
  * bootstrap they can be nonzero to specify hand-assigned OIDs
  */
-static bool
+bool
 create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				   Datum reloptions, LOCKMODE lockmode, bool check,
 				   Oid OIDOldToast)
