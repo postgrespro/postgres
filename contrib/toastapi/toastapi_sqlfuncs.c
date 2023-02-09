@@ -113,7 +113,7 @@ Oid insert_toaster(const char *tsrname, const char *tsrhandler)
 	Relation pg_toaster = get_rel_from_relname(cstring_to_text(pg_toaster_name), RowExclusiveLock, ACL_INSERT);
 
 	indexlist = RelationGetIndexList(pg_toaster);
-	
+
 	Assert(indexlist != NIL);
 
 	// num_indexes = list_length(indexlist);
@@ -225,7 +225,7 @@ open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid)
 	relid = RelationGetRelid(rel);
 
 	indexlist = RelationGetIndexList(rel);
-	
+
 	Assert(indexlist != NIL);
 
 	num_indexes = list_length(indexlist);
@@ -321,7 +321,7 @@ add_toaster(PG_FUNCTION_ARGS)
 				 errmsg("Cannot open pg_toaster table")));
 
 	indexlist = RelationGetIndexList(rel);
-	
+
 	Assert(indexlist != NIL);
 
 	//num_indexes = list_length(indexlist);
@@ -565,7 +565,7 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	return res;
 }
-	
+
 
 PG_FUNCTION_INFO_V1(drop_toaster);
 
@@ -647,7 +647,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 			o_datum = SysCacheGetAttr(ATTNAME, tup, Anum_pg_attribute_attoptions,
 								&isnull);
 			o_list = untransformRelOptions(o_datum);
-		
+
 			foreach(cell, o_list)
 			{
 				DefElem    *def = (DefElem *) lfirst(cell);
