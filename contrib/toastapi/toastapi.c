@@ -89,8 +89,10 @@ static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
 static Toastapi_size_hook_type toastapi_size_hook = NULL;
 
-static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast)
+static Datum
+toastapi_init(Oid reloid, Oid toastoid, Oid toastindexoid,
+			  Datum reloptions, int attnum, LOCKMODE lockmode,
+			  bool check, Oid OIDOldToast)
 {
    Datum result;
 	FormData_pg_attribute *pg_attr;
@@ -110,6 +112,8 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
 	result = toaster->init(rel,
 									atoi(DatumGetCString(tsrd)),
+									toastoid,
+									toastindexoid,
 									reloptions,
 									attnum,
 									lockmode,

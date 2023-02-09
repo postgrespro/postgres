@@ -537,6 +537,8 @@ set_toaster(PG_FUNCTION_ARGS)
 
 			trelid = tsr->init(rel,
 									atoi(DatumGetCString(d)),
+									InvalidOid,
+									InvalidOid,
 									(Datum) 0,
 									attnum,
 									RowExclusiveLock,

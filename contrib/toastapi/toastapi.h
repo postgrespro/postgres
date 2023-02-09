@@ -93,8 +93,9 @@ typedef struct ByteaToastRoutine
  */
 
 /* Create toast storage */
-typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast);
+typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Oid toastoid, Oid toastindexoid,
+							Datum reloptions, int attnum, LOCKMODE lockmode,
+							bool check, Oid OIDOldToast);
 
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
