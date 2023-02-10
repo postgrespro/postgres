@@ -220,7 +220,7 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 		}
 */
 		toaster = GetTsrRoutine(toasterid); //atoi(DatumGetCString(d)));
-		return toaster->detoast(toast_ptr, 0, -1);
+		return toaster->detoast(toast_ptr, offset, length);
 	}
 
    return result;
