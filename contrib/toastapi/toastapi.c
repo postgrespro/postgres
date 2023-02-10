@@ -172,9 +172,9 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
    return result;
 }
 
-static Size toastapi_size (uint8 tag)
+static Size toastapi_size (uint8 tag, const void *ptr)
 {
-	return (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata)	: 0;
+	return (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata) + VARATT_CUSTOM_GET_DATA_SIZE(ptr) : 0;
 }
 
 static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
