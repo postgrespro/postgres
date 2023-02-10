@@ -357,13 +357,18 @@ bytea_toaster_detoast(Datum toastptr,
 	if (slicelength > 0)
 	{
 		Relation toastrel;
+		AppendableToastVisibilityContext cxt = {0};
+
+		cxt.max_chunk_version = BYTEA_INVALID_VERSION;
+		cxt.attrversion = data.version;
 
 		toastrel = table_open(data.ptr.va_toastrelid, AccessShareLock);
 
 		toast_fetch_toast_slice(toastrel, data.ptr.va_valueid,
 								(struct varlena *) toastptr,	/* XXX */
 								toasted_size, sliceoffset, slicelength,
-								result, 0, false, NULL);
+								result, sizeof(AppendableToastVersion),
+								bytea_toaster_check_visibility, &cxt);
 
 		table_close(toastrel, AccessShareLock);
 	}
