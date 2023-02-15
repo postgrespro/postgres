@@ -169,11 +169,17 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
 
 	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_NTOASTERS_NAME);
+	
 	if(d == (Datum) 0)
 	{
 		elog(NOTICE, "No Toasters for rel <%u>", RelationGetRelid(ttc->ttc_rel));
+
+		result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
+			options);
+
 		table_close(rel, RowExclusiveLock);
-		return *value;
+
+		return result;
 	}
 
 	ntoasters_str = DatumGetCString(d);

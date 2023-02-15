@@ -1,3 +1,7 @@
+#ifndef TOASTAPISQL_H
+#define TOASTAPISQL_H
+
+
 #include "postgres.h"
 #include "varatt.h"
 #include "fmgr.h"
@@ -108,3 +112,5 @@ extern Datum get_toaster(PG_FUNCTION_ARGS);
 extern Datum list_toasters(PG_FUNCTION_ARGS);
 
 extern Datum list_toastrels(PG_FUNCTION_ARGS);
+
+#endif

@@ -127,7 +127,7 @@ attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 }
 
 Datum
-attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
+attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order)
 {
 	Relation	attrelation;
 	HeapTuple	tuple,
@@ -177,11 +177,18 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval)
 		if (strcmp(def->defname, optname) == 0)
 		{
 			o_list = list_delete_nth_cell(o_list, l_idx);
+			break;
 		}
-		l_idx++;
+		else l_idx++;
 	}
 
-	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
+	if (order < 0)
+		o_list = lcons(makeDefElem(optname, (Node *) makeString(optval), -1), o_list);
+	else if (order == 0 && l_idx > 0)
+		o_list = list_insert_nth(o_list, 1, makeDefElem(optname, (Node *) makeString(optval), -1));
+	else
+		o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
+
 	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
 									 o_list, NULL, NULL, false,
 									 false);	

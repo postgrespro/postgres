@@ -1,3 +1,6 @@
+#ifndef ATTOPTIONS_H
+#define ATTOPTIONS_H
+
 #include "postgres.h"
 #include "varatt.h"
 #include "fmgr.h"
@@ -27,4 +30,6 @@
 extern Datum relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
 extern Datum relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);
 extern Datum attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname);
-extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval);
+extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order);
+
+#endif /* ATTOPTIONS_H */

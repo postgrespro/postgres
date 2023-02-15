@@ -1,6 +1,3 @@
-#ifndef TOASTERCACHE_H
-#define TOASTERCACHE_H
-
 #include "toastapi.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -16,22 +13,8 @@
 #include "pg_toaster.h"
 #include "pg_toastrel.h"
 #include "toastapi_internals.h"
+#include "toaster_cache.h"
 
-typedef struct ToasterCacheEntry
-{
-	Oid			toasterOid;
-	TsrRoutine *routine;
-} ToasterCacheEntry;
-
-static List	*ToasterCache = NIL;
-
-typedef struct ToastrelCacheEntry
-{
-	Oid 		relid;
-	int16 	attnum;
-} ToastrelCacheEntry;
-
-static List	*ToastrelCache = NIL;
 
 /* Cache pg_toaster and pg_toastrel */
 Oid cache_pg_toaster()
@@ -140,24 +123,15 @@ GetTsrRoutine(Oid tsrhandler)
 TsrRoutine *
 GetTsrRoutineByOid(Oid tsroid, bool noerror)
 {
-	HeapTuple	tuple;
-	Form_pg_toaster	tsrform;
 	regproc		tsrhandler = InvalidOid;
 
-	Relation	toastrel;
 	Relation	rel;
-	Relation   *toastidxs;
 	Relation   relindx;
 	Oid			idx_oid;
 	int			num_indexes;
-	int			validIndex;
-	int options = 0;
    Oid relid = InvalidOid;
-   Oid tshndloid = InvalidOid;
-	char *tsrname;
 	bool		found = false;
 	List	   *indexlist;
-	List *namelist;
 	ListCell   *lc;
 	ScanKeyData key[2];
 	SysScanDesc scan;
@@ -272,7 +246,3 @@ validateToaster(Oid toasteroid, Oid typeoid,
 
 	return result;
 }
-
-
-
-#endif							/* TOASTERCACHE_H */

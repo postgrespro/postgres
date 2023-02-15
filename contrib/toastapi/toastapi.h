@@ -168,12 +168,13 @@ typedef struct TsrRoutine
 #define T_TsrRoutine 999
 #define makeTsrNode()		((TsrRoutine *) newNode(sizeof(TsrRoutine),T_TsrRoutine))
 
-/* Functions in access/index/toasterapi.c */
+/* Functions in toastapi.c */
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
 extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
+
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
 extern bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
 
