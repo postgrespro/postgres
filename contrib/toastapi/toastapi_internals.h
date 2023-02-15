@@ -44,23 +44,4 @@ extern Oid lookup_toaster_handler_func(List *handler_name);
 extern void create_pg_toaster(void);
 extern void create_pg_toastrel(void);
 
-static inline Datum set_numbered_att_opt_oid(Oid relid, char *optname, int len, char *nstr, Oid oid_val, char *attname, int order)
-{
-   char *tmp;
-   char str[12];
-   Datum d;
-   int namelen = strlen(optname);
-   int numlen = strlen(nstr);
-
-  	tmp = palloc(namelen + numlen + 1);
-	memcpy(tmp, optname, namelen);
-	memcpy(tmp+namelen, nstr, numlen);
-	tmp[namelen + numlen] = '\0';
-	numlen = pg_ltoa(oid_val, str);
-	Assert(numlen!=0);
-	d = attopts_set_toaster_opts(relid, attname, tmp, str, order);
-	pfree(tmp);
-   return d;
-}
-
 #endif							/* TOASTAPIINT_H */

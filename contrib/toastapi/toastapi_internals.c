@@ -34,6 +34,7 @@
 #include "utils/varlena.h"
 #include "utils/guc.h"
 #include "parser/parse_func.h"
+#include "toaster_cache.h"
 
 Relation
 get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode)
@@ -211,83 +212,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 	return res;
 
 }
-
-/*
-	Relation	rel;
-	ScanKeyData skey[2];
-	SysScanDesc sscan;
-	HeapTuple	tuple;
-	char	   *scontext;
-	char	   *tcontext;
-	char	   *ncontext;
-	ObjectAddress object;
-	Form_pg_attribute attForm;
-	StringInfoData audit_name;
-
-	rel = table_open(AttributeRelationId, AccessShareLock);
-
-	ScanKeyInit(&skey[0],
-				Anum_pg_attribute_attrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relOid));
-	ScanKeyInit(&skey[1],
-				Anum_pg_attribute_attnum,
-				BTEqualStrategyNumber, F_INT2EQ,
-				Int16GetDatum(attnum));
-
-	sscan = systable_beginscan(rel, AttributeRelidNumIndexId, true,
-							   SnapshotSelf, 2, &skey[0]);
-
-	tuple = systable_getnext(sscan);
-	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "could not find tuple for column %d of relation %u",
-			 attnum, relOid);
-
-	attForm = (Form_pg_attribute) GETSTRUCT(tuple);
-
-	List *o_list = NIL;
-	ListCell   *cell;
-	Datum o_datum, opts;
-	int l_idx = 0;
-	Datum		values[Natts_pg_attribute] = {0};
-	bool		nulls[Natts_pg_attribute] = {0};
-	bool		replaces[Natts_pg_attribute] = {0};
-
-	memset(nulls, false, sizeof(nulls));
-	memset(replaces, false, sizeof(replaces));
-
-	o_datum = get_attoptions(relOid, attnum);
-	opts =  untransformRelOptions(o_datum);
-	
-	foreach(cell, opts)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-		l_idx++;
-		if (strcmp(def->defname, optname) == 0)
-			opts = list_delete_nth_cell(opts, l_idx);
-	}
-
-	o_list = lappend(o_list, makeDefElem(optname, (Node *) makeInteger(newToaster), -1));
-
-	opts = transformRelOptions(o_datum,
-									 o_list, NULL, NULL, false,
-									 false);	
-
-	values[Anum_pg_attribute_attoptions - 1] = opts;
-	nulls[Anum_pg_attribute_attoptions - 1] = false;
-	replaces[Anum_pg_attribute_attoptions - 1] = true;
-
-	tuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
-								 values, nulls, replaces);
-
-	newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel),
-								 values, nulls, replaces);
-	CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
-*/
-/*
-	systable_endscan(sscan);
-	table_close(rel, AccessShareLock);
-*/
 
 void create_pg_toaster(void)
 {

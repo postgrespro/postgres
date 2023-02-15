@@ -421,7 +421,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	char nstr[12];
 	Oid trelid = InvalidOid;
 	int ntoasters;
-	char *tmp;
 
 
 	if (PG_ARGISNULL(0))
@@ -529,46 +528,22 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
 	if(d == (Datum) 0)
-	{
 		ntoasters = 0;
-	}
 	else
-	{
 		ntoasters = atoi(DatumGetCString(d));
-	}
 
 	len = pg_ltoa((ntoasters+1), str);
-//	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
 
 	for(int i = 1; i <= ntoasters; i++)
 	{
-		int tlen = 0;
-		char tind[12];
-		tlen = pg_ltoa(i, tind);
-/*		
-		memcpy(tmp, ATT_TOASTER_NAME, strlen(ATT_TOASTER_NAME));
-		memcpy(tmp+strlen(ATT_TOASTER_NAME), tind, tlen);
-		tmp[strlen(ATT_TOASTER_NAME) + tlen] = '\0';
-		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
-*/
 		len = pg_ltoa(i, str);
-		tmp = palloc(strlen(ATT_HANDLER_NAME) + tlen + 1);
-		memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
-		memcpy(tmp+strlen(ATT_HANDLER_NAME), str, tlen);
-		tmp[strlen(ATT_HANDLER_NAME) + tlen] = '\0';
-		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
-		pfree(tmp);
 
+		d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, str, len, attnum);
 		if(d != (Datum) 0)
 		{
 			if(strcmp(DatumGetCString(d), str))
 			{
-				tmp = palloc(strlen(ATT_TOASTREL_NAME) + tlen + 1);
-				memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
-				memcpy(tmp+strlen(ATT_TOASTREL_NAME), tind, tlen);
-				tmp[strlen(ATT_TOASTREL_NAME) + tlen] = '\0';
-				d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
-				pfree(tmp);
+				d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
 				if(d == (Datum) 0)
 				{
 					trelid = InvalidOid;
@@ -610,35 +585,18 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	if(OidIsValid(trelid))
 	{
-		tmp = palloc(strlen(ATT_TOASTREL_NAME) + len + 1);
-		memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
-		memcpy(tmp+strlen(ATT_TOASTREL_NAME), nstr, len);
-		tmp[strlen(ATT_TOASTREL_NAME) + len] = '\0';
 		len = pg_ltoa(trelid, str);
-		d = attopts_set_toaster_opts(relid, attname, tmp, str, 0);
-		pfree(tmp);
+		d = set_complex_att_opt(relid, ATT_TOASTREL_NAME, nstr, str, attname, 0);
 	}
 
-	tmp = palloc(strlen(ATT_TOASTER_NAME) + len + 1);
-	memcpy(tmp, ATT_TOASTER_NAME, strlen(ATT_TOASTER_NAME));
-	memcpy(tmp+strlen(ATT_TOASTER_NAME), nstr, len);
-	tmp[strlen(ATT_TOASTER_NAME) + len] = '\0';
 	len = pg_ltoa(tsroid, str);
-	Assert(len!=0);
-	d = attopts_set_toaster_opts(relid, attname, tmp, str, 0);
-	pfree(tmp);
+	d = set_complex_att_opt(relid, ATT_TOASTER_NAME, nstr, str, attname, 0);
 
-	tmp = palloc(strlen(ATT_HANDLER_NAME) + len + 1);
-	memcpy(tmp, ATT_HANDLER_NAME, strlen(ATT_HANDLER_NAME));
-	memcpy(tmp+strlen(ATT_HANDLER_NAME), nstr, len);
-	tmp[strlen(ATT_HANDLER_NAME) + len] = '\0';
 	len = pg_ltoa(tsrhandler, str);
-	d = attopts_set_toaster_opts(relid, attname, tmp, str, 0);
-	pfree(tmp);
+	d = set_complex_att_opt(relid, ATT_HANDLER_NAME, nstr, str, attname, 0);
 
 	d = attopts_set_toaster_opts(relid, attname, ATT_NTOASTERS_NAME, nstr, -1);
 
-	pfree(tmp);
 	return res;
 }
 	

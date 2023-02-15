@@ -197,44 +197,26 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 	int ntoasters = 0;
 	Oid toastrelid = InvalidOid;
 	char str[12];
-	int len;
-	char *tmp;
+	int len = 0;
 
 	detoasted_newval = PointerGetDatum(detoast_attr((struct varlena *) DatumGetPointer(newval)));
+
 	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_NTOASTERS_NAME);
+
 	if(d == (Datum) 0)
-	{
-		len = 0;
 		str[0] = '\0';
-	}
 	else
 	{
 		ntoasters = atoi(DatumGetCString(d));
 		len = pg_ltoa(ntoasters, str);
 	}
 
-	tmp = palloc(strlen(ATT_TOASTREL_NAME) + len + 1);
-	memcpy(tmp, ATT_TOASTREL_NAME, strlen(ATT_TOASTREL_NAME));
-	memcpy(tmp + strlen(ATT_TOASTREL_NAME), str, len);
-	tmp[strlen(ATT_TOASTREL_NAME) + len] = '\0';
-	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, tmp);
-
+	d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
 	if(d == (Datum) 0)
-	{
 		elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
-	}
 	else
 		toastrelid = atoi(DatumGetCString(d));
 
-//	toast_ind = get_toast_params(RelationGetRelid(rel), attnum, &ntoasters, &toasteroid, &toastrelid, &handlerid);
-//	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_TOASTREL_NAME);
-/*
-	if(d == (Datum) 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("No TOAST table for relation %u and toaster %u", RelationGetRelid(rel), toasterid)));
-	toastrelid = atoi(DatumGetCString(d));
-*/
 	if(!OidIsValid(toastrelid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),

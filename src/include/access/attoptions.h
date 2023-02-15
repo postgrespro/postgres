@@ -32,4 +32,39 @@ extern Datum relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid
 extern Datum attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname);
 extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order);
 
+static inline Datum set_complex_att_opt(Oid relid, char *optname, char *nstr, char *val, char *attname, int order)
+{
+   char *tmp;
+   Datum d;
+   int namelen = strlen(optname);
+   int numlen = strlen(nstr);
+
+  	tmp = palloc(namelen + numlen + 1);
+	memcpy(tmp, optname, namelen);
+	memcpy(tmp+namelen, nstr, numlen);
+	tmp[namelen + numlen] = '\0';
+	d = attopts_set_toaster_opts(relid, attname, tmp, val, order);
+	pfree(tmp);
+   return d;
+}
+
+static inline Datum get_complex_att_opt(Oid relid, char *optname, char *addstr, int addstrlen, int attnum)
+{
+   char *tmp;
+   Datum d;
+   int namelen = strlen(optname);
+   int addlen = addstrlen;
+   
+   if(addlen < 0)
+      addlen = strlen(addstr);
+
+  	tmp = palloc(namelen + addlen + 1);
+	memcpy(tmp, optname, namelen);
+	memcpy(tmp+namelen, addstr, addlen);
+	tmp[namelen + addlen] = '\0';
+	d = attopts_get_toaster_opts(relid, "", attnum, tmp);
+	pfree(tmp);
+   return d;
+}
+
 #endif /* ATTOPTIONS_H */
