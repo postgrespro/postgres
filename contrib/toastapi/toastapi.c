@@ -89,6 +89,9 @@ static Toastapi_init_hook_type toastapi_init_hook = NULL;
 static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
 static Toastapi_size_hook_type toastapi_size_hook = NULL;
+static Toastapi_copy_hook_type toastapi_copy_hook = NULL;
+static Toastapi_update_hook_type toastapi_update_hook = NULL;
+static Toastapi_delete_hook_type toastapi_delete_hook = NULL;
 
 static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast)
@@ -235,6 +238,34 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
    return result;
 }
 
+static Datum toastapi_update (Relation rel,
+												  int options,
+												  Datum old_value,
+												  Datum new_value,
+												  int attnum)
+{
+	Datum res = (Datum) 0;
+	return res;
+}
+
+static Datum toastapi_copy (Relation rel,
+									Datum value,
+									bool is_speculative,
+									int attnum)
+{
+	Datum res = (Datum) 0;
+	return res;
+}
+
+static Datum toastapi_delete (Relation rel,
+										Datum value,
+										bool is_speculative,
+										int attnum)
+{
+	Datum res = (Datum) 0;
+	return res;
+}
+
 bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
 {
 	Datum d;
@@ -288,12 +319,17 @@ void _PG_init(void)
    toastapi_toast_hook = Toastapi_toast_hook;
    toastapi_detoast_hook = Toastapi_detoast_hook;
    toastapi_size_hook = Toastapi_size_hook;
-
+	toastapi_copy_hook = Toastapi_copy_hook;
+	toastapi_update_hook = Toastapi_update_hook;
+	toastapi_delete_hook = Toastapi_delete_hook;
 
    Toastapi_init_hook = toastapi_init;
    Toastapi_toast_hook = toastapi_toast;
    Toastapi_detoast_hook = toastapi_detoast;
    Toastapi_size_hook = toastapi_size;
+	Toastapi_copy_hook = toastapi_copy;
+	Toastapi_update_hook = toastapi_update;
+	Toastapi_delete_hook = toastapi_delete;
 }
 
 void _PG_fini(void)
@@ -301,4 +337,8 @@ void _PG_fini(void)
    Toastapi_init_hook = toastapi_init_hook;
    Toastapi_toast_hook = toastapi_toast_hook;
    Toastapi_detoast_hook = toastapi_detoast_hook;
+	Toastapi_copy_hook = toastapi_copy_hook;
+	Toastapi_update_hook = toastapi_update_hook;
+	Toastapi_delete_hook = toastapi_delete_hook;
+	Toastapi_size_hook = toastapi_size_hook;
 }

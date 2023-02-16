@@ -26,6 +26,17 @@ typedef Datum (*Toastapi_init_hook_type) (Oid, Datum, LOCKMODE, int,
 						   bool, Oid);
 typedef Datum (*Toastapi_toast_hook_type) (ToastTupleContext *, int, int,
 						int);
+typedef Datum (*Toastapi_update_hook_type) (Relation,
+												  int,
+												  Datum,
+												  Datum,
+												  int);
+
+typedef Datum (*Toastapi_copy_hook_type) (Relation,
+												Datum,
+												bool,
+												int);
+
 typedef Datum (*Toastapi_detoast_hook_type) (Oid, Datum,
 											 int, int);
 typedef Datum (*Toastapi_repl_hook_type) (Oid, Datum,
@@ -34,11 +45,19 @@ typedef Datum (*Toastapi_vacuum_hook_type) (Oid, Datum,
 											 int, int);
 /* typedef Datum (*Toastapi_size_hook_type) (enum vartag_external); */
 
+typedef Datum (*Toastapi_delete_hook_type) (Relation,
+											Datum,
+											bool,
+											int);
+
 extern PGDLLIMPORT Toastapi_init_hook_type Toastapi_init_hook;
 extern PGDLLIMPORT Toastapi_toast_hook_type Toastapi_toast_hook;
+extern PGDLLIMPORT Toastapi_copy_hook_type Toastapi_copy_hook;
+extern PGDLLIMPORT Toastapi_update_hook_type Toastapi_update_hook;
 extern PGDLLIMPORT Toastapi_detoast_hook_type Toastapi_detoast_hook;
 extern PGDLLIMPORT Toastapi_repl_hook_type Toastapi_repl_hook;
 extern PGDLLIMPORT Toastapi_vacuum_hook_type Toastapi_vacuum_hook;
+extern PGDLLIMPORT Toastapi_delete_hook_type Toastapi_delete_hook;
 /* extern PGDLLIMPORT Toastapi_size_hook_type Toastapi_size_hook; */
 
 #endif							/* TOASTHOOK_H */

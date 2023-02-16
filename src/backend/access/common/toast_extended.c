@@ -171,7 +171,7 @@ toast_save_datum_ext(Relation rel, Oid toastrelid, Oid toasteroid, Datum value,
 		{
 			struct varatt_external old_toast_pointer;
 
-			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal));
+			Assert(VARATT_IS_EXTERNAL_ONDISK(oldexternal) || VARATT_IS_CUSTOM(oldexternal));
 			/* Must copy to access aligned fields */
 			VARATT_EXTERNAL_GET_POINTER(old_toast_pointer, oldexternal);
 			if (old_toast_pointer.va_toastrelid == toastrelid) // rel->rd_toastoid)
@@ -541,7 +541,7 @@ toast_update_datum(Datum value,
 	int			num_indexes;
 	int			validIndex;
 
-	Assert(VARATT_IS_EXTERNAL_ONDISK(attr));
+	Assert(VARATT_IS_EXTERNAL_ONDISK(attr) || VARATT_IS_CUSTOM(attr));
 
 	/* Must copy to access aligned fields */
 	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);

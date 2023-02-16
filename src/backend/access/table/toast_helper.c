@@ -23,6 +23,9 @@
 #include "access/toast_hook.h"
 
 Toastapi_toast_hook_type Toastapi_toast_hook = NULL;
+Toastapi_update_hook_type Toastapi_update_hook = NULL;
+Toastapi_copy_hook_type Toastapi_copy_hook = NULL;
+Toastapi_delete_hook_type Toastapi_delete_hook = NULL;
 
 /*
  * Prepare to TOAST a tuple.
@@ -54,6 +57,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
 		struct varlena *old_value;
 		struct varlena *new_value;
+		bool	need_detoast = true;
 
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
@@ -74,12 +78,10 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * we have to delete it later.
 			 */
 			if (att->attlen == -1 && !ttc->ttc_oldisnull[i] &&
-				VARATT_IS_EXTERNAL_ONDISK(old_value))
+				(VARATT_IS_EXTERNAL_ONDISK(old_value) || VARATT_IS_CUSTOM(old_value)))
 			{
 				if (ttc->ttc_isnull[i] ||
-					!VARATT_IS_EXTERNAL_ONDISK(new_value) ||
-					memcmp((char *) old_value, (char *) new_value,
-						   VARSIZE_EXTERNAL(old_value)) != 0)
+					!(VARATT_IS_EXTERNAL_ONDISK(new_value) || VARATT_IS_CUSTOM(new_value)))
 				{
 					/*
 					 * The old external stored value isn't needed any more
@@ -88,15 +90,50 @@ toast_tuple_init(ToastTupleContext *ttc)
 					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
 					ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 				}
-				else
+				else if (VARSIZE_EXTERNAL(old_value) == VARSIZE_EXTERNAL(new_value) &&
+						 memcmp((char *) old_value, (char *) new_value,
+								VARSIZE_EXTERNAL(old_value)) == 0)
 				{
 					/*
-					 * This attribute isn't changed by this update so we reuse
-					 * the original reference to the old value in the new
-					 * tuple.
+					 * This attribute isn't changed by this update so
+					 * we reuse the original reference to the old value
+					 * in the new tuple.
 					 */
 					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 					continue;
+				}
+				else if (Toastapi_update_hook &&
+						 ((VARATT_IS_CUSTOM(old_value) && VARATT_IS_CUSTOM(new_value))
+						 || (VARATT_IS_EXTERNAL(old_value) && VARATT_IS_EXTERNAL(new_value))))
+				{
+					struct varlena *new_val =
+						(struct varlena *) DatumGetPointer(Toastapi_update_hook(ttc->ttc_rel, i,
+											  ttc->ttc_values[i],
+											  ttc->ttc_oldvalues[i],
+											  false /* speculative */));
+
+					if (new_val)
+					{
+						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+							pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+						ttc->ttc_values[i] = PointerGetDatum(new_val);
+						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+
+						new_value = new_val;
+					}
+
+					need_detoast = false;
+				}
+				else
+				{
+					/*
+					 * The old external stored value isn't needed
+					 * any more after the update
+					 */
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_DELETE_OLD;
+					ttc->ttc_flags |= TOAST_NEEDS_DELETE_OLD;
 				}
 			}
 		}
@@ -106,6 +143,30 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * For INSERT simply get the new value
 			 */
 			new_value = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
+
+			if (Toastapi_copy_hook && !ttc->ttc_isnull[i] &&
+				VARATT_IS_CUSTOM(new_value))
+			{
+				struct varlena *new_val =
+					(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
+										ttc->ttc_values[i],
+										false, /* speculative */
+										i));
+
+				if (new_val)
+				{
+					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+						pfree(DatumGetPointer(ttc->ttc_values[i]));
+
+					ttc->ttc_values[i] = PointerGetDatum(new_val);
+					ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
+					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+
+					new_value = new_val;
+				}
+
+				need_detoast = false;
+			}
 		}
 
 		/*
@@ -127,7 +188,10 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * If the table's attribute says PLAIN always, force it so.
 			 */
 			if (att->attstorage == TYPSTORAGE_PLAIN)
+			{
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+				need_detoast = true;
+			}
 
 			/*
 			 * We took care of UPDATE above, so any external value we find
@@ -137,7 +201,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * PLAIN storage).  If necessary, we'll push it out as a new
 			 * external value below.
 			 */
-			if (VARATT_IS_EXTERNAL(new_value))
+			if (VARATT_IS_EXTERNAL(new_value) && need_detoast)
 			{
 				ttc->ttc_attr[i].tai_oldexternal = new_value;
 				if (att->attstorage == TYPSTORAGE_PLAIN)
@@ -316,7 +380,11 @@ toast_tuple_cleanup(ToastTupleContext *ttc)
 			ToastAttrInfo *attr = &ttc->ttc_attr[i];
 
 			if ((attr->tai_colflags & TOASTCOL_NEEDS_DELETE_OLD) != 0)
-				toast_delete_datum(ttc->ttc_rel, ttc->ttc_oldvalues[i], false);
+			{
+				if(Toastapi_delete_hook) Toastapi_delete_hook(ttc->ttc_rel, ttc->ttc_oldvalues[i], false, i);
+				else
+					toast_delete_datum(ttc->ttc_rel, ttc->ttc_oldvalues[i], false);
+			}
 		}
 	}
 }
@@ -341,6 +409,7 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 
 			if (isnull[i])
 				continue;
+			if(Toastapi_delete_hook) Toastapi_delete_hook(rel, value, is_speculative, i);
 			else if (VARATT_IS_EXTERNAL_ONDISK(value))
 				toast_delete_datum(rel, value, is_speculative);
 		}
