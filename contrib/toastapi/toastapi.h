@@ -134,7 +134,7 @@ typedef Datum (*detoast_function) (Datum toast_ptr,
 											 int offset, int length);
 
 /* Delete toast function */
-typedef void (*del_toast_function) (Datum value, bool is_speculative);
+typedef void (*del_toast_function) (Relation rel, Datum value, bool is_speculative);
 
 
 

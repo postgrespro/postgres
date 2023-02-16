@@ -63,7 +63,9 @@
 #include "utils/lsyscache.h"
 #include "utils/regproc.h"
 
+#include "access/detoast.h"
 #include "access/toast_internals.h"
+#include "access/toast_extended.h"
 #include "access/toast_hook.h"
 #include "utils/elog.h"
 #include "pg_toaster.h"
@@ -240,30 +242,119 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 
 static Datum toastapi_update (Relation rel,
 												  int options,
-												  Datum old_value,
 												  Datum new_value,
+												  Datum old_value,
 												  int attnum)
 {
-	Datum res = (Datum) 0;
-	return res;
+	Datum result = (Datum) 0;
+	struct varlena *value = (struct varlena *) DatumGetPointer(new_value);
+
+	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	{
+		varatt_external *old_data = (varatt_external *) DatumGetPointer(new_value);
+		varatt_external *new_data = (varatt_external *) DatumGetPointer(old_value);
+
+		if (old_data->va_toastrelid == new_data->va_toastrelid
+			&& old_data->va_valueid == new_data->va_valueid)
+		{
+			value = (struct varlena *) detoast_attr((struct varlena *) DatumGetPointer(new_value));
+			if(value)
+			{
+				toast_update_datum(old_value,
+							   value,
+								0,
+								new_data->va_rawsize,
+							   NULL,
+								0,
+								NULL,
+								NULL,
+								options);
+
+				toast_delete_datum(rel, old_value, false);
+			}
+		}
+	}
+	else if(VARATT_IS_CUSTOM(value))
+	{
+		TsrRoutine *toaster = NULL;
+		Oid	old_toasterid = InvalidOid;
+		Oid	new_toasterid = InvalidOid;
+		
+		new_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+
+		value = (struct varlena *) DatumGetPointer(old_value);
+		old_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+
+		if(new_toasterid != old_toasterid)
+			ereport(ERROR, (errcode(ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST),
+								errmsg("New value toast handler %u does not match old value handler %u",
+				new_toasterid, old_toasterid)));
+		
+		toaster = GetTsrRoutine(new_toasterid);
+
+		result = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum);
+		toaster->deltoast(rel, old_value, false);
+	}
+		
+   return result;
 }
 
 static Datum toastapi_copy (Relation rel,
-									Datum value,
+									Datum copy_value,
 									bool is_speculative,
 									int attnum)
 {
-	Datum res = (Datum) 0;
-	return res;
+	Datum result = (Datum) 0;
+	struct varlena *value = (struct varlena *) DatumGetPointer(copy_value);
+
+	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	{
+		Datum		detoasted_newval;
+
+		detoasted_newval = PointerGetDatum(detoast_attr(value));
+		result = toast_save_datum(rel, detoasted_newval,
+										  NULL, 0);
+	}
+	else if(VARATT_IS_CUSTOM(copy_value))
+	{
+		TsrRoutine *toaster = NULL;
+		Oid	toasterid = InvalidOid;
+		
+		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		
+		toaster = GetTsrRoutine(toasterid);
+
+		result = toaster->copy_toast(rel, toasterid, copy_value, 0, attnum);
+	}
+
+   return result;
 }
 
 static Datum toastapi_delete (Relation rel,
-										Datum value,
+										Datum del_value,
 										bool is_speculative,
 										int attnum)
 {
-	Datum res = (Datum) 0;
-	return res;
+	Datum result = (Datum) 0;
+	struct varlena *value = (struct varlena *) DatumGetPointer(del_value);
+
+	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	{
+		toast_delete_datum(rel, del_value, false);
+	}
+	if(VARATT_IS_CUSTOM(value))
+	{
+		TsrRoutine *toaster = NULL;
+		Oid	toasterid = InvalidOid;
+		
+		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		
+		toaster = GetTsrRoutine(toasterid);
+
+		toaster->deltoast(rel, del_value, is_speculative);
+	}
+
+   return result;
 }
 
 bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
