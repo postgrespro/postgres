@@ -26,6 +26,7 @@ Toastapi_toast_hook_type Toastapi_toast_hook = NULL;
 Toastapi_update_hook_type Toastapi_update_hook = NULL;
 Toastapi_copy_hook_type Toastapi_copy_hook = NULL;
 Toastapi_delete_hook_type Toastapi_delete_hook = NULL;
+Toastapi_size_hook_type Toastapi_size_hook = NULL;
 
 /*
  * Prepare to TOAST a tuple.
@@ -62,7 +63,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
-
 		if (ttc->ttc_oldvalues != NULL)
 		{
 			/*
@@ -106,7 +106,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 						 ((VARATT_IS_CUSTOM(old_value) && VARATT_IS_CUSTOM(new_value))
 						 || (VARATT_IS_EXTERNAL(old_value) && VARATT_IS_EXTERNAL(new_value))))
 				{
-					struct varlena *new_val =
+					struct varlena *new_val;
+					new_val =
 						(struct varlena *) DatumGetPointer(Toastapi_update_hook(ttc->ttc_rel, i,
 											  ttc->ttc_values[i],
 											  ttc->ttc_oldvalues[i],
@@ -143,30 +144,30 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * For INSERT simply get the new value
 			 */
 			new_value = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
-
-			if (Toastapi_copy_hook && !ttc->ttc_isnull[i] &&
-				VARATT_IS_CUSTOM(new_value))
+			if(att->attstorage == TYPSTORAGE_EXTERNAL)
 			{
-				struct varlena *new_val =
-					(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
-										ttc->ttc_values[i],
-										false, /* speculative */
-										i));
-
-				if (new_val)
+				if (Toastapi_copy_hook && !ttc->ttc_isnull[i] &&
+					VARATT_IS_EXTERNAL(new_value))
 				{
-					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
-						pfree(DatumGetPointer(ttc->ttc_values[i]));
+					struct varlena *new_val =
+						(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
+										ttc->ttc_values[i],
+										false,
+										i));
+					if (new_val)
+					{
+						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+							pfree(DatumGetPointer(ttc->ttc_values[i]));
 
-					ttc->ttc_values[i] = PointerGetDatum(new_val);
-					ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
-					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+						ttc->ttc_values[i] = PointerGetDatum(new_val);
+						ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
+						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
 
-					new_value = new_val;
+						new_value = new_val;
+					}
 				}
-
-				need_detoast = false;
 			}
+			need_detoast = false;
 		}
 
 		/*
@@ -192,7 +193,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 				need_detoast = true;
 			}
-
 			/*
 			 * We took care of UPDATE above, so any external value we find
 			 * still in the tuple must be someone else's that we cannot reuse
@@ -201,8 +201,13 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * PLAIN storage).  If necessary, we'll push it out as a new
 			 * external value below.
 			 */
-			if (VARATT_IS_EXTERNAL(new_value) && need_detoast)
+			if(VARATT_IS_EXTERNAL(new_value) && need_detoast)
+			/* (att->attstorage == TYPSTORAGE_EXTERNAL || att->attstorage == TYPSTORAGE_EXTENDED
+				|| att->attstorage == TYPSTORAGE_PLAIN ) */
 			{
+/*
+				if(VARATT_IS_EXTERNAL(new_value) && need_detoast)
+				{
 				ttc->ttc_attr[i].tai_oldexternal = new_value;
 				if (att->attstorage == TYPSTORAGE_PLAIN)
 					new_value = detoast_attr(new_value);
@@ -211,12 +216,33 @@ toast_tuple_init(ToastTupleContext *ttc)
 				ttc->ttc_values[i] = PointerGetDatum(new_value);
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
 				ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+				}
+*/
+				ttc->ttc_attr[i].tai_oldexternal = new_value;
+				if (att->attstorage == TYPSTORAGE_PLAIN)
+				{
+					new_value = detoast_attr(new_value);
+				}
+				else
+				{
+					new_value = detoast_external_attr(new_value);
+					ttc->ttc_values[i] = PointerGetDatum(new_value);
+					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
+					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+				}
 			}
-
 			/*
 			 * Remember the size of this attribute
 			 */
-			ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+				//if(VARATT_IS_EXTERNAL(new_value)) 
+/*
+				if(VARATT_IS_EXTERNAL(new_value))
+					if(VARATT_IS_CUSTOM(new_value) && Toastapi_size_hook)
+						ttc->ttc_attr[i].tai_size = Toastapi_size_hook(VARTAG_EXTERNAL(new_value), new_value);
+					else
+						ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+				else*/
+					ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
 		}
 		else
 		{

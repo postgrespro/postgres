@@ -97,13 +97,25 @@ typedef struct ByteaToastRoutine
        Datum     (*append)(Datum val1, Datum val2);
 } ByteaToastRoutine;
 
+typedef struct ToastAttributesData
+{
+	Oid toasteroid;
+	Oid toasthandleroid;
+	Oid toastreloid;
+	int attnum;
+	int ntoasters;
+	void *toaster;
+} ToastAttributesData;
+
+typedef ToastAttributesData *ToastAttributes;
+
 /*
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
 /* Create toast storage */
 typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast);
+						   bool check, Oid OIDOldToast, ToastAttributes tattrs);
 
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
@@ -112,7 +124,8 @@ typedef Datum (*toast_function) (Relation toast_rel,
 										   Datum oldvalue,
 											int attnum,
 										   int max_inline_size,
-										   int options);
+										   int options,
+											ToastAttributes tattrs);
 
 /* Update toast function, optional */
 typedef Datum (*update_toast_function) (Relation toast_rel,
@@ -120,23 +133,23 @@ typedef Datum (*update_toast_function) (Relation toast_rel,
 												  Datum newvalue,
 												  Datum oldvalue,
 												  int options,
-												  int attnum);
+												  int attnum,
+												  ToastAttributes tattrs);
 
 /* Copy toast function, optional */
 typedef Datum (*copy_toast_function) (Relation toast_rel,
 												Oid toasterid,
 												Datum newvalue,
 												int options,
-												int attnum);
+												int attnum,
+												ToastAttributes tattrs);
 
 /* Detoast function */
 typedef Datum (*detoast_function) (Datum toast_ptr,
-											 int offset, int length);
+											 int offset, int length, ToastAttributes tattrs);
 
 /* Delete toast function */
-typedef void (*del_toast_function) (Relation rel, Datum value, bool is_speculative);
-
-
+typedef void (*del_toast_function) (Relation rel,Datum value, bool is_speculative, ToastAttributes tattrs);
 
 /* Return virtual table of functions, optional */
 typedef void * (*get_vtable_function) (Datum toast_ptr);
@@ -150,6 +163,7 @@ typedef bool (*toastervalidate_function) (Oid typeoid,
  * API struct for Toaster.  Note this must be stored in a single palloc'd
  * chunk of memory.
  */
+
 typedef struct TsrRoutine
 {
 	NodeTag		type;
@@ -176,9 +190,17 @@ extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 
 extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
-extern bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
+extern bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs); // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
 
-Datum relopts_get_toaster_opts(Datum reloptions, Oid *relid, Oid *toasterid);
-Datum relopts_set_toaster_opts(Datum reloptions, Oid relid, Oid toasterid);
+static inline void init_tattrs(ToastAttributes tattrs)
+{
+	tattrs = palloc(sizeof(ToastAttributesData));
+	tattrs->attnum = -1;
+	tattrs->ntoasters = 0;
+	tattrs->toaster = NULL;
+	tattrs->toasteroid = InvalidOid;
+	tattrs->toasthandleroid = InvalidOid;
+	tattrs->toastreloid = InvalidOid;
+}
 
 #endif							/* TOASTAPI_H */

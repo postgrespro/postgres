@@ -109,8 +109,6 @@
 #define		MINMAX_BUFFER_MAX				8192
 #define		MINMAX_BUFFER_LOAD_FACTOR		0.5
 
-/* Toastapi_size_hook_type Toastapi_size_hook = NULL; */
-
 typedef struct MinmaxMultiOpaque
 {
 	FmgrInfo	extra_procinfos[MINMAX_MAX_PROCNUMS];

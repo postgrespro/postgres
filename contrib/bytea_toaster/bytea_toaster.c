@@ -63,7 +63,7 @@ do { \
 
 static Datum
 bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
-				   bool check, Oid OIDOldToast)
+				   bool check, Oid OIDOldToast, ToastAttributes tattrs)
 {
 	Datum toastrelid = (Datum) 0;
 
@@ -74,6 +74,7 @@ bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, L
 	(void) create_toast_table(rel, toasteroid, InvalidOid, reloptions, attnum,
 							  lockmode, check, OIDOldToast, &toastrelid);
 */
+	tattrs->toastreloid = toastrelid;
 	return toastrelid;
 }
 
@@ -170,7 +171,7 @@ bytea_toaster_check_visibility(void *pcxt, char **chunkdata,
 }
 
 static void
-bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative)
+bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative, ToastAttributes tattrs)
 {
 	if (VARATT_IS_CUSTOM(oldval))
 	{
@@ -187,7 +188,7 @@ bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative)
 }
 
 static Datum
-bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int attnum)
+bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int attnum, ToastAttributes tattrs)
 {
 	Datum		detoasted_newval;
 	Datum		toasted_newval;
@@ -200,7 +201,7 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 	int len = 0;
 
 	detoasted_newval = PointerGetDatum(detoast_attr((struct varlena *) DatumGetPointer(newval)));
-
+/*
 	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_NTOASTERS_NAME);
 
 	if(d == (Datum) 0)
@@ -210,20 +211,28 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 		ntoasters = atoi(DatumGetCString(d));
 		len = pg_ltoa(ntoasters, str);
 	}
+*/
+	if(tattrs)
+	{
+		if(!OidIsValid(tattrs->toastreloid))
+		{
+			len = pg_ltoa(tattrs->ntoasters, str);
+			d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
+			if(d == (Datum) 0)
+				elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
+			else
+				tattrs->toastreloid = atoi(DatumGetCString(d));
+		}
+	}
 
-	d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
+	if(tattrs && OidIsValid(tattrs->toastreloid))
+		toasted_newval = toast_save_datum_ext(rel, tattrs->toastreloid, toasterid, detoasted_newval,
+										  NULL, options, attnum,
+										  &version, sizeof(version));
 	else
-		toastrelid = atoi(DatumGetCString(d));
-
-	if(!OidIsValid(toastrelid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
-	toasted_newval = toast_save_datum_ext(rel, toastrelid, toasterid, detoasted_newval,
-										  NULL, options, attnum,
-										  &version, sizeof(version));
 
 	Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_newval));
 	VARATT_EXTERNAL_GET_POINTER(toast_ptr, DatumGetPointer(toasted_newval));
@@ -236,14 +245,14 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 static Datum
 bytea_toaster_toast(Relation rel, Oid toasterid,
 					Datum newval, Datum oldval,
-					int attnum, int max_inline_size, int options)
+					int attnum, int max_inline_size, int options, ToastAttributes tattrs)
 {
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum));
+	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
 }
 
 static Datum
 bytea_toaster_update_toast(Relation rel, Oid toasterid,
-						   Datum newval, Datum oldval, int options, int attnum)
+						   Datum newval, Datum oldval, int options, int attnum, ToastAttributes tattrs)
 {
 	Datum d;
 	char str[12];
@@ -313,23 +322,23 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 	}
 
 	if (VARATT_IS_CUSTOM(oldval))
-		bytea_toaster_delete_toast(rel, oldval, is_speculative);
+		bytea_toaster_delete_toast(rel, oldval, is_speculative, tattrs);
 	else if (VARATT_IS_EXTERNAL_ONDISK(oldval))
 		toast_delete_datum(rel, oldval, is_speculative);
 
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum));
+	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
 }
 
 static Datum
 bytea_toaster_copy_toast(Relation rel, Oid toasterid,
-						 Datum newval, int options, int attnum)
+						 Datum newval, int options, int attnum, ToastAttributes tattrs)
 {
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum));
+	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
 }
 
 static Datum
 bytea_toaster_detoast(Datum toastptr,
-					  int sliceoffset, int slicelength)
+					  int sliceoffset, int slicelength, ToastAttributes tattrs)
 {
 	AppendableToastData data;
 	struct varlena *result;

@@ -421,6 +421,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	char nstr[12];
 	Oid trelid = InvalidOid;
 	int ntoasters;
+	ToastAttributes tattrs;
 
 
 	if (PG_ARGISNULL(0))
@@ -526,6 +527,14 @@ set_toaster(PG_FUNCTION_ARGS)
 	
 	ReleaseSysCache(tuple);
 
+	tattrs = palloc(sizeof(ToastAttributesData));
+	tattrs->attnum = -1;
+	tattrs->ntoasters = 0;
+	tattrs->toaster = NULL;
+	tattrs->toasteroid = InvalidOid;
+	tattrs->toasthandleroid = InvalidOid;
+	tattrs->toastreloid = InvalidOid;
+
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
 	if(d == (Datum) 0)
 		ntoasters = 0;
@@ -533,6 +542,7 @@ set_toaster(PG_FUNCTION_ARGS)
 		ntoasters = atoi(DatumGetCString(d));
 
 	len = pg_ltoa((ntoasters+1), str);
+	tattrs->ntoasters = ntoasters;
 
 	for(int i = 1; i <= ntoasters; i++)
 	{
@@ -543,6 +553,8 @@ set_toaster(PG_FUNCTION_ARGS)
 		{
 			if(strcmp(DatumGetCString(d), str))
 			{
+				tattrs->toasthandleroid = atoi(DatumGetCString(d));
+
 				d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
 				if(d == (Datum) 0)
 				{
@@ -551,6 +563,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				else
 				{
 					trelid = atoi(DatumGetCString(d));
+					tattrs->toastreloid = trelid;
 					break;
 				}
 			}
@@ -564,6 +577,7 @@ set_toaster(PG_FUNCTION_ARGS)
 		tsr = GetTsrRoutine(tsrhandler);
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
+		tattrs->toaster = tsr;
 		
 		d = tsr->init(rel,
 								tsroid,
@@ -571,11 +585,12 @@ set_toaster(PG_FUNCTION_ARGS)
 								attnum,
 								RowExclusiveLock,
 								false,
-								InvalidOid);
+								InvalidOid,
+								tattrs);
 		trelid = DatumGetObjectId(d);
 		table_close(rel, RowExclusiveLock);
 	}
-
+	pfree(tattrs);
 	table_close(attrelation, RowExclusiveLock);
 	ntoasters++;
 

@@ -90,19 +90,26 @@ typedef enum vartag_external
 	VARTAG_ONDISK = 18
 } vartag_external;
 
-typedef Datum (*Toastapi_size_hook_type) (uint8 va_tag, const void *ptr);
+typedef Size (*Toastapi_size_hook_type) (uint8 va_tag, const void *ptr);
 extern PGDLLIMPORT Toastapi_size_hook_type Toastapi_size_hook;
 
 /* this test relies on the specific tag values above */
 #define VARTAG_IS_EXPANDED(tag) \
 	(((tag) & ~1) == VARTAG_EXPANDED_RO)
-
-#define VARTAG_SIZE(tag, ptr) \
+/*
+#define VARTAG_SIZE(tag) \
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
-	 (tag) == VARTAG_CUSTOM ? (Toastapi_size_hook != NULL ? Toastapi_size_hook(tag, (const void *)(ptr)) : 0) : \
 	 (AssertMacro(false), 0))
+*/
+#define VARTAG_SIZE(tag, ptr) \
+	 ((tag) == VARTAG_CUSTOM ? (Toastapi_size_hook != NULL ? (*Toastapi_size_hook)(tag, (const void *)(ptr)) : 0) : \
+	 (tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
+	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
+	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (AssertMacro(false), 0))
+
 
 /*
  * These structs describe the header of a varlena object that may have been
@@ -288,7 +295,10 @@ typedef struct
 #define VARDATA_SHORT(PTR)					VARDATA_1B(PTR)
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
-#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), PTR))
+/*#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), PTR))*/
+/*(VARATT_IS_CUSTOM(PTR) ? \
+											 (Toastapi_size_hook ? Toastapi_size_hook(VARTAG_EXTERNAL(PTR), (const void *)(PTR)) : 0) : \*/
+#define VARSIZE_EXTERNAL(PTR)		 (VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), (const void *)(PTR)))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
 
 #define VARATT_IS_COMPRESSED(PTR)			VARATT_IS_4B_C(PTR)

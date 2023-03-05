@@ -104,6 +104,7 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 	TsrRoutine *toaster = NULL;
 	Relation rel;
 	int ntoasters = 0;
+	ToastAttributes tattrs;
 
 	rel = table_open(reloid, RowExclusiveLock);
 	pg_attr = &rel->rd_att->attrs[attnum];
@@ -129,14 +130,25 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 		return (Datum) 0;
 	}
 
+	tattrs = palloc(sizeof(ToastAttributesData));
+	tattrs->toasteroid = InvalidOid;
+	tattrs->toastreloid = InvalidOid;
+
+	tattrs->attnum = attnum;
+	tattrs->ntoasters = ntoasters;
+	tattrs->toasthandleroid = atoi(DatumGetCString(d));
+	tattrs->toaster = toaster;
+
 	result = toaster->init(rel,
 									atoi(DatumGetCString(d)),
 									reloptions,
 									attnum,
 									lockmode,
 									check,
-									OIDOldToast);
+									OIDOldToast,
+									tattrs);
 	table_close(rel, RowExclusiveLock);
+	pfree(tattrs);
    return result;
 }
 
@@ -154,6 +166,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 //	int ntoasters = 0;
 //	int len;
 	Oid tsrhandler = InvalidOid;
+	ToastAttributes tattrs;
 
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
 
@@ -193,30 +206,50 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	if(d == (Datum) 0)
 	{
 		toastapi_init(RelationGetRelid(ttc->ttc_rel), (Datum) 0, attribute+1, RowExclusiveLock, false, InvalidOid);
+		rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
+		d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
+		table_close(rel, RowExclusiveLock);
 	}
 
 	if(toaster != NULL)
 	{
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
+
+		tattrs->attnum = attribute;
+		tattrs->ntoasters = atoi(ntoasters_str);
+		tattrs->toasthandleroid = tsrhandler;
+		tattrs->toaster = toaster;
+		if(d != (Datum) 0)
+			tattrs->toastreloid = atoi(DatumGetCString(d));
+
 		result = toaster->toast(ttc->ttc_rel,
 										tsrhandler,
 										old_value,
 										PointerGetDatum(attr->tai_oldexternal),
 										attribute+1,
-										maxDataLen, options);
+										maxDataLen, options, tattrs);
+		pfree(tattrs);
 	}
 	else
 	{
 		return *value;
 	}
-	
+
 	return result;
 }
 
 static Size toastapi_size (uint8 tag, const void *ptr)
 {
-	return (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata) + VARATT_CUSTOM_GET_DATA_SIZE(ptr) : 0;
+	return offsetof(varatt_custom, va_toasterdata) + VARATT_CUSTOM_GET_DATA_SIZE(ptr);
 }
-
+/*
+static Size toastapi_size (uint8 tag, const void *ptr)
+{
+	return (tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata) + VARATT_CUSTOM_GET_DATA_SIZE(ptr) : sizeof(ptr);
+}
+*/
 static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 											 int offset, int length)
 {
@@ -231,10 +264,19 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 	if(VARATT_IS_CUSTOM(value))
 	{
 		TsrRoutine *toaster = NULL;
+		ToastAttributes tattrs;
 		Oid	toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 		toaster = GetTsrRoutine(toasterid);
 
-		result = toaster->detoast(toast_ptr, offset, length);
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->attnum = -1;
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
+		tattrs->toasthandleroid = toasterid;
+		tattrs->toaster = toaster;
+
+		result = toaster->detoast(toast_ptr, offset, length, tattrs);
+		pfree(tattrs);
 	}
 
    return result;
@@ -258,6 +300,7 @@ static Datum toastapi_update (Relation rel,
 			&& old_data->va_valueid == new_data->va_valueid)
 		{
 			value = (struct varlena *) detoast_attr((struct varlena *) DatumGetPointer(new_value));
+
 			if(value)
 			{
 				toast_update_datum(old_value,
@@ -279,6 +322,7 @@ static Datum toastapi_update (Relation rel,
 		TsrRoutine *toaster = NULL;
 		Oid	old_toasterid = InvalidOid;
 		Oid	new_toasterid = InvalidOid;
+		ToastAttributes tattrs;
 		
 		new_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 
@@ -292,8 +336,17 @@ static Datum toastapi_update (Relation rel,
 		
 		toaster = GetTsrRoutine(new_toasterid);
 
-		result = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum);
-		toaster->deltoast(rel, old_value, false);
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->ntoasters = 0;
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
+		tattrs->attnum = attnum;
+		tattrs->toasthandleroid = new_toasterid;
+		tattrs->toaster = toaster;
+
+		result = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum, tattrs);
+		toaster->deltoast(rel, old_value, false, tattrs);
+		pfree(tattrs);
 	}
 		
    return result;
@@ -304,10 +357,10 @@ static Datum toastapi_copy (Relation rel,
 									bool is_speculative,
 									int attnum)
 {
-	Datum result = (Datum) 0;
+	Datum result = copy_value;
 	struct varlena *value = (struct varlena *) DatumGetPointer(copy_value);
 
-	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	if (VARATT_IS_EXTERNAL_ONDISK(value))
 	{
 		Datum		detoasted_newval;
 
@@ -319,12 +372,23 @@ static Datum toastapi_copy (Relation rel,
 	{
 		TsrRoutine *toaster = NULL;
 		Oid	toasterid = InvalidOid;
-		
+		ToastAttributes tattrs;
+
 		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 		
 		toaster = GetTsrRoutine(toasterid);
 
-		result = toaster->copy_toast(rel, toasterid, copy_value, 0, attnum);
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->ntoasters = 0;
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
+		tattrs->attnum = attnum;
+		tattrs->toasthandleroid = toasterid;
+		tattrs->toaster = toaster;
+
+		if(toaster->copy_toast)
+			result = toaster->copy_toast(rel, toasterid, copy_value, 0, attnum, tattrs);
+		pfree(tattrs);
 	}
 
    return result;
@@ -346,18 +410,28 @@ static Datum toastapi_delete (Relation rel,
 	{
 		TsrRoutine *toaster = NULL;
 		Oid	toasterid = InvalidOid;
+		ToastAttributes tattrs;
 		
 		toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 		
 		toaster = GetTsrRoutine(toasterid);
 
-		toaster->deltoast(rel, del_value, is_speculative);
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->ntoasters = 0;
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
+		tattrs->attnum = attnum;
+		tattrs->toasthandleroid = toasterid;
+		tattrs->toaster = toaster;
+
+		toaster->deltoast(rel, del_value, is_speculative, tattrs);
+		pfree(tattrs);
 	}
 
    return result;
 }
 
-bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
+bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
 {
 	Datum d;
 	char str[12];
@@ -365,10 +439,12 @@ bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oi
 	int len = 0;
 	bool all_found_ind = true;
 
+/*
 	*ntoasters = 0;
 	*toasteroid = InvalidOid;
 	*toastrelid = InvalidOid;
 	*handlerid = InvalidOid;
+*/
 	str[0] = '\0';
 
 	d = attopts_get_toaster_opts(relid, "", attnum, ATT_NTOASTERS_NAME);
@@ -377,27 +453,27 @@ bool get_toast_params(Oid relid, int attnum, int *ntoasters, Oid *toasteroid, Oi
 	else
 	{
 		ntoasters_str = DatumGetCString(d);
-		*ntoasters = atoi(ntoasters_str);
-		len = pg_ltoa(*ntoasters, str);
+		tattrs->ntoasters = atoi(ntoasters_str);
+		// len = pg_ltoa(*ntoasters, str);
 	}
 
 	d = get_complex_att_opt(relid, ATT_HANDLER_NAME, str, len, attnum);
 	if(d == (Datum) 0)
 		all_found_ind = false;
 	else
-		*handlerid = atoi(DatumGetCString(d));
+		tattrs->toasthandleroid = atoi(DatumGetCString(d));
 
 	d = get_complex_att_opt(relid, ATT_TOASTER_NAME, str, len, attnum);
 	if(d == (Datum) 0)
 		all_found_ind = false;
 	else
-		*toasteroid = atoi(DatumGetCString(d));
+		tattrs->toasteroid = atoi(DatumGetCString(d));
 
 	d = get_complex_att_opt(relid, ATT_TOASTREL_NAME, str, len, attnum);
 	if(d == (Datum) 0)
 		all_found_ind = false;
 	else
-		*toastrelid = atoi(DatumGetCString(d));
+		tattrs->toastreloid = atoi(DatumGetCString(d));
 
 	return all_found_ind;
 }
