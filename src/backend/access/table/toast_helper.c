@@ -103,8 +103,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 					continue;
 				}
 				else if (Toastapi_update_hook &&
-						 ((VARATT_IS_CUSTOM(old_value) && VARATT_IS_CUSTOM(new_value))
-						 || (VARATT_IS_EXTERNAL(old_value) && VARATT_IS_EXTERNAL(new_value))))
+						 ((VARATT_IS_CUSTOM(old_value) && VARATT_IS_CUSTOM(new_value))))
+/*						 || (VARATT_IS_EXTERNAL(old_value) && VARATT_IS_EXTERNAL(new_value)))) */
 				{
 					struct varlena *new_val;
 					new_val =
@@ -234,7 +234,6 @@ toast_tuple_init(ToastTupleContext *ttc)
 			/*
 			 * Remember the size of this attribute
 			 */
-				//if(VARATT_IS_EXTERNAL(new_value)) 
 /*
 				if(VARATT_IS_EXTERNAL(new_value))
 					if(VARATT_IS_CUSTOM(new_value) && Toastapi_size_hook)
@@ -242,7 +241,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 					else
 						ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
 				else*/
-					ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+
+				ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
 		}
 		else
 		{
@@ -353,7 +353,6 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-
 	if(Toastapi_toast_hook)
 	{
 		*value = Toastapi_toast_hook(ttc, attribute, 0, options);

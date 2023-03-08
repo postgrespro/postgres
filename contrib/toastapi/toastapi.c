@@ -168,6 +168,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
+	result = *value;
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
 
 	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_NTOASTERS_NAME);
@@ -191,7 +192,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	if(d == (Datum) 0)
 	{
 		table_close(rel, RowExclusiveLock);
-		return *value;
+		return result;
 	}
 	else
 	{
@@ -227,14 +228,10 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 		result = toaster->toast(ttc->ttc_rel,
 										tsrhandler,
 										old_value,
-										PointerGetDatum(attr->tai_oldexternal),
+										old_value, // PointerGetDatum(attr->tai_oldexternal),
 										attribute+1,
 										maxDataLen, options, tattrs);
 		pfree(tattrs);
-	}
-	else
-	{
-		return *value;
 	}
 
 	return result;

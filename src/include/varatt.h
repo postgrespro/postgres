@@ -103,8 +103,13 @@ extern PGDLLIMPORT Toastapi_size_hook_type Toastapi_size_hook;
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
 	 (AssertMacro(false), 0))
 */
+/* Returning 0 size in case of not existing TOASTAPI_SIZE hook
+	is a questionable but I do not see any other option in this time.
+	This case will lead to fail further when the data will be tried
+	to be toasted or de-toasted, so keep it until better solution
+*/
 #define VARTAG_SIZE(tag, ptr) \
-	 ((tag) == VARTAG_CUSTOM ? (Toastapi_size_hook != NULL ? (*Toastapi_size_hook)(tag, (const void *)(ptr)) : 0) : \
+	 ((tag) == VARTAG_CUSTOM ? ((Toastapi_size_hook) != NULL ? (*Toastapi_size_hook)((tag), (const void *)(ptr)) : 0) : \
 	 (tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
@@ -295,9 +300,6 @@ typedef struct
 #define VARDATA_SHORT(PTR)					VARDATA_1B(PTR)
 
 #define VARTAG_EXTERNAL(PTR)				VARTAG_1B_E(PTR)
-/*#define VARSIZE_EXTERNAL(PTR)				(VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), PTR))*/
-/*(VARATT_IS_CUSTOM(PTR) ? \
-											 (Toastapi_size_hook ? Toastapi_size_hook(VARTAG_EXTERNAL(PTR), (const void *)(PTR)) : 0) : \*/
 #define VARSIZE_EXTERNAL(PTR)		 (VARHDRSZ_EXTERNAL + VARTAG_SIZE(VARTAG_EXTERNAL(PTR), (const void *)(PTR)))
 #define VARDATA_EXTERNAL(PTR)				VARDATA_1B_E(PTR)
 

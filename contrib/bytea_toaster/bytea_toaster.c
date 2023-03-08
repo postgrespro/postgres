@@ -224,7 +224,6 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 				tattrs->toastreloid = atoi(DatumGetCString(d));
 		}
 	}
-
 	if(tattrs && OidIsValid(tattrs->toastreloid))
 		toasted_newval = toast_save_datum_ext(rel, tattrs->toastreloid, toasterid, detoasted_newval,
 										  NULL, options, attnum,
@@ -233,7 +232,6 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
-
 	Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_newval));
 	VARATT_EXTERNAL_GET_POINTER(toast_ptr, DatumGetPointer(toasted_newval));
 
@@ -480,7 +478,7 @@ bytea_toaster_handler(PG_FUNCTION_ARGS)
 
 	tsr->init = bytea_toaster_init;
 	tsr->toast = bytea_toaster_toast;
-	tsr->deltoast = NULL; //bytea_toaster_delete_toast;
+	tsr->deltoast = bytea_toaster_delete_toast;
 	tsr->copy_toast = bytea_toaster_copy_toast;
 	tsr->update_toast = bytea_toaster_update_toast;
 	tsr->detoast = bytea_toaster_detoast;
