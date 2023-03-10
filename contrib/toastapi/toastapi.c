@@ -179,7 +179,6 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 			options);
 
 		table_close(rel, RowExclusiveLock);
-
 		return result;
 	}
 
@@ -191,13 +190,23 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 
 	if(d == (Datum) 0)
 	{
+		result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
+			options);
+
 		table_close(rel, RowExclusiveLock);
 		return result;
 	}
 	else
 	{
 		tsrhandler = atoi(DatumGetCString(d));
-		toaster = GetTsrRoutine(tsrhandler);
+		if(OidIsValid(tsrhandler))
+			toaster = GetTsrRoutine(tsrhandler);
+		else
+		{
+			result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal, options);
+			table_close(rel, RowExclusiveLock);
+			return result;
+		}
 	}
 
 	d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);

@@ -8,6 +8,11 @@ RETURNS integer
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
+CREATE FUNCTION reset_toaster(cstring, cstring)
+RETURNS integer
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
 CREATE FUNCTION add_toaster(cstring, cstring)
 RETURNS integer
 AS 'MODULE_PATHNAME'
@@ -24,11 +29,11 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
 CREATE FUNCTION list_toasters(cstring)
-RETURNS integer
+RETURNS cstrting
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
-CREATE FUNCTION list_toastrels(cstring)
-RETURNS integer
+CREATE FUNCTION list_toastrels(cstring, cstring)
+RETURNS cstring
 AS 'MODULE_PATHNAME'
 LANGUAGE C;

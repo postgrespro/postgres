@@ -23,14 +23,12 @@ typedef struct ToasterCacheEntry
 	TsrRoutine *routine;
 } ToasterCacheEntry;
 
-static List	*ToasterCache = NIL;
-
 typedef struct ToastrelCacheEntry
 {
 	Oid 		relid;
 	int16 	attnum;
 } ToastrelCacheEntry;
 
-extern Oid cache_pg_toaster();
+/* extern Oid cache_pg_toaster(); */
 
 #endif

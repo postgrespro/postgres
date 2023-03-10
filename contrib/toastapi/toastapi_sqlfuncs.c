@@ -569,10 +569,11 @@ set_toaster(PG_FUNCTION_ARGS)
 			}
 		}
 	}
+	
+	res = ObjectIdGetDatum(tsroid);
 
 	if(!OidIsValid(trelid))
 	{
-		/* Call tsr->init */
 		TsrRoutine *tsr;
 		tsr = GetTsrRoutine(tsrhandler);
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
@@ -614,7 +615,238 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	return res;
 }
+
+PG_FUNCTION_INFO_V1(reset_toaster);
+
+Datum
+reset_toaster(PG_FUNCTION_ARGS)
+{
+	Relation	rel;
+	Relation	attrelation;
+	char *relname;
+	char *attname;
+   Oid relid = InvalidOid;
+	Datum res = (Datum) 0;
+	Datum d = (Datum) 0;
+	HeapTuple	tuple;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	char str[12];
+	char nstr[12];
+	Oid trelid = InvalidOid;
+	int ntoasters;
+	int len;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Table name cannot be null")));
+
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Attribute name cannot be null")));
+
+	relname = (char *) PG_GETARG_CSTRING(0);
+	attname = (char *) PG_GETARG_CSTRING(1);
+
+	if(strlen(relname) == 0)
+		PG_RETURN_NULL();
+	if(strlen(attname) == 0)
+		PG_RETURN_NULL();
+
+	if (!superuser())
+		ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 	errmsg("permission denied to reset toaster for table \"%s\"",
+					relname),
+			errhint("Must be superuser to reset a toaster.")));
+
+	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	relid = RelationGetRelid(rel);
+	table_close(rel, AccessShareLock);
+	if(!OidIsValid(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("Cannot retrieve oid for table %s", relname)));
+		return (Datum) 0;
+	}
+
+	attrelation = table_open(AttributeRelationId, AccessShareLock);
+	tuple = SearchSysCacheAttName(relid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(rel))));
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
 	
+	ReleaseSysCache(tuple);
+	table_close(attrelation, AccessShareLock);
+
+	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
+		return (Datum) 0;
+	else
+		ntoasters = atoi(DatumGetCString(d));
+
+	len = pg_ltoa((ntoasters+1), str);
+
+	ntoasters++;
+
+	/* Set toaster variables - oid, toast relation id, handler for fast access */
+	len = pg_ltoa((ntoasters), nstr);
+	if(len <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Number of toasters for attribute \"%s\" of relation \"%s\" is not valid",
+						attname, RelationGetRelationName(rel))));
+
+	if(OidIsValid(trelid))
+	{
+		len = pg_ltoa(rel->rd_rel->reltoastrelid, str);
+		d = set_complex_att_opt(relid, ATT_TOASTREL_NAME, nstr, str, attname, 0);
+	}
+
+	len = pg_ltoa(InvalidOid, str);
+	d = set_complex_att_opt(relid, ATT_TOASTER_NAME, nstr, str, attname, 0);
+
+	len = pg_ltoa(InvalidOid, str);
+	d = set_complex_att_opt(relid, ATT_HANDLER_NAME, nstr, str, attname, 0);
+
+	d = attopts_set_toaster_opts(relid, attname, ATT_NTOASTERS_NAME, nstr, -1);
+
+//	attopts_clear_toaster_opts(relid, attname, ATT_NTOASTERS_NAME);
+	res = ObjectIdGetDatum(InvalidOid);
+	return res;
+}
+
+PG_FUNCTION_INFO_V1(get_toaster);
+
+Datum get_toaster(PG_FUNCTION_ARGS)
+{
+	Relation	rel;
+	Relation	tsrrel;
+	char *relname;
+	char *attname;
+   Oid relid = InvalidOid;
+	Datum res = (Datum) 0;
+	SysScanDesc scan;
+	uint32 total_entries = 0;
+	Datum d = (Datum) 0;
+	Relation attrelation;
+	int len = 0;
+   Oid tsroid = InvalidOid;
+	HeapTuple	tuple,
+				tsrtup;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	char str[12];
+	int ntoasters;
+	char *tsrname = "";
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Table name cannot be null")));
+
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Attribute name cannot be null")));
+
+	relname = (char *) PG_GETARG_CSTRING(0);
+	attname = (char *) PG_GETARG_CSTRING(1);
+
+	if(strlen(relname) == 0)
+		PG_RETURN_NULL();
+	if(strlen(attname) == 0)
+		PG_RETURN_NULL();
+
+	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	relid = RelationGetRelid(rel);
+	table_close(rel, AccessShareLock);
+	if(!OidIsValid(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("Cannot retrieve oid for table %s", relname)));
+		return (Datum) 0;
+	}
+
+	attrelation = table_open(AttributeRelationId, AccessShareLock);
+	tuple = SearchSysCacheAttName(relid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(rel))));
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	ReleaseSysCache(tuple);
+	table_close(attrelation, AccessShareLock);
+
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
+
+	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
+		ntoasters = 0;
+	else
+		ntoasters = atoi(DatumGetCString(d));
+
+	len = pg_ltoa((ntoasters+1), str);
+
+	for(int i = 1; i <= ntoasters; i++)
+	{
+		len = pg_ltoa(i, str);
+
+		d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTER_NAME, str, len, attnum);
+		if(d != (Datum) 0)
+			tsroid = atoi(DatumGetCString(d));
+	}
+
+	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
+	if(!tsrrel)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("Cannot open pg_toaster table")));
+
+	scan = systable_beginscan(tsrrel, InvalidOid, false,
+							  NULL, 0, NULL);
+
+	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
+	{
+		total_entries++;
+		if((((Form_pg_toaster) GETSTRUCT(tsrtup))->oid) == tsroid)
+		{
+			tsrname = (NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname));
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(tsrrel, AccessShareLock);
+	elog(NOTICE,"%s", tsrname);
+	res = ObjectIdGetDatum(tsroid);
+	// res = PointerGetDatum(cstring_to_text_with_len(tsrname, strlen(tsrname)));
+
+	return res;
+}
 
 PG_FUNCTION_INFO_V1(drop_toaster);
 
@@ -630,7 +862,7 @@ drop_toaster(PG_FUNCTION_ARGS)
    Oid tsroid = InvalidOid;
 	bool		found = false;
 	SysScanDesc scan;
-	HeapTuple	tup;
+	HeapTuple	tup = NULL;
 	HeapTuple	tsrtup;
 	uint32      total_entries = 0;
 	char s_tsrid[12];
@@ -667,8 +899,11 @@ drop_toaster(PG_FUNCTION_ARGS)
 	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
 	{
 		total_entries++;
-		tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
-		break;
+		if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
+		{
+			tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
+			break;
+		}
 	}
 
 	systable_endscan(scan);
@@ -687,6 +922,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 		attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 		scan = systable_beginscan(attrelation, InvalidOid, false,
 								  NULL, 0, NULL);
+		elog(NOTICE, "6");
 		while (HeapTupleIsValid(tup = systable_getnext(scan)))
 		{
 			bool		isnull;
@@ -703,41 +939,46 @@ drop_toaster(PG_FUNCTION_ARGS)
 
 				char *str;
 				l_idx++;
-/*
-				if (strcmp(def->defname, tsrname) == 0)
-				{*/
-					str = defGetString(def);
+				str = defGetString(def);
 
-					if(str && strcmp(s_tsrid, str) == 0)
-					{
-						found = true;
-						break;
-					}
-/*				}*/
+				if(str && strcmp(s_tsrid, str) == 0)
+				{
+					found = true;
+					break;
+				}
 			}
 			total_entries++;
 		}
-
 		systable_endscan(scan);
-		heap_freetuple(tup);
 		table_close(attrelation, RowExclusiveLock);
 	}
 
 	if(!found)
 	{
-		CatalogTupleDelete(rel, &tsrtup->t_self);
+		rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
+
+		scan = systable_beginscan(rel, InvalidOid, false,
+							  NULL, 0, NULL);
+		tsroid = InvalidOid;
+		while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
+		{
+			total_entries++;
+			if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
+			{
+				tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
+				res = ObjectIdGetDatum(tsroid);
+				break;
+			}
+		}
+		
+		if( OidIsValid(tsroid))
+			CatalogTupleDelete(rel, &tsrtup->t_self);
+
+		systable_endscan(scan);
+		table_close(rel, RowExclusiveLock);
 	}
-	table_close(rel, RowExclusiveLock);
 
 	return res;
-}
-
-PG_FUNCTION_INFO_V1(get_toaster);
-
-Datum get_toaster(PG_FUNCTION_ARGS)
-{
-	Datum d = (Datum) 0;
-	return d;
 }
 
 PG_FUNCTION_INFO_V1(list_toasters);
@@ -752,6 +993,150 @@ PG_FUNCTION_INFO_V1(list_toastrels);
 
 Datum list_toastrels(PG_FUNCTION_ARGS)
 {
+	Relation	rel;
+	Relation attrelation;
+	char *relname;
+	char *attname;
+	int len = 0;
+   Oid relid = InvalidOid;
+	Datum res = (Datum) 0;
 	Datum d = (Datum) 0;
-	return d;
+	HeapTuple	tuple;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	char str[12];
+	int ntoasters;
+	char *tsrlist = NULL;
+	int tlen = 0;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Table name cannot be null")));
+
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Attribute name cannot be null")));
+
+	relname = (char *) PG_GETARG_CSTRING(0);
+	attname = (char *) PG_GETARG_CSTRING(1);
+
+	if(strlen(relname) == 0)
+		PG_RETURN_NULL();
+	if(strlen(attname) == 0)
+		PG_RETURN_NULL();
+
+	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	relid = RelationGetRelid(rel);
+	table_close(rel, AccessShareLock);
+	if(!OidIsValid(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("Cannot retrieve oid for table %s", relname)));
+		return (Datum) 0;
+	}
+
+	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+	tuple = SearchSysCacheAttName(relid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(rel))));
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
+	
+	ReleaseSysCache(tuple);
+
+	if(OidIsValid(rel->rd_rel->reltoastrelid))
+	{
+		len = pg_ltoa(rel->rd_rel->reltoastrelid, str);
+		tlen += len;
+	}
+
+	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_NTOASTERS_NAME);
+	if(d == (Datum) 0)
+		ntoasters = 0;
+	else
+		ntoasters = atoi(DatumGetCString(d));
+
+	len = pg_ltoa((ntoasters+1), str);
+
+	for(int i = 1; i <= ntoasters; i++)
+	{
+		len = pg_ltoa(i, str);
+
+		d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, str, len, attnum);
+		if(d != (Datum) 0)
+		{
+			if(strcmp(DatumGetCString(d), str))
+			{
+				d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
+				if(d != (Datum) 0)
+				{
+					if(OidIsValid(DatumGetObjectId(d)))
+					{
+						len = pg_ltoa(DatumGetObjectId(d) , str);
+						elog(NOTICE,"%s", str);
+						if(tlen > 0) tlen+=1;
+						tlen += len;
+					}
+				}
+			}
+		}
+	}
+
+	tsrlist = palloc0(tlen+1);
+
+	if(OidIsValid(rel->rd_rel->reltoastrelid))
+	{
+		len = pg_ltoa(rel->rd_rel->reltoastrelid, str);
+		strcat(tsrlist, str);
+		tlen = len;
+	}
+		else tlen = 0;
+
+	len = pg_ltoa((ntoasters+1), str);
+
+	for(int i = 1; i <= ntoasters; i++)
+	{
+		len = pg_ltoa(i, str);
+
+		d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, str, len, attnum);
+		if(d != (Datum) 0)
+		{
+			if(strcmp(DatumGetCString(d), str))
+			{
+				d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
+				if(d != (Datum) 0)
+				{
+					if(OidIsValid(DatumGetObjectId(d)))
+					{
+						len = pg_ltoa(DatumGetObjectId(d) , str);
+						if(tlen > 0)
+							strcat(tsrlist, ",");
+						strcat(tsrlist, str);
+					}
+				}
+			}
+		}
+	}
+
+	table_close(attrelation, RowExclusiveLock);
+	if(tsrlist != NULL) 
+	{
+		strcat(tsrlist, "\0");
+		elog(NOTICE,"%s", tsrlist);
+		res = PointerGetDatum(cstring_to_text(tsrlist));
+	}
+	return res;
 }

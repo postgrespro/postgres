@@ -213,6 +213,84 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 
 }
 
+Datum
+attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
+{
+	Relation	attrelation;
+	HeapTuple	tuple,
+				newtuple;
+	Form_pg_attribute attrtuple;
+	AttrNumber	attnum;
+	bool		isnull;
+	Datum		repl_val[Natts_pg_attribute];
+	bool		repl_null[Natts_pg_attribute];
+	bool		repl_repl[Natts_pg_attribute];
+	Datum opts, o_datum;
+	List *o_list;
+	ListCell *cell;
+	int l_idx = 0;
+	Datum res = (Datum) 0;
+
+	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+	tuple = SearchSysCacheAttName(relOid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(attrelation))));
+
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = attrtuple->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
+	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
+							&isnull);
+
+	o_list = untransformRelOptions(o_datum);
+
+	memset(repl_null, false, sizeof(repl_null));
+	memset(repl_repl, false, sizeof(repl_repl));
+
+	l_idx = 0;
+
+	foreach(cell, o_list)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+		if (strcmp(def->defname, optname) == 0)
+		{
+			o_list = list_delete_nth_cell(o_list, l_idx);
+			break;
+		}
+		else l_idx++;
+	}
+
+	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
+									 o_list, NULL, NULL, false,
+									 false);	
+
+	if (opts != (Datum) 0)
+		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
+	else
+		repl_null[Anum_pg_attribute_attoptions - 1] = true;
+	repl_repl[Anum_pg_attribute_attoptions - 1] = true;
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+								 repl_val, repl_null, repl_repl);
+	CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
+
+	heap_freetuple(newtuple);
+
+	ReleaseSysCache(tuple);
+
+	table_close(attrelation, RowExclusiveLock);
+	CommandCounterIncrement();
+	return res;
+}
+
 void create_pg_toaster(void)
 {
 	Datum reloptions = (Datum) 0;

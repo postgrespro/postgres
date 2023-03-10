@@ -15,8 +15,10 @@
 #include "toastapi_internals.h"
 #include "toaster_cache.h"
 
+static List	*ToasterCache = NIL;
 
 /* Cache pg_toaster and pg_toastrel */
+/*
 Oid cache_pg_toaster()
 {
    Oid coid = InvalidOid;
@@ -27,6 +29,7 @@ Oid cache_pg_toaster()
    coid = RelationGetRelid(rel);
    return coid;
 }
+*/
 
 /*
  * SearchTsrCache - get cached toaster routine, emits an error if toaster
@@ -128,7 +131,7 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 	Relation	rel;
 	Relation   relindx;
 	Oid			idx_oid;
-	int			num_indexes;
+	int			num_indexes = 0;
    Oid relid = InvalidOid;
 	bool		found = false;
 	List	   *indexlist;
@@ -151,6 +154,14 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 	Assert(indexlist != NIL);
 
 	num_indexes = list_length(indexlist);
+	if (num_indexes <= 0)
+	{
+		table_close(rel, RowExclusiveLock);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("no valid indexes for toast relation with Oid %u", relid)));
+	}
+
 
 	foreach(lc, indexlist)
 	{
