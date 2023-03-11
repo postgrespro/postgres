@@ -77,16 +77,6 @@
 
 PG_MODULE_MAGIC;
 
-/* Original Hook */
-/*
-typedef Datum (*Toast_Init_hook_type) (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast);
-typedef Datum (*Toast_Toast_hook_type) (ToastTupleContext *ttc, int attribute, int maxDataLen,
-						int options);
-typedef Datum (*Toast_Detoast_hook_type) (Oid relid, Datum toast_ptr,
-											 int offset, int length);
-*/
-
 static Toastapi_init_hook_type toastapi_init_hook = NULL;
 static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
@@ -106,40 +96,32 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 	int ntoasters = 0;
 	ToastAttributes tattrs;
 
-	rel = table_open(reloid, RowExclusiveLock);
-	pg_attr = &rel->rd_att->attrs[attnum];
+		rel = table_open(reloid, RowExclusiveLock);
+		pg_attr = &rel->rd_att->attrs[attnum];
 
-	d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_NTOASTERS_NAME);
-	if(d == (Datum) 0)
-		return (Datum) 0;
-	else
-		ntoasters = atoi(DatumGetCString(d));
-
+	if(!OidIsValid(rel->rd_rel->reltoastrelid))
 	{
-		int len = 0;
-		char str[12];
+		d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_HANDLER_NAME);
+		if(d == (Datum) 0)
+			return (Datum) 0;
 
-		len = pg_ltoa(ntoasters, str);
-		d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, str, len, attnum);
-	}
+		toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
+		if(toaster == NULL)
+		{
+			elog(NOTICE, "No routine found");
+			return (Datum) 0;
+		}
 
-	toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-	if(toaster == NULL)
-	{
-		elog(NOTICE, "No routine found");
-		return (Datum) 0;
-	}
+		tattrs = palloc(sizeof(ToastAttributesData));
+		tattrs->toasteroid = InvalidOid;
+		tattrs->toastreloid = InvalidOid;
 
-	tattrs = palloc(sizeof(ToastAttributesData));
-	tattrs->toasteroid = InvalidOid;
-	tattrs->toastreloid = InvalidOid;
+		tattrs->attnum = attnum;
+		tattrs->ntoasters = ntoasters;
+		tattrs->toasthandleroid = atoi(DatumGetCString(d));
+		tattrs->toaster = toaster;
 
-	tattrs->attnum = attnum;
-	tattrs->ntoasters = ntoasters;
-	tattrs->toasthandleroid = atoi(DatumGetCString(d));
-	tattrs->toaster = toaster;
-
-	result = toaster->init(rel,
+		result = toaster->init(rel,
 									atoi(DatumGetCString(d)),
 									reloptions,
 									attnum,
@@ -147,8 +129,12 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 									check,
 									OIDOldToast,
 									tattrs);
-	table_close(rel, RowExclusiveLock);
-	pfree(tattrs);
+		table_close(rel, RowExclusiveLock);
+		pfree(tattrs);
+	}
+	else
+		result = ObjectIdGetDatum(rel->rd_rel->reltoastrelid);
+
    return result;
 }
 
@@ -163,14 +149,12 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Relation rel;
 	TsrRoutine *toaster = NULL;
 	char *ntoasters_str;
-//	int ntoasters = 0;
-//	int len;
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
 	result = *value;
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
-
+/*
 	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_NTOASTERS_NAME);
 	
 	if(d == (Datum) 0)
@@ -183,10 +167,10 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	}
 
 	ntoasters_str = DatumGetCString(d);
-//	ntoasters = atoi(ntoasters_str);
-//	len = pg_ltoa(ntoasters, str);
+*/
+	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_HANDLER_NAME);
 
-	d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
+//	d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
 
 	if(d == (Datum) 0)
 	{
@@ -209,30 +193,23 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 		}
 	}
 
-	d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
-
 	table_close(rel, RowExclusiveLock);
 
-	if(d == (Datum) 0)
+	if(!OidIsValid(rel->rd_rel->reltoastrelid))
 	{
 		toastapi_init(RelationGetRelid(ttc->ttc_rel), (Datum) 0, attribute+1, RowExclusiveLock, false, InvalidOid);
-		rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
-		d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
-		table_close(rel, RowExclusiveLock);
 	}
 
 	if(toaster != NULL)
 	{
 		tattrs = palloc(sizeof(ToastAttributesData));
 		tattrs->toasteroid = InvalidOid;
-		tattrs->toastreloid = InvalidOid;
 
 		tattrs->attnum = attribute;
 		tattrs->ntoasters = atoi(ntoasters_str);
 		tattrs->toasthandleroid = tsrhandler;
 		tattrs->toaster = toaster;
-		if(d != (Datum) 0)
-			tattrs->toastreloid = atoi(DatumGetCString(d));
+		tattrs->toastreloid = rel->rd_rel->reltoastrelid;
 
 		result = toaster->toast(ttc->ttc_rel,
 										tsrhandler,
@@ -487,7 +464,7 @@ bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *nto
 void _PG_init(void)
 {
 	create_pg_toaster();
-	// create_pg_toastrel();
+
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;
    toastapi_detoast_hook = Toastapi_detoast_hook;

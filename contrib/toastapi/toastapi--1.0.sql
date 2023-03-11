@@ -27,13 +27,3 @@ CREATE FUNCTION get_toaster(cstring, cstring)
 RETURNS integer
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
-
-CREATE FUNCTION list_toasters(cstring)
-RETURNS cstrting
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION list_toastrels(cstring, cstring)
-RETURNS cstring
-AS 'MODULE_PATHNAME'
-LANGUAGE C;

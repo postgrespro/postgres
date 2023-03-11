@@ -192,37 +192,15 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 {
 	Datum		detoasted_newval;
 	Datum		toasted_newval;
-	Datum d;
 	struct varatt_external toast_ptr;
 	AppendableToastVersion version = BYTEA_FIRST_VERSION;
-	int ntoasters = 0;
-	Oid toastrelid = InvalidOid;
-	char str[12];
-	int len = 0;
+	Oid toastrelid = rel->rd_rel->reltoastrelid;
 
 	detoasted_newval = PointerGetDatum(detoast_attr((struct varlena *) DatumGetPointer(newval)));
-/*
-	d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_NTOASTERS_NAME);
 
-	if(d == (Datum) 0)
-		str[0] = '\0';
-	else
+	if(tattrs && !OidIsValid(tattrs->toastreloid))
 	{
-		ntoasters = atoi(DatumGetCString(d));
-		len = pg_ltoa(ntoasters, str);
-	}
-*/
-	if(tattrs)
-	{
-		if(!OidIsValid(tattrs->toastreloid))
-		{
-			len = pg_ltoa(tattrs->ntoasters, str);
-			d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
-			if(d == (Datum) 0)
-				elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
-			else
-				tattrs->toastreloid = atoi(DatumGetCString(d));
-		}
+		elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
 	}
 	if(tattrs && OidIsValid(tattrs->toastreloid))
 		toasted_newval = toast_save_datum_ext(rel, tattrs->toastreloid, toasterid, detoasted_newval,
@@ -252,39 +230,14 @@ static Datum
 bytea_toaster_update_toast(Relation rel, Oid toasterid,
 						   Datum newval, Datum oldval, int options, int attnum, ToastAttributes tattrs)
 {
-	Datum d;
-	char str[12];
-	int ntoasters = 0;
-	int len = 0;
 	bool		is_speculative = false; /* (options & HEAP_INSERT_SPECULATIVE) != 0 XXX */
 
 	if (VARATT_IS_CUSTOM(newval) && VARATT_IS_CUSTOM(oldval))
 	{
 		AppendableToastData old_data;
 		AppendableToastData new_data;
-		Oid			toastrelid = InvalidOid; // = rel->rd_rel->reltoastrelid;
-/*
-		d = attopts_get_toaster_opts(RelationGetRelid(rel), "", attnum, ATT_NTOASTERS_NAME);
+		Oid			toastrelid = rel->rd_rel->reltoastrelid;
 
-		if(d == (Datum) 0)
-			str[0] = '\0';
-		else
-		{
-			ntoasters = atoi(DatumGetCString(d));
-			len = pg_ltoa(ntoasters, str);
-		}
-
-		d = get_complex_att_opt(RelationGetRelid(rel), ATT_TOASTREL_NAME, str, len, attnum);
-		if(d == (Datum) 0)
-			elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
-		else
-			toastrelid = atoi(DatumGetCString(d));
-
-		if(!OidIsValid(toastrelid))
-			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
-*/
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(newval, new_data);
 
