@@ -4,12 +4,17 @@ BEGIN
   IF to_regclass('pg_catalog.pg_toaster') IS NULL
   THEN
     CREATE EXTENSION toastapi;
+    CREATE FUNCTION test_set_toaster(tab text, col text, tsr text) RETURNS void AS
+    $x$
+    BEGIN
+      PERFORM set_toaster(tab, col, tsr);
+    END
+    $x$ LANGUAGE plpgsql;
   ELSE
-    CREATE FUNCTION set_toaster(tab text, col text, tsr text) RETURNS int AS
+    CREATE FUNCTION test_set_toaster(tab text, col text, tsr text) RETURNS void AS
     $x$
     BEGIN
       EXECUTE format('ALTER TABLE %s ALTER %s SET TOASTER %s', tab, col, tsr);
-      RETURN 0;
     END
     $x$ LANGUAGE plpgsql;
   END IF;
@@ -18,25 +23,17 @@ $$;
 
 CREATE EXTENSION bytea_toaster;
 
-CREATE TABLE tst_failed (
-	t jsonb TOASTER bytea_toaster
-);
-
-CREATE TABLE tst1 (
-	t bytea TOASTER bytea_toaster
-);
-
 CREATE TABLE tst2 (
 	t bytea
 );
 
 --ALTER TABLE tst2 ALTER COLUMN t SET TOASTER bytea_toaster;
-SELECT set_toaster('bytea_toaster', 'tst2', 't');
+SELECT test_set_toaster('bytea_toaster', 'tst2', 't');
 
 
 CREATE TABLE test_bytea_append (id int, a bytea STORAGE EXTERNAL);
 --ALTER TABLE test_bytea_append ALTER a SET TOASTER bytea_toaster;
-SELECT set_toaster('bytea_toaster', 'test_bytea_append', 'a');
+SELECT test_set_toaster('bytea_toaster', 'test_bytea_append', 'a');
 
 INSERT INTO test_bytea_append SELECT i, repeat('a', 10000)::bytea FROM generate_series(1, 10) i;
 
@@ -113,3 +110,5 @@ SELECT test_bytea_append_func();
 COMMIT;
 
 DROP TABLE test_bytea_append;
+
+DROP EXTENSION bytea_toaster;
