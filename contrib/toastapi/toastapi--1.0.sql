@@ -3,7 +3,7 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION toastapi" to load this file. \quit
 
-CREATE FUNCTION set_toaster(cstring, cstring, cstring)
+CREATE FUNCTION set_toaster(text, text, text)
 RETURNS integer
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
