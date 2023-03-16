@@ -116,22 +116,22 @@ attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 	char *str = NULL;
 
 	o_datum = get_attoptions(relOid, attnum);
-   if(o_datum == (Datum) 0)
-      return (Datum) 0;
+	if(o_datum == (Datum) 0)
+		return (Datum) 0;
 
-   o_list =  untransformRelOptions(o_datum);
+	o_list =  untransformRelOptions(o_datum);
 
 	foreach(cell, o_list)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
-		
+
 		if (strcmp(def->defname, optname) == 0)
 		{
 			str = palloc(strlen(defGetString(def))+1);
 			memcpy(str, defGetString(def), strlen(defGetString(def))+1);
 			break;
 		}
-      l_idx++;
+		l_idx++;
 	}
 
 	if(str == NULL)
@@ -205,7 +205,7 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 
 	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
 									 o_list, NULL, NULL, false,
-									 false);	
+									 false);
 
 	if (opts != (Datum) 0)
 		repl_val[Anum_pg_attribute_attoptions - 1] = opts;

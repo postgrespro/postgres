@@ -74,7 +74,7 @@ bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, L
 	(void) create_toast_table(rel, toasteroid, InvalidOid, reloptions, attnum,
 							  lockmode, check, OIDOldToast, &toastrelid);
 */
-	tattrs->toastreloid = toastrelid;
+	tattrs->toastreloid = DatumGetObjectId(toastrelid);
 	return toastrelid;
 }
 

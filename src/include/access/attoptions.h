@@ -39,7 +39,7 @@ static inline Datum set_complex_att_opt(Oid relid, char *optname, char *nstr, ch
    int namelen = strlen(optname);
    int numlen = strlen(nstr);
 
-  	tmp = palloc(namelen + numlen + 1);
+   tmp = palloc(namelen + numlen + 1);
 	memcpy(tmp, optname, namelen);
 	memcpy(tmp+namelen, nstr, numlen);
 	tmp[namelen + numlen] = '\0';
@@ -54,11 +54,11 @@ static inline Datum get_complex_att_opt(Oid relid, char *optname, char *addstr, 
    Datum d;
    int namelen = strlen(optname);
    int addlen = addstrlen;
-   
+
    if(addlen < 0)
       addlen = strlen(addstr);
 
-  	tmp = palloc(namelen + addlen + 1);
+   tmp = palloc(namelen + addlen + 1);
 	memcpy(tmp, optname, namelen);
 	memcpy(tmp+namelen, addstr, addlen);
 	tmp[namelen + addlen] = '\0';

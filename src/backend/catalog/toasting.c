@@ -192,7 +192,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 		if(!extended)
 			return false;
 	}
-	
+
 	/*
 	 * Check to see whether the table actually needs a TOAST table.
 	 */

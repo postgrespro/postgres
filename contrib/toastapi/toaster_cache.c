@@ -150,7 +150,7 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 				 errmsg("Cannot open pg_toaster table")));
 
 	indexlist = RelationGetIndexList(rel);
-	
+
 	Assert(indexlist != NIL);
 
 	num_indexes = list_length(indexlist);
@@ -196,7 +196,7 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 		total_entries++;
 		if(tsroid == ((Form_pg_toaster) GETSTRUCT(tup))->oid)
 		{
-      	tsrhandler = ((Form_pg_toaster) GETSTRUCT(tup))->tsrhandler;
+			tsrhandler = ((Form_pg_toaster) GETSTRUCT(tup))->tsrhandler;
 			break;
 		}
 	}

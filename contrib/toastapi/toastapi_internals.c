@@ -95,8 +95,7 @@ attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
 	char *str = NULL;
 
 	o_datum = get_attoptions(relOid, attnum);
-   if(o_datum == (Datum) 0)
-      return (Datum) 0;
+   if(o_datum == (Datum) 0) return (Datum) 0;
 
    o_list =  untransformRelOptions(o_datum);
 
@@ -182,7 +181,7 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 
 	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
 									 o_list, NULL, NULL, false,
-									 false);	
+									 false);
 
 	if (opts != (Datum) 0)
 		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
@@ -261,7 +260,7 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 
 	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
 									 o_list, NULL, NULL, false,
-									 false);	
+									 false);
 
 	if (opts != (Datum) 0)
 		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
@@ -300,12 +299,11 @@ void create_pg_toaster(void)
 	RangeVar   *relvar;
 	Relation	rel;
 
-
 	snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toaster");
 	snprintf(toast_idxname, sizeof(toast_idxname),
 			 "pg_toaster_index");
-	
+
 	PG_TRY();
 	{
 		relvar = makeRangeVarFromNameList(textToQualifiedNameList(cstring_to_text(toast_relname)));
@@ -358,7 +356,7 @@ void create_pg_toaster(void)
 
 	/* It's mapped if and only if its parent is, too */
 	mapped_relation = false;
-	
+
 	ownerId = GetUserId();
 
 	pgtoaster_relid = heap_create_with_catalog(toast_relname,

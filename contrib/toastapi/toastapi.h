@@ -93,8 +93,8 @@ do { \
 #define BYTEA_TOASTER_MAGIC    0xb17ea757
 typedef struct ByteaToastRoutine
 {
-       int32           magic;
-       Datum     (*append)(Datum val1, Datum val2);
+	int32	magic;
+	Datum	(*append)(Datum val1, Datum val2);
 } ByteaToastRoutine;
 
 typedef struct ToastAttributesData

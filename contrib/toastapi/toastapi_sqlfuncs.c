@@ -100,7 +100,7 @@ add_toaster(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 	errmsg("permission denied to create toaster \"%s\"",
+				errmsg("permission denied to create toaster \"%s\"",
 					tsrname),
 			errhint("Must be superuser to create a toaster.")));
 
@@ -125,7 +125,7 @@ add_toaster(PG_FUNCTION_ARGS)
 				 errmsg("Cannot open pg_toaster table")));
 
 	indexlist = RelationGetIndexList(rel);
-	
+
 	Assert(indexlist != NIL);
 
 	foreach(lc, indexlist)
@@ -256,7 +256,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 	errmsg("permission denied to create toaster \"%s\"",
+				errmsg("permission denied to create toaster \"%s\"",
 					tsrname),
 			errhint("Must be superuser to create a toaster.")));
 
@@ -327,7 +327,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
 						attname)));
-	
+
 	ReleaseSysCache(tuple);
 
 	tattrs = palloc(sizeof(ToastAttributesData));
@@ -352,7 +352,7 @@ set_toaster(PG_FUNCTION_ARGS)
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
 		tattrs->toaster = tsr;
-		
+
 		d = tsr->init(rel,
 								tsroid,
 								(Datum) 0,
@@ -413,7 +413,7 @@ reset_toaster(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 	errmsg("permission denied to reset toaster for table \"%s\"",
+				errmsg("permission denied to reset toaster for table \"%s\"",
 					relname),
 			errhint("Must be superuser to reset a toaster.")));
 
@@ -444,7 +444,7 @@ reset_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
 						attname)));
-	
+
 	ReleaseSysCache(tuple);
 	table_close(attrelation, AccessShareLock);
 
@@ -591,7 +591,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 	errmsg("permission denied to create toaster \"%s\"",
+				errmsg("permission denied to create toaster \"%s\"",
 					tsrname),
 			errhint("Must be superuser to create a toaster.")));
 
@@ -679,7 +679,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 				break;
 			}
 		}
-		
+
 		if( OidIsValid(tsroid))
 			CatalogTupleDelete(rel, &tsrtup->t_self);
 

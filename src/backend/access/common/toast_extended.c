@@ -135,7 +135,7 @@ toast_save_datum_ext(Relation rel, Oid toastrelid, Oid toasteroid, Datum value,
 	 */
 	toast_pointer.va_toastrelid = toastrelid;
 	toast_pointer.va_valueid = InvalidOid;
-/*	
+/*
 	if (OidIsValid(rel->rd_toastoid))
 		toast_pointer.va_toastrelid = rel->rd_toastoid;
 	else
