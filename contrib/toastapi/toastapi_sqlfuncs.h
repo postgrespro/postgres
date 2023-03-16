@@ -62,45 +62,6 @@
 #include "varatt_custom.h"
 #include "toastapi_internals.h"
 
-/*
-CREATE FUNCTION set_toaster(cstring, cstring, cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION add_toaster(cstring, cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION drop_toaster(cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION get_toaster(cstring, cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION list_toasters(cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-CREATE FUNCTION list_toastrels(cstring)
-RETURNS integer
-AS 'MODULE_PATHNAME'
-LANGUAGE C;
-
-*/
-
-extern Oid insert_toaster(const char *tsrname, const char *tsrhandler);
-
-extern Oid insert_toastrel(Oid tsroid, Oid relid, Oid toastrelid, int16 attnum, int16 version, char opts, char flag);
-
-extern void open_toastapi_index(Relation rel, LOCKMODE lock, Oid *idx_oid);
-
 extern Datum add_toaster(PG_FUNCTION_ARGS);
 
 extern Datum set_toaster(PG_FUNCTION_ARGS);

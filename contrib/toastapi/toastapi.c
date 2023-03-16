@@ -77,16 +77,6 @@
 
 PG_MODULE_MAGIC;
 
-/* Original Hook */
-/*
-typedef Datum (*Toast_Init_hook_type) (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast);
-typedef Datum (*Toast_Toast_hook_type) (ToastTupleContext *ttc, int attribute, int maxDataLen,
-						int options);
-typedef Datum (*Toast_Detoast_hook_type) (Oid relid, Datum toast_ptr,
-											 int offset, int length);
-*/
-
 static Toastapi_init_hook_type toastapi_init_hook = NULL;
 static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
@@ -163,8 +153,6 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Relation rel;
 	TsrRoutine *toaster = NULL;
 	char *ntoasters_str;
-//	int ntoasters = 0;
-//	int len;
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
@@ -183,8 +171,6 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	}
 
 	ntoasters_str = DatumGetCString(d);
-//	ntoasters = atoi(ntoasters_str);
-//	len = pg_ltoa(ntoasters, str);
 
 	d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
 
@@ -410,7 +396,7 @@ static Datum toastapi_delete (Relation rel,
 
 	if(VARATT_IS_EXTERNAL_ONDISK(value))
 	{
-		toast_delete_datum(rel, del_value, false);
+		toast_delete_datum(rel, del_value, is_speculative);
 	}
 	if(VARATT_IS_CUSTOM(value))
 	{
