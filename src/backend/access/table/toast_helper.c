@@ -326,7 +326,7 @@ toast_tuple_try_compression(ToastTupleContext *ttc, int attribute)
  * Move an attribute to external storage.
  */
 void
-toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
+toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen, int options)
 {
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
@@ -335,7 +335,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	attr->tai_colflags |= TOASTCOL_IGNORE;
 	if(Toastapi_toast_hook)
 	{
-		*value = Toastapi_toast_hook(ttc, attribute, 0, options);
+		*value = Toastapi_toast_hook(ttc, attribute, maxDataLen, options);
 	}
 	else
 	{
