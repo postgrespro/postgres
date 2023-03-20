@@ -149,7 +149,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 					VARATT_IS_CUSTOM(new_value)
 					&& Toastapi_copy_hook)
 			{
-				
+
 				struct varlena *new_val =
 					(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
 									ttc->ttc_values[i],
@@ -266,13 +266,14 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 	for (i = 0; i < numAttrs; i++)
 	{
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
+		Pointer		value = DatumGetPointer(ttc->ttc_values[i]);
 
 		if ((ttc->ttc_attr[i].tai_colflags & skip_colflags) != 0)
 			continue;
-		if (VARATT_IS_EXTERNAL(DatumGetPointer(ttc->ttc_values[i])))
+		if (VARATT_IS_EXTERNAL(value) && !VARATT_IS_CUSTOM(value))
 			continue;			/* can't happen, toast_action would be PLAIN */
 		if (for_compression &&
-			VARATT_IS_COMPRESSED(DatumGetPointer(ttc->ttc_values[i])))
+			(VARATT_IS_COMPRESSED(value) || VARATT_IS_CUSTOM(value)))
 			continue;
 		if (check_main && att->attstorage != TYPSTORAGE_MAIN)
 			continue;
