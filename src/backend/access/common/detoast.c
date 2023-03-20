@@ -49,17 +49,13 @@ detoast_external_attr(struct varlena *attr)
 {
 	struct varlena *result;
 
-	if(VARATT_IS_CUSTOM(attr))
+	if (VARATT_IS_CUSTOM(attr))
 	{
-		if(Toastapi_detoast_hook)
-		{
-			result = (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), 0, -1));
-		}
-		else
-		{
-			return attr;
-			/* elog(ERROR, "Custom TOAST pointer but no detoast hook defined"); */
-		}
+		if (!Toastapi_detoast_hook)
+			elog(ERROR, "Custom TOAST pointer but no detoast hook defined");
+
+
+		result = (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), 0, -1));
 	}
 	else if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
@@ -242,9 +238,10 @@ detoast_attr_slice(struct varlena *attr,
 
 	if (VARATT_IS_CUSTOM(attr))
 	{
-		if (Toastapi_detoast_hook)
-			return (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), sliceoffset, slicelength));
-		else return attr;
+		if (!Toastapi_detoast_hook)
+			elog(ERROR, "Custom TOAST pointer but no detoast hook defined");
+
+		return (struct varlena *) DatumGetPointer(Toastapi_detoast_hook(InvalidOid, PointerGetDatum(attr), sliceoffset, slicelength));
 	}
 	else if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
