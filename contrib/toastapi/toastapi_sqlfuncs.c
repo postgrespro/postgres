@@ -488,9 +488,9 @@ drop_toaster(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("permission denied to create toaster \"%s\"",
+				errmsg("permission denied to drop toaster \"%s\"",
 					tsrname),
-			errhint("Must be superuser to create a toaster.")));
+			errhint("Must be superuser to drop a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
