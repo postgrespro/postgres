@@ -82,10 +82,10 @@ add_toaster(PG_FUNCTION_ARGS)
 	/* Must be superuser */
 	if (!superuser())
 		ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("permission denied to create toaster \"%s\"",
-					tsrname),
-			errhint("Must be superuser to create a toaster.")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to create toaster \"%s\"",
+						tsrname),
+				 errhint("Must be superuser to create a toaster.")));
 
 	namelist = stringToQualifiedNameList(tsrhandler, NULL);
 
@@ -176,10 +176,10 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	if (!superuser())
 		ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("permission denied to create toaster \"%s\"",
-					tsrname),
-			errhint("Must be superuser to create a toaster.")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to create toaster \"%s\"",
+						tsrname),
+				 errhint("Must be superuser to create a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
@@ -310,10 +310,10 @@ reset_toaster(PG_FUNCTION_ARGS)
 
 	if (!superuser())
 		ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("permission denied to reset toaster for table \"%s\"",
-					relname),
-			errhint("Must be superuser to reset a toaster.")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to reset toaster for table \"%s\"",
+						relname),
+				 errhint("Must be superuser to reset a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
@@ -451,10 +451,10 @@ drop_toaster(PG_FUNCTION_ARGS)
 	/* Must be superuser */
 	if (!superuser())
 		ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("permission denied to drop toaster \"%s\"",
-					tsrname),
-			errhint("Must be superuser to drop a toaster.")));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied to drop toaster \"%s\"",
+						tsrname),
+				 errhint("Must be superuser to drop a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
