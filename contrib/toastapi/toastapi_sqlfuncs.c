@@ -306,9 +306,9 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("Invalid handler OID \"%u\"",
 						tsrhandler)));
 
-	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, nstr, -1);
+	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
 
-	len = pg_ltoa(tsroid, str);
+	len = pg_ltoa(tsroid, nstr);
 	if (len <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
