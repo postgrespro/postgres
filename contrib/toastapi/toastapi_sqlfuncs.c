@@ -159,27 +159,27 @@ set_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
 	Relation	tsrrel;
-	Relation attrelation;
-   Oid relid = InvalidOid;
-   Oid tsroid = InvalidOid;
-	Oid tsrhandler = InvalidOid;
+	Relation	attrelation;
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
-	Datum d = (Datum) 0;
+	Oid			relid = InvalidOid;
+	Oid			tsroid = InvalidOid;
+	Oid			tsrhandler = InvalidOid;
+	Datum		d = (Datum) 0;
 	HeapTuple	tuple;
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
-	char str[12];
-	char nstr[12];
+	char		str[12];
+	char		nstr[12];
 	ToastAttributes tattrs;
-	int len = 0;
+	int			len = 0;
 
-	if(strlen(tsrname) == 0)
+	if (strlen(tsrname) == 0)
 		PG_RETURN_NULL();
-	if(strlen(relname) == 0)
+	if (strlen(relname) == 0)
 		PG_RETURN_NULL();
-	if(strlen(attname) == 0)
+	if (strlen(attname) == 0)
 		PG_RETURN_NULL();
 
 	if (!superuser())
@@ -202,6 +202,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot find toaster with name %s", tsrname)));
 
+	Assert(OidIsValid(tsrhandler));
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheAttName(relid, attname);
@@ -232,10 +233,10 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
 
-	if(d != (Datum) 0)
+	if (d != (Datum) 0)
 		tattrs->toasthandleroid = atoi(DatumGetCString(d));
 
-	if(!OidIsValid(tattrs->toastreloid))
+	if (!OidIsValid(tattrs->toastreloid))
 	{
 		TsrRoutine *tsr;
 		tsr = GetTsrRoutine(tsrhandler);
@@ -244,16 +245,17 @@ set_toaster(PG_FUNCTION_ARGS)
 		tattrs->toaster = tsr;
 
 		d = tsr->init(rel,
-								tsroid,
-								(Datum) 0,
-								attnum,
-								RowExclusiveLock,
-								false,
-								InvalidOid,
-								tattrs);
+					  tsroid,
+					  (Datum) 0,
+					  attnum,
+					  RowExclusiveLock,
+					  false,
+					  InvalidOid,
+					  tattrs);
 		tattrs->toastreloid = DatumGetObjectId(d);
 		table_close(rel, RowExclusiveLock);
 	}
+
 	pfree(tattrs);
 	table_close(attrelation, RowExclusiveLock);
 
