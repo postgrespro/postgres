@@ -95,15 +95,11 @@ Datum
 add_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
-   Oid tsroid = InvalidOid;
-	Oid ex_tsroid = InvalidOid;
-	Datum		values[Natts_pg_toastrel];
-	bool		nulls[Natts_pg_toastrel];
-	List *namelist;
-	HeapTuple	tup;
-
+	Oid			tsroid;
+	Oid			ex_tsroid = InvalidOid;
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	char	   *tsrhandler = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	List	   *namelist;
 
 	/* Must be superuser */
 	if (!superuser())
@@ -118,34 +114,35 @@ add_toaster(PG_FUNCTION_ARGS)
 	/*
 	 * Get the handler function oid, verifying the toaster type while at it.
 	 */
-
 	tsroid = lookup_toaster_handler_func(namelist);
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
 	ex_tsroid = find_toaster_by_name(rel, tsrname, NULL);
 
-	if(OidIsValid(ex_tsroid))
+	if (!OidIsValid(ex_tsroid))
 	{
-		table_close(rel, RowExclusiveLock);
-		return ObjectIdGetDatum(ex_tsroid);
-	}
+		/*
+		 * Insert tuple into pg_toaster.
+		 */
+		Datum		values[Natts_pg_toaster];
+		bool		nulls[Natts_pg_toaster];
+		NameData	tsrnmdata;
+		HeapTuple	tup;
 
-	/*
-	 * Insert tuple into pg_toaster.
-	 */
-	memset(values, 0, sizeof(values));
-	memset(nulls, false, sizeof(nulls));
+		memset(values, 0, sizeof(values));
+		memset(nulls, false, sizeof(nulls));
 
-	{
-		NameData tsrnmdata;
 		namestrcpy(&tsrnmdata, tsrname);
+
 		ex_tsroid = GetNewObjectId();
 
 		values[Anum_pg_toaster_oid - 1] = ObjectIdGetDatum(ex_tsroid);
 		values[Anum_pg_toaster_tsrname - 1] = NameGetDatum(&tsrnmdata);
-		values[Anum_pg_toaster_tsrhandler - 1] = ObjectIdGetDatum(tsroid); // Datum regprocin(PG_FUNCTION_ARGS) CString Datum(tsrhandler);
+		values[Anum_pg_toaster_tsrhandler - 1] = ObjectIdGetDatum(tsroid);
+
 		tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+
 		CatalogTupleInsert(rel, tup);
 		heap_freetuple(tup);
 	}
