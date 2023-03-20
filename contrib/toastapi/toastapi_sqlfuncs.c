@@ -95,17 +95,8 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	tsroid = lookup_toaster_handler_func(namelist);
 
-	if(!RegProcedureIsValid(tsroid))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Toaster handler %s is not valid", tsrhandler)));
-
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
-	if(!rel)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot open pg_toaster table")));
 
 	scan = systable_beginscan(rel, InvalidOid, false,
 							  NULL, 0, NULL);
@@ -194,16 +185,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
-	if (!OidIsValid(relid))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot retrieve oid for table %s", relname)));
-
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
-	if(!tsrrel)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot open pg_toaster table")));
 
 	scan = systable_beginscan(tsrrel, InvalidOid, false,
 							  NULL, 0, NULL);
@@ -227,10 +209,6 @@ set_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot find toaster with name %s", tsrname)));
 
-	if (!OidIsValid(tsrhandler))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot find handler for toaster with name %s", tsrname)));
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheAttName(relid, attname);
@@ -341,11 +319,6 @@ reset_toaster(PG_FUNCTION_ARGS)
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
-	if(!OidIsValid(relid))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot retrieve oid for table %s", relname)));
-
 	attrelation = table_open(AttributeRelationId, AccessShareLock);
 	tuple = SearchSysCacheAttName(relid, attname);
 
@@ -404,11 +377,6 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
-	if(!OidIsValid(relid))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot retrieve oid for table %s", relname)));
-
 	attrelation = table_open(AttributeRelationId, AccessShareLock);
 	tuple = SearchSysCacheAttName(relid, attname);
 
@@ -434,10 +402,6 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 		tsroid = atoi(DatumGetCString(d));
 
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
-	if(!tsrrel)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot open pg_toaster table")));
 
 	scan = systable_beginscan(tsrrel, InvalidOid, false,
 							  NULL, 0, NULL);
@@ -493,11 +457,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 			errhint("Must be superuser to drop a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
-
-	if(!rel)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot open pg_toaster table")));
 
 	scan = systable_beginscan(rel, InvalidOid, false,
 							  NULL, 0, NULL);
