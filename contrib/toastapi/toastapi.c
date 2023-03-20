@@ -84,6 +84,7 @@ static Toastapi_size_hook_type toastapi_size_hook = NULL;
 static Toastapi_copy_hook_type toastapi_copy_hook = NULL;
 static Toastapi_update_hook_type toastapi_update_hook = NULL;
 static Toastapi_delete_hook_type toastapi_delete_hook = NULL;
+static Toastapi_vtable_hook_type toastapi_vtable_hook = NULL;
 
 static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast)
@@ -425,6 +426,25 @@ bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *nto
 	return all_found_ind;
 }
 
+static void *
+toastapi_vtable(Datum d)
+{
+	struct varlena *value = (struct varlena *) DatumGetPointer(d);
+
+	if (VARATT_IS_CUSTOM(value))
+	{
+		Oid			toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		TsrRoutine *toaster = GetTsrRoutine(toasterid);
+
+		return toaster->get_vtable(d);
+	}
+	else
+	{
+		Assert(0);
+		return NULL;
+	}
+}
+
 void _PG_init(void)
 {
 	//create_pg_toaster();
@@ -436,6 +456,7 @@ void _PG_init(void)
 	toastapi_copy_hook = Toastapi_copy_hook;
 	toastapi_update_hook = Toastapi_update_hook;
 	toastapi_delete_hook = Toastapi_delete_hook;
+	toastapi_vtable_hook = Toastapi_vtable_hook;
 
    Toastapi_init_hook = toastapi_init;
    Toastapi_toast_hook = toastapi_toast;
@@ -444,6 +465,7 @@ void _PG_init(void)
 	Toastapi_copy_hook = toastapi_copy;
 	Toastapi_update_hook = toastapi_update;
 	Toastapi_delete_hook = toastapi_delete;
+	Toastapi_vtable_hook = toastapi_vtable;
 }
 
 void _PG_fini(void)
@@ -455,4 +477,5 @@ void _PG_fini(void)
 	Toastapi_update_hook = toastapi_update_hook;
 	Toastapi_delete_hook = toastapi_delete_hook;
 	Toastapi_size_hook = toastapi_size_hook;
+	Toastapi_vtable_hook = toastapi_vtable_hook;
 }
