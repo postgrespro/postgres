@@ -454,7 +454,7 @@ bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *nto
 
 void _PG_init(void)
 {
-	create_pg_toaster();
+	//create_pg_toaster();
 
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;

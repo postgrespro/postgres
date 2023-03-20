@@ -22,7 +22,7 @@ static List	*ToasterCache = NIL;
 Oid cache_pg_toaster()
 {
    Oid coid = InvalidOid;
-   text *relname = cstring_to_text("pg_toaster");
+   text *relname = cstring_to_text(PG_TOASTER_NAME);
    Relation rel;
    rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 

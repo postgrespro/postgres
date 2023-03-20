@@ -300,7 +300,7 @@ void create_pg_toaster(void)
 	Relation	rel;
 
 	snprintf(toast_relname, sizeof(toast_relname),
-			 "pg_toaster");
+			 PG_TOASTER_NAME);
 	snprintf(toast_idxname, sizeof(toast_idxname),
 			 "pg_toaster_index");
 
