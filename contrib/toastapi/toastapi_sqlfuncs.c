@@ -76,17 +76,8 @@ add_toaster(PG_FUNCTION_ARGS)
 	HeapTuple	tup;
 	uint32      total_entries = 0;
 
-	if (PG_ARGISNULL(0))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Toaster name cannot be null")));
-	if (PG_ARGISNULL(1))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Toaster handler cannot be null")));
-
-	tsrname = PG_GETARG_CSTRING(0);
-	tsrhandler = PG_GETARG_CSTRING(1);
+	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	tsrhandler = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	/* Must be superuser */
 	if (!superuser())
@@ -181,21 +172,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	char nstr[12];
 	ToastAttributes tattrs;
 	int len = 0;
-
-	if (PG_ARGISNULL(0))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Toaster name cannot be null")));
-
-	if (PG_ARGISNULL(1))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Table name cannot be null")));
-
-	if (PG_ARGISNULL(2))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Attribute name cannot be null")));
 
 	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
@@ -359,18 +335,8 @@ reset_toaster(PG_FUNCTION_ARGS)
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
 
-	if (PG_ARGISNULL(0))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Table name cannot be null")));
-
-	if (PG_ARGISNULL(1))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Attribute name cannot be null")));
-
-	relname = (char *) PG_GETARG_CSTRING(0);
-	attname = (char *) PG_GETARG_CSTRING(1);
+	relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	if(strlen(relname) == 0)
 		PG_RETURN_NULL();
@@ -443,18 +409,8 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	AttrNumber	attnum;
 	char *tsrname = "";
 
-	if (PG_ARGISNULL(0))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Table name cannot be null")));
-
-	if (PG_ARGISNULL(1))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Attribute name cannot be null")));
-
-	relname = (char *) PG_GETARG_CSTRING(0);
-	attname = (char *) PG_GETARG_CSTRING(1);
+	relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	if(strlen(relname) == 0)
 		PG_RETURN_NULL();
@@ -544,12 +500,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	char s_tsrid[12];
 	int len = 0;
 
-	if (PG_ARGISNULL(0))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Toaster name cannot be null")));
-
-	tsrname = PG_GETARG_CSTRING(0);
+	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
 	if(tsrname == NULL || strlen(tsrname) == 0)
 		PG_RETURN_NULL();
