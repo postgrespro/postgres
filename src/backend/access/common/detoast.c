@@ -593,6 +593,10 @@ toast_raw_datum_size(Datum value)
 	{
 		result = EOH_get_flat_size(DatumGetEOHP(value));
 	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		result = VARSIZE_EXTERNAL(attr);
+	}
 	else if (VARATT_IS_COMPRESSED(attr))
 	{
 		/* here, va_rawsize is just the payload size */
@@ -652,6 +656,10 @@ toast_datum_size(Datum value)
 	else if (VARATT_IS_EXTERNAL_EXPANDED(attr))
 	{
 		result = EOH_get_flat_size(DatumGetEOHP(value));
+	}
+	else if (VARATT_IS_CUSTOM(attr))
+	{
+		result = VARSIZE_EXTERNAL(attr);
 	}
 	else if (VARATT_IS_SHORT(attr))
 	{
