@@ -148,7 +148,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Datum d;
 	Relation rel;
 	TsrRoutine *toaster = NULL;
-	char *ntoasters_str;
+	//char *ntoasters_str;
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
@@ -202,7 +202,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 		tattrs->toasteroid = InvalidOid;
 
 		tattrs->attnum = attribute;
-		tattrs->ntoasters = atoi(ntoasters_str);
+		//tattrs->ntoasters = atoi(ntoasters_str);
 		tattrs->toasthandleroid = tsrhandler;
 		tattrs->toaster = toaster;
 		tattrs->toastreloid = rel->rd_rel->reltoastrelid;
