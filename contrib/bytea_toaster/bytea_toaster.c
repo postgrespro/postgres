@@ -236,7 +236,7 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 	{
 		AppendableToastData old_data;
 		AppendableToastData new_data;
-		Oid			toastrelid = rel->rd_rel->reltoastrelid;
+		/* Oid			toastrelid = rel->rd_rel->reltoastrelid; */
 
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(newval, new_data);

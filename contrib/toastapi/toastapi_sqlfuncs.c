@@ -65,24 +65,16 @@ Datum
 add_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
-	Relation   relindx;
-	Oid			idx_oid;
-   Oid relid = InvalidOid;
    Oid tsroid = InvalidOid;
 	Oid ex_tsroid = InvalidOid;
 	char *tsrname;
 	char *tsrhandler;
-	bool		found = false;
-	List	   *indexlist;
-	ListCell   *lc;
 	Datum		values[Natts_pg_toastrel];
 	bool		nulls[Natts_pg_toastrel];
 	List *namelist;
-	ScanKeyData key[2];
 	SysScanDesc scan;
 	HeapTuple	tup;
 	uint32      total_entries = 0;
-	int keys = 0;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -124,41 +116,8 @@ add_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot open pg_toaster table")));
 
-	indexlist = RelationGetIndexList(rel);
-
-	Assert(indexlist != NIL);
-
-	foreach(lc, indexlist)
-	{
-		idx_oid = lfirst_oid(lc);
-		found = true;
-		break;
-	}
-
-	list_free(indexlist);
-
-	if (!found)
-	{
-		table_close(rel, RowExclusiveLock);
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_FUNCTION),
-				 errmsg("no valid index found for toast relation with Oid %u", relid)));
-	}
-	else
-	{
-		relindx = index_open(idx_oid, AccessShareLock);
-		idx_oid = RelationGetRelid(relindx);
-	}
-
-	ScanKeyInit(&key[keys],
-			Anum_pg_toaster_tsrname,
-			BTEqualStrategyNumber, F_TEXTEQ,
-			CStringGetDatum(tsrname));
-	keys++;
-
-	scan = systable_beginscan(rel, idx_oid, false,
-							  NULL, keys, key);
-	keys = 0;
+	scan = systable_beginscan(rel, InvalidOid, false,
+							  NULL, 0, NULL);
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		total_entries++;
@@ -168,9 +127,6 @@ add_toaster(PG_FUNCTION_ARGS)
 	systable_endscan(scan);
 	if(OidIsValid(ex_tsroid))
 	{
-		if(ex_tsroid != tsroid && relindx)
-			index_close(relindx, AccessShareLock);
-
 		table_close(rel, RowExclusiveLock);
 		return ObjectIdGetDatum(ex_tsroid);
 	}
@@ -194,7 +150,6 @@ add_toaster(PG_FUNCTION_ARGS)
 		heap_freetuple(tup);
 	}
 
-	index_close(relindx, AccessShareLock);
 	table_close(rel, RowExclusiveLock);
 
 	return (ObjectIdGetDatum(ex_tsroid));
@@ -369,9 +324,21 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);
+	if (len <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Invalid handler OID \"%u\"",
+						tsrhandler)));
+
 	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, nstr, -1);
 
 	len = pg_ltoa(tsroid, str);
+	if (len <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Invalid Toaster OID \"%u\"",
+						tsroid)));
+
 	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
 
 	return res;
