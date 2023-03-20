@@ -472,7 +472,16 @@ bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *nto
 
 void _PG_init(void)
 {
-	create_pg_toaster();
+	PG_TRY();
+	{
+		create_pg_toaster();
+	}
+	PG_CATCH();
+	{
+		elog(NOTICE, "Could not create PG_TOASTER table, please check if it already exists.");
+	}
+	PG_END_TRY();
+
 	// create_pg_toastrel();
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;

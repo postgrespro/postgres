@@ -195,7 +195,6 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 	Datum d;
 	struct varatt_external toast_ptr;
 	AppendableToastVersion version = BYTEA_FIRST_VERSION;
-	int ntoasters = 0;
 	Oid toastrelid = InvalidOid;
 	char str[12];
 	int len = 0;
@@ -242,17 +241,13 @@ static Datum
 bytea_toaster_update_toast(Relation rel, Oid toasterid,
 						   Datum newval, Datum oldval, int options, int attnum, ToastAttributes tattrs)
 {
-	Datum d;
-	char str[12];
-	int ntoasters = 0;
-	int len = 0;
 	bool		is_speculative = false; /* (options & HEAP_INSERT_SPECULATIVE) != 0 XXX */
 
 	if (VARATT_IS_CUSTOM(newval) && VARATT_IS_CUSTOM(oldval))
 	{
 		AppendableToastData old_data;
 		AppendableToastData new_data;
-		Oid			toastrelid = InvalidOid; // = rel->rd_rel->reltoastrelid;
+		/* Oid			toastrelid = InvalidOid; */ // = rel->rd_rel->reltoastrelid;
 
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(newval, new_data);

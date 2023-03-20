@@ -109,7 +109,6 @@ add_toaster(PG_FUNCTION_ARGS)
 	/*
 	 * Get the handler function oid, verifying the toaster type while at it.
 	 */
-
 	tsroid = lookup_toaster_handler_func(namelist);
 
 	if(!RegProcedureIsValid(tsroid))
@@ -156,8 +155,10 @@ add_toaster(PG_FUNCTION_ARGS)
 			CStringGetDatum(tsrname));
 	keys++;
 
-	scan = systable_beginscan(rel, idx_oid, false,
-							  NULL, keys, key);
+	scan = systable_beginscan(rel, InvalidOid, false,
+							  NULL, 0, NULL);
+
+
 	keys = 0;
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
@@ -168,6 +169,7 @@ add_toaster(PG_FUNCTION_ARGS)
 	systable_endscan(scan);
 	if(OidIsValid(ex_tsroid))
 	{
+		elog(NOTICE,"existing toaster %s found, toaster Oid %u", tsrname, ex_tsroid);
 		if(ex_tsroid != tsroid && relindx)
 			index_close(relindx, AccessShareLock);
 
@@ -728,7 +730,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 		attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 		scan = systable_beginscan(attrelation, InvalidOid, false,
 								  NULL, 0, NULL);
-		elog(NOTICE, "6");
+
 		while (HeapTupleIsValid(tup = systable_getnext(scan)))
 		{
 			bool		isnull;

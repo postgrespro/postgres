@@ -310,7 +310,6 @@ void create_pg_toaster(void)
 	RangeVar   *relvar;
 	Relation	rel;
 
-
 	snprintf(toast_relname, sizeof(toast_relname),
 			 "pg_toaster");
 	snprintf(toast_idxname, sizeof(toast_idxname),
