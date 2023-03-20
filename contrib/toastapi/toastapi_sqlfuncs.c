@@ -369,9 +369,9 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);
-	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, nstr, -1);
+	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
 
-	len = pg_ltoa(tsroid, str);
+	len = pg_ltoa(tsroid, nstr);
 	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
 
 	return res;
