@@ -97,15 +97,13 @@ add_toaster(PG_FUNCTION_ARGS)
 	Relation	rel;
    Oid tsroid = InvalidOid;
 	Oid ex_tsroid = InvalidOid;
-	char *tsrname;
-	char *tsrhandler;
 	Datum		values[Natts_pg_toastrel];
 	bool		nulls[Natts_pg_toastrel];
 	List *namelist;
 	HeapTuple	tup;
 
-	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	tsrhandler = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	char	   *tsrhandler = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	/* Must be superuser */
 	if (!superuser())
@@ -165,12 +163,12 @@ set_toaster(PG_FUNCTION_ARGS)
 	Relation	rel;
 	Relation	tsrrel;
 	Relation attrelation;
-   char *tsrname;
-	char *relname;
-	char *attname;
    Oid relid = InvalidOid;
    Oid tsroid = InvalidOid;
 	Oid tsrhandler = InvalidOid;
+	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
 	Datum d = (Datum) 0;
 	HeapTuple	tuple;
 	Form_pg_attribute attrtuple;
@@ -179,10 +177,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	char nstr[12];
 	ToastAttributes tattrs;
 	int len = 0;
-
-	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
-	attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
 
 	if(strlen(tsrname) == 0)
 		PG_RETURN_NULL();
@@ -295,15 +289,12 @@ reset_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
 	Relation	attrelation;
-	char *relname;
-	char *attname;
+	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	Oid			relid = InvalidOid;
 	HeapTuple	tuple;
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
-
-	relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	if(strlen(relname) == 0)
 		PG_RETURN_NULL();
@@ -353,8 +344,8 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
 	Relation	tsrrel;
-	char *relname;
-	char *attname;
+	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
    Oid relid = InvalidOid;
 	SysScanDesc scan;
 	uint32 total_entries = 0;
@@ -366,9 +357,6 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
 	char *tsrname = "";
-
-	relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 
 	if(strlen(relname) == 0)
 		PG_RETURN_NULL();
@@ -431,7 +419,7 @@ PG_FUNCTION_INFO_V1(drop_toaster);
 Datum
 drop_toaster(PG_FUNCTION_ARGS)
 {
-	char *tsrname;
+	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	Relation	attrelation;
 	Relation	rel;
 	Datum o_datum;
@@ -444,8 +432,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 	uint32      total_entries = 0;
 	char s_tsrid[12];
 	int len = 0;
-
-	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
 	if(tsrname == NULL || strlen(tsrname) == 0)
 		PG_RETURN_NULL();
