@@ -143,7 +143,7 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	table_close(rel, RowExclusiveLock);
 
-	return (ObjectIdGetDatum(ex_tsroid));
+	PG_RETURN_OID(ex_tsroid);
 }
 
 PG_FUNCTION_INFO_V1(set_toaster);
@@ -160,7 +160,6 @@ set_toaster(PG_FUNCTION_ARGS)
    Oid relid = InvalidOid;
    Oid tsroid = InvalidOid;
 	Oid tsrhandler = InvalidOid;
-	Datum res = (Datum) 0;
 	Datum d = (Datum) 0;
 	HeapTuple	tuple,
 				tsrtup;
@@ -194,13 +193,11 @@ set_toaster(PG_FUNCTION_ARGS)
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
-	if(!OidIsValid(relid))
-	{
+
+	if (!OidIsValid(relid))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot retrieve oid for table %s", relname)));
-		return (Datum) 0;
-	}
 
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
 	if(!tsrrel)
@@ -224,23 +221,16 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	systable_endscan(scan);
 	table_close(tsrrel, AccessShareLock);
-	if(!OidIsValid(tsroid))
-	{
+
+	if (!OidIsValid(tsroid))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot find toaster with name %s", tsrname)));
 
-		return (Datum) 0;
-	}
-
-	if(!OidIsValid(tsrhandler))
-	{
+	if (!OidIsValid(tsrhandler))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot find handler for toaster with name %s", tsrname)));
-
-		return (Datum) 0;
-	}
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheAttName(relid, attname);
@@ -273,8 +263,6 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	if(d != (Datum) 0)
 		tattrs->toasthandleroid = atoi(DatumGetCString(d));
-
-	res = ObjectIdGetDatum(tsroid);
 
 	if(!OidIsValid(tattrs->toastreloid))
 	{
@@ -317,7 +305,7 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
 
-	return res;
+	PG_RETURN_OID(tsroid);
 }
 
 PG_FUNCTION_INFO_V1(reset_toaster);
@@ -329,8 +317,7 @@ reset_toaster(PG_FUNCTION_ARGS)
 	Relation	attrelation;
 	char *relname;
 	char *attname;
-   Oid relid = InvalidOid;
-	Datum res = (Datum) 0;
+	Oid			relid = InvalidOid;
 	HeapTuple	tuple;
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
@@ -353,13 +340,11 @@ reset_toaster(PG_FUNCTION_ARGS)
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
+
 	if(!OidIsValid(relid))
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot retrieve oid for table %s", relname)));
-		return (Datum) 0;
-	}
 
 	attrelation = table_open(AttributeRelationId, AccessShareLock);
 	tuple = SearchSysCacheAttName(relid, attname);
@@ -384,8 +369,7 @@ reset_toaster(PG_FUNCTION_ARGS)
 	attopts_clear_toaster_opts(relid, attname, ATT_TOASTER_NAME);
 	attopts_clear_toaster_opts(relid, attname, ATT_HANDLER_NAME);
 
-	res = ObjectIdGetDatum(InvalidOid);
-	return res;
+	PG_RETURN_OID(InvalidOid);
 }
 
 PG_FUNCTION_INFO_V1(get_toaster);
@@ -397,7 +381,6 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	char *relname;
 	char *attname;
    Oid relid = InvalidOid;
-	Datum res = (Datum) 0;
 	SysScanDesc scan;
 	uint32 total_entries = 0;
 	Datum d = (Datum) 0;
@@ -420,13 +403,11 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
+
 	if(!OidIsValid(relid))
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
 				 errmsg("Cannot retrieve oid for table %s", relname)));
-		return (Datum) 0;
-	}
 
 	attrelation = table_open(AttributeRelationId, AccessShareLock);
 	tuple = SearchSysCacheAttName(relid, attname);
@@ -474,10 +455,9 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	systable_endscan(scan);
 	table_close(tsrrel, AccessShareLock);
 	elog(NOTICE,"%s", tsrname);
-	res = ObjectIdGetDatum(tsroid);
 	// res = PointerGetDatum(cstring_to_text_with_len(tsrname, strlen(tsrname)));
 
-	return res;
+	PG_RETURN_OID(tsroid);
 }
 
 PG_FUNCTION_INFO_V1(drop_toaster);
@@ -490,8 +470,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	Relation	rel;
 	Datum o_datum;
 	int l_idx = 0;
-	Datum res = (Datum) 0;
-   Oid tsroid = InvalidOid;
+	Oid			tsroid = InvalidOid;
 	bool		found = false;
 	SysScanDesc scan;
 	HeapTuple	tup = NULL;
@@ -536,10 +515,8 @@ drop_toaster(PG_FUNCTION_ARGS)
 	systable_endscan(scan);
 	table_close(rel, RowExclusiveLock);
 
-	if(!OidIsValid(tsroid))
-	{
-		return (Datum) 0;
-	}
+	if (!OidIsValid(tsroid))
+		PG_RETURN_OID(InvalidOid);
 
 	len = pg_ltoa(tsroid, s_tsrid);
 	found = false;
@@ -549,7 +526,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 		attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 		scan = systable_beginscan(attrelation, InvalidOid, false,
 								  NULL, 0, NULL);
-		elog(NOTICE, "6");
+
 		while (HeapTupleIsValid(tup = systable_getnext(scan)))
 		{
 			bool		isnull;
@@ -580,7 +557,9 @@ drop_toaster(PG_FUNCTION_ARGS)
 		table_close(attrelation, RowExclusiveLock);
 	}
 
-	if(!found)
+	if (found)
+		tsroid = InvalidOid;
+	else
 	{
 		rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
@@ -593,7 +572,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 			if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
 			{
 				tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
-				res = ObjectIdGetDatum(tsroid);
 				break;
 			}
 		}
@@ -605,5 +583,5 @@ drop_toaster(PG_FUNCTION_ARGS)
 		table_close(rel, RowExclusiveLock);
 	}
 
-	return res;
+	PG_RETURN_OID(tsroid);
 }
