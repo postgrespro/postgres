@@ -290,7 +290,9 @@ toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
 		tattrs->toasthandleroid = new_toasterid;
 		tattrs->toaster = toaster;
 
-		*p_result_new_value = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum, tattrs);
+		*p_result_new_value = toaster->update_toast(rel, new_toasterid,
+													new_value, old_value,
+													options, attnum, tattrs);
 
 		pfree(tattrs);
 
