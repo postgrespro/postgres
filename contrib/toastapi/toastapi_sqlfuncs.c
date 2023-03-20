@@ -59,6 +59,36 @@
 #include "toastapi_internals.h"
 #include "toastapi_sqlfuncs.h"
 
+static Oid
+find_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler)
+{
+	SysScanDesc scan;
+	HeapTuple	tup;
+	Oid			tsroid = InvalidOid;
+
+	scan = systable_beginscan(pg_toaster_rel, InvalidOid, false, NULL, 0, NULL);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_toaster tsr = (Form_pg_toaster) GETSTRUCT(tup);
+
+		if (!namestrcmp(&tsr->tsrname, tsrname))
+		{
+			tsroid = tsr->oid;
+
+			if (tsrhandler)
+				*tsrhandler = tsr->tsrhandler;
+
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+
+	return tsroid;
+}
+
+
 PG_FUNCTION_INFO_V1(add_toaster);
 
 Datum
@@ -72,9 +102,7 @@ add_toaster(PG_FUNCTION_ARGS)
 	Datum		values[Natts_pg_toastrel];
 	bool		nulls[Natts_pg_toastrel];
 	List *namelist;
-	SysScanDesc scan;
 	HeapTuple	tup;
-	uint32      total_entries = 0;
 
 	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	tsrhandler = text_to_cstring(PG_GETARG_TEXT_PP(1));
@@ -97,16 +125,8 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
+	ex_tsroid = find_toaster_by_name(rel, tsrname, NULL);
 
-	scan = systable_beginscan(rel, InvalidOid, false,
-							  NULL, 0, NULL);
-	while (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		total_entries++;
-		ex_tsroid = ((Form_pg_toaster) GETSTRUCT(tup))->oid;
-		break;
-	}
-	systable_endscan(scan);
 	if(OidIsValid(ex_tsroid))
 	{
 		table_close(rel, RowExclusiveLock);
@@ -152,12 +172,9 @@ set_toaster(PG_FUNCTION_ARGS)
    Oid tsroid = InvalidOid;
 	Oid tsrhandler = InvalidOid;
 	Datum d = (Datum) 0;
-	HeapTuple	tuple,
-				tsrtup;
+	HeapTuple	tuple;
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
-	SysScanDesc scan;
-	uint32      total_entries = 0;
 	char str[12];
 	char nstr[12];
 	ToastAttributes tattrs;
@@ -186,22 +203,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	table_close(rel, AccessShareLock);
 
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
-
-	scan = systable_beginscan(tsrrel, InvalidOid, false,
-							  NULL, 0, NULL);
-
-	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
-	{
-		total_entries++;
-		if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
-		{
-			tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
-			tsrhandler = ((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrhandler;
-			break;
-		}
-	}
-
-	systable_endscan(scan);
+	tsroid = find_toaster_by_name(tsrrel, tsrname, &tsrhandler);
 	table_close(tsrrel, AccessShareLock);
 
 	if (!OidIsValid(tsroid))
