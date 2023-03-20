@@ -9,7 +9,7 @@ EXTENSION = bytea_toaster
 DATA = bytea_toaster--1.0.sql
 PGFILEDESC = "bytea_toaster - appendable bytea toaster"
 
-REGRESS = bytea_toaster
+REGRESS = bytea_toaster bytea_toaster_syntax
 EXTRA_INSTALL = contrib/toastapi
 
 ifdef USE_PGXS

@@ -238,7 +238,8 @@ toast_save_datum(Relation rel, Datum value,
 	{
 		/* rewrite case: check to see if value was in old toast table */
 		toast_pointer.va_valueid = InvalidOid;
-		if (oldexternal != NULL)
+		if (oldexternal != NULL &&
+			VARATT_IS_EXTERNAL_ONDISK(oldexternal)) /* FIXME */
 		{
 			struct varatt_external old_toast_pointer;
 

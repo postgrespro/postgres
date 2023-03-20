@@ -84,6 +84,7 @@ static Toastapi_size_hook_type toastapi_size_hook = NULL;
 static Toastapi_copy_hook_type toastapi_copy_hook = NULL;
 static Toastapi_update_hook_type toastapi_update_hook = NULL;
 static Toastapi_delete_hook_type toastapi_delete_hook = NULL;
+static Toastapi_vtable_hook_type toastapi_vtable_hook = NULL;
 
 static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast)
@@ -148,7 +149,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Datum d;
 	Relation rel;
 	TsrRoutine *toaster = NULL;
-	char *ntoasters_str;
+	//char *ntoasters_str;
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
@@ -202,7 +203,7 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 		tattrs->toasteroid = InvalidOid;
 
 		tattrs->attnum = attribute;
-		tattrs->ntoasters = atoi(ntoasters_str);
+		//tattrs->ntoasters = atoi(ntoasters_str);
 		tattrs->toasthandleroid = tsrhandler;
 		tattrs->toaster = toaster;
 		tattrs->toastreloid = rel->rd_rel->reltoastrelid;
@@ -262,56 +263,24 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
    return result;
 }
 
-static Datum toastapi_update (Relation rel,
-												  int options,
-												  Datum new_value,
-												  Datum old_value,
-												  int attnum)
+static bool
+toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
+				int attnum, Datum *p_result_new_value)
 {
-	Datum result = (Datum) 0;
-	struct varlena *value = (struct varlena *) DatumGetPointer(new_value);
+	struct varlena *new_val = (struct varlena *) DatumGetPointer(new_value);
+	struct varlena *old_val = (struct varlena *) DatumGetPointer(old_value);
 
-	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	if (VARATT_IS_CUSTOM(new_val) &&
+		VARATT_IS_CUSTOM(old_val))
 	{
-		varatt_external *old_data = (varatt_external *) DatumGetPointer(new_value);
-		varatt_external *new_data = (varatt_external *) DatumGetPointer(old_value);
-
-		if (old_data->va_toastrelid == new_data->va_toastrelid
-			&& old_data->va_valueid == new_data->va_valueid)
-		{
-			value = (struct varlena *) detoast_attr((struct varlena *) DatumGetPointer(new_value));
-
-			if(value)
-			{
-				toast_update_datum(old_value,
-							   value,
-								0,
-								new_data->va_rawsize,
-							   NULL,
-								0,
-								NULL,
-								NULL,
-								options);
-
-				toast_delete_datum(rel, old_value, false);
-			}
-		}
-	}
-	else if(VARATT_IS_CUSTOM(value))
-	{
-		TsrRoutine *toaster = NULL;
-		Oid	old_toasterid = InvalidOid;
-		Oid	new_toasterid = InvalidOid;
+		Oid	old_toasterid = VARATT_CUSTOM_GET_TOASTERID(old_val);
+		Oid	new_toasterid = VARATT_CUSTOM_GET_TOASTERID(new_val);
 		ToastAttributes tattrs;
-		new_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		TsrRoutine *toaster;
 
-		value = (struct varlena *) DatumGetPointer(old_value);
-		old_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		if (new_toasterid != old_toasterid)
+			return false;
 
-		if(new_toasterid != old_toasterid)
-			ereport(ERROR, (errcode(ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST),
-								errmsg("New value toast handler %u does not match old value handler %u",
-				new_toasterid, old_toasterid)));
 		toaster = GetTsrRoutine(new_toasterid);
 
 		tattrs = palloc(sizeof(ToastAttributesData));
@@ -322,11 +291,16 @@ static Datum toastapi_update (Relation rel,
 		tattrs->toasthandleroid = new_toasterid;
 		tattrs->toaster = toaster;
 
-		result = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum, tattrs);
-		toaster->deltoast(rel, old_value, false, tattrs);
+		*p_result_new_value = toaster->update_toast(rel, new_toasterid,
+													new_value, old_value,
+													options, attnum, tattrs);
+
 		pfree(tattrs);
+
+		return true;
 	}
-   return result;
+
+	return false;
 }
 
 static Datum toastapi_copy (Relation rel,
@@ -452,9 +426,28 @@ bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *nto
 	return all_found_ind;
 }
 
+static void *
+toastapi_vtable(Datum d)
+{
+	struct varlena *value = (struct varlena *) DatumGetPointer(d);
+
+	if (VARATT_IS_CUSTOM(value))
+	{
+		Oid			toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		TsrRoutine *toaster = GetTsrRoutine(toasterid);
+
+		return toaster->get_vtable(d);
+	}
+	else
+	{
+		Assert(0);
+		return NULL;
+	}
+}
+
 void _PG_init(void)
 {
-	create_pg_toaster();
+	//create_pg_toaster();
 
    toastapi_init_hook = Toastapi_init_hook;
    toastapi_toast_hook = Toastapi_toast_hook;
@@ -463,6 +456,7 @@ void _PG_init(void)
 	toastapi_copy_hook = Toastapi_copy_hook;
 	toastapi_update_hook = Toastapi_update_hook;
 	toastapi_delete_hook = Toastapi_delete_hook;
+	toastapi_vtable_hook = Toastapi_vtable_hook;
 
    Toastapi_init_hook = toastapi_init;
    Toastapi_toast_hook = toastapi_toast;
@@ -471,6 +465,7 @@ void _PG_init(void)
 	Toastapi_copy_hook = toastapi_copy;
 	Toastapi_update_hook = toastapi_update;
 	Toastapi_delete_hook = toastapi_delete;
+	Toastapi_vtable_hook = toastapi_vtable;
 }
 
 void _PG_fini(void)
@@ -482,4 +477,5 @@ void _PG_fini(void)
 	Toastapi_update_hook = toastapi_update_hook;
 	Toastapi_delete_hook = toastapi_delete_hook;
 	Toastapi_size_hook = toastapi_size_hook;
+	Toastapi_vtable_hook = toastapi_vtable_hook;
 }

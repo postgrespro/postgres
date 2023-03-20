@@ -27,6 +27,7 @@ Toastapi_update_hook_type Toastapi_update_hook = NULL;
 Toastapi_copy_hook_type Toastapi_copy_hook = NULL;
 Toastapi_delete_hook_type Toastapi_delete_hook = NULL;
 Toastapi_size_hook_type Toastapi_size_hook = NULL;
+Toastapi_vtable_hook_type Toastapi_vtable_hook = NULL;
 
 /*
  * Prepare to TOAST a tuple.
@@ -65,6 +66,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
 		if (ttc->ttc_oldvalues != NULL)
 		{
+			Datum		new_value_after_update;
+
 			/*
 			 * For UPDATE get the old and new values of this attribute
 			 */
@@ -100,28 +103,31 @@ toast_tuple_init(ToastTupleContext *ttc)
 					 * we reuse the original reference to the old value
 					 * in the new tuple.
 					 */
-					ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+					if (VARATT_IS_EXTERNAL_ONDISK(new_value))
+						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
+					else
+						ttc->ttc_attr[i].tai_size = VARSIZE_ANY(new_value);
+
 					continue;
 				}
 				else if (Toastapi_update_hook &&
-						 VARATT_IS_CUSTOM(old_value))
-				{
-					struct varlena *new_val;
-					new_val =
-						(struct varlena *) DatumGetPointer(Toastapi_update_hook(ttc->ttc_rel, i,
+						 VARATT_IS_CUSTOM(old_value) &&
+						 VARATT_IS_CUSTOM(new_value) &&
+						 Toastapi_update_hook(ttc->ttc_rel, i,
 											  ttc->ttc_values[i],
 											  ttc->ttc_oldvalues[i],
-											  false /* speculative */));
-
-					if (new_val)
+											  false /* speculative */,
+											  &new_value_after_update))
+				{
+					if (new_value_after_update != (Datum) 0)
 					{
 						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
 							pfree(DatumGetPointer(ttc->ttc_values[i]));
-						ttc->ttc_values[i] = PointerGetDatum(new_val);
+						ttc->ttc_values[i] = new_value_after_update;
 						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
 						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
 
-						new_value = new_val;
+						new_value = (struct varlena *) DatumGetPointer(new_value_after_update);
 					}
 
 					need_detoast = false;
@@ -148,7 +154,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 					VARATT_IS_CUSTOM(new_value)
 					&& Toastapi_copy_hook)
 			{
-				
+
 				struct varlena *new_val =
 					(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
 									ttc->ttc_values[i],
@@ -265,13 +271,14 @@ toast_tuple_find_biggest_attribute(ToastTupleContext *ttc,
 	for (i = 0; i < numAttrs; i++)
 	{
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
+		Pointer		value = DatumGetPointer(ttc->ttc_values[i]);
 
 		if ((ttc->ttc_attr[i].tai_colflags & skip_colflags) != 0)
 			continue;
-		if (VARATT_IS_EXTERNAL(DatumGetPointer(ttc->ttc_values[i])))
+		if (VARATT_IS_EXTERNAL(value) && !VARATT_IS_CUSTOM(value))
 			continue;			/* can't happen, toast_action would be PLAIN */
 		if (for_compression &&
-			VARATT_IS_COMPRESSED(DatumGetPointer(ttc->ttc_values[i])))
+			(VARATT_IS_COMPRESSED(value) || VARATT_IS_CUSTOM(value)))
 			continue;
 		if (check_main && att->attstorage != TYPSTORAGE_MAIN)
 			continue;
@@ -324,7 +331,7 @@ toast_tuple_try_compression(ToastTupleContext *ttc, int attribute)
  * Move an attribute to external storage.
  */
 void
-toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
+toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen, int options)
 {
 	Datum	   *value = &ttc->ttc_values[attribute];
 	Datum		old_value = *value;
@@ -333,7 +340,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	attr->tai_colflags |= TOASTCOL_IGNORE;
 	if(Toastapi_toast_hook)
 	{
-		*value = Toastapi_toast_hook(ttc, attribute, 0, options);
+		*value = Toastapi_toast_hook(ttc, attribute, maxDataLen, options);
 	}
 	else
 	{

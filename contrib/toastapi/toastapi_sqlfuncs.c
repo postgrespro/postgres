@@ -197,9 +197,9 @@ set_toaster(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Attribute name cannot be null")));
 
-	tsrname = (char *) PG_GETARG_CSTRING(0);
-	relname = (char *) PG_GETARG_CSTRING(1);
-	attname = (char *) PG_GETARG_CSTRING(2);
+	tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
 
 	if(strlen(tsrname) == 0)
 		PG_RETURN_NULL();

@@ -16,6 +16,7 @@
 
 #include "postgres.h"
 #include "varatt.h"
+#include "varatt_custom.h"
 #include "fmgr.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"

@@ -1,0 +1,2 @@
+CREATE EXTENSION toastapi;
+DROP EXTENSION toastapi;
