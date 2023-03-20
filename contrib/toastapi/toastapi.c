@@ -262,56 +262,24 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
    return result;
 }
 
-static Datum toastapi_update (Relation rel,
-												  int options,
-												  Datum new_value,
-												  Datum old_value,
-												  int attnum)
+static bool
+toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
+				int attnum, Datum *p_result_new_value)
 {
-	Datum result = (Datum) 0;
-	struct varlena *value = (struct varlena *) DatumGetPointer(new_value);
+	struct varlena *new_val = (struct varlena *) DatumGetPointer(new_value);
+	struct varlena *old_val = (struct varlena *) DatumGetPointer(old_value);
 
-	if(VARATT_IS_EXTERNAL_ONDISK(value))
+	if (VARATT_IS_CUSTOM(new_val) &&
+		VARATT_IS_CUSTOM(old_val))
 	{
-		varatt_external *old_data = (varatt_external *) DatumGetPointer(new_value);
-		varatt_external *new_data = (varatt_external *) DatumGetPointer(old_value);
-
-		if (old_data->va_toastrelid == new_data->va_toastrelid
-			&& old_data->va_valueid == new_data->va_valueid)
-		{
-			value = (struct varlena *) detoast_attr((struct varlena *) DatumGetPointer(new_value));
-
-			if(value)
-			{
-				toast_update_datum(old_value,
-							   value,
-								0,
-								new_data->va_rawsize,
-							   NULL,
-								0,
-								NULL,
-								NULL,
-								options);
-
-				toast_delete_datum(rel, old_value, false);
-			}
-		}
-	}
-	else if(VARATT_IS_CUSTOM(value))
-	{
-		TsrRoutine *toaster = NULL;
-		Oid	old_toasterid = InvalidOid;
-		Oid	new_toasterid = InvalidOid;
+		Oid	old_toasterid = VARATT_CUSTOM_GET_TOASTERID(old_val);
+		Oid	new_toasterid = VARATT_CUSTOM_GET_TOASTERID(new_val);
 		ToastAttributes tattrs;
-		new_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		TsrRoutine *toaster;
 
-		value = (struct varlena *) DatumGetPointer(old_value);
-		old_toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
+		if (new_toasterid != old_toasterid)
+			return false;
 
-		if(new_toasterid != old_toasterid)
-			ereport(ERROR, (errcode(ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST),
-								errmsg("New value toast handler %u does not match old value handler %u",
-				new_toasterid, old_toasterid)));
 		toaster = GetTsrRoutine(new_toasterid);
 
 		tattrs = palloc(sizeof(ToastAttributesData));
@@ -322,11 +290,14 @@ static Datum toastapi_update (Relation rel,
 		tattrs->toasthandleroid = new_toasterid;
 		tattrs->toaster = toaster;
 
-		result = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum, tattrs);
-		toaster->deltoast(rel, old_value, false, tattrs);
+		*p_result_new_value = toaster->update_toast(rel, new_toasterid, options, new_value, old_value, attnum, tattrs);
+
 		pfree(tattrs);
+
+		return true;
 	}
-   return result;
+
+	return false;
 }
 
 static Datum toastapi_copy (Relation rel,

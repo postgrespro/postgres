@@ -65,6 +65,8 @@ toast_tuple_init(ToastTupleContext *ttc)
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
 		if (ttc->ttc_oldvalues != NULL)
 		{
+			Datum		new_value_after_update;
+
 			/*
 			 * For UPDATE get the old and new values of this attribute
 			 */
@@ -104,24 +106,23 @@ toast_tuple_init(ToastTupleContext *ttc)
 					continue;
 				}
 				else if (Toastapi_update_hook &&
-						 VARATT_IS_CUSTOM(old_value))
-				{
-					struct varlena *new_val;
-					new_val =
-						(struct varlena *) DatumGetPointer(Toastapi_update_hook(ttc->ttc_rel, i,
+						 VARATT_IS_CUSTOM(old_value) &&
+						 VARATT_IS_CUSTOM(new_value) &&
+						 Toastapi_update_hook(ttc->ttc_rel, i,
 											  ttc->ttc_values[i],
 											  ttc->ttc_oldvalues[i],
-											  false /* speculative */));
-
-					if (new_val)
+											  false /* speculative */,
+											  &new_value_after_update))
+				{
+					if (new_value_after_update != (Datum) 0)
 					{
 						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
 							pfree(DatumGetPointer(ttc->ttc_values[i]));
-						ttc->ttc_values[i] = PointerGetDatum(new_val);
+						ttc->ttc_values[i] = new_value_after_update;
 						ttc->ttc_attr[i].tai_colflags |= TOASTCOL_NEEDS_FREE;
 						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
 
-						new_value = new_val;
+						new_value = (struct varlena *) DatumGetPointer(new_value_after_update);
 					}
 
 					need_detoast = false;
