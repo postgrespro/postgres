@@ -199,8 +199,8 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	if (!OidIsValid(tsroid))
 		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot find toaster with name %s", tsrname)));
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("cannot find toaster with name \"%s\"", tsrname)));
 
 	Assert(OidIsValid(tsrhandler));
 
