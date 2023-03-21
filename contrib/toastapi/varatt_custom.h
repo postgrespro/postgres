@@ -28,10 +28,6 @@ typedef struct varatt_custom
 	char		va_toasterdata[FLEXIBLE_ARRAY_MEMBER];	/* Custom toaster data */
 }			varatt_custom;
 
-#define VARTAG_CUSTOM_SIZE(tag) \
-	((tag) == VARTAG_CUSTOM ? offsetof(varatt_custom, va_toasterdata)	: \
-	 (AssertMacro(false), 0))
-
 /* Custom Toast pointer */
 #define VARATT_CUSTOM_GET_TOASTPOINTER(PTR) \
 	((varatt_custom *) VARDATA_EXTERNAL(PTR))

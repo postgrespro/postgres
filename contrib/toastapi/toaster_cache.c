@@ -96,8 +96,10 @@ GetTsrRoutine(Oid tsrhandler)
 	routine = (TsrRoutine *) DatumGetPointer(datum);
 
 	if (routine == NULL) // || !IsA(routine, TsrRoutine))
-		elog(ERROR, "toaster handler function %u did not return an TsrRoutine struct",
-			 tsrhandler);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("toaster handler function %u did not return an \"%s\" struct",
+				 tsrhandler, "TsrRoutine")));
 
 	return routine;
 }
@@ -133,7 +135,7 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 	if(!rel)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("Cannot open pg_toaster table")));
+				 errmsg("cannot open \"%s\" table", "PG_TOASTER")));
 
 	indexlist = RelationGetIndexList(rel);
 
@@ -189,11 +191,9 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 	systable_endscan(scan);
 	table_close(rel, RowExclusiveLock);
 
-/*	namelist = stringToQualifiedNameList(tsrhandler, NULL); */
 	/*
 	 * Get the handler function oid, verifying the toaster type while at it.
 	 */
-/*	tshndloid = lookup_toaster_handler_func(namelist); */
 	if (!RegProcedureIsValid(tsrhandler))
 	{
 		ereport(ERROR,
@@ -201,7 +201,6 @@ GetTsrRoutineByOid(Oid tsroid, bool noerror)
 				 errmsg("toaster \"%u\" does not have a handler",
 						tsroid)));
 	}
-//NameStr(tsrform->tsrname)
 	/* And finally, call the handler function to get the API struct. */
 	return GetTsrRoutine(tsrhandler);
 }
