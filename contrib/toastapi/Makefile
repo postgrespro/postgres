@@ -6,7 +6,8 @@ OBJS = \
 	toastapi_internals.o \
 	toastapi_sqlfuncs.o \
 	toaster_cache.o \
-	toastapi.o
+	toastapi.o \
+	dummy_toaster.o
 
 EXTENSION = toastapi
 DATA = toastapi--1.0.sql
