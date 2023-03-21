@@ -168,7 +168,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	Relation	rel;
 	Relation	tsrrel;
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
-	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	text	   *relname = PG_GETARG_TEXT_PP(1);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
 	Oid			relid = InvalidOid;
 	Oid			tsroid = InvalidOid;
@@ -188,7 +188,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errhint("Must be superuser to create a toaster.")));
 
 	/* Get relation oid by name */
-	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
@@ -225,7 +225,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	{
 		TsrRoutine *tsr = GetTsrRoutine(tsrhandler);
 
-		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
+		rel = get_rel_from_relname(relname, RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
 		tattrs->toaster = tsr;
 
@@ -270,7 +270,7 @@ PG_FUNCTION_INFO_V1(reset_toaster);
 Datum
 reset_toaster(PG_FUNCTION_ARGS)
 {
-	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	Relation	rel;
 	Oid			relid;
@@ -279,10 +279,10 @@ reset_toaster(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to reset toaster for table \"%s\"",
-						relname),
+						text_to_cstring(relname)),
 				 errhint("Must be superuser to reset a toaster.")));
 
-	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 
 	(void) validate_attribute(rel, attname, InvalidOid);
@@ -301,7 +301,7 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
 	Relation	tsrrel;
-	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	Oid			relid = InvalidOid;
 	SysScanDesc scan;
@@ -312,7 +312,7 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	AttrNumber	attnum;
 	char	   *tsrname = "";
 
-	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
+	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
