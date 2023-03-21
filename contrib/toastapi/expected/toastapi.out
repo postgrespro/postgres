@@ -151,4 +151,78 @@ NOTICE:  dummy
  t
 (1 row)
 
+-- reset_toaster()
+SELECT reset_toaster('', '');
+ERROR:  invalid name syntax
+SELECT reset_toaster('foo', 'bar');
+ERROR:  relation "foo" does not exist
+SELECT reset_toaster('tab', 'bar');
+ERROR:  column "bar" of relation "tab" does not exist
+SELECT reset_toaster('tab', 'id');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT reset_toaster('tab', 'jb');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT reset_toaster('tab', 'b_uncomp');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT reset_toaster('tab', 'b_comp');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT get_toaster('tab', 'b_comp');
+ get_toaster 
+-------------
+            
+(1 row)
+
+SELECT reset_toaster('tab', 'b_comp');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT get_toaster('tab', 'b_comp');
+ get_toaster 
+-------------
+            
+(1 row)
+
+SELECT set_toaster('dummy', 'tab', 'b_comp') = :dummy_toaster_oid;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT get_toaster('tab', 'b_comp') = :dummy_toaster_oid;
+NOTICE:  dummy
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT reset_toaster('tab', 'b_comp');
+ reset_toaster 
+---------------
+             0
+(1 row)
+
+SELECT get_toaster('tab', 'b_comp');
+ get_toaster 
+-------------
+            
+(1 row)
+
 DROP EXTENSION toastapi;

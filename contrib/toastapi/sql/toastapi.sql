@@ -57,5 +57,21 @@ SELECT get_toaster('tab', 'jb');
 SELECT get_toaster('tab', 'b_uncomp');
 SELECT get_toaster('tab', 'b_comp') = :dummy_toaster_oid;
 
+-- reset_toaster()
+SELECT reset_toaster('', '');
+SELECT reset_toaster('foo', 'bar');
+SELECT reset_toaster('tab', 'bar');
+SELECT reset_toaster('tab', 'id');
+SELECT reset_toaster('tab', 'jb');
+SELECT reset_toaster('tab', 'b_uncomp');
+SELECT reset_toaster('tab', 'b_comp');
+SELECT get_toaster('tab', 'b_comp');
+SELECT reset_toaster('tab', 'b_comp');
+SELECT get_toaster('tab', 'b_comp');
+
+SELECT set_toaster('dummy', 'tab', 'b_comp') = :dummy_toaster_oid;
+SELECT get_toaster('tab', 'b_comp') = :dummy_toaster_oid;
+SELECT reset_toaster('tab', 'b_comp');
+SELECT get_toaster('tab', 'b_comp');
 
 DROP EXTENSION toastapi;
