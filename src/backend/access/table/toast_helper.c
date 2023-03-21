@@ -155,24 +155,27 @@ toast_tuple_init(ToastTupleContext *ttc)
 				VARATT_IS_CUSTOM(new_value) &&
 				Toastapi_copy_hook)
 			{
+				Datum		new_val = Toastapi_copy_hook(ttc->ttc_rel,
+														 ttc->ttc_values[i],
+														 false,
+														 i);
 
-				struct varlena *new_val =
-					(struct varlena *) DatumGetPointer(Toastapi_copy_hook(ttc->ttc_rel,
-									ttc->ttc_values[i],
-									false,
-									i));
-				if (new_val)
+				if (new_val != (Datum) 0)
 				{
-					if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
-						pfree(DatumGetPointer(ttc->ttc_values[i]));
+					if (new_val != ttc->ttc_values[i])
+					{
+						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
+							pfree(DatumGetPointer(ttc->ttc_values[i]));
 
-					ttc->ttc_values[i] = PointerGetDatum(new_val);
-					ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
-					ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
+						ttc->ttc_values[i] = new_val;
+						ttc->ttc_attr[i].tai_colflags |= TOAST_NEEDS_FREE;
+						ttc->ttc_flags |= (TOAST_NEEDS_CHANGE | TOAST_NEEDS_FREE);
 
-					new_value = new_val;
+						new_value = (struct varlena *) DatumGetPointer(new_val);
+					}
+
+					need_detoast = false;
 				}
-				need_detoast = false;
 			}
 		}
 
