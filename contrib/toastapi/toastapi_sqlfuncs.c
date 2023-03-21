@@ -191,6 +191,9 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("cannot alter system column \"%s\"",
 						attname)));
 
+	validateToaster(tsroid, attrtuple->atttypid, attrtuple->attstorage,
+					attrtuple->attcompression, rel->rd_rel->relam, false);
+
 	ReleaseSysCache(tuple);
 
 	tattrs = palloc(sizeof(ToastAttributesData));
