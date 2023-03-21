@@ -335,10 +335,11 @@ static Datum toastapi_copy (Relation rel,
    return result;
 }
 
-static Datum toastapi_delete (Relation rel,
-										Datum del_value,
-										bool is_speculative,
-										int attnum)
+static void
+toastapi_delete(Relation rel,
+				Datum del_value,
+				bool is_speculative,
+				int attnum)
 {
 	Datum result = (Datum) 0;
 	struct varlena *value = (struct varlena *) DatumGetPointer(del_value);
@@ -368,7 +369,6 @@ static Datum toastapi_delete (Relation rel,
 		pfree(tattrs);
 	}
 
-   return result;
 }
 
 bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)

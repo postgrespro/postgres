@@ -46,10 +46,10 @@ typedef Datum (*Toastapi_vacuum_hook_type) (Oid, Datum,
 /* typedef Datum (*Toastapi_size_hook_type) (enum vartag_external); */
 typedef void *(*Toastapi_vtable_hook_type) (Datum value);
 
-typedef Datum (*Toastapi_delete_hook_type) (Relation,
-											Datum,
-											bool,
-											int);
+typedef void (*Toastapi_delete_hook_type) (Relation rel,
+										   Datum value,
+										   bool is_speculative,
+										   int attnum);
 
 extern PGDLLIMPORT Toastapi_init_hook_type Toastapi_init_hook;
 extern PGDLLIMPORT Toastapi_toast_hook_type Toastapi_toast_hook;
