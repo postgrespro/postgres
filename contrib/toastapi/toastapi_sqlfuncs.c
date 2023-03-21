@@ -101,20 +101,6 @@ add_toaster(PG_FUNCTION_ARGS)
 		HeapTuple	tup;
 		TsrRoutine *tsr = GetTsrRoutine(tsroid);
 
-		if(!tsr)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("Handler for toaster \"%s\" is not found!",
-							tsrname),
-					errhint("Please check if toaster extension is present.")));
-
-		if(!(tsr->toast))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("Mandatory function \"toast()\" is not present in toaster \"%s\"",
-							tsrname),
-					errhint("\"toast()\" is mandatory and must be present in toaster.")));
-
 		memset(values, 0, sizeof(values));
 		memset(nulls, false, sizeof(nulls));
 

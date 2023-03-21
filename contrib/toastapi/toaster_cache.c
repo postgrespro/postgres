@@ -81,25 +81,36 @@ out:
 	return entry->routine;
 }
 
-/*я
+static void
+reportMissingToastMethod(const char *method_name, Oid tsrhandler)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("mandatory function %s is not present in toaster routine returned by toast handler function %u",
+					"toast()", tsrhandler))); /* get_toaster_name(tsroid) */
+}
+
+/*
  * GetRoutine - call the specified toaster handler routine to get
  * its TsrRoutine struct, which will be palloc'd in the caller's context.
- *
  */
 TsrRoutine *
 GetTsrRoutine(Oid tsrhandler)
 {
-	Datum		datum;
-	TsrRoutine *routine;
+	TsrRoutine *routine = (TsrRoutine *)
+		DatumGetPointer(OidFunctionCall0(tsrhandler));
 
-	datum = OidFunctionCall0(tsrhandler);
-	routine = (TsrRoutine *) DatumGetPointer(datum);
-
-	if (routine == NULL) // || !IsA(routine, TsrRoutine))
+	if (routine == NULL) /* || !IsA(routine, TsrRoutine)) */
 		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_FUNCTION),
-				 errmsg("toaster handler function %u did not return an \"%s\" struct",
-				 tsrhandler, "TsrRoutine")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("toaster handler function %u did not return a %s",
+						tsrhandler, "struct TsrRoutine")));
+
+	if (!routine->toast)
+		reportMissingToastMethod("toast()", tsrhandler);
+
+	if (!routine->detoast)
+		reportMissingToastMethod("detoast()", tsrhandler);
 
 	return routine;
 }

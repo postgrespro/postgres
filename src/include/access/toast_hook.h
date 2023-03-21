@@ -26,12 +26,11 @@ typedef Datum (*Toastapi_init_hook_type) (Oid, Datum, LOCKMODE, int,
 						   bool, Oid);
 typedef Datum (*Toastapi_toast_hook_type) (ToastTupleContext *, int, int,
 						int);
-typedef bool (*Toastapi_update_hook_type) (Relation,
-												  int,
-												  Datum,
-												  Datum,
-												  int,
-												  Datum *p_new_value);
+typedef Datum (*Toastapi_update_hook_type) (Relation rel,
+											int attnum,
+											Datum new_value,
+											Datum old_value,
+											int options);
 
 typedef Datum (*Toastapi_copy_hook_type) (Relation,
 												Datum,
@@ -47,10 +46,10 @@ typedef Datum (*Toastapi_vacuum_hook_type) (Oid, Datum,
 /* typedef Datum (*Toastapi_size_hook_type) (enum vartag_external); */
 typedef void *(*Toastapi_vtable_hook_type) (Datum value);
 
-typedef Datum (*Toastapi_delete_hook_type) (Relation,
-											Datum,
-											bool,
-											int);
+typedef void (*Toastapi_delete_hook_type) (Relation rel,
+										   Datum value,
+										   bool is_speculative,
+										   int attnum);
 
 extern PGDLLIMPORT Toastapi_init_hook_type Toastapi_init_hook;
 extern PGDLLIMPORT Toastapi_toast_hook_type Toastapi_toast_hook;
