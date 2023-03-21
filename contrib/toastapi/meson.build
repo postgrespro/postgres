@@ -1,5 +1,10 @@
 toastapi = shared_module('toastapi',
-  files('toastapi.c'),
+  files(
+    'toastapi.c',
+    'toastapi_internals.c',
+    'toastapi_sqlfuncs.c',
+    'toaster_cache.c'
+  ),
   kwargs: contrib_mod_args,
 )
 contrib_targets += toastapi
