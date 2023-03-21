@@ -39,4 +39,6 @@ extern Datum attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname
 extern Oid lookup_toaster_handler_func(List *handler_name);
 extern void create_pg_toaster(void);
 
+extern Oid get_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler);
+
 #endif							/* TOASTAPIINT_H */

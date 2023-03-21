@@ -434,3 +434,32 @@ void create_pg_toaster(void)
 	CommandCounterIncrement();
 	// return pgtoaster_relid;
 }
+
+Oid
+get_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler)
+{
+	SysScanDesc scan;
+	HeapTuple	tup;
+	Oid			tsroid = InvalidOid;
+
+	scan = systable_beginscan(pg_toaster_rel, InvalidOid, false, NULL, 0, NULL);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_toaster tsr = (Form_pg_toaster) GETSTRUCT(tup);
+
+		if (!namestrcmp(&tsr->tsrname, tsrname))
+		{
+			tsroid = tsr->oid;
+
+			if (tsrhandler)
+				*tsrhandler = tsr->tsrhandler;
+
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+
+	return tsroid;
+}

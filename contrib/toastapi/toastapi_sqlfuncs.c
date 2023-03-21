@@ -59,36 +59,6 @@
 #include "toastapi_internals.h"
 #include "toastapi_sqlfuncs.h"
 
-static Oid
-find_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler)
-{
-	SysScanDesc scan;
-	HeapTuple	tup;
-	Oid			tsroid = InvalidOid;
-
-	scan = systable_beginscan(pg_toaster_rel, InvalidOid, false, NULL, 0, NULL);
-
-	while (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		Form_pg_toaster tsr = (Form_pg_toaster) GETSTRUCT(tup);
-
-		if (!namestrcmp(&tsr->tsrname, tsrname))
-		{
-			tsroid = tsr->oid;
-
-			if (tsrhandler)
-				*tsrhandler = tsr->tsrhandler;
-
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-
-	return tsroid;
-}
-
-
 PG_FUNCTION_INFO_V1(add_toaster);
 
 Datum
@@ -118,7 +88,7 @@ add_toaster(PG_FUNCTION_ARGS)
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
 
-	ex_tsroid = find_toaster_by_name(rel, tsrname, NULL);
+	ex_tsroid = get_toaster_by_name(rel, tsrname, NULL);
 
 	if (!OidIsValid(ex_tsroid))
 	{
@@ -194,7 +164,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	table_close(rel, AccessShareLock);
 
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
-	tsroid = find_toaster_by_name(tsrrel, tsrname, &tsrhandler);
+	tsroid = get_toaster_by_name(tsrrel, tsrname, &tsrhandler);
 	table_close(tsrrel, AccessShareLock);
 
 	if (!OidIsValid(tsroid))
