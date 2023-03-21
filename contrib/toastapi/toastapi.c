@@ -387,21 +387,19 @@ toastapi_vtable(Datum value)
 
 void _PG_init(void)
 {
-	//create_pg_toaster();
-
-   toastapi_init_hook = Toastapi_init_hook;
-   toastapi_toast_hook = Toastapi_toast_hook;
-   toastapi_detoast_hook = Toastapi_detoast_hook;
-   toastapi_size_hook = Toastapi_size_hook;
+	toastapi_init_hook = Toastapi_init_hook;
+	toastapi_toast_hook = Toastapi_toast_hook;
+	toastapi_detoast_hook = Toastapi_detoast_hook;
+	toastapi_size_hook = Toastapi_size_hook;
 	toastapi_copy_hook = Toastapi_copy_hook;
 	toastapi_update_hook = Toastapi_update_hook;
 	toastapi_delete_hook = Toastapi_delete_hook;
 	toastapi_vtable_hook = Toastapi_vtable_hook;
 
-   Toastapi_init_hook = toastapi_init;
-   Toastapi_toast_hook = toastapi_toast;
-   Toastapi_detoast_hook = toastapi_detoast;
-   Toastapi_size_hook = toastapi_size;
+	Toastapi_init_hook = toastapi_init;
+	Toastapi_toast_hook = toastapi_toast;
+	Toastapi_detoast_hook = toastapi_detoast;
+	Toastapi_size_hook = toastapi_size;
 	Toastapi_copy_hook = toastapi_copy;
 	Toastapi_update_hook = toastapi_update;
 	Toastapi_delete_hook = toastapi_delete;
@@ -410,9 +408,9 @@ void _PG_init(void)
 
 void _PG_fini(void)
 {
-   Toastapi_init_hook = toastapi_init_hook;
-   Toastapi_toast_hook = toastapi_toast_hook;
-   Toastapi_detoast_hook = toastapi_detoast_hook;
+	Toastapi_init_hook = toastapi_init_hook;
+	Toastapi_toast_hook = toastapi_toast_hook;
+	Toastapi_detoast_hook = toastapi_detoast_hook;
 	Toastapi_copy_hook = toastapi_copy_hook;
 	Toastapi_update_hook = toastapi_update_hook;
 	Toastapi_delete_hook = toastapi_delete_hook;
