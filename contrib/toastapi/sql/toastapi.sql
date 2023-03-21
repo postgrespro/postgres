@@ -28,4 +28,11 @@ SELECT :foo_toaster_oid <> 0;
 SELECT :foo_toaster_oid <> :dummy_toaster_oid;
 SELECT :foo_toaster_oid = add_toaster('foo', 'dummy_toaster_handler');
 
+-- drop_toaster()
+SELECT drop_toaster(NULL);
+SELECT drop_toaster('');
+SELECT drop_toaster('bar');
+SELECT drop_toaster('foo') = :foo_toaster_oid;
+SELECT drop_toaster('foo');
+
 DROP EXTENSION toastapi;

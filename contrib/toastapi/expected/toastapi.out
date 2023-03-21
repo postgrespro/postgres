@@ -66,4 +66,35 @@ SELECT :foo_toaster_oid = add_toaster('foo', 'dummy_toaster_handler');
  t
 (1 row)
 
+-- drop_toaster()
+SELECT drop_toaster(NULL);
+ drop_toaster 
+--------------
+             
+(1 row)
+
+SELECT drop_toaster('');
+ drop_toaster 
+--------------
+             
+(1 row)
+
+SELECT drop_toaster('bar');
+ drop_toaster 
+--------------
+             
+(1 row)
+
+SELECT drop_toaster('foo') = :foo_toaster_oid;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT drop_toaster('foo');
+ drop_toaster 
+--------------
+             
+(1 row)
+
 DROP EXTENSION toastapi;
