@@ -106,6 +106,7 @@ typedef struct ToastAttributesData
 	int attnum;
 	int ntoasters;
 	void *toaster;
+	bool create_table_ind;
 } ToastAttributesData;
 
 typedef ToastAttributesData *ToastAttributes;

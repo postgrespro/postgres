@@ -26,7 +26,10 @@ dummy_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum,
 {
 	Datum toastrelid = (Datum) 0;
 
-	toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode, OIDOldToast);
+	if(tattrs->create_table_ind)
+		toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode, OIDOldToast);
+	else
+		toastrelid = rel->rd_rel->reltoastrelid;
 
 	tattrs->toastreloid = DatumGetObjectId(toastrelid);
 

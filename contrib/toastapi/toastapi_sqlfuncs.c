@@ -99,6 +99,21 @@ add_toaster(PG_FUNCTION_ARGS)
 		bool		nulls[Natts_pg_toaster];
 		NameData	tsrnmdata;
 		HeapTuple	tup;
+		TsrRoutine *tsr = GetTsrRoutine(tsroid);
+
+		if(!tsr)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("Handler for toaster \"%s\" is not found!",
+							tsrname),
+					errhint("Please check if toaster extension is present.")));
+
+		if(!(tsr->toast))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("Mandatory function \"toast()\" is not present in toaster \"%s\"",
+							tsrname),
+					errhint("\"toast()\" is mandatory and must be present in toaster.")));
 
 		memset(values, 0, sizeof(values));
 		memset(nulls, false, sizeof(nulls));
@@ -179,6 +194,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	ToastAttributes tattrs;
 	int			len = 0;
 	AttrNumber	attnum;
+	TsrRoutine *tsr = NULL;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -215,16 +231,17 @@ set_toaster(PG_FUNCTION_ARGS)
 	tattrs->toasteroid = InvalidOid;
 	tattrs->toasthandleroid = InvalidOid;
 	tattrs->toastreloid = rel->rd_rel->reltoastrelid;
+	tattrs->create_table_ind = false;
 
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
 
 	if (d != (Datum) 0)
 		tattrs->toasthandleroid = atoi(DatumGetCString(d));
 
-	if (!OidIsValid(tattrs->toastreloid))
-	{
-		TsrRoutine *tsr = GetTsrRoutine(tsrhandler);
+	tsr = GetTsrRoutine(tsrhandler);
 
+	if (tsr->init) //!OidIsValid(tattrs->toastreloid))
+	{
 		rel = get_rel_from_relname(relname, RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
 		tattrs->toaster = tsr;

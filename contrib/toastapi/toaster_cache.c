@@ -17,20 +17,6 @@
 
 static List	*ToasterCache = NIL;
 
-/* Cache pg_toaster and pg_toastrel */
-/*
-Oid cache_pg_toaster()
-{
-   Oid coid = InvalidOid;
-   text *relname = cstring_to_text(PG_TOASTER_NAME);
-   Relation rel;
-   rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
-
-   coid = RelationGetRelid(rel);
-   return coid;
-}
-*/
-
 /*
  * SearchTsrCache - get cached toaster routine, emits an error if toaster
  * doesn't exist

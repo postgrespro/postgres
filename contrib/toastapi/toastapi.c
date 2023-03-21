@@ -122,7 +122,8 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 		tattrs->toasthandleroid = atoi(DatumGetCString(d));
 		tattrs->toaster = toaster;
 
-		result = toaster->init(rel,
+		if(toaster->init)
+			result = toaster->init(rel,
 									atoi(DatumGetCString(d)),
 									reloptions,
 									attnum,
@@ -130,6 +131,7 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 									check,
 									OIDOldToast,
 									tattrs);
+
 		table_close(rel, RowExclusiveLock);
 		pfree(tattrs);
 	}
@@ -149,28 +151,14 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 	Datum d;
 	Relation rel;
 	TsrRoutine *toaster = NULL;
-	//char *ntoasters_str;
 	Oid tsrhandler = InvalidOid;
 	ToastAttributes tattrs;
 
 	result = *value;
 	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
-/*
-	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_NTOASTERS_NAME);
 
-	if(d == (Datum) 0)
-	{
-		result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
-			options);
-
-		table_close(rel, RowExclusiveLock);
-		return result;
-	}
-
-	ntoasters_str = DatumGetCString(d);
-*/
 	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_HANDLER_NAME);
-//	d = get_complex_att_opt(RelationGetRelid(rel), ATT_HANDLER_NAME, ntoasters_str, strlen(ntoasters_str), attribute+1);
+
 	if(d == (Datum) 0)
 	{
 		result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
@@ -203,10 +191,10 @@ static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataL
 		tattrs->toasteroid = InvalidOid;
 
 		tattrs->attnum = attribute;
-		//tattrs->ntoasters = atoi(ntoasters_str);
 		tattrs->toasthandleroid = tsrhandler;
 		tattrs->toaster = toaster;
 		tattrs->toastreloid = rel->rd_rel->reltoastrelid;
+
 		result = toaster->toast(ttc->ttc_rel,
 										tsrhandler,
 										old_value,
@@ -256,7 +244,9 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
 		tattrs->toasthandleroid = toasterid;
 		tattrs->toaster = toaster;
 
-		result = toaster->detoast(toast_ptr, offset, length, tattrs);
+		if(toaster->detoast)
+			result = toaster->detoast(toast_ptr, offset, length, tattrs);
+
 		pfree(tattrs);
 	}
 
@@ -291,7 +281,8 @@ toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
 		tattrs->toasthandleroid = new_toasterid;
 		tattrs->toaster = toaster;
 
-		*p_result_new_value = toaster->update_toast(rel, new_toasterid,
+		if(toaster->update_toast)
+			*p_result_new_value = toaster->update_toast(rel, new_toasterid,
 													new_value, old_value,
 													options, attnum, tattrs);
 
@@ -372,7 +363,8 @@ static Datum toastapi_delete (Relation rel,
 		tattrs->toasthandleroid = toasterid;
 		tattrs->toaster = toaster;
 
-		toaster->deltoast(rel, del_value, is_speculative, tattrs);
+		if(toaster->deltoast)
+			toaster->deltoast(rel, del_value, is_speculative, tattrs);
 		pfree(tattrs);
 	}
 
@@ -436,7 +428,10 @@ toastapi_vtable(Datum d)
 		Oid			toasterid = VARATT_CUSTOM_GET_TOASTERID(value);
 		TsrRoutine *toaster = GetTsrRoutine(toasterid);
 
-		return toaster->get_vtable(d);
+		if(toaster->get_vtable)
+			return toaster->get_vtable(d);
+		else
+			return NULL;
 	}
 	else
 	{

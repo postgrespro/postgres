@@ -29,6 +29,4 @@ typedef struct ToastrelCacheEntry
 	int16 	attnum;
 } ToastrelCacheEntry;
 
-/* extern Oid cache_pg_toaster(); */
-
 #endif
