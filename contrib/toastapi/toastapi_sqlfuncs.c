@@ -299,49 +299,32 @@ PG_FUNCTION_INFO_V1(get_toaster);
 
 Datum get_toaster(PG_FUNCTION_ARGS)
 {
-	Relation	rel;
-	Relation	tsrrel;
 	text	   *relname = PG_GETARG_TEXT_PP(0);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
-	Oid			relid = InvalidOid;
-	SysScanDesc scan;
-	uint32		total_entries = 0;
+	Relation	rel;
+	Oid			relid;
 	Datum		d = (Datum) 0;
 	Oid			tsroid = InvalidOid;
-	HeapTuple	tsrtup;
 	AttrNumber	attnum;
-	char	   *tsrname = "";
+	char	   *tsrname;
 
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
-	relid = RelationGetRelid(rel);
-	table_close(rel, AccessShareLock);
 
+	relid = RelationGetRelid(rel);
 	attnum = validate_attribute(rel, attname, InvalidOid);
 
+	table_close(rel, AccessShareLock);
+
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTER_NAME);
-	if(d != (Datum) 0)
-		tsroid = atoi(DatumGetCString(d));
 
-	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
+	if (d == (Datum) 0)
+		PG_RETURN_NULL();
 
-	scan = systable_beginscan(tsrrel, InvalidOid, false,
-							  NULL, 0, NULL);
+	tsroid = atoi(DatumGetCString(d));
+	tsrname = get_toaster_name(tsroid);
 
-	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
-	{
-		total_entries++;
-		if((((Form_pg_toaster) GETSTRUCT(tsrtup))->oid) == tsroid)
-		{
-			tsrname = (NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname));
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-	table_close(tsrrel, AccessShareLock);
 	elog(NOTICE,"%s", tsrname);
-	// res = PointerGetDatum(cstring_to_text_with_len(tsrname, strlen(tsrname)));
-
+	//PG_RETURN_TEXT_P(cstring_to_text(tsrname));
 	PG_RETURN_OID(tsroid);
 }
 
