@@ -47,13 +47,13 @@
 #define PG_TOASTER_NAME "pg_toaster"
 #define PG_TOASTREL_NAME "pg_toastrel"
 
-#define REL_TOASTER_NAME "toasteroid"
-#define REL_BASEREL_NAME "basereloid"
+#define REL_TOASTER_NAME "pgpro_toasteroid"
+#define REL_BASEREL_NAME "pgpro_basereloid"
 
-#define ATT_TOASTER_NAME "toasteroid"
-#define ATT_HANDLER_NAME "toasthandler"
-#define ATT_TOASTREL_NAME "toastreloid"
-#define ATT_NTOASTERS_NAME "ntoasters"
+#define ATT_TOASTER_NAME "pgpro_toasteroid"
+#define ATT_HANDLER_NAME "pgpro_toasthandler"
+#define ATT_TOASTREL_NAME "pgpro_toastreloid"
+#define ATT_NTOASTERS_NAME "pgpro_ntoasters"
 /*
 static Oid pg_toaster_idx_oid = InvalidOid;
 static Oid pg_toastrel_idx_oid = InvalidOid;
@@ -105,6 +105,7 @@ typedef struct ToastAttributesData
 	Oid toastreloid;
 	int attnum;
 	int ntoasters;
+	int options;
 	void *toaster;
 	bool create_table_ind;
 } ToastAttributesData;
@@ -116,34 +117,28 @@ typedef ToastAttributesData *ToastAttributes;
  */
 
 /* Create toast storage */
-typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
+typedef Datum (*toast_init)(Relation rel, Datum reloptions, LOCKMODE lockmode,
 						   bool check, Oid OIDOldToast, ToastAttributes tattrs);
 
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
-										   Oid toasterid,
 										   Datum value,
 										   Datum oldvalue,
-											int attnum,
 										   int max_inline_size,
 										   int options,
 											ToastAttributes tattrs);
 
 /* Update toast function, optional */
 typedef Datum (*update_toast_function) (Relation toast_rel,
-												  Oid toasterid,
 												  Datum newvalue,
 												  Datum oldvalue,
 												  int options,
-												  int attnum,
 												  ToastAttributes tattrs);
 
 /* Copy toast function, optional */
 typedef Datum (*copy_toast_function) (Relation toast_rel,
-												Oid toasterid,
 												Datum newvalue,
 												int options,
-												int attnum,
 												ToastAttributes tattrs);
 
 /* Detoast function */

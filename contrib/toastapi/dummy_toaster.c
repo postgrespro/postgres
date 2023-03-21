@@ -20,14 +20,14 @@
 #include "utils/builtins.h"
 
 static Datum
-dummy_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum,
+dummy_toaster_init(Relation rel, Datum reloptions,
 				   LOCKMODE lockmode, bool check, Oid OIDOldToast,
 				   ToastAttributes tattrs)
 {
 	Datum toastrelid = (Datum) 0;
 
 	if(tattrs->create_table_ind)
-		toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode, OIDOldToast);
+		toastrelid = ToastCreateToastTable(rel, tattrs->toasteroid, reloptions, tattrs->attnum, lockmode, OIDOldToast);
 	else
 		toastrelid = rel->rd_rel->reltoastrelid;
 
@@ -85,25 +85,25 @@ dummy_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative,
 }
 
 static Datum
-dummy_toaster_copy_toast(Relation rel, Oid toasterid, Datum newval,
-						 int options, int attnum,
+dummy_toaster_copy_toast(Relation rel, Datum newval,
+						 int options,
 						 ToastAttributes tattrs)
 {
 	return (Datum) 0;
 }
 
 static Datum
-dummy_toaster_toast(Relation rel, Oid toasterid,
+dummy_toaster_toast(Relation rel,
 					Datum newval, Datum oldval,
-					int attnum, int max_inline_size, int options,
+					int max_inline_size, int options,
 					ToastAttributes tattrs)
 {
 	return (Datum) 0;
 }
 
 static Datum
-dummy_toaster_update_toast(Relation rel, Oid toasterid,
-						   Datum newval, Datum oldval, int options, int attnum,
+dummy_toaster_update_toast(Relation rel,
+						   Datum newval, Datum oldval, int options,
 						   ToastAttributes tattrs)
 {
 	return (Datum) 0;

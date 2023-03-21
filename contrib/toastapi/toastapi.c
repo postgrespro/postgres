@@ -124,9 +124,7 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
 
 		if(toaster->init)
 			result = toaster->init(rel,
-									atoi(DatumGetCString(d)),
 									reloptions,
-									attnum,
 									lockmode,
 									check,
 									OIDOldToast,
@@ -189,11 +187,10 @@ toastapi_toast(ToastTupleContext *ttc, int attribute, int maxDataLen,
 		elog(ERROR, "toast relation is missing for toasted attribute %d of relation %u",
 			 attribute, RelationGetRelid(rel));
 
+	tattrs.attnum = attribute + 1;
 	return toaster->toast(rel,
-						  tattrs.toasthandleroid, /* FIXME */
 						  old_value,
 						  old_value, // PointerGetDatum(attr->tai_oldexternal),
-						  attribute + 1,
 						  maxDataLen, options, &tattrs);
 }
 
@@ -278,10 +275,11 @@ toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
 		return (Datum) 0;
 
 	tattrs.attnum = attnum;
+	tattrs.toasthandleroid = new_toasterid;
 
-	return toaster->update_toast(rel, new_toasterid,
+	return toaster->update_toast(rel,
 								 new_value, old_value,
-								 options, attnum, &tattrs);
+								 options, &tattrs);
 }
 
 static Datum
@@ -298,8 +296,8 @@ toastapi_copy(Relation rel,
 
 	tattrs.attnum = attnum;
 
-	return toaster->copy_toast(rel, tattrs.toasthandleroid /* FIXME */,
-							   copy_value, 0, attnum, &tattrs);
+	return toaster->copy_toast(rel,
+							   copy_value, 0, &tattrs);
 }
 
 static void

@@ -99,7 +99,7 @@ add_toaster(PG_FUNCTION_ARGS)
 		bool		nulls[Natts_pg_toaster];
 		NameData	tsrnmdata;
 		HeapTuple	tup;
-		TsrRoutine *tsr = GetTsrRoutine(tsroid);
+		/* TsrRoutine *tsr = GetTsrRoutine(tsroid); */
 
 		memset(values, 0, sizeof(values));
 		memset(nulls, false, sizeof(nulls));
@@ -231,14 +231,13 @@ set_toaster(PG_FUNCTION_ARGS)
 		rel = get_rel_from_relname(relname, RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
 		tattrs->toaster = tsr;
+		tattrs->toasteroid = tsroid;
 
 		d = tsr->init(rel,
-					  tsroid,
 					  (Datum) 0,
 					  attnum,
 					  RowExclusiveLock,
 					  false,
-					  InvalidOid,
 					  tattrs);
 		tattrs->toastreloid = DatumGetObjectId(d);
 		table_close(rel, RowExclusiveLock);
