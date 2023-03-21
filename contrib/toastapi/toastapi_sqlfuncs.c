@@ -225,23 +225,9 @@ set_toaster(PG_FUNCTION_ARGS)
 		tattrs->toasthandleroid = atoi(DatumGetCString(d));
 
 	tsr = GetTsrRoutine(tsrhandler);
-
-	if (tsr->init) //!OidIsValid(tattrs->toastreloid))
-	{
-		rel = get_rel_from_relname(relname, RowExclusiveLock, ACL_INSERT);
-		relid = RelationGetRelid(rel);
-		tattrs->toaster = tsr;
-		tattrs->toasteroid = tsroid;
-
-		d = tsr->init(rel,
-					  (Datum) 0,
-					  attnum,
-					  RowExclusiveLock,
-					  false,
-					  tattrs);
-		tattrs->toastreloid = DatumGetObjectId(d);
-		table_close(rel, RowExclusiveLock);
-	}
+	tattrs->toaster = tsr;
+	tattrs->toasteroid = tsroid;
+	tattrs->toastreloid = DatumGetObjectId(d);
 
 	pfree(tattrs);
 

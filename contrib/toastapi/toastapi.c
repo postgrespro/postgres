@@ -77,7 +77,6 @@
 
 PG_MODULE_MAGIC;
 
-static Toastapi_init_hook_type toastapi_init_hook = NULL;
 static Toastapi_toast_hook_type toastapi_toast_hook = NULL;
 static Toastapi_detoast_hook_type toastapi_detoast_hook = NULL;
 static Toastapi_size_hook_type toastapi_size_hook = NULL;
@@ -85,59 +84,6 @@ static Toastapi_copy_hook_type toastapi_copy_hook = NULL;
 static Toastapi_update_hook_type toastapi_update_hook = NULL;
 static Toastapi_delete_hook_type toastapi_delete_hook = NULL;
 static Toastapi_vtable_hook_type toastapi_vtable_hook = NULL;
-
-static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast)
-{
-   Datum result = (Datum) 0;
-	FormData_pg_attribute *pg_attr;
-	Datum d;
-	TsrRoutine *toaster = NULL;
-	Relation rel;
-	int ntoasters = 0;
-	ToastAttributes tattrs;
-
-		rel = table_open(reloid, RowExclusiveLock);
-		pg_attr = &rel->rd_att->attrs[attnum];
-
-	if(!OidIsValid(rel->rd_rel->reltoastrelid))
-	{
-		d = attopts_get_toaster_opts(reloid, NameStr(pg_attr->attname), attnum, ATT_HANDLER_NAME);
-		if(d == (Datum) 0)
-			return (Datum) 0;
-
-		toaster = GetTsrRoutine(atoi(DatumGetCString(d)));
-		if(toaster == NULL)
-		{
-			elog(NOTICE, "No routine found");
-			return (Datum) 0;
-		}
-
-		tattrs = palloc(sizeof(ToastAttributesData));
-		tattrs->toasteroid = InvalidOid;
-		tattrs->toastreloid = InvalidOid;
-
-		tattrs->attnum = attnum;
-		tattrs->ntoasters = ntoasters;
-		tattrs->toasthandleroid = atoi(DatumGetCString(d));
-		tattrs->toaster = toaster;
-
-		if(toaster->init)
-			result = toaster->init(rel,
-									reloptions,
-									lockmode,
-									check,
-									OIDOldToast,
-									tattrs);
-
-		table_close(rel, RowExclusiveLock);
-		pfree(tattrs);
-	}
-	else
-		result = ObjectIdGetDatum(rel->rd_rel->reltoastrelid);
-
-   return result;
-}
 
 static TsrRoutine *
 get_toaster_for_attr(Relation rel, int attnum, ToastAttributes tattrs)
@@ -318,53 +264,6 @@ toastapi_delete(Relation rel,
 	toaster->deltoast(rel, del_value, is_speculative, &tattrs);
 }
 
-bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
-{
-	Datum d;
-	char str[12];
-	char *ntoasters_str;
-	int len = 0;
-	bool all_found_ind = true;
-
-/*
-	*ntoasters = 0;
-	*toasteroid = InvalidOid;
-	*toastrelid = InvalidOid;
-	*handlerid = InvalidOid;
-*/
-	str[0] = '\0';
-
-	d = attopts_get_toaster_opts(relid, "", attnum, ATT_NTOASTERS_NAME);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-	{
-		ntoasters_str = DatumGetCString(d);
-		tattrs->ntoasters = atoi(ntoasters_str);
-		// len = pg_ltoa(*ntoasters, str);
-	}
-
-	d = get_complex_att_opt(relid, ATT_HANDLER_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toasthandleroid = atoi(DatumGetCString(d));
-
-	d = get_complex_att_opt(relid, ATT_TOASTER_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toasteroid = atoi(DatumGetCString(d));
-
-	d = get_complex_att_opt(relid, ATT_TOASTREL_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toastreloid = atoi(DatumGetCString(d));
-
-	return all_found_ind;
-}
-
 static void *
 toastapi_vtable(Datum value)
 {
@@ -375,7 +274,6 @@ toastapi_vtable(Datum value)
 
 void _PG_init(void)
 {
-	toastapi_init_hook = Toastapi_init_hook;
 	toastapi_toast_hook = Toastapi_toast_hook;
 	toastapi_detoast_hook = Toastapi_detoast_hook;
 	toastapi_size_hook = Toastapi_size_hook;
@@ -384,7 +282,6 @@ void _PG_init(void)
 	toastapi_delete_hook = Toastapi_delete_hook;
 	toastapi_vtable_hook = Toastapi_vtable_hook;
 
-	Toastapi_init_hook = toastapi_init;
 	Toastapi_toast_hook = toastapi_toast;
 	Toastapi_detoast_hook = toastapi_detoast;
 	Toastapi_size_hook = toastapi_size;
@@ -396,7 +293,6 @@ void _PG_init(void)
 
 void _PG_fini(void)
 {
-	Toastapi_init_hook = toastapi_init_hook;
 	Toastapi_toast_hook = toastapi_toast_hook;
 	Toastapi_detoast_hook = toastapi_detoast_hook;
 	Toastapi_copy_hook = toastapi_copy_hook;

@@ -116,10 +116,6 @@ typedef ToastAttributesData *ToastAttributes;
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
-/* Create toast storage */
-typedef Datum (*toast_init)(Relation rel, Datum reloptions, LOCKMODE lockmode,
-						   bool check, Oid OIDOldToast, ToastAttributes tattrs);
-
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
 										   Datum value,
@@ -166,7 +162,6 @@ typedef struct TsrRoutine
 	NodeTag		type;
 
 	/* interface functions */
-	toast_init init;
 	toast_function toast;
 	update_toast_function update_toast;
 	copy_toast_function copy_toast;
@@ -185,19 +180,5 @@ extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
 extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
-
-extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
-extern bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs); // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
-
-static inline void init_tattrs(ToastAttributes tattrs)
-{
-	tattrs = palloc(sizeof(ToastAttributesData));
-	tattrs->attnum = -1;
-	tattrs->ntoasters = 0;
-	tattrs->toaster = NULL;
-	tattrs->toasteroid = InvalidOid;
-	tattrs->toasthandleroid = InvalidOid;
-	tattrs->toastreloid = InvalidOid;
-}
 
 #endif							/* TOASTAPI_H */

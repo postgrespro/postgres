@@ -61,25 +61,6 @@ do { \
 	(data).inline_tail_data = VARATT_CUSTOM_GET_DATA(attrc) + VARATT_CUSTOM_APPENDABLE_HDRSZ; \
 } while (0)
 
-static Datum
-bytea_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
-				   bool check, Oid OIDOldToast, ToastAttributes tattrs)
-{
-	Datum toastrelid = (Datum) 0;
-
-	if(tattrs->create_table_ind)
-		toastrelid = ToastCreateToastTable(rel, tattrs->toasthandleroid, reloptions, tattrs->attnum, lockmode,
-						 OIDOldToast);
-	else toastrelid = rel->rd_rel->reltoastrelid;
-
-/*
-	(void) create_toast_table(rel, toasteroid, InvalidOid, reloptions, attnum,
-							  lockmode, check, OIDOldToast, &toastrelid);
-*/
-	tattrs->toastreloid = DatumGetObjectId(toastrelid);
-	return toastrelid;
-}
-
 static bool
 bytea_toaster_validate(Oid toasteroid, Oid typeoid, char storage, char compression,
 					   Oid amoid, bool false_ok)
@@ -439,7 +420,6 @@ bytea_toaster_handler(PG_FUNCTION_ARGS)
 {
 	TsrRoutine *tsr = makeTsrNode();// makeNode(TsrRoutine);
 
-	tsr->init = bytea_toaster_init;
 	tsr->toast = bytea_toaster_toast;
 	tsr->deltoast = bytea_toaster_delete_toast;
 	tsr->copy_toast = bytea_toaster_copy_toast;
