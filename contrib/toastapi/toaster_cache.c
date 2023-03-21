@@ -81,6 +81,52 @@ out:
 	return entry->routine;
 }
 
+/*
+ * SearchTsrCache - get cached toaster routine, emits an error if toaster
+ * doesn't exist
+ */
+TsrRoutine*
+SearchTsrHandlerCache(Oid	toastHandlerOid)
+{
+	ListCell		   *lc;
+	ToasterCacheEntry  *entry;
+	MemoryContext		ctx;
+
+	if (list_length(ToasterCache) > 0)
+	{
+		/* fast path */
+		entry = (ToasterCacheEntry*)linitial(ToasterCache);
+		if (entry->toasterOid == toastHandlerOid)
+			return entry->routine;
+	}
+
+	/* didn't find in first position */
+	ctx = MemoryContextSwitchTo(CacheMemoryContext);
+
+	for_each_from(lc, ToasterCache, 0)
+	{
+		entry = (ToasterCacheEntry*)lfirst(lc);
+
+		if (entry->toasterOid == toastHandlerOid)
+		{
+			goto out;
+		}
+	}
+
+	/* did not find entry, make a new one */
+	entry = palloc(sizeof(*entry));
+
+	entry->toasterOid = toastHandlerOid;
+	entry->routine = GetTsrRoutine(toastHandlerOid);
+
+	ToasterCache = lappend(ToasterCache, entry);
+
+out:
+	MemoryContextSwitchTo(ctx);
+
+	return entry->routine;
+}
+
 static void
 reportMissingToastMethod(const char *method_name, Oid tsrhandler)
 {

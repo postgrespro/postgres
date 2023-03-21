@@ -123,7 +123,6 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 	HeapTuple	tuple,
 				newtuple;
 	Form_pg_attribute attrtuple;
-	AttrNumber	attnum;
 	bool		isnull;
 	Datum		repl_val[Natts_pg_attribute];
 	bool		repl_null[Natts_pg_attribute];
@@ -145,8 +144,7 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 
 	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
 
-	attnum = attrtuple->attnum;
-	if (attnum <= 0)
+	if (attrtuple->attnum <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
@@ -207,7 +205,6 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 	HeapTuple	tuple,
 				newtuple;
 	Form_pg_attribute attrtuple;
-	AttrNumber	attnum;
 	bool		isnull;
 	Datum		repl_val[Natts_pg_attribute];
 	bool		repl_null[Natts_pg_attribute];
@@ -227,8 +224,7 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 
 	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
 
-	attnum = attrtuple->attnum;
-	if (attnum <= 0)
+	if (attrtuple->attnum <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",

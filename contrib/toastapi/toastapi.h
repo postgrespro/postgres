@@ -178,6 +178,7 @@ typedef struct TsrRoutine
 extern TsrRoutine *GetTsrRoutine(Oid tsrhandler);
 extern TsrRoutine *GetTsrRoutineByOid(Oid tsroid, bool noerror);
 extern TsrRoutine *SearchTsrCache(Oid tsroid);
+extern TsrRoutine *SearchTsrHandlerCache(Oid tsrhandleroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 

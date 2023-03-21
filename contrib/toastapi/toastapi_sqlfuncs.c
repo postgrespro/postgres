@@ -206,32 +206,8 @@ set_toaster(PG_FUNCTION_ARGS)
 	/* Find attribute and check whether toaster is applicable to it */
 	attnum = validate_attribute(rel, attname, tsroid);
 
-<<<<<<< HEAD
-	/* Call toaster init() method */
-	tattrs = palloc(sizeof(ToastAttributesData));
-	tattrs->attnum = -1;
-	tattrs->ntoasters = 0;
-	tattrs->toaster = NULL;
-	tattrs->toasteroid = InvalidOid;
-	tattrs->toasthandleroid = InvalidOid;
-	tattrs->toastreloid = rel->rd_rel->reltoastrelid;
-	tattrs->create_table_ind = false;
-
-	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
-
-	if (d != (Datum) 0)
-		tattrs->toasthandleroid = atoi(DatumGetCString(d));
-
-	tsr = GetTsrRoutine(tsrhandler);
-	tattrs->toaster = tsr;
-	tattrs->toasteroid = tsroid;
-	tattrs->toastreloid = DatumGetObjectId(d);
-
-	pfree(tattrs);
-=======
 	/* Check toaster handler and routine */
-	(void) GetTsrRoutine(tsrhandler);
->>>>>>> f53c44f126aa8822cfa79027a2ae2c019034c01e
+	(void) SearchTsrHandlerCache(tsrhandler); // GetTsrRoutine(tsrhandler);
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);

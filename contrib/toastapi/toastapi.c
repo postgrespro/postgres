@@ -103,7 +103,7 @@ get_toaster_for_attr(Relation rel, int attnum, ToastAttributes tattrs)
 	if (!OidIsValid(tsrhandler))
 		return NULL;
 
-	toaster = GetTsrRoutine(tsrhandler);
+	toaster = SearchTsrHandlerCache(tsrhandler); //GetTsrRoutine(tsrhandler);
 
 	if (tattrs)
 	{
@@ -163,7 +163,7 @@ get_toaster_for_ptr(Datum toast_ptr, ToastAttributes tattrs)
 	/* FIXME handler oid stored instead of toaster oid */
 	toasterhandleroid = VARATT_CUSTOM_GET_TOASTERID(custom_toast_ptr);
 
-	toaster = GetTsrRoutine(toasterhandleroid);
+	toaster = SearchTsrHandlerCache(toasterhandleroid); // GetTsrRoutine(toasterhandleroid);
 
 	if (tattrs)
 	{
