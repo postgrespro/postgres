@@ -62,13 +62,13 @@ do { \
 } while (0)
 
 static Datum
-bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
+bytea_toaster_init(Relation rel, Datum reloptions, LOCKMODE lockmode,
 				   bool check, Oid OIDOldToast, ToastAttributes tattrs)
 {
 	Datum toastrelid = (Datum) 0;
 
 	if(tattrs->create_table_ind)
-		toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode,
+		toastrelid = ToastCreateToastTable(rel, tattrs->toasthandleroid, reloptions, tattrs->attnum, lockmode,
 						 OIDOldToast);
 	else toastrelid = rel->rd_rel->reltoastrelid;
 
@@ -199,7 +199,7 @@ bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative, Toas
 }
 
 static Datum
-bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int attnum, ToastAttributes tattrs)
+bytea_toaster_copy(Relation rel, Datum newval, int options, ToastAttributes tattrs)
 {
 	Datum		detoasted_newval;
 	Datum		toasted_newval;
@@ -214,32 +214,31 @@ bytea_toaster_copy(Relation rel, Oid toasterid, Datum newval, int options, int a
 		elog(NOTICE, "No TOAST rel for rel <%u>", RelationGetRelid(rel));
 	}
 	if(tattrs && OidIsValid(tattrs->toastreloid))
-		toasted_newval = toast_save_datum_ext(rel, tattrs->toastreloid, toasterid, detoasted_newval,
-										  NULL, options, attnum,
+		toasted_newval = toast_save_datum_ext(rel, tattrs->toastreloid, tattrs->toasthandleroid, detoasted_newval,
+										  NULL, options, tattrs->attnum,
 										  &version, sizeof(version));
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), toasterid)));
+				 errmsg("TOAST table OID %u is not valid for relation %u and toaster %u", toastrelid, RelationGetRelid(rel), tattrs->toasthandleroid)));
 	Assert(VARATT_IS_EXTERNAL_ONDISK(toasted_newval));
 	VARATT_EXTERNAL_GET_POINTER(toast_ptr, DatumGetPointer(toasted_newval));
 
 	pfree(DatumGetPointer(toasted_newval));
 
-	return PointerGetDatum(bytea_toaster_make_pointer(toasterid, &toast_ptr, version, 0, NULL));
+	return PointerGetDatum(bytea_toaster_make_pointer(tattrs->toasthandleroid, &toast_ptr, version, 0, NULL));
 }
 
 static Datum
-bytea_toaster_toast(Relation rel, Oid toasterid,
+bytea_toaster_toast(Relation rel,
 					Datum newval, Datum oldval,
-					int attnum, int max_inline_size, int options, ToastAttributes tattrs)
+					int max_inline_size, int options, ToastAttributes tattrs)
 {
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
+	return (Datum)(bytea_toaster_copy(rel, newval, options, tattrs));
 }
 
 static Datum
-bytea_toaster_update_toast(Relation rel, Oid toasterid,
-						   Datum newval, Datum oldval, int options, int attnum, ToastAttributes tattrs)
+bytea_toaster_update_toast(Relation rel, Datum newval, Datum oldval, int options, ToastAttributes tattrs)
 {
 	bool		is_speculative = false; /* (options & HEAP_INSERT_SPECULATIVE) != 0 XXX */
 
@@ -279,7 +278,7 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 
 			VARATT_EXTERNAL_SET_SIZE_AND_COMPRESS_METHOD(toast_ptr, toasted_size + new_data.inline_tail_size, 0);
 
-			return PointerGetDatum(bytea_toaster_make_pointer(toasterid, &toast_ptr, version, 0, NULL));
+			return PointerGetDatum(bytea_toaster_make_pointer(tattrs->toasthandleroid, &toast_ptr, version, 0, NULL));
 		}
 	}
 
@@ -288,14 +287,14 @@ bytea_toaster_update_toast(Relation rel, Oid toasterid,
 	else if (VARATT_IS_EXTERNAL_ONDISK(oldval))
 		toast_delete_datum(rel, oldval, is_speculative);
 
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
+	return (Datum)(bytea_toaster_copy(rel, newval, options, tattrs));
 }
 
 static Datum
-bytea_toaster_copy_toast(Relation rel, Oid toasterid,
-						 Datum newval, int options, int attnum, ToastAttributes tattrs)
+bytea_toaster_copy_toast(Relation rel,
+						 Datum newval, int options, ToastAttributes tattrs)
 {
-	return (Datum)(bytea_toaster_copy(rel, toasterid, newval, options, attnum, tattrs));
+	return (Datum)(bytea_toaster_copy(rel, newval, options, tattrs));
 }
 
 static Datum
