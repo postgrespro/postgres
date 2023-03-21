@@ -179,9 +179,7 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 	else
 		o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
 
-	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
-									 o_list, NULL, NULL, false,
-									 false);
+	opts = transformRelOptions((Datum) 0, o_list, NULL, NULL, false, false);
 
 	if (opts != (Datum) 0)
 		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
