@@ -243,7 +243,6 @@ validateToaster(Oid toasteroid, Oid typeoid,
 	if (tsrroutine == NULL)
 		return false;
 
-#if 0 /* XXX teodor: commented out while there is no actual toaster */
 	/* should not happen */
 	if (tsrroutine->toastervalidate == NULL)
 		elog(ERROR, "function toastervalidate is not defined for toaster %s",
@@ -251,7 +250,6 @@ validateToaster(Oid toasteroid, Oid typeoid,
 
 	result = tsrroutine->toastervalidate(typeoid, storage, compression,
 										 amoid, false_ok);
-#endif
 
 	pfree(tsrroutine);
 

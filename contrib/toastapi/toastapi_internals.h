@@ -40,5 +40,6 @@ extern Oid lookup_toaster_handler_func(List *handler_name);
 extern void create_pg_toaster(void);
 
 extern Oid get_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler);
+extern char *get_toaster_name(Oid tsroid);
 
 #endif							/* TOASTAPIINT_H */

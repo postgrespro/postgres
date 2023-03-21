@@ -463,3 +463,31 @@ get_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandle
 
 	return tsroid;
 }
+
+char *
+get_toaster_name(Oid tsroid)
+{
+	SysScanDesc scan;
+	HeapTuple	tup;
+	char	   *tsrname = NULL;
+	Relation	pg_toaster_rel =
+		get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
+
+	scan = systable_beginscan(pg_toaster_rel, InvalidOid, false, NULL, 0, NULL);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_toaster tsr = (Form_pg_toaster) GETSTRUCT(tup);
+
+		if (tsr->oid == tsroid)
+		{
+			tsrname = pstrdup(NameStr(tsr->tsrname));
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(pg_toaster_rel, AccessShareLock);
+
+	return tsrname;
+}
