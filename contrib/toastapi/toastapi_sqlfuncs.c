@@ -230,7 +230,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	if (len <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Invalid handler OID \"%u\"",
+				 errmsg("invalid handler OID \"%u\"",
 						tsrhandler)));
 
 	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
@@ -239,7 +239,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	if (len <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Invalid Toaster OID \"%u\"",
+				 errmsg("invalid toaster OID \"%u\"",
 						tsroid)));
 
 	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
