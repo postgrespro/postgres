@@ -401,7 +401,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 	SysScanDesc scan;
 	HeapTuple	tup = NULL;
 	HeapTuple	tsrtup;
-	uint32      total_entries = 0;
 	char s_tsrid[12];
 	int len = 0;
 
@@ -417,21 +416,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 				 errhint("Must be superuser to drop a toaster.")));
 
 	rel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), RowExclusiveLock, ACL_INSERT);
-
-	scan = systable_beginscan(rel, InvalidOid, false,
-							  NULL, 0, NULL);
-
-	while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
-	{
-		total_entries++;
-		if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
-		{
-			tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
-			break;
-		}
-	}
-
-	systable_endscan(scan);
+	tsroid = get_toaster_by_name(rel, tsrname, NULL);
 	table_close(rel, RowExclusiveLock);
 
 	if (!OidIsValid(tsroid))
@@ -470,7 +455,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 					break;
 				}
 			}
-			total_entries++;
 		}
 		systable_endscan(scan);
 		table_close(attrelation, RowExclusiveLock);
@@ -487,7 +471,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 		tsroid = InvalidOid;
 		while (HeapTupleIsValid(tsrtup = systable_getnext(scan)))
 		{
-			total_entries++;
 			if(strcmp(NameStr(((Form_pg_toaster) GETSTRUCT(tsrtup))->tsrname), tsrname) == 0)
 			{
 				tsroid = ((Form_pg_toaster) GETSTRUCT(tsrtup))->oid;
