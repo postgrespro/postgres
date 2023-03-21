@@ -223,8 +223,8 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	if (!OidIsValid(tattrs->toastreloid))
 	{
-		TsrRoutine *tsr;
-		tsr = GetTsrRoutine(tsrhandler);
+		TsrRoutine *tsr = GetTsrRoutine(tsrhandler);
+
 		rel = get_rel_from_relname(cstring_to_text(relname), RowExclusiveLock, ACL_INSERT);
 		relid = RelationGetRelid(rel);
 		tattrs->toaster = tsr;
@@ -303,13 +303,14 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	Relation	tsrrel;
 	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
-   Oid relid = InvalidOid;
+	Oid			relid = InvalidOid;
 	SysScanDesc scan;
-	Datum d = (Datum) 0;
-   Oid tsroid = InvalidOid;
+	uint32		total_entries = 0;
+	Datum		d = (Datum) 0;
+	Oid			tsroid = InvalidOid;
 	HeapTuple	tsrtup;
 	AttrNumber	attnum;
-	char *tsrname = "";
+	char	   *tsrname = "";
 
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
@@ -352,15 +353,15 @@ drop_toaster(PG_FUNCTION_ARGS)
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	Relation	attrelation;
 	Relation	rel;
-	Datum o_datum;
-	int l_idx = 0;
+	Datum		o_datum;
+	int			l_idx = 0;
 	Oid			tsroid = InvalidOid;
 	bool		found = false;
 	SysScanDesc scan;
 	HeapTuple	tup = NULL;
 	HeapTuple	tsrtup;
-	char s_tsrid[12];
-	int len = 0;
+	char		s_tsrid[12];
+	int			len = 0;
 
 	/* Must be superuser */
 	if (!superuser())
