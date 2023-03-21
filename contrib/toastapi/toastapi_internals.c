@@ -216,8 +216,6 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 	bool		repl_repl[Natts_pg_attribute];
 	Datum opts, o_datum;
 	List *o_list;
-	ListCell *cell;
-	int l_idx = 0;
 	Datum res = (Datum) 0;
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
@@ -240,27 +238,13 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
 							&isnull);
 
-	o_list = untransformRelOptions(o_datum);
+	o_list = list_make1(makeDefElem(optname, NULL, -1));
+
+	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
+							   o_list, NULL, NULL, false, true);
 
 	memset(repl_null, false, sizeof(repl_null));
 	memset(repl_repl, false, sizeof(repl_repl));
-
-	l_idx = 0;
-
-	foreach(cell, o_list)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-		if (strcmp(def->defname, optname) == 0)
-		{
-			o_list = list_delete_nth_cell(o_list, l_idx);
-			break;
-		}
-		else l_idx++;
-	}
-
-	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
-									 o_list, NULL, NULL, false,
-									 false);
 
 	if (opts != (Datum) 0)
 		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
