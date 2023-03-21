@@ -141,70 +141,60 @@ static Datum toastapi_init (Oid reloid, Datum reloptions, int attnum, LOCKMODE l
    return result;
 }
 
-static Datum toastapi_toast (ToastTupleContext *ttc, int attribute, int maxDataLen,
-						int options)
+static TsrRoutine *
+get_toaster_for_attr(Relation rel, int attnum, ToastAttributes tattrs)
 {
-   Datum result = (Datum) 0;
-	Datum	   *value = &ttc->ttc_values[attribute];
-	Datum		old_value = *value;
-	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
-	Datum d;
-	Relation rel;
-	TsrRoutine *toaster = NULL;
-	Oid tsrhandler = InvalidOid;
-	ToastAttributes tattrs;
+	TsrRoutine *toaster;
+	Datum		tsrhandler_str;
+	Oid			tsrhandler;
 
-	result = *value;
-	rel = table_open(RelationGetRelid(ttc->ttc_rel), RowExclusiveLock);
+	tsrhandler_str = attopts_get_toaster_opts(RelationGetRelid(rel), "",
+											  attnum, ATT_HANDLER_NAME);
 
-	d = attopts_get_toaster_opts(RelationGetRelid(ttc->ttc_rel), "", attribute+1, ATT_HANDLER_NAME);
+	if (tsrhandler_str == (Datum) 0)
+		return NULL;
 
-	if(d == (Datum) 0)
+	tsrhandler = atoi(DatumGetCString(tsrhandler_str));
+
+	if (!OidIsValid(tsrhandler))
+		return NULL;
+
+	toaster = GetTsrRoutine(tsrhandler);
+
+	if (tattrs)
 	{
-		result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
-			options);
-
-		table_close(rel, RowExclusiveLock);
-		return result;
-	}
-	else
-	{
-		tsrhandler = atoi(DatumGetCString(d));
-		if(OidIsValid(tsrhandler))
-			toaster = GetTsrRoutine(tsrhandler);
-		else
-		{
-			result = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal, options);
-			table_close(rel, RowExclusiveLock);
-			return result;
-		}
-	}
-	table_close(rel, RowExclusiveLock);
-
-	if(!OidIsValid(rel->rd_rel->reltoastrelid))
-	{
-		toastapi_init(RelationGetRelid(ttc->ttc_rel), (Datum) 0, attribute+1, RowExclusiveLock, false, InvalidOid);
-	}
-	if(toaster != NULL)
-	{
-		tattrs = palloc(sizeof(ToastAttributesData));
 		tattrs->toasteroid = InvalidOid;
-
-		tattrs->attnum = attribute;
+		tattrs->attnum = attnum;
 		tattrs->toasthandleroid = tsrhandler;
 		tattrs->toaster = toaster;
 		tattrs->toastreloid = rel->rd_rel->reltoastrelid;
-
-		result = toaster->toast(ttc->ttc_rel,
-										tsrhandler,
-										old_value,
-										old_value, // PointerGetDatum(attr->tai_oldexternal),
-										attribute+1,
-										maxDataLen, options, tattrs);
-		pfree(tattrs);
 	}
 
-	return result;
+	return toaster;
+}
+
+static Datum
+toastapi_toast(ToastTupleContext *ttc, int attribute, int maxDataLen,
+			   int options)
+{
+	Relation	rel = ttc->ttc_rel;
+	Datum		old_value = ttc->ttc_values[attribute];
+	ToastAttributesData tattrs;
+	TsrRoutine *toaster = get_toaster_for_attr(rel, attribute + 1, &tattrs);
+
+	if (!toaster)
+		return (Datum) 0;
+
+	if (!OidIsValid(rel->rd_rel->reltoastrelid))
+		elog(ERROR, "toast relation is missing for toasted attribute %d of relation %u",
+			 attribute, RelationGetRelid(rel));
+
+	return toaster->toast(rel,
+						  tattrs.toasthandleroid, /* FIXME */
+						  old_value,
+						  old_value, // PointerGetDatum(attr->tai_oldexternal),
+						  attribute + 1,
+						  maxDataLen, options, &tattrs);
 }
 
 static Size toastapi_size (uint8 tag, const void *ptr)
