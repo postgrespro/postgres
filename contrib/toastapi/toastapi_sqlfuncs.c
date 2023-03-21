@@ -383,12 +383,13 @@ drop_toaster(PG_FUNCTION_ARGS)
 			foreach(cell, o_list)
 			{
 				DefElem    *def = (DefElem *) lfirst(cell);
+				char	   *str;
 
-				char *str;
 				l_idx++;
 				str = defGetString(def);
 
-				if(str && strcmp(s_tsrid, str) == 0)
+				if (!strcmp(def->defname, ATT_TOASTER_NAME) &&
+					str && !strcmp(s_tsrid, str))
 				{
 					found = true;
 					break;
