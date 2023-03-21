@@ -67,8 +67,10 @@ bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, L
 {
 	Datum toastrelid = (Datum) 0;
 
-	toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode,
+	if(tattrs->create_table_ind)
+		toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode,
 						 OIDOldToast);
+	else toastrelid = rel->rd_rel->reltoastrelid;
 
 /*
 	(void) create_toast_table(rel, toasteroid, InvalidOid, reloptions, attnum,
@@ -79,7 +81,7 @@ bytea_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum, L
 }
 
 static bool
-bytea_toaster_validate(Oid typeoid, char storage, char compression,
+bytea_toaster_validate(Oid toasteroid, Oid typeoid, char storage, char compression,
 					   Oid amoid, bool false_ok)
 
 {
