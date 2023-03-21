@@ -152,10 +152,12 @@ set_toaster(PG_FUNCTION_ARGS)
 						tsrname),
 				 errhint("Must be superuser to create a toaster.")));
 
+	/* Get relation oid by name */
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
+	/* Get toaster id by name */
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
 	tsroid = get_toaster_by_name(tsrrel, tsrname, &tsrhandler);
 	table_close(tsrrel, AccessShareLock);
@@ -167,6 +169,7 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	Assert(OidIsValid(tsrhandler));
 
+	/* Find attribute and check whether toaster is applicable to it */
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 	tuple = SearchSysCacheAttName(relid, attname);
 
@@ -189,6 +192,7 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	ReleaseSysCache(tuple);
 
+	/* Call toaster init() method */
 	tattrs = palloc(sizeof(ToastAttributesData));
 	tattrs->attnum = -1;
 	tattrs->ntoasters = 0;
