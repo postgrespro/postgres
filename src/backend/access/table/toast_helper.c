@@ -59,7 +59,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
 		struct varlena *old_value;
 		struct varlena *new_value;
-		bool	need_detoast = true;
+		bool		need_detoast = true;
 
 		ttc->ttc_attr[i].tai_colflags = 0;
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
@@ -149,10 +149,11 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * For INSERT simply get the new value
 			 */
 			new_value = (struct varlena *) DatumGetPointer(ttc->ttc_values[i]);
-			if (att->attstorage == TYPSTORAGE_EXTERNAL
-					&& !ttc->ttc_isnull[i] &&
-					VARATT_IS_CUSTOM(new_value)
-					&& Toastapi_copy_hook)
+
+			if (att->attstorage == TYPSTORAGE_EXTERNAL &&
+				!ttc->ttc_isnull[i] &&
+				VARATT_IS_CUSTOM(new_value) &&
+				Toastapi_copy_hook)
 			{
 
 				struct varlena *new_val =
@@ -422,9 +423,11 @@ toast_delete_external(Relation rel, Datum *values, bool *isnull,
 
 			if (isnull[i])
 				continue;
-			if(VARATT_IS_CUSTOM(value))
+
+			if (VARATT_IS_CUSTOM(value))
 			{
-				if(Toastapi_delete_hook) Toastapi_delete_hook(rel, value, is_speculative, i);
+				if (Toastapi_delete_hook)
+					Toastapi_delete_hook(rel, value, is_speculative, i);
 			}
 			else if (VARATT_IS_EXTERNAL_ONDISK(value))
 				toast_delete_datum(rel, value, is_speculative);
