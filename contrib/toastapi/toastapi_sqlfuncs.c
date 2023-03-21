@@ -174,13 +174,10 @@ set_toaster(PG_FUNCTION_ARGS)
 	Oid			relid = InvalidOid;
 	Oid			tsroid = InvalidOid;
 	Oid			tsrhandler = InvalidOid;
-	Datum		d = (Datum) 0;
 	char		str[12];
 	char		nstr[12];
-	ToastAttributes tattrs;
 	int			len = 0;
-	AttrNumber	attnum;
-	TsrRoutine *tsr = NULL;
+	int			attnum pg_attribute_unused();
 
 	if (!superuser())
 		ereport(ERROR,
@@ -209,6 +206,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	/* Find attribute and check whether toaster is applicable to it */
 	attnum = validate_attribute(rel, attname, tsroid);
 
+<<<<<<< HEAD
 	/* Call toaster init() method */
 	tattrs = palloc(sizeof(ToastAttributesData));
 	tattrs->attnum = -1;
@@ -230,6 +228,10 @@ set_toaster(PG_FUNCTION_ARGS)
 	tattrs->toastreloid = DatumGetObjectId(d);
 
 	pfree(tattrs);
+=======
+	/* Check toaster handler and routine */
+	(void) GetTsrRoutine(tsrhandler);
+>>>>>>> f53c44f126aa8822cfa79027a2ae2c019034c01e
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);
@@ -239,7 +241,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid handler OID \"%u\"",
 						tsrhandler)));
 
-	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
+	(void) attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
 
 	len = pg_ltoa(tsroid, nstr);
 	if (len <= 0)
@@ -248,7 +250,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid toaster OID \"%u\"",
 						tsroid)));
 
-	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
+	(void) attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
 
 	PG_RETURN_OID(tsroid);
 }
