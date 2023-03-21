@@ -19,7 +19,6 @@
 #define PG_TOASTER_H
 
 #include "postgres.h"
-#include "utils/relcache.h"
 
 #define Anum_pg_toaster_oid 1
 #define Anum_pg_toaster_tsrname 2

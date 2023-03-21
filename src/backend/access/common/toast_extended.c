@@ -12,23 +12,16 @@
  */
 
 #include "postgres.h"
-#include "varatt.h"
 #include "access/detoast.h"
-
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
-#include "access/table.h"
 #include "access/toast_internals.h"
 #include "access/toast_extended.h"
-#include "catalog/toasting.h"
-#include "access/xact.h"
 #include "catalog/catalog.h"
-#include "common/pg_lzcompress.h"
 #include "miscadmin.h"
 #include "utils/fmgroids.h"
-#include "utils/rel.h"
-#include "utils/snapmgr.h"
+#include "varatt.h"
 
 static void
 toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,

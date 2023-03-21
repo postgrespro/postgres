@@ -12,12 +12,14 @@
  */
 
 #include "postgres.h"
-#include "varatt.h"
+
+#include "access/toast_compression.h"
 #include "fmgr.h"
+#include "catalog/pg_type.h"
+#include "utils/builtins.h"
+
 #include "toastapi.h"
 #include "toastapi_internals.h"
-#include "access/toast_helper.h"
-#include "utils/builtins.h"
 
 static bool
 dummy_toaster_validate(Oid toasteroid, Oid typeoid,

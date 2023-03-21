@@ -12,16 +12,10 @@
 #ifndef TOAST_EXTENDED_H
 #define TOAST_EXTENDED_H
 
-#include "access/toast_internals.h"
-#include "access/toast_compression.h"
-#include "storage/lockdefs.h"
-#include "utils/relcache.h"
-#include "utils/snapshot.h"
+#include "postgres.h"
+
 #include "utils/rel.h"
-#include "access/table.h"
-#include "common/int.h"
-#include "common/pg_lzcompress.h"
-#include "utils/expandeddatum.h"
+#include "storage/itemptr.h"
 
 typedef bool (*ToastChunkVisibilityCheck)(void *cxt, char **chunkdata,
 										  int32 *chunksize,

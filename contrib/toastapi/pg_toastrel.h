@@ -19,7 +19,6 @@
 #define PG_TOASTREL_H
 
 #include "postgres.h"
-#include "utils/relcache.h"
 
 #define ToastrelRelationId 9881
 #define ToastrelOidIndexId 9882
