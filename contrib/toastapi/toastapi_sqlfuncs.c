@@ -14,7 +14,6 @@
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/reloptions.h"
-#include "access/attoptions.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "miscadmin.h"

@@ -25,7 +25,6 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "access/relation.h"
-#include "access/attoptions.h"
 #include "access/genam.h"
 #include "toastapi.h"
 

@@ -27,7 +27,6 @@
 #include "access/genam.h"
 #include "access/table.h"
 #include "access/reloptions.h"
-#include "access/attoptions.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
 #include "utils/lsyscache.h"
