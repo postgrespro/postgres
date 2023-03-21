@@ -35,4 +35,18 @@ SELECT drop_toaster('bar');
 SELECT drop_toaster('foo') = :foo_toaster_oid;
 SELECT drop_toaster('foo');
 
+
+CREATE TABLE tab (id int, jb jsonb, b_comp bytea, b_uncomp bytea STORAGE external);
+
+-- set_toaster()
+SELECT set_toaster('', '', '');
+SELECT set_toaster('foo', 'bar', 'baz');
+SELECT set_toaster('foo', 'tab', 'baz');
+SELECT set_toaster('dummy', 'tab', 'bar');
+SELECT set_toaster('dummy', 'tab', 'id');
+SELECT set_toaster('dummy', 'tab', 'jb');
+SELECT set_toaster('dummy', 'tab', 'b_uncomp');
+SELECT set_toaster('dummy', 'tab', 'b_comp') = :dummy_toaster_oid;
+
+
 DROP EXTENSION toastapi;

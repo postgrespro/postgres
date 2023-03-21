@@ -97,4 +97,26 @@ SELECT drop_toaster('foo');
              
 (1 row)
 
+CREATE TABLE tab (id int, jb jsonb, b_comp bytea, b_uncomp bytea STORAGE external);
+-- set_toaster()
+SELECT set_toaster('', '', '');
+ERROR:  invalid name syntax
+SELECT set_toaster('foo', 'bar', 'baz');
+ERROR:  relation "bar" does not exist
+SELECT set_toaster('foo', 'tab', 'baz');
+ERROR:  cannot find toaster with name "foo"
+SELECT set_toaster('dummy', 'tab', 'bar');
+ERROR:  column "bar" of relation "tab" does not exist
+SELECT set_toaster('dummy', 'tab', 'id');
+ERROR:  data type integer can not be toasted
+SELECT set_toaster('dummy', 'tab', 'jb');
+ERROR:  toaster "dummy" does not support type jsonb
+SELECT set_toaster('dummy', 'tab', 'b_uncomp');
+ERROR:  toaster "dummy" supports only STORAGE EXTENDED
+SELECT set_toaster('dummy', 'tab', 'b_comp') = :dummy_toaster_oid;
+ ?column? 
+----------
+ t
+(1 row)
+
 DROP EXTENSION toastapi;
