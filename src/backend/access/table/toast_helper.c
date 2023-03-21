@@ -113,13 +113,13 @@ toast_tuple_init(ToastTupleContext *ttc)
 				else if (Toastapi_update_hook &&
 						 VARATT_IS_CUSTOM(old_value) &&
 						 VARATT_IS_CUSTOM(new_value) &&
-						 Toastapi_update_hook(ttc->ttc_rel, i,
-											  ttc->ttc_values[i],
-											  ttc->ttc_oldvalues[i],
-											  false /* speculative */,
-											  &new_value_after_update))
+						 (new_value_after_update =
+						  Toastapi_update_hook(ttc->ttc_rel, i,
+											   ttc->ttc_values[i],
+											   ttc->ttc_oldvalues[i],
+											   false /* FIXME speculative */)) != (Datum) 0)
 				{
-					if (new_value_after_update != (Datum) 0)
+					if (new_value_after_update != ttc->ttc_values[i])
 					{
 						if (ttc->ttc_attr[i].tai_colflags & TOASTCOL_NEEDS_FREE)
 							pfree(DatumGetPointer(ttc->ttc_values[i]));

@@ -26,12 +26,11 @@ typedef Datum (*Toastapi_init_hook_type) (Oid, Datum, LOCKMODE, int,
 						   bool, Oid);
 typedef Datum (*Toastapi_toast_hook_type) (ToastTupleContext *, int, int,
 						int);
-typedef bool (*Toastapi_update_hook_type) (Relation,
-												  int,
-												  Datum,
-												  Datum,
-												  int,
-												  Datum *p_new_value);
+typedef Datum (*Toastapi_update_hook_type) (Relation rel,
+											int attnum,
+											Datum new_value,
+											Datum old_value,
+											int options);
 
 typedef Datum (*Toastapi_copy_hook_type) (Relation,
 												Datum,

@@ -253,9 +253,9 @@ static Datum toastapi_detoast (Oid relid, Datum toast_ptr,
    return result;
 }
 
-static bool
+static Datum
 toastapi_update(Relation rel, int options, Datum new_value, Datum old_value,
-				int attnum, Datum *p_result_new_value)
+				int attnum)
 {
 	struct varlena *new_val = (struct varlena *) DatumGetPointer(new_value);
 	struct varlena *old_val = (struct varlena *) DatumGetPointer(old_value);
