@@ -122,6 +122,44 @@ add_toaster(PG_FUNCTION_ARGS)
 	PG_RETURN_OID(ex_tsroid);
 }
 
+static int
+validate_attribute(Relation rel, char *attname, Oid toasterid)
+{
+	Oid			relid = RelationGetRelid(rel);
+	Relation	attrel;
+	HeapTuple	tuple;
+	Form_pg_attribute att;
+	AttrNumber	attnum;
+
+	attrel = table_open(AttributeRelationId, AccessShareLock);
+	tuple = SearchSysCacheAttName(relid, attname);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("column \"%s\" of relation \"%s\" does not exist",
+						attname, RelationGetRelationName(rel))));
+
+	att = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attnum = att->attnum;
+	if (attnum <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter system column \"%s\"",
+						attname)));
+
+	/* validate toaster, if needed */
+	if (OidIsValid(toasterid))
+		validateToaster(toasterid, att->atttypid, att->attstorage,
+						att->attcompression, rel->rd_rel->relam, false);
+
+	ReleaseSysCache(tuple);
+	table_close(attrel, AccessShareLock);
+
+	return attnum;
+}
+
 PG_FUNCTION_INFO_V1(set_toaster);
 
 Datum
@@ -129,7 +167,6 @@ set_toaster(PG_FUNCTION_ARGS)
 {
 	Relation	rel;
 	Relation	tsrrel;
-	Relation	attrelation;
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
@@ -137,13 +174,11 @@ set_toaster(PG_FUNCTION_ARGS)
 	Oid			tsroid = InvalidOid;
 	Oid			tsrhandler = InvalidOid;
 	Datum		d = (Datum) 0;
-	HeapTuple	tuple;
-	Form_pg_attribute attrtuple;
-	AttrNumber	attnum;
 	char		str[12];
 	char		nstr[12];
 	ToastAttributes tattrs;
 	int			len = 0;
+	AttrNumber	attnum;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -170,27 +205,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	Assert(OidIsValid(tsrhandler));
 
 	/* Find attribute and check whether toaster is applicable to it */
-	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
-	tuple = SearchSysCacheAttName(relid, attname);
-
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(rel))));
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
-
-	attnum = attrtuple->attnum;
-	if (attnum <= 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot alter system column \"%s\"",
-						attname)));
-
-	validateToaster(tsroid, attrtuple->atttypid, attrtuple->attstorage,
-					attrtuple->attcompression, rel->rd_rel->relam, false);
-
-	ReleaseSysCache(tuple);
+	attnum = validate_attribute(rel, attname, tsroid);
 
 	/* Call toaster init() method */
 	tattrs = palloc(sizeof(ToastAttributesData));
@@ -227,7 +242,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	}
 
 	pfree(tattrs);
-	table_close(attrelation, RowExclusiveLock);
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);
@@ -256,14 +270,10 @@ PG_FUNCTION_INFO_V1(reset_toaster);
 Datum
 reset_toaster(PG_FUNCTION_ARGS)
 {
-	Relation	rel;
-	Relation	attrelation;
 	char	   *relname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
-	Oid			relid = InvalidOid;
-	HeapTuple	tuple;
-	Form_pg_attribute attrtuple;
-	AttrNumber	attnum;
+	Relation	rel;
+	Oid			relid;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -274,27 +284,10 @@ reset_toaster(PG_FUNCTION_ARGS)
 
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
+
+	(void) validate_attribute(rel, attname, InvalidOid);
+
 	table_close(rel, AccessShareLock);
-
-	attrelation = table_open(AttributeRelationId, AccessShareLock);
-	tuple = SearchSysCacheAttName(relid, attname);
-
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(rel))));
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
-
-	attnum = attrtuple->attnum;
-	if (attnum <= 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot alter system column \"%s\"",
-						attname)));
-
-	ReleaseSysCache(tuple);
-	table_close(attrelation, AccessShareLock);
 
 	attopts_clear_toaster_opts(relid, attname, ATT_TOASTER_NAME);
 	attopts_clear_toaster_opts(relid, attname, ATT_HANDLER_NAME);
@@ -312,13 +305,9 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
    Oid relid = InvalidOid;
 	SysScanDesc scan;
-	uint32 total_entries = 0;
 	Datum d = (Datum) 0;
-	Relation attrelation;
    Oid tsroid = InvalidOid;
-	HeapTuple	tuple,
-				tsrtup;
-	Form_pg_attribute attrtuple;
+	HeapTuple	tsrtup;
 	AttrNumber	attnum;
 	char *tsrname = "";
 
@@ -326,25 +315,7 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	relid = RelationGetRelid(rel);
 	table_close(rel, AccessShareLock);
 
-	attrelation = table_open(AttributeRelationId, AccessShareLock);
-	tuple = SearchSysCacheAttName(relid, attname);
-
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(rel))));
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
-
-	attnum = attrtuple->attnum;
-	ReleaseSysCache(tuple);
-	table_close(attrelation, AccessShareLock);
-
-	if (attnum <= 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot alter system column \"%s\"",
-						attname)));
+	attnum = validate_attribute(rel, attname, InvalidOid);
 
 	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTER_NAME);
 	if(d != (Datum) 0)
