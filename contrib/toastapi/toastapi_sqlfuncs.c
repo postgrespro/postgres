@@ -359,7 +359,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 	table_close(rel, RowExclusiveLock);
 
 	if (!OidIsValid(tsroid))
-		PG_RETURN_OID(InvalidOid);
+		PG_RETURN_NULL();
 
 	len = pg_ltoa(tsroid, s_tsrid);
 	found = false;
@@ -424,5 +424,8 @@ drop_toaster(PG_FUNCTION_ARGS)
 		table_close(rel, RowExclusiveLock);
 	}
 
-	PG_RETURN_OID(tsroid);
+	if (OidIsValid(tsroid))
+		PG_RETURN_OID(tsroid);
+	else
+		PG_RETURN_NULL();
 }
