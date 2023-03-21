@@ -342,15 +342,14 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int maxDataLen, i
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
-	if(Toastapi_toast_hook)
+
+	if (!Toastapi_toast_hook ||
+		(*value = Toastapi_toast_hook(ttc, attribute, maxDataLen, options)) == (Datum) 0)
 	{
-		*value = Toastapi_toast_hook(ttc, attribute, maxDataLen, options);
+		*value = toast_save_datum(ttc->ttc_rel, old_value,
+								  attr->tai_oldexternal, options);
 	}
-	else
-	{
-		*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
-			options);
-	}
+
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)
 		pfree(DatumGetPointer(old_value));
 	attr->tai_colflags |= TOASTCOL_NEEDS_FREE;
