@@ -26,11 +26,9 @@ CREATE TABLE tst2 (
 );
 --ALTER TABLE tst2 ALTER COLUMN t SET TOASTER bytea_toaster;
 SELECT test_set_toaster('bytea_toaster', 'tst2', 't');
- test_set_toaster 
-------------------
- 
-(1 row)
-
+ERROR:  "bytea_toaster" supports only type "bytea" and uncompressed storage
+CONTEXT:  SQL statement "SELECT set_toaster(tab, col, tsr)"
+PL/pgSQL function test_set_toaster(text,text,text) line 3 at PERFORM
 CREATE TABLE test_bytea_append (id int, a bytea STORAGE EXTERNAL);
 --ALTER TABLE test_bytea_append ALTER a SET TOASTER bytea_toaster;
 SELECT test_set_toaster('bytea_toaster', 'test_bytea_append', 'a');

@@ -85,9 +85,18 @@ bytea_toaster_validate(Oid toasteroid, Oid typeoid, char storage, char compressi
 					   Oid amoid, bool false_ok)
 
 {
-	return typeoid == BYTEAOID &&
-		storage == TYPSTORAGE_EXTERNAL &&
-		compression == TOAST_INVALID_COMPRESSION_ID;
+	if (typeoid == BYTEAOID &&
+		storage == TYPSTORAGE_EXTERNAL
+		/* && compression == TOAST_INVALID_COMPRESSION_ID */)
+		return true;
+
+	if (!false_ok)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("\"%s\" supports only type \"%s\" and uncompressed storage",
+						"bytea_toaster", "bytea")));
+
+	return false;
 }
 
 static struct varlena *
