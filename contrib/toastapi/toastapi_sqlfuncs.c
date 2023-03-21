@@ -145,13 +145,6 @@ set_toaster(PG_FUNCTION_ARGS)
 	ToastAttributes tattrs;
 	int			len = 0;
 
-	if (strlen(tsrname) == 0)
-		PG_RETURN_NULL();
-	if (strlen(relname) == 0)
-		PG_RETURN_NULL();
-	if (strlen(attname) == 0)
-		PG_RETURN_NULL();
-
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -268,11 +261,6 @@ reset_toaster(PG_FUNCTION_ARGS)
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
 
-	if(strlen(relname) == 0)
-		PG_RETURN_NULL();
-	if(strlen(attname) == 0)
-		PG_RETURN_NULL();
-
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -329,11 +317,6 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	Form_pg_attribute attrtuple;
 	AttrNumber	attnum;
 	char *tsrname = "";
-
-	if(strlen(relname) == 0)
-		PG_RETURN_NULL();
-	if(strlen(attname) == 0)
-		PG_RETURN_NULL();
 
 	rel = get_rel_from_relname(cstring_to_text(relname), AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
@@ -403,9 +386,6 @@ drop_toaster(PG_FUNCTION_ARGS)
 	HeapTuple	tsrtup;
 	char s_tsrid[12];
 	int len = 0;
-
-	if(tsrname == NULL || strlen(tsrname) == 0)
-		PG_RETURN_NULL();
 
 	/* Must be superuser */
 	if (!superuser())
