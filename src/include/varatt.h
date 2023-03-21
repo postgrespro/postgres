@@ -109,7 +109,7 @@ extern PGDLLIMPORT Toastapi_size_hook_type Toastapi_size_hook;
 	to be toasted or de-toasted, so keep it until better solution
 */
 #define VARTAG_SIZE(tag, ptr) \
-	 ((tag) == VARTAG_CUSTOM ? ((Toastapi_size_hook) != NULL ? (*Toastapi_size_hook)((tag), (const void *)(ptr)) : 0) : \
+	 ((tag) == VARTAG_CUSTOM ? ((Toastapi_size_hook) != NULL ? (*Toastapi_size_hook)((tag), (const void *)(ptr)) : (AssertMacro(false), 0)) : \
 	 (tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
