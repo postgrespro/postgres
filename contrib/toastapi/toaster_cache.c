@@ -248,10 +248,13 @@ validateToaster(Oid toasteroid, Oid typeoid,
 		elog(ERROR, "function toastervalidate is not defined for toaster %s",
 			 get_toaster_name(toasteroid));
 
-	result = tsrroutine->toastervalidate(typeoid, storage, compression,
+	result = tsrroutine->toastervalidate(toasteroid, typeoid,
+										 storage, compression,
 										 amoid, false_ok);
 
 	pfree(tsrroutine);
+
+	Assert(result || false_ok);
 
 	return result;
 }

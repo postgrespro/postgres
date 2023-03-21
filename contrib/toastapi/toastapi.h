@@ -156,7 +156,7 @@ typedef void (*del_toast_function) (Relation rel,Datum value, bool is_speculativ
 typedef void * (*get_vtable_function) (Datum toast_ptr);
 
 /* validate definition of a toaster Oid */
-typedef bool (*toastervalidate_function) (Oid typeoid,
+typedef bool (*toastervalidate_function) (Oid toasteroid, Oid typeoid,
 										  char storage, char compression,
 										  Oid amoid, bool false_ok);
 
