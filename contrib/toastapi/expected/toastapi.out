@@ -3,4 +3,67 @@ CREATE FUNCTION dummy_toaster_handler(internal)
 RETURNS internal
 AS '$libdir/toastapi'
 LANGUAGE C;
+-- add_toaster()
+SELECT add_toaster(NULL, NULL);
+ add_toaster 
+-------------
+            
+(1 row)
+
+SELECT add_toaster(NULL, 'foo');
+ add_toaster 
+-------------
+            
+(1 row)
+
+SELECT add_toaster('bar', NULL);
+ add_toaster 
+-------------
+            
+(1 row)
+
+SELECT add_toaster('', '');
+ERROR:  invalid name syntax
+SELECT add_toaster('foo', '');
+ERROR:  invalid name syntax
+SELECT add_toaster('foo', 'bar');
+ERROR:  function bar(internal) does not exist
+SELECT add_toaster('dummy', 'foo');
+ERROR:  function foo(internal) does not exist
+SELECT add_toaster('dummy', 'dummy_toaster_handler') AS dummy_toaster_oid
+\gset
+SELECT :dummy_toaster_oid <> 0;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT add_toaster('dummy', 'foo');
+ERROR:  function foo(internal) does not exist
+SELECT :dummy_toaster_oid = add_toaster('dummy', 'dummy_toaster_handler');
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT add_toaster('foo', 'dummy_toaster_handler') AS foo_toaster_oid
+\gset
+SELECT :foo_toaster_oid <> 0;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT :foo_toaster_oid <> :dummy_toaster_oid;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT :foo_toaster_oid = add_toaster('foo', 'dummy_toaster_handler');
+ ?column? 
+----------
+ t
+(1 row)
+
 DROP EXTENSION toastapi;
