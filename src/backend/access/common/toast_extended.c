@@ -865,3 +865,174 @@ toast_extract_chunk_fields(Relation toastrel, TupleDesc toasttupDesc,
 		*chunkdata = NULL;
 	}
 }
+
+void
+toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative,
+					   int32 header_size,
+					   ToastChunkVisibilityCheck visibility_check,
+					   void *visibility_cxt)
+{
+	struct varlena *attr = (struct varlena *) DatumGetPointer(value);
+	struct varatt_external toast_pointer;
+	Relation	toastrel;
+	Relation   *toastidxs;
+	ScanKeyData toastkey;
+	SysScanDesc toastscan;
+	HeapTuple	toasttup;
+	int			num_indexes;
+	int			validIndex;
+	SnapshotData SnapshotToast;
+	TupleDesc	toasttupDesc;
+	int			expectedchunk = 0;
+	Size		chunk_data_size = TOAST_MAX_CHUNK_SIZE - header_size;
+	bool		versioned = header_size != 0;
+
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+		return;
+
+	/* Must copy to access aligned fields */
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+	/*
+	 * Open the toast relation and its indexes
+	 */
+	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+
+	toasttupDesc = toastrel->rd_att;
+
+	/* Fetch valid relation used for process */
+	validIndex = toast_open_indexes(toastrel,
+									RowExclusiveLock,
+									&toastidxs,
+									&num_indexes);
+
+	/*
+	 * Setup a scan key to find chunks with matching va_valueid
+	 */
+	ScanKeyInit(&toastkey,
+				(AttrNumber) 1,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(toast_pointer.va_valueid));
+
+	/*
+	 * Find all the chunks.  (We don't actually care whether we see them in
+	 * sequence or not, but since we've already locked the index we might as
+	 * well use systable_beginscan_ordered.)
+	 */
+	init_toast_snapshot(&SnapshotToast);
+	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
+										   &SnapshotToast, 1, &toastkey);
+	while ((toasttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
+	{
+		int32		curchunk;
+		Pointer		chunk;
+		bool		isnull;
+		char	   *chunkdata;
+		int32		chunksize;
+
+		/*
+		 * Have a chunk, extract the sequence number and the data
+		 */
+		curchunk = DatumGetInt32(fastgetattr(toasttup, 2, toasttupDesc, &isnull));
+		Assert(!isnull);
+		chunk = DatumGetPointer(fastgetattr(toasttup, 3, toasttupDesc, &isnull));
+		Assert(!isnull);
+		if (!VARATT_IS_EXTENDED(chunk))
+		{
+			chunksize = VARSIZE(chunk) - VARHDRSZ;
+			chunkdata = VARDATA(chunk);
+		}
+		else if (VARATT_IS_SHORT(chunk))
+		{
+			/* could happen due to heap_form_tuple doing its thing */
+			chunksize = VARSIZE_SHORT(chunk) - VARHDRSZ_SHORT;
+			chunkdata = VARDATA_SHORT(chunk);
+		}
+		else
+		{
+			/* should never happen */
+			elog(ERROR, "found toasted toast chunk for toast value %u in %s",
+				 toast_pointer.va_valueid, RelationGetRelationName(toastrel));
+			chunksize = 0;		/* keep compiler quiet */
+			chunkdata = NULL;
+		}
+
+		if (versioned)
+		{
+			/* Skip aborted chunks */
+			if (!HeapTupleHeaderXminCommitted(toasttup->t_data))
+			{
+				TransactionId xmin = HeapTupleHeaderGetXmin(toasttup->t_data);
+
+				Assert(!HeapTupleHeaderXminInvalid(toasttup->t_data));
+
+				if (TransactionIdDidAbort(xmin))
+					continue;
+			}
+
+			if (curchunk != expectedchunk)
+			{
+				ItemPointerData tid;
+				char	   *chunkdata_ver = NULL;
+				int32		chunksize_ver = 0;
+
+				if (!visibility_check(visibility_cxt, &chunkdata_ver, &chunksize_ver, &tid))
+					ereport(ERROR,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							 errmsg_internal("missing chunk number %d for toast value %u in %s",
+											 expectedchunk, toast_pointer.va_valueid,
+											 RelationGetRelationName(toastrel))));
+
+				chunkdata_ver += header_size;
+				chunksize_ver -= header_size;
+
+				if (is_speculative)
+					heap_abort_speculative(toastrel, &tid);
+				else
+					simple_heap_delete(toastrel, &tid);
+
+				expectedchunk++;
+			}
+
+			if (curchunk != expectedchunk)
+				continue;
+
+			if (!visibility_check(visibility_cxt, &chunkdata, &chunksize, &toasttup->t_self))
+				continue;
+		}
+
+		/*
+		 * Have a chunk, delete it
+		 */
+		if (is_speculative)
+			heap_abort_speculative(toastrel, &toasttup->t_self);
+		else
+			simple_heap_delete(toastrel, &toasttup->t_self);
+	}
+
+	if (versioned)
+	{
+		ItemPointerData tid;
+		char	   *chunkdata_ver = NULL;
+		int32		chunksize_ver = 0;
+
+		if (visibility_check(visibility_cxt, &chunkdata_ver, &chunksize_ver, &tid))
+		{
+			if (is_speculative)
+				heap_abort_speculative(toastrel, &tid);
+			else
+				simple_heap_delete(toastrel, &tid);
+
+			expectedchunk++;
+		}
+	}
+
+	/*
+	 * End scan and close relations but keep the lock until commit, so as a
+	 * concurrent reindex done directly on the toast relation would be able to
+	 * wait for this transaction.
+	 */
+	systable_endscan_ordered(toastscan);
+	toast_close_indexes(toastidxs, num_indexes, NoLock);
+	table_close(toastrel, NoLock);
+}

@@ -22,6 +22,7 @@
 #include "catalog/pg_type.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
+#include "utils/bytea.h"
 #include "utils/memutils.h"
 #include "varatt.h"
 
@@ -166,13 +167,19 @@ bytea_toaster_delete_toast(Relation rel, Datum oldval, bool is_speculative, Toas
 	{
 		AppendableToastData old_data;
 		char		ptr[TOAST_POINTER_SIZE];
+		AppendableToastVisibilityContext cxt = {0};
 
 		VARATT_CUSTOM_GET_APPENDABLE_DATA(oldval, old_data);
 
 		SET_VARTAG_EXTERNAL(ptr, VARTAG_ONDISK);
 		memcpy(VARDATA_EXTERNAL(ptr), &old_data.ptr, sizeof(old_data.ptr));
 
-		toast_delete_datum(rel, PointerGetDatum(ptr), is_speculative);
+		cxt.max_chunk_version = BYTEA_INVALID_VERSION;
+		cxt.attrversion = old_data.version;
+
+		toast_delete_datum_ext(rel, PointerGetDatum(ptr), is_speculative,
+							   sizeof(AppendableToastVersion),
+							   bytea_toaster_check_visibility, &cxt);
 	}
 }
 

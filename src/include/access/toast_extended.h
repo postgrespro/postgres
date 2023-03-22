@@ -40,4 +40,10 @@ toast_update_datum(Datum value,
 				   ToastChunkVisibilityCheck visibility_check,
 				   void *visibility_cxt, int options);
 
+extern void
+toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative,
+					   int32 header_size,
+					   ToastChunkVisibilityCheck visibility_check,
+					   void *visibility_cxt);
+
 #endif							/* TOAST_EXTENDED_H */
