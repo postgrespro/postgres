@@ -262,6 +262,161 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 	return res;
 }
 
+void create_pg_toaster(void)
+{
+	Datum reloptions = (Datum) 0;
+	Oid ownerId;
+	TupleDesc	tupdesc;
+	bool		shared_relation;
+	bool		mapped_relation;
+	Relation	toast_rel;
+	Oid			pgtoaster_relid = InvalidOid;
+	Oid			namespaceid;
+	char		toast_relname[NAMEDATALEN];
+	char		toast_idxname[NAMEDATALEN];
+	IndexInfo  *indexInfo;
+	Oid			collationObjectId[1];
+	Oid			classObjectId[1];
+	int16		coloptions[1];
+	RangeVar   *relvar;
+	Relation	rel;
+
+	snprintf(toast_relname, sizeof(toast_relname),
+			 PG_TOASTER_NAME);
+	snprintf(toast_idxname, sizeof(toast_idxname),
+			 "pg_toaster_index");
+
+	PG_TRY();
+	{
+		relvar = makeRangeVarFromNameList(textToQualifiedNameList(cstring_to_text(toast_relname)));
+		rel = table_openrv(relvar, AccessShareLock);
+		if(rel)
+		{
+			pgtoaster_relid = RelationGetRelid(rel);
+			table_close(rel, AccessShareLock);
+		}
+	}
+	PG_CATCH();
+	{
+		pgtoaster_relid = InvalidOid;
+		rel = NULL;
+	}
+	PG_END_TRY();
+
+	if(OidIsValid(pgtoaster_relid))
+	{
+		return;
+	}
+
+	tupdesc = CreateTemplateTupleDesc(3);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1,
+					   "tsroid",
+					   OIDOID,
+					   -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 2,
+					   "tsrname",
+					   NAMEOID,
+					   -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 3,
+					   "tsrhandler",
+					   REGPROCOID,
+					   -1, 0);
+
+	TupleDescAttr(tupdesc, 0)->attstorage = TYPSTORAGE_PLAIN;
+	TupleDescAttr(tupdesc, 1)->attstorage = TYPSTORAGE_PLAIN;
+	TupleDescAttr(tupdesc, 2)->attstorage = TYPSTORAGE_PLAIN;
+
+	TupleDescAttr(tupdesc, 0)->attcompression = InvalidCompressionMethod;
+	TupleDescAttr(tupdesc, 1)->attcompression = InvalidCompressionMethod;
+	TupleDescAttr(tupdesc, 2)->attcompression = InvalidCompressionMethod;
+
+	/* create pg_toaster in pg_toast namespace */
+	namespaceid = PG_PUBLIC_NAMESPACE;
+
+	/* Toast table is shared if and only if its parent is. */
+	shared_relation = false;
+
+	/* It's mapped if and only if its parent is, too */
+	mapped_relation = false;
+
+	ownerId = GetUserId();
+
+	pgtoaster_relid = heap_create_with_catalog(toast_relname,
+										   namespaceid,
+										   InvalidOid,
+										   InvalidOid,
+										   InvalidOid,
+										   InvalidOid,
+										   ownerId,
+										   HEAP_TABLE_AM_OID,
+										   tupdesc,
+										   NIL,
+										   RELKIND_RELATION,
+										   RELPERSISTENCE_PERMANENT,
+										   shared_relation,
+										   mapped_relation,
+										   ONCOMMIT_NOOP,
+										   reloptions,
+										   false,
+										   true,
+										   true,
+										   InvalidOid,
+										   NULL);
+	Assert(pgtoaster_relid != InvalidOid);
+	/* make the toast relation visible, else table_open will fail */
+	CommandCounterIncrement();
+
+	/* ShareLock is not really needed here, but take it anyway */
+	toast_rel = table_open(pgtoaster_relid, ShareLock);
+
+	indexInfo = makeNode(IndexInfo);
+	indexInfo->ii_NumIndexAttrs = 1;
+	indexInfo->ii_NumIndexKeyAttrs = 1;
+	indexInfo->ii_IndexAttrNumbers[0] = 1;
+//	indexInfo->ii_IndexAttrNumbers[1] = 1;
+	indexInfo->ii_Expressions = NIL;
+	indexInfo->ii_ExpressionsState = NIL;
+	indexInfo->ii_Predicate = NIL;
+	indexInfo->ii_PredicateState = NULL;
+	indexInfo->ii_ExclusionOps = NULL;
+	indexInfo->ii_ExclusionProcs = NULL;
+	indexInfo->ii_ExclusionStrats = NULL;
+	indexInfo->ii_OpclassOptions = NULL;
+	indexInfo->ii_Unique = true;
+	indexInfo->ii_NullsNotDistinct = false;
+	indexInfo->ii_ReadyForInserts = true;
+	indexInfo->ii_CheckedUnchanged = false;
+	indexInfo->ii_IndexUnchanged = false;
+	indexInfo->ii_Concurrent = false;
+	indexInfo->ii_BrokenHotChain = false;
+	indexInfo->ii_ParallelWorkers = 0;
+	indexInfo->ii_Am = BTREE_AM_OID;
+	indexInfo->ii_AmCache = NULL;
+	indexInfo->ii_Context = CurrentMemoryContext;
+
+	collationObjectId[0] = InvalidOid;
+//	collationObjectId[1] = DEFAULT_COLLATION_OID;
+
+	classObjectId[0] = OID_BTREE_OPS_OID;
+//	classObjectId[1] = TEXT_BTREE_OPS_OID;
+
+	coloptions[0] = 0;
+//	coloptions[1] = 0;
+
+	index_create(toast_rel, toast_idxname, InvalidOid, InvalidOid,
+				 InvalidOid, InvalidOid,
+				 indexInfo,
+				 list_make1("tsroid"), // ,"tsrname"),
+				 BTREE_AM_OID,
+				 InvalidOid,
+				 collationObjectId, classObjectId, coloptions, (Datum) 0,
+				 INDEX_CREATE_IS_PRIMARY, 0, true, true, NULL);
+	table_close(toast_rel, ShareLock);
+
+	CommandCounterIncrement();
+	// return pgtoaster_relid;
+}
+
 Oid
 get_toaster_by_name(Relation pg_toaster_rel, const char *tsrname, Oid *tsrhandler)
 {

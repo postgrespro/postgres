@@ -186,4 +186,18 @@ extern TsrRoutine *SearchTsrCache(Oid tsroid);
 extern bool	validateToaster(Oid toasteroid, Oid typeoid, char storage,
 							char compression, Oid amoid, bool false_ok);
 
+extern Datum default_toaster_handler(PG_FUNCTION_ARGS);
+extern bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs); // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid);
+
+static inline void init_tattrs(ToastAttributes tattrs)
+{
+	tattrs = palloc(sizeof(ToastAttributesData));
+	tattrs->attnum = -1;
+	tattrs->ntoasters = 0;
+	tattrs->toaster = NULL;
+	tattrs->toasteroid = InvalidOid;
+	tattrs->toasthandleroid = InvalidOid;
+	tattrs->toastreloid = InvalidOid;
+}
+
 #endif							/* TOASTAPI_H */
