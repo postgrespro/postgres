@@ -3,7 +3,8 @@
 MODULE_big = bytea_toaster
 OBJS = \
 	$(WIN32RES) \
-	bytea_toaster.o
+	bytea_toaster.o \
+	toast_extended.o
 
 EXTENSION = bytea_toaster
 DATA = bytea_toaster--1.0.sql

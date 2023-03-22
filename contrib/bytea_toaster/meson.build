@@ -1,5 +1,9 @@
 bytea_toaster = shared_module('bytea_toaster',
-  files('bytea_toaster.c'),
+  files(
+    'bytea_toaster.c',
+    'toast_extended.c'
+  ),
+
   kwargs: contrib_mod_args,
 )
 contrib_targets += bytea_toaster

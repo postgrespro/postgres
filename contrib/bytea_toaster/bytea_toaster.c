@@ -18,7 +18,7 @@
 #include "access/table.h"
 #include "access/toast_internals.h"
 #include "access/toast_compression.h"
-#include "access/toast_extended.h"
+#include "toast_extended.h"
 #include "catalog/pg_type.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
