@@ -19,23 +19,6 @@
 #include "access/toast_helper.h"
 #include "utils/builtins.h"
 
-static Datum
-dummy_toaster_init(Relation rel, Oid toasteroid, Datum reloptions, int attnum,
-				   LOCKMODE lockmode, bool check, Oid OIDOldToast,
-				   ToastAttributes tattrs)
-{
-	Datum toastrelid = (Datum) 0;
-
-	if(tattrs->create_table_ind)
-		toastrelid = ToastCreateToastTable(rel, toasteroid, reloptions, attnum, lockmode, OIDOldToast);
-	else
-		toastrelid = rel->rd_rel->reltoastrelid;
-
-	tattrs->toastreloid = DatumGetObjectId(toastrelid);
-
-	return toastrelid;
-}
-
 static bool
 dummy_toaster_validate(Oid toasteroid, Oid typeoid,
 					   char storage, char compression,
@@ -124,7 +107,6 @@ dummy_toaster_handler(PG_FUNCTION_ARGS)
 {
 	TsrRoutine *tsr = makeNode(TsrRoutine);
 
-	tsr->init = dummy_toaster_init;
 	tsr->toast = dummy_toaster_toast;
 	tsr->deltoast = dummy_toaster_delete_toast;
 	tsr->copy_toast = dummy_toaster_copy_toast;

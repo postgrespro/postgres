@@ -22,8 +22,6 @@
 #include "access/toast_helper.h"
 
 /* Hook for plugins to get control in Toast, Detoast and TOAST init() */
-typedef Datum (*Toastapi_init_hook_type) (Oid, Datum, LOCKMODE, int,
-						   bool, Oid);
 typedef Datum (*Toastapi_toast_hook_type) (ToastTupleContext *, int, int,
 						int);
 typedef Datum (*Toastapi_update_hook_type) (Relation rel,
@@ -51,7 +49,6 @@ typedef void (*Toastapi_delete_hook_type) (Relation rel,
 										   bool is_speculative,
 										   int attnum);
 
-extern PGDLLIMPORT Toastapi_init_hook_type Toastapi_init_hook;
 extern PGDLLIMPORT Toastapi_toast_hook_type Toastapi_toast_hook;
 extern PGDLLIMPORT Toastapi_copy_hook_type Toastapi_copy_hook;
 extern PGDLLIMPORT Toastapi_update_hook_type Toastapi_update_hook;
