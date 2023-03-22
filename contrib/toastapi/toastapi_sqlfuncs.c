@@ -174,10 +174,13 @@ set_toaster(PG_FUNCTION_ARGS)
 	Oid			relid = InvalidOid;
 	Oid			tsroid = InvalidOid;
 	Oid			tsrhandler = InvalidOid;
+	Datum		d = (Datum) 0;
 	char		str[12];
 	char		nstr[12];
+	ToastAttributes tattrs;
 	int			len = 0;
-	int			attnum pg_attribute_unused();
+	AttrNumber	attnum;
+	TsrRoutine *tsr = NULL;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -206,8 +209,42 @@ set_toaster(PG_FUNCTION_ARGS)
 	/* Find attribute and check whether toaster is applicable to it */
 	attnum = validate_attribute(rel, attname, tsroid);
 
-	/* Check toaster handler and routine */
-	(void) GetTsrRoutine(tsrhandler);
+	/* Call toaster init() method */
+	tattrs = palloc(sizeof(ToastAttributesData));
+	tattrs->attnum = -1;
+	tattrs->ntoasters = 0;
+	tattrs->toaster = NULL;
+	tattrs->toasteroid = InvalidOid;
+	tattrs->toasthandleroid = InvalidOid;
+	tattrs->toastreloid = rel->rd_rel->reltoastrelid;
+	tattrs->create_table_ind = false;
+
+	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_HANDLER_NAME);
+
+	if (d != (Datum) 0)
+		tattrs->toasthandleroid = atoi(DatumGetCString(d));
+
+	tsr = GetTsrRoutine(tsrhandler);
+
+	if (tsr->init) //!OidIsValid(tattrs->toastreloid))
+	{
+		rel = get_rel_from_relname(relname, RowExclusiveLock, ACL_INSERT);
+		relid = RelationGetRelid(rel);
+		tattrs->toaster = tsr;
+
+		d = tsr->init(rel,
+					  tsroid,
+					  (Datum) 0,
+					  attnum,
+					  RowExclusiveLock,
+					  false,
+					  InvalidOid,
+					  tattrs);
+		tattrs->toastreloid = DatumGetObjectId(d);
+		table_close(rel, RowExclusiveLock);
+	}
+
+	pfree(tattrs);
 
 	/* Set toaster variables - oid, toast relation id, handler for fast access */
 	len = pg_ltoa(tsrhandler, str);
@@ -217,7 +254,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid handler OID \"%u\"",
 						tsrhandler)));
 
-	(void) attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
+	d = attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
 
 	len = pg_ltoa(tsroid, nstr);
 	if (len <= 0)
@@ -226,7 +263,7 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid toaster OID \"%u\"",
 						tsroid)));
 
-	(void) attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
+	d = attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
 
 	PG_RETURN_OID(tsroid);
 }
