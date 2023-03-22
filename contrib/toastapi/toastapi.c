@@ -264,53 +264,6 @@ toastapi_delete(Relation rel,
 	toaster->deltoast(rel, del_value, is_speculative, &tattrs);
 }
 
-bool get_toast_params(Oid relid, int attnum, ToastAttributes tattrs) // int *ntoasters, Oid *toasteroid, Oid *toastrelid, Oid *handlerid)
-{
-	Datum d;
-	char str[12];
-	char *ntoasters_str;
-	int len = 0;
-	bool all_found_ind = true;
-
-/*
-	*ntoasters = 0;
-	*toasteroid = InvalidOid;
-	*toastrelid = InvalidOid;
-	*handlerid = InvalidOid;
-*/
-	str[0] = '\0';
-
-	d = attopts_get_toaster_opts(relid, "", attnum, ATT_NTOASTERS_NAME);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-	{
-		ntoasters_str = DatumGetCString(d);
-		tattrs->ntoasters = atoi(ntoasters_str);
-		// len = pg_ltoa(*ntoasters, str);
-	}
-
-	d = get_complex_att_opt(relid, ATT_HANDLER_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toasthandleroid = atoi(DatumGetCString(d));
-
-	d = get_complex_att_opt(relid, ATT_TOASTER_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toasteroid = atoi(DatumGetCString(d));
-
-	d = get_complex_att_opt(relid, ATT_TOASTREL_NAME, str, len, attnum);
-	if(d == (Datum) 0)
-		all_found_ind = false;
-	else
-		tattrs->toastreloid = atoi(DatumGetCString(d));
-
-	return all_found_ind;
-}
-
 static void *
 toastapi_vtable(Datum value)
 {
