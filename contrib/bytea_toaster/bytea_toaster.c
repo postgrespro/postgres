@@ -13,22 +13,20 @@
  */
 
 #include "postgres.h"
-#include "varatt.h"
-#include "varatt_custom.h"
-#include "toastapi.h"
-#include "access/heapam.h"
-#include "access/heaptoast.h"
+
+#include "access/detoast.h"
 #include "access/table.h"
-#include "access/tableam.h"
-#include "access/toast_helper.h"
 #include "access/toast_internals.h"
+#include "access/toast_compression.h"
 #include "access/toast_extended.h"
-#include "catalog/toasting.h"
+#include "catalog/pg_type.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
-#include "utils/varlena.h"
-#include "access/detoast.h"
+#include "varatt.h"
+
+#include "toastapi.h"
+#include "varatt_custom.h"
 
 PG_MODULE_MAGIC;
 
