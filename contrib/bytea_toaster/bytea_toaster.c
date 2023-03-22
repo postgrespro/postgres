@@ -16,7 +16,6 @@
 #include "varatt.h"
 #include "varatt_custom.h"
 #include "toastapi.h"
-#include "access/attoptions.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
 #include "access/table.h"

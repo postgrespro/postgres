@@ -24,7 +24,6 @@
 #include "utils/builtins.h"
 #include "utils/syscache.h"
 #include "access/toast_compression.h"
-#include "access/attoptions.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
