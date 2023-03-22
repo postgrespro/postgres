@@ -22,6 +22,13 @@ typedef enum
 	BYTEA_OUTPUT_HEX
 }			ByteaOutputType;
 
+#define BYTEA_TOASTER_MAGIC    0xb17ea757
+typedef struct ByteaToastRoutine
+{
+	int32		magic;
+	Datum	  (*append)(Datum val1, Datum val2);
+} ByteaToastRoutine;
+
 extern PGDLLIMPORT int bytea_output;	/* ByteaOutputType, but int for GUC
 										 * enum */
 

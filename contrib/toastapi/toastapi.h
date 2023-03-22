@@ -68,13 +68,6 @@ do { \
 /* Size of an EXTERNAL datum that contains a custom TOAST pointer */
 #define TOASTER_POINTER_SIZE (VARHDRSZ_EXTERNAL + sizeof(varatt_custom))
 
-#define BYTEA_TOASTER_MAGIC    0xb17ea757
-typedef struct ByteaToastRoutine
-{
-	int32	magic;
-	Datum	(*append)(Datum val1, Datum val2);
-} ByteaToastRoutine;
-
 typedef struct ToastAttributesData
 {
 	Oid toasteroid;
