@@ -115,6 +115,10 @@ typedef ToastAttributesData *ToastAttributes;
  * Callback function signatures --- see indexam.sgml for more info.
  */
 
+/* Create toast storage */
+typedef Datum (*toast_init)(Relation rel, Oid toasteroid, Datum reloptions, int attnum, LOCKMODE lockmode,
+						   bool check, Oid OIDOldToast, ToastAttributes tattrs);
+
 /* Toast function */
 typedef Datum (*toast_function) (Relation toast_rel,
 										   Oid toasterid,
@@ -167,6 +171,7 @@ typedef struct TsrRoutine
 	NodeTag		type;
 
 	/* interface functions */
+	toast_init init;
 	toast_function toast;
 	update_toast_function update_toast;
 	copy_toast_function copy_toast;
