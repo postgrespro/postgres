@@ -1210,6 +1210,10 @@ retry:
 	else
 		Assert(relation->rd_rel->relam == InvalidOid);
 
+	/* initialize toast cache */
+	relation->rd_toastcache = NULL;
+	relation->rd_toastcachecxt = NULL;
+
 	/* extract reloptions if any */
 	RelationParseRelOptions(relation, pg_class_tuple);
 
@@ -2468,6 +2472,8 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 		MemoryContextDelete(relation->rd_pddcxt);
 	if (relation->rd_partcheckcxt)
 		MemoryContextDelete(relation->rd_partcheckcxt);
+	if (relation->rd_toastcachecxt)
+		MemoryContextDelete(relation->rd_toastcachecxt);
 	pfree(relation);
 }
 
@@ -2516,6 +2522,12 @@ RelationClearRelation(Relation relation, bool rebuild)
 	if (relation->rd_amcache)
 		pfree(relation->rd_amcache);
 	relation->rd_amcache = NULL;
+
+	/* Free TOAST cached data, if any */
+	if (relation->rd_toastcachecxt)
+		MemoryContextDelete(relation->rd_toastcachecxt);
+	relation->rd_toastcachecxt = NULL;
+	relation->rd_toastcache = NULL;
 
 	/*
 	 * Treat nailed-in system relations separately, they always need to be
@@ -5860,6 +5872,36 @@ RelationGetIndexAttOptions(Relation relation, bool copy)
 	return relation->rd_opcoptions;
 }
 
+void *
+RelationToastCacheAlloc(Relation relation, Size size)
+{
+	if (!relation->rd_toastcachecxt)
+	{
+		MemoryContext cxt = AllocSetContextCreate(CacheMemoryContext,
+												  "toast info cache",
+												  ALLOCSET_SMALL_SIZES);
+
+		MemoryContextCopyAndSetIdentifier(cxt,
+										  RelationGetRelationName(relation));
+
+		relation->rd_toastcachecxt = cxt;
+	}
+
+	return MemoryContextAllocZero(relation->rd_toastcachecxt, size);
+}
+
+void **
+RelationGetToastCache(Relation relation)
+{
+	if (!relation->rd_toastcache)
+		relation->rd_toastcache =
+			RelationToastCacheAlloc(relation,
+									sizeof(relation->rd_toastcache[0]) *
+									RelationGetNumberOfAttributes(relation));
+
+	return relation->rd_toastcache;
+}
+
 /*
  * Routines to support ereport() reports of relation-related errors
  *
@@ -6321,6 +6363,8 @@ load_relcache_init_file(bool shared)
 		rel->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
 		rel->rd_droppedSubid = InvalidSubTransactionId;
 		rel->rd_amcache = NULL;
+		rel->rd_toastcache = NULL;
+		rel->rd_toastcachecxt = NULL;
 		rel->pgstat_info = NULL;
 
 		/*

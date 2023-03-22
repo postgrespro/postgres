@@ -81,6 +81,9 @@ extern void RelationBuildPublicationDesc(Relation relation,
 
 extern void RelationInitTableAccessMethod(Relation relation);
 
+extern void **RelationGetToastCache(Relation relation);
+extern void *RelationToastCacheAlloc(Relation relation, Size size);
+
 /*
  * Routines to support ereport() reports of relation-related errors
  */

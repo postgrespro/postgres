@@ -184,6 +184,10 @@ typedef struct RelationData
 	 */
 	const struct TableAmRoutine *rd_tableam;
 
+	/* Used only for a table relation */
+	MemoryContext rd_toastcachecxt;
+	void	  **rd_toastcache;	/* cache for custom attribute TOASTers */
+
 	/* These are non-NULL only for an index relation: */
 	Form_pg_index rd_index;		/* pg_index tuple describing this index */
 	/* use "struct" here to avoid needing to include htup.h: */
