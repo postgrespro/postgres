@@ -86,12 +86,10 @@ static int
 validate_attribute(Relation rel, char *attname, Oid toasterid)
 {
 	Oid			relid = RelationGetRelid(rel);
-	Relation	attrel;
 	HeapTuple	tuple;
 	Form_pg_attribute att;
 	AttrNumber	attnum;
 
-	attrel = table_open(AttributeRelationId, AccessShareLock);
 	tuple = SearchSysCacheAttName(relid, attname);
 
 	if (!HeapTupleIsValid(tuple))
@@ -115,7 +113,6 @@ validate_attribute(Relation rel, char *attname, Oid toasterid)
 						att->attcompression, rel->rd_rel->relam, false);
 
 	ReleaseSysCache(tuple);
-	table_close(attrel, AccessShareLock);
 
 	return attnum;
 }
