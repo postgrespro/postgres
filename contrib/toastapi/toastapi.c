@@ -12,8 +12,8 @@
  *-------------------------------------------------------------------------
  */
 
-#include "postgres.h"
 #include "fmgr.h"
+#include "postgres.h"
 #include "access/toast_hook.h"
 
 #include "toastapi.h"
@@ -244,7 +244,8 @@ toastapi_vtable(Datum value)
 	return toaster->get_vtable ? toaster->get_vtable(value) : NULL;
 }
 
-void _PG_init(void)
+void
+_PG_init(void)
 {
 	toastapi_toast_hook = Toastapi_toast_hook;
 	toastapi_detoast_hook = Toastapi_detoast_hook;
@@ -261,15 +262,4 @@ void _PG_init(void)
 	Toastapi_update_hook = toastapi_update;
 	Toastapi_delete_hook = toastapi_delete;
 	Toastapi_vtable_hook = toastapi_vtable;
-}
-
-void _PG_fini(void)
-{
-	Toastapi_toast_hook = toastapi_toast_hook;
-	Toastapi_detoast_hook = toastapi_detoast_hook;
-	Toastapi_copy_hook = toastapi_copy_hook;
-	Toastapi_update_hook = toastapi_update_hook;
-	Toastapi_delete_hook = toastapi_delete_hook;
-	Toastapi_size_hook = toastapi_size_hook;
-	Toastapi_vtable_hook = toastapi_vtable_hook;
 }
