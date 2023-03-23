@@ -238,7 +238,7 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 
 	table_close(rel, AccessShareLock);
 
-	d = attopts_get_toaster_opts(relid, attname, attnum, ATT_TOASTER_NAME);
+	d = attopts_get_toaster_opts(relid, attnum, ATT_TOASTER_NAME);
 
 	if (d == (Datum) 0)
 		PG_RETURN_NULL();

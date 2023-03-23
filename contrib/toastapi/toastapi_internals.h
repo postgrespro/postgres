@@ -8,7 +8,7 @@
 extern Relation
 get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode);
 
-extern Datum attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname);
+extern Datum attopts_get_toaster_opts(Oid relOid, int attnum, char *optname);
 extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order);
 extern Datum attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname);
 

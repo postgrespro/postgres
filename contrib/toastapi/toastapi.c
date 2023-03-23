@@ -58,7 +58,7 @@ get_toaster_cacher_for_attr(Relation rel, int attnum)
 	{
 		Oid			tsrhandler;
 		Datum		tsrhandler_str =
-			attopts_get_toaster_opts(RelationGetRelid(rel), "",
+			attopts_get_toaster_opts(RelationGetRelid(rel),
 									 attnum + 1, ATT_HANDLER_NAME);
 
 		if (tsrhandler_str == (Datum) 0)

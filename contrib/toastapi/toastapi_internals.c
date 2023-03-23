@@ -70,7 +70,7 @@ lookup_toaster_handler_func(List *handler_name)
 }
 
 Datum
-attopts_get_toaster_opts(Oid relOid, char *attname, int attnum, char *optname)
+attopts_get_toaster_opts(Oid relOid, int attnum, char *optname)
 {
 	List *o_list = NIL;
 	ListCell   *cell;
