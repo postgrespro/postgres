@@ -884,7 +884,6 @@ toast_delete_datum_ext(Relation rel, Datum value, bool is_speculative,
 	SnapshotData SnapshotToast;
 	TupleDesc	toasttupDesc;
 	int			expectedchunk = 0;
-	Size		chunk_data_size = TOAST_MAX_CHUNK_SIZE - header_size;
 	bool		versioned = header_size != 0;
 
 	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
