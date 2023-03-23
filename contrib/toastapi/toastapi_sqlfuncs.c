@@ -83,7 +83,7 @@ add_toaster(PG_FUNCTION_ARGS)
 }
 
 static int
-validate_attribute(Relation rel, char *attname, Oid toasterid)
+get_attr_for_toasting(Relation rel, char *attname, Oid toasterid, bool is_alter)
 {
 	Oid			relid = RelationGetRelid(rel);
 	HeapTuple	tuple;
@@ -99,9 +99,10 @@ validate_attribute(Relation rel, char *attname, Oid toasterid)
 						attname, RelationGetRelationName(rel))));
 
 	att = (Form_pg_attribute) GETSTRUCT(tuple);
-
 	attnum = att->attnum;
-	if (attnum <= 0)
+
+	/* check for system columns, if altering toasters */
+	if (attnum <= 0 && is_alter)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
@@ -160,7 +161,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	Assert(OidIsValid(tsrhandler));
 
 	/* Find attribute and check whether toaster is applicable to it */
-	attnum = validate_attribute(rel, attname, tsroid);
+	attnum = get_attr_for_toasting(rel, attname, tsroid, true);
 
 	/* Check toaster handler and routine */
 	(void) SearchTsrHandlerCache(tsrhandler); // GetTsrRoutine(tsrhandler);
@@ -207,7 +208,7 @@ reset_toaster(PG_FUNCTION_ARGS)
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 	relid = RelationGetRelid(rel);
 
-	(void) validate_attribute(rel, attname, InvalidOid);
+	(void) get_attr_for_toasting(rel, attname, InvalidOid, true);
 
 	table_close(rel, AccessShareLock);
 
@@ -233,7 +234,7 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 
 	relid = RelationGetRelid(rel);
-	attnum = validate_attribute(rel, attname, InvalidOid);
+	attnum = get_attr_for_toasting(rel, attname, InvalidOid, false);
 
 	table_close(rel, AccessShareLock);
 
