@@ -173,8 +173,6 @@ toastapi_detoast(Oid relid, Datum toast_ptr, int offset, int length)
 
 	toaster = get_toaster_for_ptr(NULL, -1, toast_ptr, &tattrs);
 
-	tattrs.attnum = -1;
-
 	return toaster->detoast(toast_ptr, offset, length, &tattrs);
 }
 
