@@ -8,9 +8,25 @@
 extern Relation
 get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode);
 
-extern Datum attopts_get_toaster_opts(Oid relOid, int attnum, char *optname);
-extern Datum attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order);
-extern Datum attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname);
+typedef struct ToastAttrContext
+{
+	Relation	rel;
+	Relation	attrel;
+	int			attrel_lockmode;
+	AttrNumber	attnum;
+	HeapTuple	atttup;
+	Datum		attoptions;
+} ToastAttrContext;
+
+extern void toaster_attopts_init(ToastAttrContext *cxt, Relation rel,
+								 const char *attname, bool for_update, Oid toasterid);
+extern char *toaster_attopts_get(ToastAttrContext *cxt, char *optname);
+extern void toaster_attopts_clear(ToastAttrContext *cxt, char *optname);
+extern void toaster_attopts_set(ToastAttrContext *cxt, char *optname, char *optval, int order);
+extern void toaster_attopts_update(ToastAttrContext *cxt);
+extern void toaster_attopts_free(ToastAttrContext *cxt);
+
+extern char *attopts_get_toaster_opts(Relation rel, int attnum, char *optname);
 
 extern Oid lookup_toaster_handler_func(List *handler_name);
 

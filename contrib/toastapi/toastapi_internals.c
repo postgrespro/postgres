@@ -69,89 +69,99 @@ lookup_toaster_handler_func(List *handler_name)
 	return handlerOid;
 }
 
-Datum
-attopts_get_toaster_opts(Oid relOid, int attnum, char *optname)
+static void
+toaster_attopts_init_ext(ToastAttrContext *cxt, Relation rel,
+						 const char *attname, int attnum, bool for_update, Oid toasterid)
 {
-	List *o_list = NIL;
-	ListCell   *cell;
-	Datum o_datum;
-	int l_idx = 0;
-	char *str = NULL;
-
-	o_datum = get_attoptions(relOid, attnum);
-   if(o_datum == (Datum) 0) return (Datum) 0;
-
-   o_list =  untransformRelOptions(o_datum);
-
-	foreach(cell, o_list)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-		if (strcmp(def->defname, optname) == 0)
-		{
-			str = palloc(strlen(defGetString(def))+1);
-			memcpy(str, defGetString(def), strlen(defGetString(def))+1);
-			break;
-		}
-		l_idx++;
-	}
-
-	if(str == NULL)
-		return (Datum) 0;
-	return CStringGetDatum(str);
-}
-
-Datum
-attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval, int order)
-{
-	Relation	attrelation;
-	HeapTuple	tuple,
-				newtuple;
-	Form_pg_attribute attrtuple;
+	Form_pg_attribute att;
+	HeapTuple	tuple;
 	bool		isnull;
-	Datum		repl_val[Natts_pg_attribute];
-	bool		repl_null[Natts_pg_attribute];
-	bool		repl_repl[Natts_pg_attribute];
-	Datum opts, o_datum;
-	List *o_list;
-	ListCell *cell;
-	int l_idx = 0;
-	Datum res = (Datum) 0;
+	Oid			relid = RelationGetRelid(rel);
 
-	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
-	tuple = SearchSysCacheAttName(relOid, attname);
+	cxt->attrel_lockmode = for_update ? RowExclusiveLock : RowShareLock;
+	cxt->attrel = table_open(AttributeRelationId, cxt->attrel_lockmode);
+
+	tuple = attname ? SearchSysCacheAttName(relid, attname) : SearchSysCacheAttNum(relid, attnum);
 
 	if (!HeapTupleIsValid(tuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(attrelation))));
+						attname, RelationGetRelationName(rel))));
 
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+	cxt->atttup = tuple;
+	att = (Form_pg_attribute) GETSTRUCT(tuple);
 
-	if (attrtuple->attnum <= 0)
+	if (att->attnum <= 0 && for_update)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot alter system column \"%s\"",
 						attname)));
-	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
-							&isnull);
 
-	o_list = untransformRelOptions(o_datum);
+	/* validate toaster, if needed */
+	if (OidIsValid(toasterid))
+		validateToaster(toasterid, att->atttypid, att->attstorage,
+						att->attcompression, rel->rd_rel->relam, false);
 
-	memset(repl_null, false, sizeof(repl_null));
-	memset(repl_repl, false, sizeof(repl_repl));
+	cxt->attnum = att->attnum;
 
-	l_idx = 0;
+	cxt->attoptions =
+		SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
+						&isnull);
+
+	if (isnull)
+		cxt->attoptions = (Datum) 0;
+}
+
+void
+toaster_attopts_init(ToastAttrContext *cxt, Relation rel,
+					 const char *attname, bool for_update, Oid toasterid)
+{
+	toaster_attopts_init_ext(cxt, rel, attname, -1, for_update, toasterid);
+}
+
+void
+toaster_attopts_free(ToastAttrContext *cxt)
+{
+	ReleaseSysCache(cxt->atttup);
+	table_close(cxt->attrel, cxt->attrel_lockmode);
+}
+
+char *
+toaster_attopts_get(ToastAttrContext *cxt, char *optname)
+{
+	List	   *o_list = untransformRelOptions(cxt->attoptions);
+	ListCell   *cell;
 
 	foreach(cell, o_list)
 	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-		if (strcmp(def->defname, optname) == 0)
+		DefElem    *def = lfirst(cell);
+
+		if (!strcmp(def->defname, optname))
+			return pstrdup(defGetString(def));
+	}
+
+	return NULL;
+}
+
+void
+toaster_attopts_set(ToastAttrContext *cxt, char *optname, char *optval, int order)
+{
+	List	   *o_list = untransformRelOptions(cxt->attoptions);
+	ListCell   *cell;
+	int			l_idx = 0;
+
+	foreach(cell, o_list)
+	{
+		DefElem    *def = lfirst(cell);
+
+		if (!strcmp(def->defname, optname))
 		{
 			o_list = list_delete_nth_cell(o_list, l_idx);
 			break;
 		}
-		else l_idx++;
+
+		l_idx++;
 	}
 
 	if (order < 0)
@@ -161,65 +171,25 @@ attopts_set_toaster_opts(Oid relOid, char *attname, char *optname, char *optval,
 	else
 		o_list = lappend(o_list, makeDefElem(optname, (Node *) makeString(optval), -1));
 
-	opts = transformRelOptions((Datum) 0, o_list, NULL, NULL, false, false);
-
-	if (opts != (Datum) 0)
-		repl_val[Anum_pg_attribute_attoptions - 1] = opts;
-	else
-		repl_null[Anum_pg_attribute_attoptions - 1] = true;
-	repl_repl[Anum_pg_attribute_attoptions - 1] = true;
-	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
-								 repl_val, repl_null, repl_repl);
-	CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
-
-	heap_freetuple(newtuple);
-
-	ReleaseSysCache(tuple);
-
-	table_close(attrelation, RowExclusiveLock);
-	CommandCounterIncrement();
-	return res;
-
+	cxt->attoptions = transformRelOptions((Datum) 0, o_list, NULL, NULL, false, false);
 }
 
-Datum
-attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
+void
+toaster_attopts_clear(ToastAttrContext *cxt, char *optname)
 {
-	Relation	attrelation;
-	HeapTuple	tuple,
-				newtuple;
-	Form_pg_attribute attrtuple;
-	bool		isnull;
+	List	   *o_list = list_make1(makeDefElem(optname, NULL, -1));
+
+	cxt->attoptions = transformRelOptions(cxt->attoptions, o_list, NULL, NULL, false, true);
+}
+
+void
+toaster_attopts_update(ToastAttrContext *cxt)
+{
+	HeapTuple	newtuple;
 	Datum		repl_val[Natts_pg_attribute];
 	bool		repl_null[Natts_pg_attribute];
 	bool		repl_repl[Natts_pg_attribute];
-	Datum opts, o_datum;
-	List *o_list;
-	Datum res = (Datum) 0;
-
-	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
-	tuple = SearchSysCacheAttName(relOid, attname);
-
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(attrelation))));
-
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
-
-	if (attrtuple->attnum <= 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot alter system column \"%s\"",
-						attname)));
-	o_datum = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
-							&isnull);
-
-	o_list = list_make1(makeDefElem(optname, NULL, -1));
-
-	opts = transformRelOptions(isnull ? (Datum) 0 : o_datum,
-							   o_list, NULL, NULL, false, true);
+	Datum		opts = cxt->attoptions;
 
 	memset(repl_null, false, sizeof(repl_null));
 	memset(repl_repl, false, sizeof(repl_repl));
@@ -229,16 +199,26 @@ attopts_clear_toaster_opts(Oid relOid, char *attname, char *optname)
 	else
 		repl_null[Anum_pg_attribute_attoptions - 1] = true;
 	repl_repl[Anum_pg_attribute_attoptions - 1] = true;
-	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+
+	newtuple = heap_modify_tuple(cxt->atttup, RelationGetDescr(cxt->attrel),
 								 repl_val, repl_null, repl_repl);
-	CatalogTupleUpdate(attrelation, &newtuple->t_self, newtuple);
+	CatalogTupleUpdate(cxt->attrel, &newtuple->t_self, newtuple);
 
 	heap_freetuple(newtuple);
 
-	ReleaseSysCache(tuple);
-
-	table_close(attrelation, RowExclusiveLock);
 	CommandCounterIncrement();
+}
+
+char *
+attopts_get_toaster_opts(Relation rel, int attnum, char *optname)
+{
+	ToastAttrContext cxt;
+	char	   *res;
+
+	toaster_attopts_init_ext(&cxt, rel, NULL, attnum, false, InvalidOid);
+	res = toaster_attopts_get(&cxt, optname);
+	toaster_attopts_free(&cxt);
+
 	return res;
 }
 

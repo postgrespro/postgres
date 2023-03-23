@@ -57,14 +57,13 @@ get_toaster_cacher_for_attr(Relation rel, int attnum)
 	if (!cache)
 	{
 		Oid			tsrhandler;
-		Datum		tsrhandler_str =
-			attopts_get_toaster_opts(RelationGetRelid(rel),
-									 attnum + 1, ATT_HANDLER_NAME);
+		char	   *tsrhandler_str =
+			attopts_get_toaster_opts(rel, attnum + 1, ATT_HANDLER_NAME);
 
-		if (tsrhandler_str == (Datum) 0)
+		if (!tsrhandler_str)
 			return NULL;
 
-		tsrhandler = atoi(DatumGetCString(tsrhandler_str));
+		tsrhandler = atoi(tsrhandler_str);
 
 		if (!OidIsValid(tsrhandler))
 			return NULL;

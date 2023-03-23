@@ -82,55 +82,19 @@ add_toaster(PG_FUNCTION_ARGS)
 	PG_RETURN_OID(ex_tsroid);
 }
 
-static int
-get_attr_for_toasting(Relation rel, char *attname, Oid toasterid, bool is_alter)
-{
-	Oid			relid = RelationGetRelid(rel);
-	HeapTuple	tuple;
-	Form_pg_attribute att;
-	AttrNumber	attnum;
-
-	tuple = SearchSysCacheAttName(relid, attname);
-
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" of relation \"%s\" does not exist",
-						attname, RelationGetRelationName(rel))));
-
-	att = (Form_pg_attribute) GETSTRUCT(tuple);
-	attnum = att->attnum;
-
-	/* check for system columns, if altering toasters */
-	if (attnum <= 0 && is_alter)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot alter system column \"%s\"",
-						attname)));
-
-	/* validate toaster, if needed */
-	if (OidIsValid(toasterid))
-		validateToaster(toasterid, att->atttypid, att->attstorage,
-						att->attcompression, rel->rd_rel->relam, false);
-
-	ReleaseSysCache(tuple);
-
-	return attnum;
-}
-
 PG_FUNCTION_INFO_V1(set_toaster);
 
 Datum
 set_toaster(PG_FUNCTION_ARGS)
 {
+	ToastAttrContext cxt;
 	Relation	rel;
 	Relation	tsrrel;
 	char	   *tsrname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	text	   *relname = PG_GETARG_TEXT_PP(1);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(2));
-	Oid			relid = InvalidOid;
-	Oid			tsroid = InvalidOid;
-	Oid			tsrhandler = InvalidOid;
+	Oid			tsroid;
+	Oid			tsrhandler;
 	char		str[12];
 	char		nstr[12];
 	int			len = 0;
@@ -145,8 +109,6 @@ set_toaster(PG_FUNCTION_ARGS)
 
 	/* Get relation oid by name */
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
-	relid = RelationGetRelid(rel);
-	table_close(rel, AccessShareLock);
 
 	/* Get toaster id by name */
 	tsrrel = get_rel_from_relname(cstring_to_text(PG_TOASTER_NAME), AccessShareLock, ACL_SELECT);
@@ -161,7 +123,7 @@ set_toaster(PG_FUNCTION_ARGS)
 	Assert(OidIsValid(tsrhandler));
 
 	/* Find attribute and check whether toaster is applicable to it */
-	attnum = get_attr_for_toasting(rel, attname, tsroid, true);
+	toaster_attopts_init(&cxt, rel, attname, true, tsroid);
 
 	/* Check toaster handler and routine */
 	(void) SearchTsrHandlerCache(tsrhandler); // GetTsrRoutine(tsrhandler);
@@ -174,8 +136,6 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid handler OID \"%u\"",
 						tsrhandler)));
 
-	(void) attopts_set_toaster_opts(relid, attname, ATT_HANDLER_NAME, str, -1);
-
 	len = pg_ltoa(tsroid, nstr);
 	if (len <= 0)
 		ereport(ERROR,
@@ -183,7 +143,12 @@ set_toaster(PG_FUNCTION_ARGS)
 				 errmsg("invalid toaster OID \"%u\"",
 						tsroid)));
 
-	(void) attopts_set_toaster_opts(relid, attname, ATT_TOASTER_NAME, nstr, -1);
+	toaster_attopts_set(&cxt, ATT_HANDLER_NAME, str, -1);
+	toaster_attopts_set(&cxt, ATT_TOASTER_NAME, nstr, -1);
+	toaster_attopts_update(&cxt);
+	toaster_attopts_free(&cxt);
+
+	table_close(rel, AccessShareLock);
 
 	PG_RETURN_OID(tsroid);
 }
@@ -195,8 +160,8 @@ reset_toaster(PG_FUNCTION_ARGS)
 {
 	text	   *relname = PG_GETARG_TEXT_PP(0);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	ToastAttrContext cxt;
 	Relation	rel;
-	Oid			relid;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -206,14 +171,14 @@ reset_toaster(PG_FUNCTION_ARGS)
 				 errhint("Must be superuser to reset a toaster.")));
 
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
-	relid = RelationGetRelid(rel);
 
-	(void) get_attr_for_toasting(rel, attname, InvalidOid, true);
+	toaster_attopts_init(&cxt, rel, attname, true, InvalidOid);
+	toaster_attopts_clear(&cxt, ATT_TOASTER_NAME);
+	toaster_attopts_clear(&cxt, ATT_HANDLER_NAME);
+	toaster_attopts_update(&cxt);
+	toaster_attopts_free(&cxt);
 
 	table_close(rel, AccessShareLock);
-
-	attopts_clear_toaster_opts(relid, attname, ATT_TOASTER_NAME);
-	attopts_clear_toaster_opts(relid, attname, ATT_HANDLER_NAME);
 
 	PG_RETURN_OID(InvalidOid);
 }
@@ -225,25 +190,23 @@ Datum get_toaster(PG_FUNCTION_ARGS)
 	text	   *relname = PG_GETARG_TEXT_PP(0);
 	char	   *attname = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	Relation	rel;
-	Oid			relid;
-	Datum		d = (Datum) 0;
-	Oid			tsroid = InvalidOid;
-	AttrNumber	attnum;
+	ToastAttrContext cxt;
+	const char *tsroid_str;
+	Oid			tsroid;
 	char	   *tsrname;
 
 	rel = get_rel_from_relname(relname, AccessShareLock, ACL_SELECT);
 
-	relid = RelationGetRelid(rel);
-	attnum = get_attr_for_toasting(rel, attname, InvalidOid, false);
+	toaster_attopts_init(&cxt, rel, attname, false, InvalidOid);
+	tsroid_str = toaster_attopts_get(&cxt, ATT_TOASTER_NAME);
+	toaster_attopts_free(&cxt);
 
 	table_close(rel, AccessShareLock);
 
-	d = attopts_get_toaster_opts(relid, attnum, ATT_TOASTER_NAME);
-
-	if (d == (Datum) 0)
+	if (!tsroid_str)
 		PG_RETURN_NULL();
 
-	tsroid = atoi(DatumGetCString(d));
+	tsroid = atoi(tsroid_str);
 	tsrname = get_toaster_name(tsroid);
 
 	elog(NOTICE,"%s", tsrname);
@@ -341,7 +304,7 @@ drop_toaster(PG_FUNCTION_ARGS)
 			}
 		}
 
-		if( OidIsValid(tsroid))
+		if (OidIsValid(tsroid))
 			CatalogTupleDelete(rel, &tsrtup->t_self);
 
 		systable_endscan(scan);
