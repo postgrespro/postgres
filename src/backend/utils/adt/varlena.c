@@ -3185,6 +3185,20 @@ byteaoctetlen(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(toast_raw_datum_size(str) - VARHDRSZ);
 }
 
+static inline ByteaToastRoutine *
+bytea_get_toast_routine(Datum value)
+{
+	if (VARATT_IS_CUSTOM(value) && Toastapi_vtable_hook)
+	{
+		ByteaToastRoutine *routine = Toastapi_vtable_hook(value);
+
+		if (routine && routine->magic == BYTEA_TOASTER_MAGIC)
+			return routine;
+	}
+
+	return NULL;
+}
+
 /*
  * byteacat -
  *	  takes two bytea* and returns a bytea* that is the concatenation of
@@ -3196,17 +3210,12 @@ Datum
 byteacat(PG_FUNCTION_ARGS)
 {
 	Datum		d1 = PG_GETARG_DATUM(0);
-	Datum		d2 = PG_GETARG_DATUM(1);
+	ByteaToastRoutine *routine = bytea_get_toast_routine(d1);
 	bytea	   *t1;
 	bytea	   *t2;
 
-	if (VARATT_IS_CUSTOM(d1) && Toastapi_vtable_hook)
-	{
-		ByteaToastRoutine *routine = Toastapi_vtable_hook(d1);
-
-		if (routine->magic == BYTEA_TOASTER_MAGIC)
-			PG_RETURN_DATUM(routine->append(d1, d2));
-	}
+	if (routine)
+		PG_RETURN_DATUM(routine->append(d1, PG_GETARG_DATUM(1)));
 
 	t1 = PG_GETARG_BYTEA_PP(0);
 	t2 = PG_GETARG_BYTEA_PP(1);
