@@ -4,7 +4,7 @@
 \echo Use "CREATE EXTENSION bytea_toaster" to load this file. \quit
 
 CREATE FUNCTION bytea_toaster_handler(internal)
-RETURNS toaster_handler
+RETURNS internal
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
 

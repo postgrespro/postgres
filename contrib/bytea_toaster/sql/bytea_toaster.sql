@@ -3,12 +3,12 @@ $$
 BEGIN
   IF to_regclass('pg_catalog.pg_toaster') IS NULL
   THEN
-    CREATE SCHEMA pgpro_toast;
-    CREATE EXTENSION toastapi with SCHEMA pgpro_toast;
+    CREATE EXTENSION toastapi;
+    SET search_path = pgpro_toast, public, pg_catalog;
     CREATE FUNCTION test_set_toaster(tab text, col text, tsr text) RETURNS void AS
     $x$
     BEGIN
-      PERFORM pgpro_toast.set_toaster(tab, col, tsr);
+      PERFORM set_toaster(tab, col, tsr);
     END
     $x$ LANGUAGE plpgsql;
   ELSE
