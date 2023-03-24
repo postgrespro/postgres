@@ -16,7 +16,7 @@ BEGIN
    EXECUTE 'CREATE TOASTER bytea_toaster  HANDLER bytea_toaster_handler';
    EXECUTE 'COMMENT ON TOASTER bytea_toaster IS ''bytea_toaster is a appendable bytea toaster''';
  ELSE
-   PERFORM add_toaster('bytea_toaster', 'bytea_toaster_handler');
+   PERFORM pgpro_toast.add_toaster('bytea_toaster', 'bytea_toaster_handler');
  END IF;
 END
 $$;

@@ -21,8 +21,8 @@
 
 #define TOASTER_HANDLEROID 8888
 
-#define PG_TOASTER_NAME "pg_toaster"
-#define PG_TOASTREL_NAME "pg_toastrel"
+#define PG_TOASTER_NAME "pgpro_toast.pg_toaster"
+#define PG_TOASTREL_NAME "pgpro_toast.pg_toastrel"
 
 #define REL_TOASTER_NAME "pgpro_toasteroid"
 #define REL_BASEREL_NAME "pgpro_basereloid"

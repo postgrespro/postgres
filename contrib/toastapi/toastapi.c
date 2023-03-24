@@ -12,8 +12,8 @@
  *-------------------------------------------------------------------------
  */
 
-#include "fmgr.h"
 #include "postgres.h"
+#include "fmgr.h"
 #include "access/toast_hook.h"
 
 #include "toastapi.h"

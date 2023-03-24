@@ -3,11 +3,12 @@ $$
 BEGIN
   IF to_regclass('pg_catalog.pg_toaster') IS NULL
   THEN
-    CREATE EXTENSION toastapi;
+    CREATE SCHEMA pgpro_toast;
+    CREATE EXTENSION toastapi with SCHEMA pgpro_toast;
     CREATE FUNCTION test_set_toaster(tab text, col text, tsr text) RETURNS void AS
     $x$
     BEGIN
-      PERFORM set_toaster(tab, col, tsr);
+      PERFORM pgpro_toast.set_toaster(tab, col, tsr);
     END
     $x$ LANGUAGE plpgsql;
   ELSE
@@ -27,7 +28,7 @@ CREATE TABLE tst2 (
 --ALTER TABLE tst2 ALTER COLUMN t SET TOASTER bytea_toaster;
 SELECT test_set_toaster('bytea_toaster', 'tst2', 't');
 ERROR:  "bytea_toaster" supports only type "bytea" and uncompressed storage
-CONTEXT:  SQL statement "SELECT set_toaster(tab, col, tsr)"
+CONTEXT:  SQL statement "SELECT pgpro_toast.set_toaster(tab, col, tsr)"
 PL/pgSQL function test_set_toaster(text,text,text) line 3 at PERFORM
 CREATE TABLE test_bytea_append (id int, a bytea STORAGE EXTERNAL);
 --ALTER TABLE test_bytea_append ALTER a SET TOASTER bytea_toaster;
