@@ -2,4 +2,5 @@
 comment = 'toastapi - Pluggable TOAST API'
 default_version = '1.0'
 module_pathname = '$libdir/toastapi'
+schema = pgpro_toast
 relocatable = false
