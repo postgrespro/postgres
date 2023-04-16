@@ -1065,8 +1065,11 @@ AllocSetFree(void *pointer)
 		/* Test for someone scribbling on unused space in chunk */
 		if (chunk->requested_size < GetChunkSizeFromFreeListIdx(fidx))
 			if (!sentinel_ok(pointer, chunk->requested_size))
-				elog(WARNING, "detected write past chunk end in %s %p",
-					 set->header.name, chunk);
+				elog(WARNING, "2 detected write past chunk end in %s %p size %ld f size %ld",
+					 set->header.name, chunk, chunk->requested_size, GetChunkSizeFromFreeListIdx(fidx));
+
+/*				elog(WARNING, "detected write past chunk end in %s %p",
+					 set->header.name, chunk); */
 #endif
 
 #ifdef CLOBBER_FREED_MEMORY
