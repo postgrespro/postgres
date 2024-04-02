@@ -42,6 +42,12 @@ static void try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1,
 								   RelOptInfo *rel2, RelOptInfo *joinrel,
 								   SpecialJoinInfo *parent_sjinfo,
 								   List *parent_restrictlist);
+static void try_asymmetric_partitionwise_join(PlannerInfo *root,
+											  RelOptInfo *inner_rel,
+											  RelOptInfo *prel,
+											  RelOptInfo *joinrel,
+											  SpecialJoinInfo *parent_sjinfo,
+											  List *parent_restrictlist);
 static SpecialJoinInfo *build_child_join_sjinfo(PlannerInfo *root,
 												SpecialJoinInfo *parent_sjinfo,
 												Relids left_relids, Relids right_relids);
@@ -1044,6 +1050,13 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 
 	/* Apply partitionwise join technique, if possible. */
 	try_partitionwise_join(root, rel1, rel2, joinrel, sjinfo, restrictlist);
+
+	/*
+	 * Consider joining inner relation to every leaf of a partitioned relation
+	 */
+	try_asymmetric_partitionwise_join(root, rel1, rel2, joinrel,
+									  sjinfo, restrictlist);
+
 }
 
 
@@ -1491,7 +1504,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	check_stack_depth();
 
 	/* Nothing to do, if the join relation is not partitioned. */
-	if (joinrel->part_scheme == NULL || joinrel->nparts == 0)
+	if (joinrel->part_scheme == NULL || joinrel->nparts == 0 ||
+		!joinrel->consider_partitionwise_join)
 		return;
 
 	/* The join relation should have consider_partitionwise_join set. */
@@ -1507,8 +1521,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	Assert(REL_HAS_ALL_PART_PROPS(rel1) && REL_HAS_ALL_PART_PROPS(rel2));
 
 	/* The joining relations should have consider_partitionwise_join set. */
-	Assert(rel1->consider_partitionwise_join &&
-		   rel2->consider_partitionwise_join);
+	Assert((rel1->consider_partitionwise_join || rel1->consider_asymmetric_join) &&
+		   (rel2->consider_partitionwise_join || rel2->consider_asymmetric_join));
 
 	/*
 	 * The partition scheme of the join relation should match that of the
@@ -1678,6 +1692,200 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 
 		pfree(appinfos);
 		free_child_join_sjinfo(child_sjinfo);
+	}
+}
+
+/*
+ * Assess whether join between given outer partitioned and inner not partitioned
+ * relations can be broken down into joins between each partition and the inner
+ * relation; a technique called "asymmetric join"
+ *
+ * Asymmetric join is possible when a. inner relation doesn't contain
+ * partitioned or other unsafe relations under the hood and b. inner doesn't
+ * have lateral references to something inside the outer.
+ */
+static void
+try_asymmetric_partitionwise_join(PlannerInfo *root,
+								  RelOptInfo *outer,
+								  RelOptInfo *inner,
+								  RelOptInfo *joinrel,
+								  SpecialJoinInfo *parent_sjinfo,
+								  List *parent_restrictlist)
+{
+	int			cnt_parts;
+	RelOptInfo *inner_rel = inner;
+	RelOptInfo *prel = outer;
+
+	/* Fast path if AJ is forbidden */
+	if (!joinrel->consider_asymmetric_join)
+		return;
+
+	Assert(joinrel->part_scheme != NULL);
+
+	/*
+	 * The caller will not juggle the inner and outer sides of the joinrel.
+	 * Hence, we need to check reverse order here ifi direct order isn't
+	 * acceptable one.
+	 */
+	if (!IS_PARTITIONED_REL(prel))
+	{
+		if (parent_sjinfo->jointype != JOIN_INNER)
+			/*
+			 * Can't change the order of inputs because left or anti join
+			 * depend on the order.
+			 */
+			return;
+
+		prel = inner;
+		inner_rel = outer;
+	}
+
+	if (!IS_PARTITIONED_REL(prel))
+		return;
+
+	Assert(REL_HAS_ALL_PART_PROPS(prel));
+
+	/*
+	 * Recheck AJ conditions. XXX: do we need just to store allowed inner/outer
+	 * combinations in some sort of cache?
+	 */
+	if (!is_inner_rel_safe_for_asymmetric_join(root, inner_rel))
+		return;
+
+	/*
+	 * Compute partition bounds. Remember, after that point we can't get out
+	 * of this routine without paths population.
+	 */
+	if (joinrel->boundinfo == NULL)
+	{
+		Assert(joinrel->nparts == -1);
+		joinrel->boundinfo = prel->boundinfo;
+		joinrel->nparts = prel->nparts;
+		joinrel->part_rels =
+				(RelOptInfo **) palloc0(sizeof(RelOptInfo *) * prel->nparts);
+	}
+	else
+		Assert(joinrel->nparts == prel->nparts && joinrel->part_rels != NULL);
+
+	/*
+	 * Create child-join relations for this asymmetric join, if those don't
+	 * exist. Add paths to child-joins for a pair of child relations
+	 * corresponding to the given pair of parent relations.
+	 */
+	for (cnt_parts = 0; cnt_parts < joinrel->nparts; cnt_parts++)
+	{
+		RelOptInfo		   *outer_child;
+		bool				child_empty;
+		SpecialJoinInfo	   *child_sjinfo;
+		List			   *child_restrictlist;
+		RelOptInfo		   *child_joinrel;
+		AppendRelInfo	  **appinfos;
+		int					nappinfos;
+
+		outer_child = prel->part_rels[cnt_parts];
+
+		Assert(!IS_DUMMY_REL(inner_rel));
+		child_empty = (outer_child == NULL || IS_DUMMY_REL(outer_child));
+
+		/* Remember, inner already can't be dummy at this point */
+		switch (parent_sjinfo->jointype)
+		{
+			case JOIN_INNER:
+			case JOIN_SEMI:
+			case JOIN_LEFT:
+			case JOIN_ANTI:
+				if (child_empty)
+					continue;	/* ignore this join segment */
+				break;
+			default:
+				/* other values not expected here */
+				elog(ERROR, "unrecognized join type: %d",
+					 (int) parent_sjinfo->jointype);
+				break;
+		}
+
+		/*
+		 * XXX:
+		 * If we want to provide each child join with personal copy of inner
+		 * relation - it is a good place to do.
+		 * The main reason why we still don't do it - what if AJ had
+		 * implemented over arbitrary inner subtree, not only a baserel? In that
+		 * case we inevitable must copy whole subtree of RelOptInfos. But we
+		 * don't have standard machinery to do this and even insight on how to
+		 * do it with strong guarantees.
+		 */
+
+		Assert(!bms_overlap(inner_rel->relids, outer_child->relids));
+
+		/*
+		 * Construct SpecialJoinInfo from parent join relations's
+		 * SpecialJoinInfo.
+		 */
+		child_sjinfo = build_child_join_sjinfo(root, parent_sjinfo,
+											   inner_rel->relids,
+											   outer_child->relids);
+
+		/* Find the AppendRelInfo structures */
+		appinfos = find_appinfos_by_relids(root,
+										   outer_child->relids,
+										   &nappinfos);
+
+		child_restrictlist =
+			(List *) adjust_appendrel_attrs(root,
+											(Node *) parent_restrictlist,
+											nappinfos, appinfos);
+
+		if (joinrel->part_rels[cnt_parts] == NULL)
+		{
+			child_joinrel = build_child_join_rel(root, outer_child, inner_rel,
+												 joinrel, child_restrictlist,
+												 child_sjinfo);
+			joinrel->part_rels[cnt_parts] = child_joinrel;
+			joinrel->live_parts = bms_add_member(joinrel->live_parts, cnt_parts);
+			joinrel->all_partrels = bms_add_members(joinrel->all_partrels,
+													child_joinrel->relids);
+		}
+		else
+			child_joinrel = joinrel->part_rels[cnt_parts];
+
+#ifdef USE_ASSERT_CHECKING
+		/*
+		 * Check correctness of the adjustment here. It is much faster and
+		 * easier to fix issues, detected here, than in setrefs.c module.
+		 */
+		{
+			Bitmapset *parent = bms_del_members(bms_copy(joinrel->relids),
+												child_joinrel->relids);
+			ListCell *lc;
+
+			Assert(!bms_is_empty(parent));
+
+			foreach(lc, child_restrictlist)
+			{
+				RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
+
+				if(bms_intersect(parent, rinfo->clause_relids))
+					elog(ERROR, "Incorrect relids in the child join clause");
+			}
+		}
+#endif
+		Assert(bms_equal(child_joinrel->relids,
+						 adjust_child_relids(joinrel->relids,
+											 nappinfos, appinfos)));
+
+		/* And make paths for the child join */
+		populate_joinrel_with_paths(root, outer_child, inner_rel,
+									child_joinrel, child_sjinfo,
+									child_restrictlist);
+
+		pfree(appinfos);
+
+		/*
+		 * free_child_join_sjinfo(child_sjinfo);
+		 * We can't free it here, because min_righthand value isn't changed
+		 * in the AJ optimisation yet - remember that the same copy of inner
+		 * relation participates in each child join.
+		 */
 	}
 }
 

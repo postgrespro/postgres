@@ -10070,6 +10070,60 @@ SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a 
  400 | 400
 (4 rows)
 
+-- Apply AJ to foreign tables
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Merge Append
+   Sort Key: t1.a
+   ->  Foreign Scan
+         Relations: (ftprt1_p1 t1_1) INNER JOIN (ftprt2_p1 t2)
+   ->  Foreign Scan
+         Relations: (ftprt1_p2 t1_2) INNER JOIN (ftprt2_p1 t2)
+(6 rows)
+
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2;
+  a  |  b  
+-----+-----
+ 204 | 204
+ 210 | 210
+ 216 | 216
+ 222 | 222
+ 228 | 228
+ 234 | 234
+ 240 | 240
+ 246 | 246
+(8 rows)
+
+-- FOR UPDATE requires whole-row reference, and so asymmetric join doesn't apply
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2 FOR UPDATE OF t2;
+                    QUERY PLAN                    
+--------------------------------------------------
+ LockRows
+   ->  Merge Join
+         Merge Cond: (t1.a = t2.b)
+         ->  Append
+               ->  Foreign Scan on ftprt1_p1 t1_1
+               ->  Foreign Scan on ftprt1_p2 t1_2
+         ->  Materialize
+               ->  Foreign Scan on ftprt2_p1 t2
+(8 rows)
+
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2 FOR UPDATE OF t2;
+  a  |  b  
+-----+-----
+ 204 | 204
+ 210 | 210
+ 216 | 216
+ 222 | 222
+ 228 | 228
+ 234 | 234
+ 240 | 240
+ 246 | 246
+(8 rows)
+
 RESET enable_partitionwise_join;
 -- ===================================================================
 -- test partitionwise aggregates
@@ -11338,25 +11392,32 @@ RESET enable_partitionwise_join;
 SET enable_hashjoin TO false;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO join_tbl SELECT * FROM async_p1 t1, async_pt t2 WHERE t1.a = t2.a AND t1.b = t2.b AND t1.b % 100 = 0;
-                                       QUERY PLAN                                       
-----------------------------------------------------------------------------------------
+                                                                                           QUERY PLAN                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Insert on public.join_tbl
-   ->  Nested Loop
-         Output: t1.a, t1.b, t1.c, t2.a, t2.b, t2.c
-         Join Filter: ((t1.a = t2.a) AND (t1.b = t2.b))
-         ->  Foreign Scan on public.async_p1 t1
-               Output: t1.a, t1.b, t1.c
-               Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE (((b % 100) = 0))
-         ->  Append
-               ->  Async Foreign Scan on public.async_p1 t2_1
-                     Output: t2_1.a, t2_1.b, t2_1.c
-                     Remote SQL: SELECT a, b, c FROM public.base_tbl1
-               ->  Async Foreign Scan on public.async_p2 t2_2
+   ->  Append
+         ->  Async Foreign Scan
+               Output: t1.a, t1.b, t1.c, t2_1.a, t2_1.b, t2_1.c
+               Relations: (public.async_p1 t2_1) INNER JOIN (public.async_p1 t1)
+               Remote SQL: SELECT r3.a, r3.b, r3.c, r5.a, r5.b, r5.c FROM (public.base_tbl1 r5 INNER JOIN public.base_tbl1 r3 ON (((r3.a = r5.a)) AND ((r3.b = r5.b)) AND (((r3.b % 100) = 0))))
+         ->  Nested Loop
+               Output: t1.a, t1.b, t1.c, t2_2.a, t2_2.b, t2_2.c
+               Join Filter: ((t1.a = t2_2.a) AND (t1.b = t2_2.b))
+               ->  Foreign Scan on public.async_p1 t1
+                     Output: t1.a, t1.b, t1.c
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE (((b % 100) = 0))
+               ->  Foreign Scan on public.async_p2 t2_2
                      Output: t2_2.a, t2_2.b, t2_2.c
                      Remote SQL: SELECT a, b, c FROM public.base_tbl2
+         ->  Nested Loop
+               Output: t1.a, t1.b, t1.c, t2_3.a, t2_3.b, t2_3.c
+               Join Filter: ((t1.a = t2_3.a) AND (t1.b = t2_3.b))
+               ->  Foreign Scan on public.async_p1 t1
+                     Output: t1.a, t1.b, t1.c
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE (((b % 100) = 0))
                ->  Seq Scan on public.async_p3 t2_3
                      Output: t2_3.a, t2_3.b, t2_3.c
-(16 rows)
+(23 rows)
 
 INSERT INTO join_tbl SELECT * FROM async_p1 t1, async_pt t2 WHERE t1.a = t2.a AND t1.b = t2.b AND t1.b % 100 = 0;
 SELECT * FROM join_tbl ORDER BY a1;
@@ -11464,39 +11525,61 @@ ALTER FOREIGN TABLE async_p1 OPTIONS (use_remote_estimate 'true');
 ALTER FOREIGN TABLE async_p2 OPTIONS (use_remote_estimate 'true');
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM local_tbl, async_pt WHERE local_tbl.a = async_pt.a AND local_tbl.c = 'bar';
-                                        QUERY PLAN                                        
-------------------------------------------------------------------------------------------
- Nested Loop
-   Output: local_tbl.a, local_tbl.b, local_tbl.c, async_pt.a, async_pt.b, async_pt.c
-   ->  Seq Scan on public.local_tbl
-         Output: local_tbl.a, local_tbl.b, local_tbl.c
-         Filter: (local_tbl.c = 'bar'::text)
-   ->  Append
-         ->  Async Foreign Scan on public.async_p1 async_pt_1
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Append
+   ->  Nested Loop
+         Output: local_tbl.a, local_tbl.b, local_tbl.c, async_pt_1.a, async_pt_1.b, async_pt_1.c
+         ->  Seq Scan on public.local_tbl
+               Output: local_tbl.a, local_tbl.b, local_tbl.c
+               Filter: (local_tbl.c = 'bar'::text)
+         ->  Foreign Scan on public.async_p1 async_pt_1
                Output: async_pt_1.a, async_pt_1.b, async_pt_1.c
                Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE ((a = $1::integer))
-         ->  Async Foreign Scan on public.async_p2 async_pt_2
+   ->  Nested Loop
+         Output: local_tbl.a, local_tbl.b, local_tbl.c, async_pt_2.a, async_pt_2.b, async_pt_2.c
+         ->  Seq Scan on public.local_tbl
+               Output: local_tbl.a, local_tbl.b, local_tbl.c
+               Filter: (local_tbl.c = 'bar'::text)
+         ->  Foreign Scan on public.async_p2 async_pt_2
                Output: async_pt_2.a, async_pt_2.b, async_pt_2.c
                Remote SQL: SELECT a, b, c FROM public.base_tbl2 WHERE ((a = $1::integer))
+   ->  Hash Join
+         Output: local_tbl.a, local_tbl.b, local_tbl.c, async_pt_3.a, async_pt_3.b, async_pt_3.c
+         Hash Cond: (async_pt_3.a = local_tbl.a)
          ->  Seq Scan on public.async_p3 async_pt_3
                Output: async_pt_3.a, async_pt_3.b, async_pt_3.c
-               Filter: (async_pt_3.a = local_tbl.a)
-(15 rows)
+         ->  Hash
+               Output: local_tbl.a, local_tbl.b, local_tbl.c
+               ->  Seq Scan on public.local_tbl
+                     Output: local_tbl.a, local_tbl.b, local_tbl.c
+                     Filter: (local_tbl.c = 'bar'::text)
+(27 rows)
 
 EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
 SELECT * FROM local_tbl, async_pt WHERE local_tbl.a = async_pt.a AND local_tbl.c = 'bar';
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
- Nested Loop (actual rows=1 loops=1)
-   ->  Seq Scan on local_tbl (actual rows=1 loops=1)
-         Filter: (c = 'bar'::text)
-         Rows Removed by Filter: 1
-   ->  Append (actual rows=1 loops=1)
-         ->  Async Foreign Scan on async_p1 async_pt_1 (never executed)
-         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=1 loops=1)
-         ->  Seq Scan on async_p3 async_pt_3 (never executed)
-               Filter: (a = local_tbl.a)
-(9 rows)
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Append (actual rows=1 loops=1)
+   ->  Nested Loop (actual rows=0 loops=1)
+         ->  Seq Scan on local_tbl (actual rows=1 loops=1)
+               Filter: (c = 'bar'::text)
+               Rows Removed by Filter: 1
+         ->  Foreign Scan on async_p1 async_pt_1 (actual rows=0 loops=1)
+   ->  Nested Loop (actual rows=1 loops=1)
+         ->  Seq Scan on local_tbl (actual rows=1 loops=1)
+               Filter: (c = 'bar'::text)
+               Rows Removed by Filter: 1
+         ->  Foreign Scan on async_p2 async_pt_2 (actual rows=1 loops=1)
+   ->  Hash Join (actual rows=0 loops=1)
+         Hash Cond: (async_pt_3.a = local_tbl.a)
+         ->  Seq Scan on async_p3 async_pt_3 (actual rows=200 loops=1)
+         ->  Hash (actual rows=1 loops=1)
+               Buckets: 1024  Batches: 1  Memory Usage: 9kB
+               ->  Seq Scan on local_tbl (actual rows=1 loops=1)
+                     Filter: (c = 'bar'::text)
+                     Rows Removed by Filter: 1
+(19 rows)
 
 SELECT * FROM local_tbl, async_pt WHERE local_tbl.a = async_pt.a AND local_tbl.c = 'bar';
   a   |  b  |  c  |  a   |  b  |  c   
@@ -11670,29 +11753,45 @@ SET enable_mergejoin TO false;
 SET enable_hashjoin TO false;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM async_pt t1, async_p2 t2 WHERE t1.a = t2.a AND t1.b === 505;
-                           QUERY PLAN                           
-----------------------------------------------------------------
- Nested Loop
-   Output: t1.a, t1.b, t1.c, t2.a, t2.b, t2.c
-   Join Filter: (t1.a = t2.a)
-   ->  Append
-         ->  Async Foreign Scan on public.async_p1 t1_1
-               Output: t1_1.a, t1_1.b, t1_1.c
-               Filter: (t1_1.b === 505)
-               Remote SQL: SELECT a, b, c FROM public.base_tbl1
-         ->  Async Foreign Scan on public.async_p2 t1_2
-               Output: t1_2.a, t1_2.b, t1_2.c
-               Filter: (t1_2.b === 505)
-               Remote SQL: SELECT a, b, c FROM public.base_tbl2
-         ->  Seq Scan on public.async_p3 t1_3
-               Output: t1_3.a, t1_3.b, t1_3.c
-               Filter: (t1_3.b === 505)
-   ->  Materialize
-         Output: t2.a, t2.b, t2.c
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Append
+   ->  Nested Loop
+         Output: t1_1.a, t1_1.b, t1_1.c, t2.a, t2.b, t2.c
+         Join Filter: (t1_1.a = t2.a)
          ->  Foreign Scan on public.async_p2 t2
                Output: t2.a, t2.b, t2.c
                Remote SQL: SELECT a, b, c FROM public.base_tbl2
-(20 rows)
+         ->  Materialize
+               Output: t1_1.a, t1_1.b, t1_1.c
+               ->  Foreign Scan on public.async_p1 t1_1
+                     Output: t1_1.a, t1_1.b, t1_1.c
+                     Filter: (t1_1.b === 505)
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl1
+   ->  Nested Loop
+         Output: t1_2.a, t1_2.b, t1_2.c, t2.a, t2.b, t2.c
+         Join Filter: (t1_2.a = t2.a)
+         ->  Foreign Scan on public.async_p2 t2
+               Output: t2.a, t2.b, t2.c
+               Remote SQL: SELECT a, b, c FROM public.base_tbl2
+         ->  Materialize
+               Output: t1_2.a, t1_2.b, t1_2.c
+               ->  Foreign Scan on public.async_p2 t1_2
+                     Output: t1_2.a, t1_2.b, t1_2.c
+                     Filter: (t1_2.b === 505)
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl2
+   ->  Nested Loop
+         Output: t1_3.a, t1_3.b, t1_3.c, t2.a, t2.b, t2.c
+         Join Filter: (t1_3.a = t2.a)
+         ->  Foreign Scan on public.async_p2 t2
+               Output: t2.a, t2.b, t2.c
+               Remote SQL: SELECT a, b, c FROM public.base_tbl2
+         ->  Materialize
+               Output: t1_3.a, t1_3.b, t1_3.c
+               ->  Seq Scan on public.async_p3 t1_3
+                     Output: t1_3.a, t1_3.b, t1_3.c
+                     Filter: (t1_3.b === 505)
+(36 rows)
 
 SELECT * FROM async_pt t1, async_p2 t2 WHERE t1.a = t2.a AND t1.b === 505;
   a   |  b  |  c   |  a   |  b  |  c   

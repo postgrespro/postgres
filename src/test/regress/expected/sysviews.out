@@ -134,6 +134,7 @@ select count(*) = 0 as ok from pg_stat_wal_receiver;
 select name, setting from pg_settings where name like 'enable%';
               name              | setting 
 --------------------------------+---------
+ enable_asymmetric_join         | on
  enable_async_append            | on
  enable_bitmapscan              | on
  enable_gathermerge             | on
@@ -156,7 +157,7 @@ select name, setting from pg_settings where name like 'enable%';
  enable_seqscan                 | on
  enable_sort                    | on
  enable_tidscan                 | on
-(22 rows)
+(23 rows)
 
 -- There are always wait event descriptions for various types.
 select type, count(*) > 0 as ok FROM pg_wait_events

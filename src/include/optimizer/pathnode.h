@@ -298,14 +298,18 @@ extern void adjust_limit_rows_costs(double *rows,
 extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 								 Relids required_outer,
 								 double loop_count);
+extern bool is_asymmetric_join(Path *path);
 extern Path *reparameterize_path_by_child(PlannerInfo *root, Path *path,
-										  RelOptInfo *child_rel);
+										  RelOptInfo *child_rel,
+										  bool needFlatCopy);
 extern bool path_is_reparameterizable_by_child(Path *path,
 											   RelOptInfo *child_rel);
 
 /*
  * prototypes for relnode.c
  */
+extern bool is_inner_rel_safe_for_asymmetric_join(PlannerInfo *root,
+												  RelOptInfo *rel);
 extern void setup_simple_rel_arrays(PlannerInfo *root);
 extern void expand_planner_arrays(PlannerInfo *root, int add_size);
 extern RelOptInfo *build_simple_rel(PlannerInfo *root, int relid,

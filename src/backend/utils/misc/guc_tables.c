@@ -920,6 +920,16 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_asymmetric_join", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables asymmetric partitionwise join."),
+			NULL,
+			GUC_EXPLAIN
+		},
+		&enable_asymmetric_join,
+		true,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables partitionwise aggregation and grouping."),
 			NULL,

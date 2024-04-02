@@ -319,24 +319,29 @@ set_plan_references(PlannerInfo *root, Plan *plan)
 
 	/*
 	 * Adjust RT indexes of AppendRelInfos and add to final appendrels list.
-	 * We assume the AppendRelInfos were built during planning and don't need
-	 * to be copied.
+	 * The AppendRelInfos are copied, because as a part of a subplan they could
+	 * be visited many times in the case of asymmetric join.
 	 */
 	foreach(lc, root->append_rel_list)
 	{
 		AppendRelInfo *appinfo = lfirst_node(AppendRelInfo, lc);
+		AppendRelInfo *newappinfo;
+
+		/* flat copy is enough since all valuable fields are scalars */
+		newappinfo = (AppendRelInfo *) palloc(sizeof(AppendRelInfo));
+		memcpy(newappinfo, appinfo, sizeof(AppendRelInfo));
 
 		/* adjust RT indexes */
-		appinfo->parent_relid += rtoffset;
-		appinfo->child_relid += rtoffset;
+		newappinfo->parent_relid += rtoffset;
+		newappinfo->child_relid += rtoffset;
 
 		/*
 		 * Rather than adjust the translated_vars entries, just drop 'em.
 		 * Neither the executor nor EXPLAIN currently need that data.
 		 */
-		appinfo->translated_vars = NIL;
+		newappinfo->translated_vars = NIL;
 
-		glob->appendRelations = lappend(glob->appendRelations, appinfo);
+		glob->appendRelations = lappend(glob->appendRelations, newappinfo);
 	}
 
 	/* If needed, create workspace for processing AlternativeSubPlans */

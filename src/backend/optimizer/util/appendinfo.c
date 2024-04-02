@@ -202,8 +202,9 @@ adjust_appendrel_attrs(PlannerInfo *root, Node *node, int nappinfos,
 	context.nappinfos = nappinfos;
 	context.appinfos = appinfos;
 
-	/* If there's nothing to adjust, don't call this function. */
-	Assert(nappinfos >= 1 && appinfos != NULL);
+	/* If there's nothing to adjust, just return a duplication */
+	if (nappinfos == 0)
+		return copyObject(node);
 
 	/* Should never be translating a Query tree. */
 	Assert(node == NULL || !IsA(node, Query));
@@ -746,13 +747,7 @@ find_appinfos_by_relids(PlannerInfo *root, Relids relids, int *nappinfos)
 		AppendRelInfo *appinfo = root->append_rel_array[i];
 
 		if (!appinfo)
-		{
-			/* Probably i is an OJ index, but let's check */
-			if (find_base_rel_ignore_join(root, i) == NULL)
-				continue;
-			/* It's a base rel, but we lack an append_rel_array entry */
-			elog(ERROR, "child rel %d not found in append_rel_array", i);
-		}
+			continue;
 
 		appinfos[cnt++] = appinfo;
 	}

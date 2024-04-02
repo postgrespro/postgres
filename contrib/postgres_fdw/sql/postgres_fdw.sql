@@ -3139,6 +3139,15 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a % 25 = 0 ORDER BY 1,2 FOR UPDATE OF t1;
 SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a % 25 = 0 ORDER BY 1,2 FOR UPDATE OF t1;
 
+-- Apply AJ to foreign tables
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2;
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2;
+-- FOR UPDATE requires whole-row reference, and so asymmetric join doesn't apply
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2 FOR UPDATE OF t2;
+SELECT t1.a,t2.b FROM fprt1 t1 , ftprt2_p1 t2 WHERE (t1.a = t2.b) AND t2.c like '%0004' ORDER BY 1,2 FOR UPDATE OF t2;
+
 RESET enable_partitionwise_join;
 
 

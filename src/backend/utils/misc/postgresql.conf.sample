@@ -407,6 +407,7 @@
 #enable_parallel_hash = on
 #enable_partition_pruning = on
 #enable_partitionwise_join = off
+#enable_asymmetric_join = on
 #enable_partitionwise_aggregate = off
 #enable_presorted_aggregate = on
 #enable_seqscan = on

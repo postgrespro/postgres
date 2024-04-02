@@ -585,6 +585,271 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_adv t1 INNER JOIN prt2_adv t2 ON (t1.a = t2.b) WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_adv t1 INNER JOIN prt2_adv t2 ON (t1.a = t2.b) WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 
+--
+-- For asymmetric partition-wise join
+--
+CREATE TABLE prt5 (hkey int, a int, b int) PARTITION BY HASH(hkey);
+CREATE TABLE prt5_p0 PARTITION OF prt5
+                     FOR VALUES WITH (modulus 3, remainder 0);
+CREATE TABLE prt5_p1 PARTITION OF prt5
+                     FOR VALUES WITH (modulus 3, remainder 1);
+CREATE TABLE prt5_p2 PARTITION OF prt5
+                     FOR VALUES WITH (modulus 3, remainder 2);
+CREATE TABLE prt6 (aid int, alabel text) PARTITION BY HASH(aid);
+CREATE TABLE prt6_p0 PARTITION OF prt6
+                     FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE prt6_p1 PARTITION OF prt6
+                     FOR VALUES WITH (modulus 2, remainder 1);
+CREATE TABLE t5_1 (aid int, alabel text);
+CREATE TABLE t5_2 (bid int, blabel text);
+
+INSERT INTO prt5 (SELECT x, (x % 1000)::int,
+                            ((x+1) % 1000)::int
+                    FROM generate_series(1,1000000) x);
+INSERT INTO t5_1 (SELECT x, md5(x::text) FROM generate_series(-200, 1500) x);
+INSERT INTO t5_2 (SELECT x, md5(x::text) FROM generate_series(-200, 1500) x);
+INSERT INTO prt6 (SELECT * FROM t5_1);
+
+VACUUM ANALYZE prt5,prt6,t5_1,t5_2;
+
+SET max_parallel_workers_per_gather = 0;
+
+-- Trivial asymmetric JOIN of partitioned table with a relation
+EXPLAIN (COSTS OFF)
+SELECT *
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%abc%';
+
+-- AJ: the case of WholeRowVar
+EXPLAIN (COSTS OFF)
+SELECT (t1.*)::prt1 FROM prt1 t1, prt2_p1 t2 WHERE (t1.a = t2.b);
+
+-- AJ with partitioned table (one partition has pruned)
+EXPLAIN (COSTS OFF)
+SELECT (t1.*)::prt1
+FROM prt1 t1, prt2_p1 t2
+WHERE (t1.a = t2.b) AND (t1.a = 542 OR t1.a = 1);
+
+-- Test AJ on anti join
+-- First test mostly for the future SJE with support of partitioned tables.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt1 t1, prt2_p1 t2
+WHERE NOT EXISTS (SELECT * FROM prt1 WHERE prt1.a = t1.a);
+SELECT count(*) FROM prt1 t1, prt2_p1 t2
+WHERE NOT EXISTS (SELECT * FROM prt1 WHERE prt1.a = t1.a);
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt2_p1 t1
+WHERE NOT EXISTS (SELECT * FROM prt1 WHERE prt1.a = t1.b);
+SELECT count(*) FROM prt2_p1 t1
+WHERE NOT EXISTS (SELECT * FROM prt1 WHERE prt1.a = t1.b);
+
+-- Can't use AJ because of complex inner as well as PWJ (one partition pruned)
+EXPLAIN (COSTS OFF)
+SELECT (t1.*)::prt1
+FROM prt1 t1, prt2_p1 t2, prt1 t3
+WHERE (t1.a = t2.b) AND (t1.a = 542 OR t1.a = 1) AND t2.a = t3.a;
+
+-- TODO: We don't see any AJ or PWJ, but may be it's a game of costs?
+EXPLAIN (COSTS OFF)
+SELECT (t1.*)::prt1
+FROM prt1 t1, prt2_p1 t2, prt1 t3
+WHERE (t1.a = t2.b) AND (t1.a = 542 OR t1.a = 1)
+  AND (t2.a = t3.a) AND (t3.a = 543 OR t3.a = 2);
+
+-- The same, but appended with UNION ALL
+EXPLAIN (COSTS OFF)
+SELECT * FROM (
+	(SELECT * FROM prt5_p0)
+	UNION ALL
+	(SELECT * FROM prt5_p1)
+	UNION ALL
+	(SELECT * FROM prt5_p2)
+	) AS sq1
+JOIN t5_1 ON a = aid AND alabel like '%abc%';
+
+-- Don't allow asymmetric JOIN of two partitioned tables.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt5 JOIN prt6 ON a = aid AND alabel like '%abc%';
+SELECT count(*) FROM prt5 JOIN prt6 ON a = aid AND alabel like '%abc%';
+
+-- Check that asymmetric JOIN with Subquery is forbidden
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt5 JOIN (
+	SELECT * FROM prt6 LIMIT 1000
+) AS sq1 ON a = aid AND alabel like '%abc%';
+SELECT count(*) FROM prt5 JOIN (SELECT * FROM prt6 LIMIT 1000) AS sq1
+	ON a = aid AND alabel like '%abc%';
+
+-- Asymmetric JOIN of two plane tables and one partitioned
+EXPLAIN (COSTS OFF)
+SELECT count(*)
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%ab%'
+            JOIN t5_2 ON b = bid AND blabel like '%cd%';
+SELECT count(*)
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%ab%'
+            JOIN t5_2 ON b = bid AND blabel like '%cd%';
+
+-- unable to extract non-partitioned right relation
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt5 RIGHT JOIN t5_1 ON a = aid AND alabel like '%abc%';
+-- left side can be extracted, but no cost benefit
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt5 LEFT JOIN t5_1 ON a = aid AND alabel like '%abc%';
+
+-- validation of the results with/without asymmetric partition-wise join
+SELECT * INTO pg_temp.result01a
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%abc%';
+
+SELECT * INTO pg_temp.result02a
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%ab%'
+            JOIN t5_2 ON b = bid AND blabel like '%cd%';
+
+SET enable_partitionwise_join = off;
+
+SELECT * INTO pg_temp.result01b
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%abc%';
+
+SELECT * INTO pg_temp.result02b
+  FROM prt5 JOIN t5_1 ON a = aid AND alabel like '%ab%'
+            JOIN t5_2 ON b = bid AND blabel like '%cd%';
+
+SELECT * FROM pg_temp.result01a EXCEPT SELECT * FROM pg_temp.result01b;
+SELECT * FROM pg_temp.result02a EXCEPT SELECT * FROM pg_temp.result02b;
+
+SET enable_partitionwise_join = on;
+
+-- Trying different JOIN combinations optimiser can provide partitioned relation
+-- buried deeply in the inner subtree. Check that it doesn't provide
+-- inconsistency in the plan.
+EXPLAIN (COSTS OFF)
+SELECT * from prt1 d1, prt2 d2, unnest(array[3,4]) n, unnest(array[3,4]) g
+WHERE d1.a = n AND d2.b = d1.a and g = n;
+
+-- TODO:
+-- According to current logic decision on AJ or PWJ for specific joinrel
+-- can depend on the order of relations in the FROM list. See how it works.
+-- Can we resolve this issue somehow?
+EXPLAIN (COSTS OFF) -- PWJ on top
+SELECT * from prt1 d1, unnest(array[3,4]) n, prt2 d2
+WHERE d1.a = n AND d2.b = d1.a;
+EXPLAIN (COSTS OFF) -- AJ on top
+SELECT * from prt1 d1, prt2 d2, unnest(array[3,4]) n
+WHERE d1.a = n AND d2.b = d1.a;
+
+-- Allow JOINs in the inner side of AJ
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt1 d1 LEFT JOIN (unnest(array[3,4]) n
+  FULL OUTER JOIN unnest(array[3,4]) g ON (n=g))
+ON (d1.a = n);
+
+-- Check reparameterization code when an optimizer have to make two level relids
+-- adjustment.
+
+SET enable_hashjoin = 'off';
+SET enable_mergejoin = 'off';
+SET enable_material = 'off';
+
+CREATE TABLE big AS SELECT x AS x FROM generate_series(1,1E4) x;
+CREATE INDEX ON big(x);
+CREATE TABLE small AS SELECT x, -x AS y FROM generate_series(1,100) x;
+
+CREATE TABLE part_l0 (x int, y int, z int) PARTITION BY HASH (y);
+CREATE TABLE part0_l1 PARTITION OF part_l0 (y)
+	FOR VALUES WITH (modulus 2, remainder 0) PARTITION BY HASH (z);
+CREATE TABLE part0_l2 PARTITION OF part0_l1 (z)
+	FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE part1_l2 PARTITION OF part0_l1 (z)
+	FOR VALUES WITH (modulus 2, remainder 1);
+CREATE TABLE part1_l1 PARTITION OF part_l0 (y)
+	FOR VALUES WITH (modulus 2, remainder 1);
+INSERT INTO part_l0 (x, y, z) (SELECT x,x,x FROM generate_series(1,1E4) x);
+
+ANALYZE big,small,part_l0;
+
+-- Parameter have to be reparameterized by a plane relation.
+EXPLAIN (COSTS OFF)
+SELECT small.* FROM small
+	JOIN part_l0 ON small.y = part_l0.y AND small.y + part_l0.y < 10
+	LEFT JOIN big ON big.x = small.x;
+SELECT small.* FROM small
+	JOIN part_l0 ON small.y = part_l0.y AND small.y + part_l0.y < 10
+	LEFT JOIN big ON big.x = small.x;
+
+-- Parameters have to be reparameterized by plane and partitioned relations.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM small
+	JOIN part_l0 ON small.y = part_l0.y AND small.y + part_l0.y < 10
+	LEFT JOIN big ON big.x = small.x OR big.x = part_l0.x;
+SELECT count(*) FROM small
+	JOIN part_l0 ON small.y = part_l0.y AND small.y + part_l0.y < 10
+	LEFT JOIN big ON big.x = small.x OR big.x = part_l0.x;
+
+DROP TABLE IF EXISTS big,small,part_l0 CASCADE;
+RESET enable_hashjoin;
+RESET enable_mergejoin;
+RESET enable_material;
+RESET max_parallel_workers_per_gather;
+
+--
+-- The case of AJ under partitionwise PNL which needs reparameterization
+--
+CREATE TABLE small (x int);
+CREATE TABLE big (x int, y int);
+CREATE TABLE part42 (x int, y int) PARTITION BY RANGE (x);
+CREATE TABLE p1 PARTITION OF part42 (x) FOR VALUES FROM (0) TO (50);
+CREATE TABLE p2 PARTITION OF part42 (x) FOR VALUES FROM (50) TO (101);
+INSERT INTO big (SELECT gs%10,gs FROM generate_series(1,10000) AS gs);
+INSERT INTO small (x) SELECT gs FROM generate_series (1,1) AS gs;
+INSERT INTO part42 SELECT gs%100, gs%100 FROM generate_series(1,100000) AS gs;
+CREATE INDEX big_idx ON big(y);
+VACUUM ANALYZE small,big,part42;
+
+SET enable_hashjoin = off;
+SET enable_mergejoin = off;
+SET max_parallel_workers_per_gather = 0; -- Reduce test unstability
+EXPLAIN (COSTS OFF)
+SELECT * FROM part42 ext LEFT JOIN big
+  JOIN part42 p2 ON (p2.x=big.y)
+ON (ext.x=p2.x AND ext.y=big.y);
+RESET max_parallel_workers_per_gather;
+RESET enable_mergejoin;
+RESET enable_hashjoin;
+
+-- Parameterized path examples.
+CREATE TABLE prta (id integer, payload text) PARTITION BY HASH (id);
+CREATE TABLE prta1 PARTITION OF prta FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE prta2 PARTITION OF prta FOR VALUES WITH (modulus 2, remainder 1);
+CREATE UNIQUE INDEX ON prta1 (id);
+CREATE UNIQUE INDEX ON prta2 (id);
+INSERT INTO prta (id, payload)
+	(SELECT *, ('abc' || id)::text AS payload
+		FROM generate_series(1,1) AS id);
+
+CREATE TABLE prtb (id integer, payload text) PARTITION BY HASH (id);
+CREATE TABLE prtb1 PARTITION OF prtb FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE prtb2 PARTITION OF prtb FOR VALUES WITH (modulus 2, remainder 1);
+CREATE UNIQUE INDEX ON prtb1 (id);
+CREATE UNIQUE INDEX ON prtb2 (id);
+INSERT INTO prtb (id, payload)
+    (SELECT *, ('def' || id)::text AS payload
+		FROM generate_series(1,1000) AS id);
+
+CREATE TABLE e (id integer, payload text) PARTITION BY HASH (id);
+CREATE TABLE e1 PARTITION OF e FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE e2 PARTITION OF e FOR VALUES WITH (modulus 2, remainder 1);
+INSERT INTO e (id, payload)
+	(SELECT *, ('ghi' || id)::text AS payload
+		FROM generate_series(1,1000) AS id);
+CREATE UNIQUE INDEX ON e1 (id);
+CREATE UNIQUE INDEX ON e2 (id);
+
+ANALYZE prta,prtb,e;
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM prta,prtb WHERE prta.id=prtb.id;
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM prta,prtb,e WHERE prta.id=prtb.id AND prta.id=e.id;
+
 -- semi join
 EXPLAIN (COSTS OFF)
 SELECT t1.* FROM prt1_adv t1 WHERE EXISTS (SELECT 1 FROM prt2_adv t2 WHERE t1.a = t2.b) AND t1.b = 0 ORDER BY t1.a;
@@ -777,6 +1042,17 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_adv t1 INNER JOIN prt2_adv t2 ON (t1.a =
 DROP TABLE prt1_adv;
 DROP TABLE prt2_adv;
 
+DROP TABLE prt1;
+
+-- Test function scan with lateral relids
+CREATE TABLE prt1 (id int, data json) PARTITION BY HASH(id);
+CREATE TABLE prt1_p1 PARTITION OF prt1 FOR VALUES WITH (MODULUS 3, REMAINDER 0);
+CREATE TABLE prt1_p2 PARTITION OF prt1 FOR VALUES WITH (MODULUS 3, REMAINDER 1);
+CREATE TABLE prt1_p3 PARTITION OF prt1 FOR VALUES WITH (MODULUS 3, REMAINDER 2);
+INSERT INTO prt1 SELECT i, format('{ "name":  "value%s", "Test": {"a":"b"}}', i)::json from generate_series(1,100) i;
+ANALYZE prt1;
+SELECT id, key, value from prt1, json_each(data->'Test') ORDER BY id LIMIT 10;
+DROP TABLE prt1;
 
 -- Tests for list-partitioned tables
 CREATE TABLE plt1_adv (a int, b int, c text) PARTITION BY LIST (c);

@@ -4357,6 +4357,8 @@ create_nestloop_plan(PlannerInfo *root,
 	Relids		outerrelids;
 	List	   *nestParams;
 	Relids		saveOuterRels = root->curOuterRels;
+	bool		needFlatCopy =
+						is_asymmetric_join((Path *) best_path) ? true : false;
 
 	/*
 	 * If the inner path is parameterized by the topmost parent of the outer
@@ -4366,7 +4368,8 @@ create_nestloop_plan(PlannerInfo *root,
 	best_path->jpath.innerjoinpath =
 		reparameterize_path_by_child(root,
 									 best_path->jpath.innerjoinpath,
-									 best_path->jpath.outerjoinpath->parent);
+									 best_path->jpath.outerjoinpath->parent,
+									 needFlatCopy);
 
 	/*
 	 * Failure here probably means that reparameterize_path_by_child() is not
