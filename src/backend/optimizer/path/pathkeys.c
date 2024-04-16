@@ -1355,7 +1355,8 @@ make_pathkeys_for_sortclauses(PlannerInfo *root,
 													&sortclauses,
 													tlist,
 													false,
-													&sortable);
+													&sortable,
+													false);
 	/* It's caller error if not all clauses were sortable */
 	Assert(sortable);
 	return result;
@@ -1379,13 +1380,16 @@ make_pathkeys_for_sortclauses(PlannerInfo *root,
  * to remove any clauses that can be proven redundant via the eclass logic.
  * Even though we'll have to hash in that case, we might as well not hash
  * redundant columns.)
+ * *set_ec_sortref is true if caller wants to set up ec_sortref field in
+ * the pathkey Equivalence Class, if it have not initialized beforehand.
  */
 List *
 make_pathkeys_for_sortclauses_extended(PlannerInfo *root,
 									   List **sortclauses,
 									   List *tlist,
 									   bool remove_redundant,
-									   bool *sortable)
+									   bool *sortable,
+									   bool set_ec_sortref)
 {
 	List	   *pathkeys = NIL;
 	ListCell   *l;
@@ -1409,6 +1413,13 @@ make_pathkeys_for_sortclauses_extended(PlannerInfo *root,
 										   sortcl->nulls_first,
 										   sortcl->tleSortGroupRef,
 										   true);
+		if (pathkey->pk_eclass->ec_sortref == 0 && set_ec_sortref)
+			/*
+			 * Copy the sortref if it wasn't set yet.  That may happen if
+			 * the ec was constructed from a WHERE clause, i.e. it doesn't
+			 * have a target reference at all.
+			 */
+			pathkey->pk_eclass->ec_sortref = sortcl->tleSortGroupRef;
 
 		/* Canonical form eliminates redundant ordering keys */
 		if (!pathkey_is_redundant(pathkey, pathkeys))
