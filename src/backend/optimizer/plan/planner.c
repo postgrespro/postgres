@@ -3400,7 +3400,8 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 												   &root->processed_groupClause,
 												   tlist,
 												   true,
-												   &sortable);
+												   &sortable,
+												   true);
 		if (!sortable)
 		{
 			/* Can't sort; no point in considering aggregate ordering either */
@@ -3450,7 +3451,8 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 												   &root->processed_distinctClause,
 												   tlist,
 												   true,
-												   &sortable);
+												   &sortable,
+												   false);
 		if (!sortable)
 			root->distinct_pathkeys = NIL;
 	}
@@ -3476,7 +3478,8 @@ standard_qp_callback(PlannerInfo *root, void *extra)
 												   &groupClauses,
 												   tlist,
 												   false,
-												   &sortable);
+												   &sortable,
+												   false);
 		if (!sortable)
 			root->setop_pathkeys = NIL;
 	}
@@ -6061,7 +6064,8 @@ make_pathkeys_for_window(PlannerInfo *root, WindowClause *wc,
 																 &wc->partitionClause,
 																 tlist,
 																 true,
-																 &sortable);
+																 &sortable,
+																 false);
 
 		Assert(sortable);
 	}
