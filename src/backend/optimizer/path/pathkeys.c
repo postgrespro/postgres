@@ -380,14 +380,17 @@ group_keys_reorder_by_pathkeys(List *pathkeys, List **group_pathkeys,
 
 	/*
 	 * We're going to search within just the first num_groupby_pathkeys of
-	 * *group_pathkeys.  The thing is that root->group_pathkeys is passed as
+	 * *group_pathkeys. The thing is that root->group_pathkeys is passed as
 	 * *group_pathkeys containing grouping pathkeys altogether with aggregate
-	 * pathkeys.  If we process aggregate pathkeys we could get an invalid
+	 * pathkeys. If we process aggregate pathkeys we could get an invalid
 	 * result of get_sortgroupref_clause_noerr(), because their
-	 * pathkey->pk_eclass->ec_sortref doesn't reference query targetlist.  So,
+	 * pathkey->pk_eclass->ec_sortref doesn't reference query targetlist. So,
 	 * we allocate a separate list of pathkeys for lookups.
 	 */
 	grouping_pathkeys = list_copy_head(*group_pathkeys, num_groupby_pathkeys);
+
+	/* Make a new copy before reordering clauses */
+	*group_clauses = list_copy(*group_clauses);
 
 	/*
 	 * Walk the pathkeys (determining ordering of the input path) and see if
@@ -400,8 +403,8 @@ group_keys_reorder_by_pathkeys(List *pathkeys, List **group_pathkeys,
 	 */
 	foreach(lc, pathkeys)
 	{
-		PathKey    *pathkey = (PathKey *) lfirst(lc);
-		SortGroupClause *sgc;
+		PathKey			   *pathkey = (PathKey *) lfirst(lc);
+		SortGroupClause	   *sgc;
 
 		/*
 		 * Pathkeys are built in a way that allows simply comparing pointers.
@@ -431,17 +434,25 @@ group_keys_reorder_by_pathkeys(List *pathkeys, List **group_pathkeys,
 		Assert(OidIsValid(sgc->sortop));
 
 		new_group_pathkeys = lappend(new_group_pathkeys, pathkey);
+
+		/*
+		 * Keeping in mind that the SortGroupClause list doesn't guarantee
+		 * unique pointers we must explicitly transfer elements one-by-one.
+		 */
 		new_group_clauses = lappend(new_group_clauses, sgc);
+		*group_clauses = list_delete_ptr(*group_clauses, sgc);
 	}
 
 	/* remember the number of pathkeys with a matching GROUP BY key */
 	n = list_length(new_group_pathkeys);
 
-	/* append the remaining group pathkeys (will be treated as not sorted) */
+	/*
+	 * Append the remaining group pathkeys (will be treated as not sorted) and
+	 * grouping clauses.
+	 */
 	*group_pathkeys = list_concat_unique_ptr(new_group_pathkeys,
 											 *group_pathkeys);
-	*group_clauses = list_concat_unique_ptr(new_group_clauses,
-											*group_clauses);
+	*group_clauses = list_concat(new_group_clauses, *group_clauses);
 
 	list_free(grouping_pathkeys);
 	return n;
@@ -484,9 +495,9 @@ pathkeys_are_duplicate(List *infos, List *pathkeys)
 List *
 get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 {
-	Query	   *parse = root->parse;
-	List	   *infos = NIL;
-	PathKeyInfo *info;
+	Query		   *parse = root->parse;
+	List		   *infos = NIL;
+	PathKeyInfo	   *info;
 
 	List	   *pathkeys = root->group_pathkeys;
 	List	   *clauses = root->processed_groupClause;
@@ -561,6 +572,23 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 		}
 	}
 
+#ifdef USE_ASSERT_CHECKING
+	{
+		PathKeyInfo	   *pinfo = linitial_node(PathKeyInfo, infos);
+		ListCell	   *lc;
+
+		/* Test consistency of info structures */
+		for_each_from(lc, infos, 1)
+		{
+			info = lfirst_node(PathKeyInfo, lc);
+
+			Assert(list_length(info->clauses) == list_length(pinfo->clauses));
+			Assert(list_length(info->pathkeys) == list_length(pinfo->pathkeys));
+			Assert(list_difference(info->clauses, pinfo->clauses) == NIL);
+			Assert(list_difference_ptr(info->pathkeys, pinfo->pathkeys) == NIL);
+		}
+	}
+#endif
 	return infos;
 }
 
