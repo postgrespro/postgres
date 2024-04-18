@@ -4110,7 +4110,7 @@ manifest_writer
 rfile
 ws_options
 ws_file_info
-PathKeyInfo
+GroupByOrdering
 TidStore
 TidStoreIter
 TidStoreIterResult
