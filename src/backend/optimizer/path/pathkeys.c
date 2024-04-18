@@ -461,7 +461,7 @@ group_keys_reorder_by_pathkeys(List *pathkeys, List **group_pathkeys,
 /*
  * pathkeys_are_duplicate
  *		Check if give pathkeys are already contained the list of
- *		PathKeyInfo's.
+ *		GroupByOrdering's.
  */
 static bool
 pathkeys_are_duplicate(List *infos, List *pathkeys)
@@ -470,7 +470,7 @@ pathkeys_are_duplicate(List *infos, List *pathkeys)
 
 	foreach(lc, infos)
 	{
-		PathKeyInfo *info = lfirst_node(PathKeyInfo, lc);
+		GroupByOrdering *info = lfirst_node(GroupByOrdering, lc);
 
 		if (compare_pathkeys(pathkeys, info->pathkeys) == PATHKEYS_EQUAL)
 			return true;
@@ -482,7 +482,7 @@ pathkeys_are_duplicate(List *infos, List *pathkeys)
  * get_useful_group_keys_orderings
  *		Determine which orderings of GROUP BY keys are potentially interesting.
  *
- * Returns a list of PathKeyInfo items, each representing an interesting
+ * Returns a list of GroupByOrdering items, each representing an interesting
  * ordering of GROUP BY keys.  Each item stores pathkeys and clauses in the
  * matching order.
  *
@@ -495,15 +495,15 @@ pathkeys_are_duplicate(List *infos, List *pathkeys)
 List *
 get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 {
-	Query		   *parse = root->parse;
-	List		   *infos = NIL;
-	PathKeyInfo	   *info;
+	Query			   *parse = root->parse;
+	List			   *infos = NIL;
+	GroupByOrdering	   *info;
 
 	List	   *pathkeys = root->group_pathkeys;
 	List	   *clauses = root->processed_groupClause;
 
 	/* always return at least the original pathkeys/clauses */
-	info = makeNode(PathKeyInfo);
+	info = makeNode(GroupByOrdering);
 	info->pathkeys = pathkeys;
 	info->clauses = clauses;
 	infos = lappend(infos, info);
@@ -539,7 +539,7 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 			(enable_incremental_sort || n == root->num_groupby_pathkeys) &&
 			!pathkeys_are_duplicate(infos, pathkeys))
 		{
-			info = makeNode(PathKeyInfo);
+			info = makeNode(GroupByOrdering);
 			info->pathkeys = pathkeys;
 			info->clauses = clauses;
 
@@ -564,7 +564,7 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 			(enable_incremental_sort || n == list_length(root->sort_pathkeys)) &&
 			!pathkeys_are_duplicate(infos, pathkeys))
 		{
-			info = makeNode(PathKeyInfo);
+			info = makeNode(GroupByOrdering);
 			info->pathkeys = pathkeys;
 			info->clauses = clauses;
 
@@ -574,18 +574,29 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 
 #ifdef USE_ASSERT_CHECKING
 	{
-		PathKeyInfo	   *pinfo = linitial_node(PathKeyInfo, infos);
+		GroupByOrdering	   *pinfo = linitial_node(GroupByOrdering, infos);
 		ListCell	   *lc;
 
 		/* Test consistency of info structures */
 		for_each_from(lc, infos, 1)
 		{
-			info = lfirst_node(PathKeyInfo, lc);
+			ListCell *lc1, *lc2;
+
+			info = lfirst_node(GroupByOrdering, lc);
 
 			Assert(list_length(info->clauses) == list_length(pinfo->clauses));
 			Assert(list_length(info->pathkeys) == list_length(pinfo->pathkeys));
 			Assert(list_difference(info->clauses, pinfo->clauses) == NIL);
 			Assert(list_difference_ptr(info->pathkeys, pinfo->pathkeys) == NIL);
+
+			forboth(lc1, info->clauses, lc2, info->pathkeys)
+			{
+				SortGroupClause *sgc = lfirst_node(SortGroupClause, lc1);
+				PathKey *pk = lfirst_node(PathKey, lc2);
+
+				if (pk->pk_eclass->ec_sortref != sgc->tleSortGroupRef)
+					elog(ERROR, "Order of group-by clauses doesn't correspond incoming sort order");
+			}
 		}
 	}
 #endif

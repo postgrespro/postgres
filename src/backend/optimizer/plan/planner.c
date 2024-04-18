@@ -6882,7 +6882,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 
 			foreach(lc2, pathkey_orderings)
 			{
-				PathKeyInfo *info = (PathKeyInfo *) lfirst(lc2);
+				GroupByOrdering *info = (GroupByOrdering *) lfirst(lc2);
 
 				/* restore the path (we replace it in the loop) */
 				path = path_save;
@@ -6963,7 +6963,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 				/* process all potentially interesting grouping reorderings */
 				foreach(lc2, pathkey_orderings)
 				{
-					PathKeyInfo *info = (PathKeyInfo *) lfirst(lc2);
+					GroupByOrdering *info = (GroupByOrdering *) lfirst(lc2);
 
 					/* restore the path (we replace it in the loop) */
 					path = path_save;
@@ -7214,7 +7214,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 			/* process all potentially interesting grouping reorderings */
 			foreach(lc2, pathkey_orderings)
 			{
-				PathKeyInfo *info = (PathKeyInfo *) lfirst(lc2);
+				GroupByOrdering *info = (GroupByOrdering *) lfirst(lc2);
 
 				/* restore the path (we replace it in the loop) */
 				path = path_save;
@@ -7270,7 +7270,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 			/* process all potentially interesting grouping reorderings */
 			foreach(lc2, pathkey_orderings)
 			{
-				PathKeyInfo *info = (PathKeyInfo *) lfirst(lc2);
+				GroupByOrdering *info = (GroupByOrdering *) lfirst(lc2);
 
 
 				/* restore the path (we replace it in the loop) */
