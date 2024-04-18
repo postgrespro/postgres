@@ -1424,7 +1424,10 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 		else if (parse->groupClause)
 		{
-			/* Preprocess regular GROUP BY clause, if any */
+			/*
+			 * Make a copy of origin groupClause because we are going to
+			 * remove redundant clauses.
+			 */
 			root->processed_groupClause = list_copy(parse->groupClause);
 			/* Remove any redundant GROUP BY columns */
 			remove_useless_groupby_columns(root);
