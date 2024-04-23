@@ -1983,7 +1983,6 @@ compute_cpu_sort_cost(PlannerInfo *root, List *pathkeys, int nPresortedKeys,
 	double		totalFuncCost = 1.0;
 	bool		has_fake_var = false;
 	int			i = 0;
-	Oid			prev_datatype = InvalidOid;
 	List	   *cache_varinfos = NIL;
 
 	/* fallback if pathkeys is unknown */
@@ -2011,49 +2010,16 @@ compute_cpu_sort_cost(PlannerInfo *root, List *pathkeys, int nPresortedKeys,
 	 */
 	foreach(lc, pathkeys)
 	{
-		PathKey    *pathkey = (PathKey *) lfirst(lc);
-		EquivalenceMember *em;
-		double		nGroups,
-					correctedNGroups;
-		Cost		funcCost = 1.0;
+		PathKey			    *pathkey = (PathKey *) lfirst(lc);
+		EquivalenceMember   *em;
+		double				nGroups,
+							correctedNGroups;
 
 		/*
 		 * We believe that equivalence members aren't very different, so, to
 		 * estimate cost we consider just the first member.
 		 */
 		em = (EquivalenceMember *) linitial(pathkey->pk_eclass->ec_members);
-
-		if (em->em_datatype != InvalidOid)
-		{
-			/* do not lookup funcCost if the data type is the same */
-			if (prev_datatype != em->em_datatype)
-			{
-				Oid			sortop;
-				QualCost	cost;
-
-				sortop = get_opfamily_member(pathkey->pk_opfamily,
-											 em->em_datatype, em->em_datatype,
-											 pathkey->pk_strategy);
-
-				cost.startup = 0;
-				cost.per_tuple = 0;
-				add_function_cost(root, get_opcode(sortop), NULL, &cost);
-
-				/*
-				 * add_function_cost returns the product of cpu_operator_cost
-				 * and procost, but we need just procost, co undo that.
-				 */
-				funcCost = cost.per_tuple / cpu_operator_cost;
-
-				prev_datatype = em->em_datatype;
-			}
-		}
-
-		/* factor in the width of the values in this column */
-		funcCost *= get_width_cost_multiplier(root, em->em_expr);
-
-		/* now we have per-key cost, so add to the running total */
-		totalFuncCost += funcCost;
 
 		/* remember if we have found a fake Var in pathkeys */
 		has_fake_var |= is_fake_var(em->em_expr);
