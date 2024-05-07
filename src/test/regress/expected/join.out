@@ -5726,18 +5726,20 @@ select d.* from d left join (select * from b group by b.id, b.c_id) s
 explain (costs off)
 select d.* from d left join (select distinct * from b) s
   on d.a = s.id;
-              QUERY PLAN              
---------------------------------------
- Merge Right Join
-   Merge Cond: (b.id = d.a)
-   ->  Unique
-         ->  Sort
-               Sort Key: b.id, b.c_id
-               ->  Seq Scan on b
+                 QUERY PLAN                  
+---------------------------------------------
+ Merge Left Join
+   Merge Cond: (d.a = s.id)
    ->  Sort
          Sort Key: d.a
          ->  Seq Scan on d
-(9 rows)
+   ->  Sort
+         Sort Key: s.id
+         ->  Subquery Scan on s
+               ->  HashAggregate
+                     Group Key: b.id, b.c_id
+                     ->  Seq Scan on b
+(11 rows)
 
 -- join removal is not possible here
 explain (costs off)

@@ -1224,18 +1224,17 @@ SELECT * FROM
    SELECT 2 AS t, 4 AS x) ss
 WHERE x < 4
 ORDER BY x;
-                    QUERY PLAN                    
---------------------------------------------------
+                 QUERY PLAN                 
+--------------------------------------------
  Sort
    Sort Key: (2)
-   ->  Unique
-         ->  Sort
-               Sort Key: (1), (2)
-               ->  Append
-                     ->  Result
-                     ->  Result
-                           One-Time Filter: false
-(9 rows)
+   ->  HashAggregate
+         Group Key: (1), (2)
+         ->  Append
+               ->  Result
+               ->  Result
+                     One-Time Filter: false
+(8 rows)
 
 SELECT * FROM
   (SELECT 1 AS t, 2 AS x
@@ -1289,19 +1288,18 @@ SELECT * FROM
    SELECT 2 AS t, 4 AS x) ss
 WHERE x > 3
 ORDER BY x;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
  Sort
    Sort Key: ss.x
    ->  Subquery Scan on ss
          Filter: (ss.x > 3)
-         ->  Unique
-               ->  Sort
-                     Sort Key: (1), (((random() * '3'::double precision))::integer)
-                     ->  Append
-                           ->  Result
-                           ->  Result
-(10 rows)
+         ->  HashAggregate
+               Group Key: (1), (((random() * '3'::double precision))::integer)
+               ->  Append
+                     ->  Result
+                     ->  Result
+(9 rows)
 
 SELECT * FROM
   (SELECT 1 AS t, (random()*3)::int AS x
@@ -1322,24 +1320,22 @@ select distinct q1 from
    union all
    select distinct * from int8_tbl i82) ss
 where q2 = q2;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Unique
-   ->  Merge Append
-         Sort Key: "*SELECT* 1".q1
+                     QUERY PLAN                     
+----------------------------------------------------
+ HashAggregate
+   Group Key: "*SELECT* 1".q1
+   ->  Append
          ->  Subquery Scan on "*SELECT* 1"
-               ->  Unique
-                     ->  Sort
-                           Sort Key: i81.q1, i81.q2
-                           ->  Seq Scan on int8_tbl i81
-                                 Filter: (q2 IS NOT NULL)
+               ->  HashAggregate
+                     Group Key: i81.q1, i81.q2
+                     ->  Seq Scan on int8_tbl i81
+                           Filter: (q2 IS NOT NULL)
          ->  Subquery Scan on "*SELECT* 2"
-               ->  Unique
-                     ->  Sort
-                           Sort Key: i82.q1, i82.q2
-                           ->  Seq Scan on int8_tbl i82
-                                 Filter: (q2 IS NOT NULL)
-(15 rows)
+               ->  HashAggregate
+                     Group Key: i82.q1, i82.q2
+                     ->  Seq Scan on int8_tbl i82
+                           Filter: (q2 IS NOT NULL)
+(13 rows)
 
 select distinct q1 from
   (select distinct * from int8_tbl i81
