@@ -18,6 +18,8 @@
 #include "nodes/pathnodes.h"
 
 
+extern bool force_path;
+
 /*
  * prototypes for pathnode.c
  */

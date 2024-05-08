@@ -46,6 +46,8 @@ typedef enum
  */
 #define STD_FUZZ_FACTOR 1.01
 
+bool force_path = false;
+
 static List *translate_sub_tlist(List *tlist, int relid);
 static int	append_total_cost_compare(const ListCell *a, const ListCell *b);
 static int	append_startup_cost_compare(const ListCell *a, const ListCell *b);
@@ -424,6 +426,12 @@ add_path(RelOptInfo *parent_rel, Path *new_path)
 	int			insert_at = 0;	/* where to insert new item */
 	List	   *new_path_pathkeys;
 	ListCell   *p1;
+
+	if (force_path)
+	{
+		new_path->startup_cost = 0.0001;
+		new_path->total_cost = 0.0001;
+	}
 
 	/*
 	 * This is a convenient place to check for query cancel --- no part of the

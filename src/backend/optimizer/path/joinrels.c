@@ -1874,10 +1874,11 @@ try_asymmetric_partitionwise_join(PlannerInfo *root,
 											 nappinfos, appinfos)));
 
 		/* And make paths for the child join */
+		force_path = true;
 		populate_joinrel_with_paths(root, outer_child, inner_rel,
 									child_joinrel, child_sjinfo,
 									child_restrictlist);
-
+		force_path = false;
 		pfree(appinfos);
 
 		/*
