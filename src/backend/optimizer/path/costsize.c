@@ -4250,9 +4250,19 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 	}
 	else
 	{
+		List *otherclauses;
+
 		innerbucketsize = 1.0;
 		innermcvfreq = 1.0;
-		foreach(hcl, hashclauses)
+
+		/* At first, try to estimate bucket size using extended statistics. */
+		otherclauses = estimate_multivariate_bucketsize(root,
+														inner_path->parent,
+														hashclauses,
+														&innerbucketsize);
+
+		/* Pass through the remaining clauses */
+		foreach(hcl, otherclauses)
 		{
 			RestrictInfo *restrictinfo = lfirst_node(RestrictInfo, hcl);
 			Selectivity thisbucketsize;
