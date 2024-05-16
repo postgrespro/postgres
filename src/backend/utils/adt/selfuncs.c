@@ -3783,6 +3783,7 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 		double		mvndistinct;
 		List	   *origin_varinfos;
 		int			group_relid = -1;
+		RelOptInfo *group_rel;
 		ListCell   *lc1, *lc2;
 
 		/*
@@ -3821,7 +3822,24 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 				 */
 
 				if (group_relid < 0)
+				{
+					RangeTblEntry *rte = root->simple_rte_array[relid];
+
+					if (!rte || (rte->relkind != RELKIND_RELATION &&
+						rte->relkind != RELKIND_MATVIEW &&
+						rte->relkind != RELKIND_FOREIGN_TABLE &&
+						rte->relkind != RELKIND_PARTITIONED_TABLE))
+					{
+						/* Statistic can't exist in principle */
+						otherclauses = lappend(otherclauses, rinfo);
+						clauses = foreach_delete_current(clauses, lc);
+						continue;
+					}
+
 					group_relid = relid;
+					group_rel = root->simple_rel_array[relid];
+					Assert(group_rel != NULL);
+				}
 				else if (group_relid != relid)
 					/*
 					 * Being in hte state of the clause group forming we don't
@@ -3871,7 +3889,7 @@ estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 		for (;;)
 		{
 			bool	estimated = estimate_multivariate_ndistinct(root,
-																inner,
+																group_rel,
 																&varinfos,
 																&mvndistinct);
 			if (!estimated)
