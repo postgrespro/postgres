@@ -1712,7 +1712,7 @@ statext_is_compatible_clause(PlannerInfo *root, Node *clause, Index relid,
  * 0-based 'clauses' indexes we estimate for and also skip clause items that
  * already have a bit set.
  */
-static Selectivity
+Selectivity
 statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varRelid,
 								   JoinType jointype, SpecialJoinInfo *sjinfo,
 								   RelOptInfo *rel, Bitmapset **estimatedclauses,

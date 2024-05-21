@@ -6,6 +6,7 @@ include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
 		amcheck		\
+		pg_index_stats	\
 		auth_delay	\
 		auto_explain	\
 		basic_archive	\

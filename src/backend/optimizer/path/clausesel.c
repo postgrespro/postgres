@@ -128,6 +128,11 @@ clauselist_selectivity_ext(PlannerInfo *root,
 	ListCell   *l;
 	int			listidx;
 
+	if (clauselist_selectivity_hook)
+		s1 = clauselist_selectivity_hook(root, clauses, varRelid, jointype,
+										 sjinfo, &estimatedclauses,
+										 use_extended_stats);
+
 	/*
 	 * If there's exactly one clause, just go directly to
 	 * clause_selectivity_ext(). None of what we might do below is relevant.

@@ -148,6 +148,17 @@ typedef bool (*get_index_stats_hook_type) (PlannerInfo *root,
 										   VariableStatData *vardata);
 extern PGDLLIMPORT get_index_stats_hook_type get_index_stats_hook;
 
+/* Hooks for plugins to get control when we ask for selectivity estimation */
+typedef Selectivity (*clauselist_selectivity_hook_type) (
+												PlannerInfo *root,
+												List *clauses,
+												int varRelid,
+												JoinType jointype,
+												SpecialJoinInfo *sjinfo,
+												Bitmapset **estimatedclauses,
+												bool use_extended_stats);
+extern PGDLLIMPORT clauselist_selectivity_hook_type clauselist_selectivity_hook;
+
 /* Functions in selfuncs.c */
 
 extern void examine_variable(PlannerInfo *root, Node *node, int varRelid,

@@ -104,6 +104,14 @@ extern void BuildRelationExtStatistics(Relation onerel, bool inh, double totalro
 extern int	ComputeExtStatisticsRows(Relation onerel,
 									 int natts, VacAttrStats **vacattrstats);
 extern bool statext_is_kind_built(HeapTuple htup, char type);
+extern Selectivity statext_mcv_clauselist_selectivity(PlannerInfo *root,
+													  List *clauses,
+													  int varRelid,
+													  JoinType jointype,
+													  SpecialJoinInfo *sjinfo,
+													   RelOptInfo *rel,
+													   Bitmapset **estimatedclauses,
+													   bool is_or);
 extern Selectivity dependencies_clauselist_selectivity(PlannerInfo *root,
 													   List *clauses,
 													   int varRelid,
