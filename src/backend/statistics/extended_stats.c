@@ -3406,7 +3406,14 @@ statext_clauselist_join_selectivity(PlannerInfo *root, List *clauses, int varRel
 				continue;
 		}
 		else
+		{
+			/*
+			 * TODO:
+			 * We don't have MCV statistics at all. Should find max number of
+			 * clauses which can fit some distinct statistic
+			 */
 			continue;
+		}
 
 		/*
 		 * Now mark all the clauses for this join pair as estimated.
