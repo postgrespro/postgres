@@ -33,7 +33,13 @@
 #include "utils/lsyscache.h"
 
 /*
- * The struct containing self-join candidate.  Used to find duplicate reloids.
+ * Utility structure. It is needed to perform a sorting procedure and simplify
+ * the search of SJE-candidate baserels referencing the same database relation.
+ * Having collected all baserels from the query jointree, the planner sorts them
+ * according to the reloid value, groups them with the next pass and attempts to
+ * remove self-joins.
+ * Preliminary sorting prevents quadratic behaviour that can be harmful in the
+ * case of numerous joins.
  */
 typedef struct
 {
@@ -1584,6 +1590,9 @@ replace_varno(Node *node, int from, int to)
  * We must make a copy of the original Bitmapset before making any
  * modifications, because the same pointer to it might be shared among
  * different places.
+ * Also, this function can be used in 'delete only' mode (newId < 0).
+ * It allows us to utilise the same code in the remove_useless_joins and the
+ * remove_self_joins features.
  */
 static Bitmapset *
 replace_relid(Relids relids, int oldId, int newId)
@@ -2463,7 +2472,7 @@ self_join_candidates_cmp(const void *a, const void *b)
  * of the removed relation become either restriction or join clauses, based on
  * whether they reference any relations not participating in the removed join.
  *
- * 'targetlist' is the top-level targetlist of the query. If it has any
+ * 'joinlist' is the top-level joinlist of the query. If it has any
  * references to the removed relations, we update them to point to the
  * remaining ones.
  */
@@ -2485,11 +2494,15 @@ remove_useless_self_joins(PlannerInfo *root, List *joinlist)
 
 	if (unlikely(toRemove != NULL))
 	{
-		int			nremoved = 0;
-
 		/* At the end, remove orphaned relation links */
 		while ((relid = bms_next_member(toRemove, relid)) >= 0)
+		{
+			int	nremoved = 0;
+
 			joinlist = remove_rel_from_joinlist(joinlist, relid, &nremoved);
+			if (nremoved != 1)
+				elog(ERROR, "SJE failed to find relation %d in joinlist", relid);
+		}
 	}
 
 	return joinlist;
