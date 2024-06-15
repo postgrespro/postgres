@@ -1884,7 +1884,7 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
  */
 static void
 cost_tuplesort(Cost *startup_cost, Cost *run_cost,
-			   double tuples, int width, int cmpMultiplier,
+			   double tuples, int width, double cmpMultiplier,
 			   Cost comparison_cost, int sort_mem,
 			   double limit_tuples)
 {
@@ -2153,8 +2153,36 @@ cost_sort(Path *path, PlannerInfo *root,
 {
 	Cost		startup_cost;
 	Cost		run_cost;
-	int			cmpMultiplier =
-						(pathkeys == NIL) ? 2.0 : list_length(pathkeys) + 1.0;
+	int			n = list_length(pathkeys);
+	double		cmpMultiplier = (n == 0) ? 2.0 : n + 1;
+
+	if (root != NULL && tuples > 1 && n > 1)
+	{
+		PathKey    *key = linitial_node(PathKey, pathkeys);
+		EquivalenceMember *em = (EquivalenceMember *)
+										linitial(key->pk_eclass->ec_members);
+		Node *node = (Node *) em->em_expr;
+		bool isdefault;
+		VariableStatData vardata;
+		double nd = -1;
+		Bitmapset *relids = pull_varnos(root, node);
+
+		if (bms_num_members(relids) == 1 && !bms_is_member(0, relids))
+		{
+			examine_variable(root, node, 0, &vardata);
+			if (HeapTupleIsValid(vardata.statsTuple))
+			{
+				nd = get_variable_numdistinct(&vardata, &isdefault);
+
+				if (!isdefault)
+				{
+					if (tuples >= nd)
+						cmpMultiplier = 2.0 + ((tuples - nd) / (tuples - 1)) * (n - 1);
+				}
+			}
+			ReleaseVariableStats(vardata);
+		}
+	}
 
 	cost_tuplesort(&startup_cost, &run_cost,
 				   tuples, width, cmpMultiplier,
