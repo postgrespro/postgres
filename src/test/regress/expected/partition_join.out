@@ -641,13 +641,13 @@ SELECT a, b FROM prt1 FULL JOIN prt2 p2(b,a,c) USING(a,b)
                ->  Sort
                      Sort Key: (COALESCE(prt1_2.a, p2_2.a)), (COALESCE(prt1_2.b, p2_2.b))
                      ->  Merge Full Join
-                           Merge Cond: ((prt1_2.a = p2_2.a) AND (prt1_2.b = p2_2.b))
+                           Merge Cond: ((prt1_2.b = p2_2.b) AND (prt1_2.a = p2_2.a))
                            Filter: ((COALESCE(prt1_2.a, p2_2.a) >= 490) AND (COALESCE(prt1_2.a, p2_2.a) <= 510))
                            ->  Sort
-                                 Sort Key: prt1_2.a, prt1_2.b
+                                 Sort Key: prt1_2.b, prt1_2.a
                                  ->  Seq Scan on prt1_p3 prt1_2
                            ->  Sort
-                                 Sort Key: p2_2.a, p2_2.b
+                                 Sort Key: p2_2.b, p2_2.a
                                  ->  Seq Scan on prt2_p3 p2_2
 (43 rows)
 

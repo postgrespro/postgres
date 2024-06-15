@@ -2842,19 +2842,18 @@ SELECT count(*)
                                   QUERY PLAN                                   
 -------------------------------------------------------------------------------
  GroupAggregate
-   Group Key: t1.z, t1.w, t1.x, t1.y
-   ->  Incremental Sort
-         Sort Key: t1.z, t1.w, t1.x, t1.y
-         Presorted Key: t1.z, t1.w, t1.x
+   Group Key: t1.x, t1.y, t1.z, t1.w
+   ->  Sort
+         Sort Key: t1.x, t1.y, t1.z, t1.w
          ->  Merge Join
-               Merge Cond: ((t1.z = t2.z) AND (t1.w = t2.w) AND (t1.x = t2.x))
+               Merge Cond: ((t1.w = t2.w) AND (t1.z = t2.z) AND (t1.x = t2.x))
                ->  Sort
-                     Sort Key: t1.z, t1.w, t1.x
+                     Sort Key: t1.w, t1.z, t1.x
                      ->  Index Scan using btg_x_y_idx on btg t1
                ->  Sort
-                     Sort Key: t2.z, t2.w, t2.x
+                     Sort Key: t2.w, t2.z, t2.x
                      ->  Index Scan using btg_x_y_idx on btg t2
-(13 rows)
+(12 rows)
 
 RESET enable_nestloop;
 RESET enable_hashjoin;
@@ -2878,12 +2877,11 @@ SELECT count(*) FROM btg GROUP BY w, x, y, z ORDER BY x*x, z;
  Sort
    Sort Key: ((x * x)), z
    ->  GroupAggregate
-         Group Key: x, y, w, z
-         ->  Incremental Sort
-               Sort Key: x, y, w, z
-               Presorted Key: x, y
+         Group Key: w, x, y, z
+         ->  Sort
+               Sort Key: w, x, y, z
                ->  Index Scan using btg_x_y_idx on btg
-(8 rows)
+(7 rows)
 
 -- Test the case where the number of incoming subtree path keys is more than
 -- the number of grouping keys.
