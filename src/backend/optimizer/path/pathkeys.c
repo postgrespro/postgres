@@ -448,6 +448,8 @@ group_keys_reorder_by_pathkeys(List *pathkeys, List **group_pathkeys,
 	return n;
 }
 
+#include "utils/selfuncs.h"
+
 /*
  * get_useful_group_keys_orderings
  *		Determine which orderings of GROUP BY keys are potentially interesting.
@@ -516,6 +518,67 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 			infos = lappend(infos, info);
 		}
 	}
+
+	/*
+	 * Let's try the order with the column having max ndistinct value
+	 */
+{
+	double nd_max;
+	PathKey *pk_opt;
+	ListCell *lc;
+
+	foreach(lc, root->group_pathkeys)
+	{
+		PathKey *pkey = lfirst_node(PathKey, lc);
+		EquivalenceMember *em = (EquivalenceMember *)
+										linitial(pkey->pk_eclass->ec_members);
+		Bitmapset *relids = pull_varnos(root, (Node *) em->em_expr);
+		VariableStatData vardata;
+		double nd = -1;
+		bool isdefault;
+
+		if (foreach_current_index(lc) >= root->num_groupby_pathkeys)
+			break;
+
+		if (bms_num_members(relids) != 1 && bms_is_member(0, relids))
+			continue;
+
+		examine_variable(root, (Node *) em->em_expr, 0, &vardata);
+		if (!HeapTupleIsValid(vardata.statsTuple))
+			continue;
+		nd = get_variable_numdistinct(&vardata, &isdefault);
+		ReleaseVariableStats(vardata);
+		if (isdefault)
+			continue;
+		Assert(nd >= 0);
+		if (nd < 0 || nd > nd_max)
+		{
+			nd_max = nd;
+			pk_opt = pkey;
+		}
+	}
+
+	if (pk_opt != NULL)
+	{
+		List *new_pathkeys = list_make1(pk_opt);
+		int n;
+
+		new_pathkeys = list_concat_unique_ptr(new_pathkeys, root->group_pathkeys);
+		n = group_keys_reorder_by_pathkeys(new_pathkeys, &pathkeys, &clauses,
+										   root->num_groupby_pathkeys);
+
+		if (n > 0 &&
+			(enable_incremental_sort || n == root->num_groupby_pathkeys) &&
+			compare_pathkeys(pathkeys, root->group_pathkeys) != PATHKEYS_EQUAL)
+		{
+			info = makeNode(GroupByOrdering);
+			info->pathkeys = pathkeys;
+			info->clauses = clauses;
+
+			infos = lappend(infos, info);
+		}
+	}
+}
 
 #ifdef USE_ASSERT_CHECKING
 	{
