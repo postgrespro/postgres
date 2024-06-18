@@ -31,14 +31,87 @@ SELECT count(*) FROM parallel_test;
 -- Should also utilise parallel workers like scanning of a plain table
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Aggregate
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Finalize Aggregate
    ->  Gather
          Workers Planned: 1
-         ->  Custom Scan (nodeCustomTempScan)
-               ->  Parallel Seq Scan on parallel_test_tmp
-(5 rows)
+         ->  Partial Aggregate
+               ->  Custom Scan (nodeCustomTempScan)
+                     ->  Parallel Seq Scan on parallel_test_tmp
+(6 rows)
 
+-- Want to see here partial aggregate over parallel join
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 1
+         ->  Partial Aggregate
+               ->  Parallel Hash Join
+                     Hash Cond: (t1.x = t2.x)
+                     ->  Parallel Seq Scan on parallel_test t1
+                     ->  Parallel Hash
+                           ->  Parallel Seq Scan on parallel_test t2
+(9 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 1
+         ->  Partial Aggregate
+               ->  Parallel Hash Join
+                     Hash Cond: (t1.x = t2.x)
+                     ->  Custom Scan (nodeCustomTempScan)
+                           ->  Parallel Seq Scan on parallel_test_tmp t1
+                     ->  Parallel Hash
+                           ->  Parallel Seq Scan on parallel_test t2
+(10 rows)
+
+-- Just see how merge join manages custom parallel scan path
+SET enable_hashjoin = 'off';
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 1
+         ->  Partial Aggregate
+               ->  Merge Join
+                     Merge Cond: (t1.x = t2.x)
+                     ->  Sort
+                           Sort Key: t1.x
+                           ->  Parallel Seq Scan on parallel_test t1
+                     ->  Sort
+                           Sort Key: t2.x
+                           ->  Seq Scan on parallel_test t2
+(12 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 1
+         ->  Partial Aggregate
+               ->  Merge Join
+                     Merge Cond: (t1.x = t2.x)
+                     ->  Sort
+                           Sort Key: t1.x
+                           ->  Custom Scan (nodeCustomTempScan)
+                                 ->  Parallel Seq Scan on parallel_test_tmp t1
+                     ->  Sort
+                           Sort Key: t2.x
+                           ->  Seq Scan on parallel_test t2
+(13 rows)
+
+RESET enable_hashjoin;
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

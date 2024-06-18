@@ -29,5 +29,19 @@ SELECT count(*) FROM parallel_test;
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp;
 
+-- Want to see here partial aggregate over parallel join
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
+
+-- Just see how merge join manages custom parallel scan path
+SET enable_hashjoin = 'off';
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
+
+RESET enable_hashjoin;
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

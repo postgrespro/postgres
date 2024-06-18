@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "nodes/extensible.h"
+#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
@@ -70,6 +71,7 @@ static CustomExecMethods exec_methods =
 };
 
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_next = NULL;
+
 static bool tempscan_enable = false;
 
 void _PG_init(void);
@@ -90,7 +92,7 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->pathtype = T_CustomScan;
 	pathnode->parent = rel;
 	pathnode->pathtarget = rel->reltarget;
-	pathnode->rows = rel->rows;
+	pathnode->rows = path->rows; /* Don't use rel->rows! Remember semantics of this field in the parallel case */
 
 	/* XXX: Just for now */
 	pathnode->param_info = NULL;
@@ -100,8 +102,8 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->parallel_workers = path->parallel_workers;
 
 	/* DEBUGGING purposes only */
-	pathnode->startup_cost = path->startup_cost / disable_cost;
-	pathnode->total_cost = path->total_cost / disable_cost;
+	pathnode->startup_cost = path->startup_cost /*/ disable_cost*/;
+	pathnode->total_cost = path->total_cost /*/ disable_cost*/;
 
 	cpath->custom_paths = list_make1(path);
 	cpath->custom_private = NIL;
@@ -213,11 +215,16 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (set_rel_pathlist_hook_next)
 		(*set_rel_pathlist_hook_next)(root, rel, rti, rte);
 
-	if (rel->consider_parallel)
+	if (!tempscan_enable || rel->consider_parallel)
 		return;
 
 	if (rte->rtekind != RTE_RELATION ||
 		get_rel_persistence(rte->relid) != RELPERSISTENCE_TEMP)
+		return;
+
+	/* HACK */
+	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo) ||
+		!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
 		return;
 
 	parallel_workers = compute_parallel_worker(rel, rel->pages, -1,
@@ -227,7 +234,6 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (parallel_workers <= 0)
 		return;
 
-	/* HACK */
 	rel->consider_parallel = true;
 
 	path = create_seqscan_path(root, rel, NULL, parallel_workers);
@@ -238,8 +244,6 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 								create_partial_tempscan_path(root, rel, path));
 	}
 
-	if (!bms_equal(rel->relids, root->all_query_rels))
-		rel->consider_parallel = false;
 	Assert(IsA(linitial(rel->partial_pathlist), CustomPath));
 }
 
