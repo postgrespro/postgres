@@ -42,6 +42,8 @@ SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
 
+-- TODO: Tests on parallel index scan
+
 RESET enable_hashjoin;
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

@@ -102,8 +102,8 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->parallel_workers = path->parallel_workers;
 
 	/* DEBUGGING purposes only */
-	pathnode->startup_cost = path->startup_cost /*/ disable_cost*/;
-	pathnode->total_cost = path->total_cost /*/ disable_cost*/;
+	pathnode->startup_cost = path->startup_cost;
+	pathnode->total_cost = path->total_cost;
 
 	cpath->custom_paths = list_make1(path);
 	cpath->custom_private = NIL;
@@ -206,7 +206,8 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 					 RangeTblEntry *rte)
 {
 	int			parallel_workers;
-	Path	   *path;
+	ListCell   *lc;
+	List	   *partial_pathlist_new = NIL;
 
 	/*
 	 * Some extension intercept this hook earlier. Allow it to do a work
@@ -234,15 +235,32 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (parallel_workers <= 0)
 		return;
 
+	/* Enable parallel paths generation for this relation */
+	Assert(rel->partial_pathlist == NIL);
 	rel->consider_parallel = true;
 
-	path = create_seqscan_path(root, rel, NULL, parallel_workers);
-	if (path)
+	/* Add partial sequental scan path. */
+	add_partial_path(rel, (Path *)
+						create_seqscan_path(root, rel, NULL, parallel_workers));
+
+	/* Add there more specific paths too */
+	create_index_paths(root, rel);
+	create_tidscan_paths(root, rel);
+
+	foreach(lc, rel->partial_pathlist)
 	{
-		/* Add an unordered partial path based on a parallel sequential scan. */
-		add_partial_path(rel, (Path *)
-								create_partial_tempscan_path(root, rel, path));
+		Path   *path = lfirst(lc);
+
+		partial_pathlist_new =
+			lappend(partial_pathlist_new,
+					(void *) create_partial_tempscan_path(root, rel, path));
 	}
+
+	/*
+	 * Dangerous zone. But we assume it is strictly local. What about extension
+	 * which could call ours and add some paths after us?
+	 */
+	rel->partial_pathlist = partial_pathlist_new;
 
 	Assert(IsA(linitial(rel->partial_pathlist), CustomPath));
 }
