@@ -45,6 +45,7 @@ SUBDIRS = \
 		spi		\
 		tablefunc	\
 		tcn		\
+		tempscan	\
 		test_decoding	\
 		tsm_system_rows \
 		tsm_system_time \

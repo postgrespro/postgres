@@ -1,0 +1,5 @@
+# tempscan
+comment = 'Parallel Temp Table Scan'
+default_version = '0.1'
+module_pathname = '$libdir/tempscan'
+relocatable = true
