@@ -283,5 +283,7 @@ _PG_init(void)
 	set_rel_pathlist_hook_next = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = try_partial_tempscan;
 
+	RegisterCustomScanMethods(&plan_methods);
+
 	MarkGUCPrefixReserved(MODULENAME);
 }

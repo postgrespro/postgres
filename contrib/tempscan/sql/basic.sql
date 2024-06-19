@@ -42,8 +42,29 @@ SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
 
--- TODO: Tests on parallel index scan
-
 RESET enable_hashjoin;
+
+-- Increase table size and see how indexes work
+ALTER TABLE parallel_test ADD COLUMN y text DEFAULT 'none';
+INSERT INTO parallel_test (x,y) SELECT x, 'data' || x AS y FROM generate_series(1,10000) AS x;
+CREATE INDEX ON parallel_test (x);
+ANALYZE parallel_test;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2
+WHERE t1.x < 10;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp t2
+WHERE t1.x < 10;
+
+CREATE TEMP TABLE parallel_test_tmp_2 AS (SELECT * FROM parallel_test);
+CREATE INDEX ON parallel_test_tmp_2 (x);
+ANALYZE parallel_test_tmp_2;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test_tmp_2 t2
+WHERE t2.x < 10;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test_tmp_2 t1 NATURAL JOIN parallel_test_tmp_2 t2
+WHERE t1.x < 10;
+
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;
