@@ -16,6 +16,7 @@
 #include "nodes/extensible.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "utils/guc.h"
@@ -26,6 +27,9 @@ PG_MODULE_MAGIC;
 
 #define MODULENAME	"tempscan"
 #define NODENAME	"nodeCustomTempScan"
+
+/* By analogy with Append */
+#define TEMPSCAN_CPU_COST_MULTIPLIER	(0.5)
 
 static Plan *create_partial_tempscan_plan(PlannerInfo *root,
 										  RelOptInfo *rel,
@@ -38,6 +42,7 @@ static void BeginTempScan(CustomScanState *node, EState *estate, int eflags);
 static TupleTableSlot *ExecTempScan(CustomScanState *node);
 static void EndTempScan(CustomScanState *node);
 static void ReScanTempScan(CustomScanState *node);
+static Size EstimateDSMTempScan(CustomScanState *node, ParallelContext *pcxt);
 
 static CustomPathMethods path_methods =
 {
@@ -62,7 +67,7 @@ static CustomExecMethods exec_methods =
 	.ReScanCustomScan = ReScanTempScan,
 	.MarkPosCustomScan = NULL,
 	.RestrPosCustomScan = NULL,
-	.EstimateDSMCustomScan = NULL,
+	.EstimateDSMCustomScan = EstimateDSMTempScan,
 	.InitializeDSMCustomScan = NULL,
 	.ReInitializeDSMCustomScan = NULL,
 	.InitializeWorkerCustomScan = NULL,
@@ -93,17 +98,21 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->parent = rel;
 	pathnode->pathtarget = rel->reltarget;
 	pathnode->rows = path->rows; /* Don't use rel->rows! Remember semantics of this field in the parallel case */
-
-	/* XXX: Just for now */
-	pathnode->param_info = NULL;
+	pathnode->param_info = path->param_info;
 
 	pathnode->parallel_safe = true;
 	pathnode->parallel_aware = false;
 	pathnode->parallel_workers = path->parallel_workers;
 
-	/* DEBUGGING purposes only */
 	pathnode->startup_cost = path->startup_cost;
 	pathnode->total_cost = path->total_cost;
+
+	/*
+	 * Although TempScan does not do any selection or projection, it's not free;
+	 * add a small per-tuple overhead.
+	 */
+	pathnode->total_cost +=
+					cpu_tuple_cost * TEMPSCAN_CPU_COST_MULTIPLIER * path->rows;
 
 	cpath->custom_paths = list_make1(path);
 	cpath->custom_private = NIL;
@@ -121,8 +130,7 @@ create_partial_tempscan_plan(PlannerInfo *root, RelOptInfo *rel,
 	CustomScan *cscan = makeNode(CustomScan);
 
 	Assert(list_length(custom_plans) == 1);
-	Assert(best_path->path.parallel_safe = true &&
-		   best_path->path.parallel_workers > 0);
+	Assert(best_path->path.parallel_safe = true);
 
 
 	cscan->scan.plan.targetlist = cscan->custom_scan_tlist = tlist;
@@ -205,9 +213,9 @@ static void
 try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 					 RangeTblEntry *rte)
 {
-	int			parallel_workers;
 	ListCell   *lc;
-	List	   *partial_pathlist_new = NIL;
+	List	   *parallel_safe_lst = NIL;
+	List	   *tmplst = rel->pathlist;
 
 	/*
 	 * Some extension intercept this hook earlier. Allow it to do a work
@@ -223,46 +231,56 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		get_rel_persistence(rte->relid) != RELPERSISTENCE_TEMP)
 		return;
 
-	/* HACK */
 	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo) ||
 		!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
 		return;
 
-	parallel_workers = compute_parallel_worker(rel, rel->pages, -1,
-											   max_parallel_workers_per_gather);
-
-	/* If any limit was set to zero, the user doesn't want a parallel scan. */
-	if (parallel_workers <= 0)
-		return;
-
-	/* Enable parallel paths generation for this relation */
+	/* Enable parallel safe paths generation for this relation */
 	Assert(rel->partial_pathlist == NIL);
 	rel->consider_parallel = true;
 
-	/* Add partial sequental scan path. */
-	add_partial_path(rel, (Path *)
-						create_seqscan_path(root, rel, NULL, parallel_workers));
+	/*
+	 * Now we have a problem:
+	 * should generate parallel safe paths. But they will have the same cost as
+	 * previously added non-parallel ones and, being safe, will definitely crowd
+	 * out non-safe ones.
+	 * So, we need a HACK: add new safe paths with cost of custom node.
+	 */
 
-	/* Add there more specific paths too */
+	rel->pathlist = NIL;
+
+	/*
+	 * Build possibly parallel paths other temporary table
+	 */
+	add_path(rel, create_seqscan_path(root, rel, NULL, 0));
 	create_index_paths(root, rel);
 	create_tidscan_paths(root, rel);
 
-	foreach(lc, rel->partial_pathlist)
+	/*
+	 * Dangerous zone. But we assume it is strictly local. What about extension
+	 * which could call ours and may have desire to add some partial paths after
+	 * us?
+	 */
+
+	list_free(rel->partial_pathlist);
+	rel->partial_pathlist = NIL;
+
+	/*
+	 * Set guard over each parallel_safe path
+	 */
+	parallel_safe_lst = rel->pathlist;
+	rel->pathlist = tmplst;
+	foreach(lc, parallel_safe_lst)
 	{
 		Path   *path = lfirst(lc);
 
-		partial_pathlist_new =
-			lappend(partial_pathlist_new,
-					(void *) create_partial_tempscan_path(root, rel, path));
+		if (!path->parallel_safe)
+			continue;
+
+		add_path(rel, (Path *) create_partial_tempscan_path(root, rel, path));
 	}
 
-	/*
-	 * Dangerous zone. But we assume it is strictly local. What about extension
-	 * which could call ours and add some paths after us?
-	 */
-	rel->partial_pathlist = partial_pathlist_new;
-
-	Assert(IsA(linitial(rel->partial_pathlist), CustomPath));
+	list_free(parallel_safe_lst);
 }
 
 void
@@ -286,4 +304,22 @@ _PG_init(void)
 	RegisterCustomScanMethods(&plan_methods);
 
 	MarkGUCPrefixReserved(MODULENAME);
+}
+
+/* *****************************************************************************
+ *
+ * Parallel transport stuff
+ *
+ **************************************************************************** */
+
+/* copy from execParallel.c */
+#define PARALLEL_TUPLE_QUEUE_SIZE		65536
+
+static Size
+EstimateDSMTempScan(CustomScanState *node, ParallelContext *pcxt)
+{
+	Size size;
+
+	size = mul_size(PARALLEL_TUPLE_QUEUE_SIZE, pcxt->nworkers);
+	return size;
 }

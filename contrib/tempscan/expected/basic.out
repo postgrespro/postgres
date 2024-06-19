@@ -28,18 +28,15 @@ SELECT count(*) FROM parallel_test;
                ->  Parallel Seq Scan on parallel_test
 (5 rows)
 
--- Should also utilise parallel workers like scanning of a plain table
+-- Do not use parallel scan of temporary table so far. As a result, shouldn't
+-- find nodeCustomTempScan here
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp;
-                           QUERY PLAN                           
-----------------------------------------------------------------
- Finalize Aggregate
-   ->  Gather
-         Workers Planned: 1
-         ->  Partial Aggregate
-               ->  Custom Scan (nodeCustomTempScan)
-                     ->  Parallel Seq Scan on parallel_test_tmp
-(6 rows)
+             QUERY PLAN              
+-------------------------------------
+ Aggregate
+   ->  Seq Scan on parallel_test_tmp
+(2 rows)
 
 -- Want to see here partial aggregate over parallel join
 EXPLAIN (COSTS OFF)
@@ -59,18 +56,18 @@ SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                              QUERY PLAN                              
+----------------------------------------------------------------------
  Finalize Aggregate
    ->  Gather
          Workers Planned: 1
          ->  Partial Aggregate
-               ->  Parallel Hash Join
-                     Hash Cond: (t1.x = t2.x)
-                     ->  Custom Scan (nodeCustomTempScan)
-                           ->  Parallel Seq Scan on parallel_test_tmp t1
-                     ->  Parallel Hash
-                           ->  Parallel Seq Scan on parallel_test t2
+               ->  Hash Join
+                     Hash Cond: (t2.x = t1.x)
+                     ->  Parallel Seq Scan on parallel_test t2
+                     ->  Hash
+                           ->  Custom Scan (nodeCustomTempScan)
+                                 ->  Seq Scan on parallel_test_tmp t1
 (10 rows)
 
 -- Just see how merge join manages custom parallel scan path
@@ -95,100 +92,81 @@ SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2;
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test t2;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                              QUERY PLAN                              
+----------------------------------------------------------------------
  Finalize Aggregate
    ->  Gather
          Workers Planned: 1
          ->  Partial Aggregate
                ->  Merge Join
-                     Merge Cond: (t1.x = t2.x)
+                     Merge Cond: (t2.x = t1.x)
+                     ->  Sort
+                           Sort Key: t2.x
+                           ->  Parallel Seq Scan on parallel_test t2
                      ->  Sort
                            Sort Key: t1.x
                            ->  Custom Scan (nodeCustomTempScan)
-                                 ->  Parallel Seq Scan on parallel_test_tmp t1
-                     ->  Sort
-                           Sort Key: t2.x
-                           ->  Seq Scan on parallel_test t2
+                                 ->  Seq Scan on parallel_test_tmp t1
 (13 rows)
 
 RESET enable_hashjoin;
 -- Increase table size and see how indexes work
 ALTER TABLE parallel_test ADD COLUMN y text DEFAULT 'none';
 INSERT INTO parallel_test (x,y) SELECT x, 'data' || x AS y FROM generate_series(1,10000) AS x;
-CREATE INDEX ON parallel_test (x);
-ANALYZE parallel_test;
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2
-WHERE t1.x < 10;
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
- Aggregate
-   ->  Gather
-         Workers Planned: 1
-         ->  Nested Loop
-               ->  Parallel Index Scan using parallel_test_x_idx on parallel_test t1
-                     Index Cond: (x < 10)
-               ->  Index Scan using parallel_test_x_idx on parallel_test t2
-                     Index Cond: (x = t1.x)
-                     Filter: (y = t1.y)
-(9 rows)
-
+CREATE INDEX ON parallel_test_tmp (x);
+VACUUM ANALYZE;
+-- Use IndexScan on temporary table
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp t2
 WHERE t1.x < 10;
-                                   QUERY PLAN                                    
----------------------------------------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Aggregate
    ->  Gather
-         Workers Planned: 1
-         ->  Merge Join
-               Merge Cond: (t2.x = t1.x)
-               ->  Sort
-                     Sort Key: t2.x
-                     ->  Custom Scan (nodeCustomTempScan)
-                           ->  Parallel Seq Scan on parallel_test_tmp t2
-               ->  Index Only Scan using parallel_test_x_idx on parallel_test t1
-                     Index Cond: (x < 10)
-(11 rows)
+         Workers Planned: 3
+         ->  Nested Loop
+               ->  Parallel Seq Scan on parallel_test t1
+                     Filter: (x < 10)
+               ->  Custom Scan (nodeCustomTempScan)
+                     ->  Index Only Scan using parallel_test_tmp_x_idx on parallel_test_tmp t2
+                           Index Cond: (x = t1.x)
+(9 rows)
 
 CREATE TEMP TABLE parallel_test_tmp_2 AS (SELECT * FROM parallel_test);
 CREATE INDEX ON parallel_test_tmp_2 (x);
-ANALYZE parallel_test_tmp_2;
+VACUUM ANALYZE;
+-- Can't use parallel workers here: for now temp tables can be used as parallel
+-- safe source but not be read concurrently.
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test_tmp_2 t2
 WHERE t2.x < 10;
-                                         QUERY PLAN                                          
----------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Aggregate
-   ->  Gather
-         Workers Planned: 1
-         ->  Merge Join
-               Merge Cond: (t1.x = t2.x)
-               ->  Sort
-                     Sort Key: t1.x
-                     ->  Custom Scan (nodeCustomTempScan)
-                           ->  Parallel Seq Scan on parallel_test_tmp t1
-               ->  Index Only Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t2
-                     Index Cond: (x < 10)
-(11 rows)
+   ->  Merge Join
+         Merge Cond: (t1.x = t2.x)
+         ->  Sort
+               Sort Key: t1.x
+               ->  Seq Scan on parallel_test_tmp t1
+         ->  Index Only Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t2
+               Index Cond: (x < 10)
+(8 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp_2 t1 NATURAL JOIN parallel_test_tmp_2 t2
 WHERE t1.x < 10;
-                                              QUERY PLAN                                               
--------------------------------------------------------------------------------------------------------
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
  Aggregate
-   ->  Gather
-         Workers Planned: 1
-         ->  Nested Loop
-               ->  Custom Scan (nodeCustomTempScan)
-                     ->  Parallel Index Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t1
-                           Index Cond: (x < 10)
+   ->  Nested Loop
+         ->  Custom Scan (nodeCustomTempScan)
+               ->  Index Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t1
+                     Index Cond: (x < 10)
+         ->  Custom Scan (nodeCustomTempScan)
                ->  Index Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t2
                      Index Cond: (x = t1.x)
                      Filter: (y = t1.y)
-(10 rows)
+(9 rows)
 
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

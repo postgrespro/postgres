@@ -25,7 +25,8 @@ SET tempscan.enable = 'on';
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test;
 
--- Should also utilise parallel workers like scanning of a plain table
+-- Do not use parallel scan of temporary table so far. As a result, shouldn't
+-- find nodeCustomTempScan here
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp;
 
@@ -47,18 +48,19 @@ RESET enable_hashjoin;
 -- Increase table size and see how indexes work
 ALTER TABLE parallel_test ADD COLUMN y text DEFAULT 'none';
 INSERT INTO parallel_test (x,y) SELECT x, 'data' || x AS y FROM generate_series(1,10000) AS x;
-CREATE INDEX ON parallel_test (x);
-ANALYZE parallel_test;
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test t2
-WHERE t1.x < 10;
+CREATE INDEX ON parallel_test_tmp (x);
+VACUUM ANALYZE;
+-- Use IndexScan on temporary table
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp t2
 WHERE t1.x < 10;
 
 CREATE TEMP TABLE parallel_test_tmp_2 AS (SELECT * FROM parallel_test);
 CREATE INDEX ON parallel_test_tmp_2 (x);
-ANALYZE parallel_test_tmp_2;
+VACUUM ANALYZE;
+
+-- Can't use parallel workers here: for now temp tables can be used as parallel
+-- safe source but not be read concurrently.
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp t1 NATURAL JOIN parallel_test_tmp_2 t2
 WHERE t2.x < 10;
