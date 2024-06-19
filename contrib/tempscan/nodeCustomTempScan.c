@@ -4,6 +4,17 @@
  *		Implements strategy which allows to build and execute partial paths for
  *		a query which contains tempoorary table scans.
  *
+ * Specifics of this node:
+ * 		So far as this node lies inside the parallel worker and master plan, it
+ * 		would be too brave think we know who first will execute Begin, Exec or
+ * 		End routines. So, it must initialize tuple queue earlier than Gather do.
+ *
+ * 		Another thing - nodeParallelTempScan on master must wait for
+ * 		initialization of all the workers - we must send each tuple to their
+ * 		queues and therefore, initialize receivers on the worker side.
+ * 		XXX: for parallel temp scan does it would be needed?
+ *
+ *
  * Copyright (c) 2017-2024, Postgres Professional
  *
  * IDENTIFICATION
@@ -13,6 +24,7 @@
  */
 #include "postgres.h"
 
+#include "executor/tqueue.h"
 #include "nodes/extensible.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
@@ -43,6 +55,17 @@ static TupleTableSlot *ExecTempScan(CustomScanState *node);
 static void EndTempScan(CustomScanState *node);
 static void ReScanTempScan(CustomScanState *node);
 static Size EstimateDSMTempScan(CustomScanState *node, ParallelContext *pcxt);
+static void InitializeDSMTempScan(CustomScanState *node, ParallelContext *pcxt,
+								  void *coordinate);
+static void ReInitializeDSMTempScan(CustomScanState *node,
+									ParallelContext *pcxt,
+									void *coordinate);
+static void InitializeWorkerTempScan(CustomScanState *node, shm_toc *toc,
+									 void *coordinate);
+static void ShutdownTempScan(CustomScanState *node);
+static shm_mq_handle **ExecParallelSetupTupleQueues(int nworkers,
+													char *tqueuespace,
+													dsm_segment *seg);
 
 static CustomPathMethods path_methods =
 {
@@ -68,10 +91,10 @@ static CustomExecMethods exec_methods =
 	.MarkPosCustomScan = NULL,
 	.RestrPosCustomScan = NULL,
 	.EstimateDSMCustomScan = EstimateDSMTempScan,
-	.InitializeDSMCustomScan = NULL,
-	.ReInitializeDSMCustomScan = NULL,
-	.InitializeWorkerCustomScan = NULL,
-	.ShutdownCustomScan = NULL,
+	.InitializeDSMCustomScan = InitializeDSMTempScan,
+	.ReInitializeDSMCustomScan = ReInitializeDSMTempScan,
+	.InitializeWorkerCustomScan = InitializeWorkerTempScan,
+	.ShutdownCustomScan = ShutdownTempScan,
 	.ExplainCustomScan = NULL
 };
 
@@ -101,8 +124,8 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->param_info = path->param_info;
 
 	pathnode->parallel_safe = true;
-	pathnode->parallel_aware = false;
 	pathnode->parallel_workers = path->parallel_workers;
+	pathnode->parallel_aware = pathnode->parallel_workers > 0;
 
 	pathnode->startup_cost = path->startup_cost;
 	pathnode->total_cost = path->total_cost;
@@ -144,43 +167,204 @@ create_partial_tempscan_plan(PlannerInfo *root, RelOptInfo *rel,
 	return &cscan->scan.plan;
 }
 
+typedef struct SharedTempScanInfo
+{
+	int			nworkers;
+	dsm_handle	handle;
+} SharedTempScanInfo;
+
+#define SharedTempScanInfoHeaderSize offsetof(SharedTempScanInfo, data)
+
+typedef struct TempScanInfo
+{
+	shm_mq_handle **tqueue;
+	DestReceiver  **receiver;
+} TempScanInfo;
+
+typedef struct ParallelTempScanState
+{
+	CustomScanState		node;
+
+	bool				initialized;
+	DestReceiver	  **receiver; /* Must be NULL for workers */
+	TempScanInfo		ptsi;
+	SharedTempScanInfo *shared;
+
+	TupleQueueReader   *reader;
+} ParallelTempScanState;
+
 static Node *
 create_tempscan_state(CustomScan *cscan)
 {
-	CustomScanState	   *cstate = makeNode(CustomScanState);
+	ParallelTempScanState  *ts = palloc0(sizeof(ParallelTempScanState));
+	CustomScanState		   *cstate = (CustomScanState *) ts;
 
+	Assert(list_length(cscan->custom_plans) == 1);
+
+	cstate->ss.ps.type = T_CustomScanState;
 	cstate->methods = &exec_methods;
+
+	/*
+	 * Setup slotOps manually. Although we just put incoming tuple to the result
+	 * slot, we must remember that the tqueueReceiveSlot in tqueue.c may need
+	 * another kind of tuple to be effective.
+	 */
+	cstate->slotOps = &TTSOpsMinimalTuple;
+
+	ts->receiver = NULL;
+	ts->initialized = false;
+	ts->shared = NULL;
+
+	if (!IsParallelWorker())
+	{
+		ts->reader = NULL;
+	}
+	else
+	{
+		list_free(cscan->custom_plans);
+		cscan->custom_plans = NIL;
+	}
 
 	return (Node *) cstate;
 }
 
+/*
+ * Remember the case when it works without any parallel workers at all
+ */
 static void
 BeginTempScan(CustomScanState *node, EState *estate, int eflags)
 {
 	CustomScan  *cscan = (CustomScan *) node->ss.ps.plan;
+	ParallelTempScanState *ts = (ParallelTempScanState *) node;
 	Plan		*subplan;
 	PlanState   *pstate;
 
-	Assert(list_length(cscan->custom_plans) == 1);
+	if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+		/*
+		 * Just a hack to provide consistent EXPLAIN and custom DSM
+		 * initialisation
+		 */
+		cscan->scan.plan.parallel_aware = true;
 
-	subplan = (Plan *) linitial(cscan->custom_plans);
-	pstate = ExecInitNode(subplan, estate, eflags);
-	node->custom_ps = lappend(node->custom_ps, (void *) pstate);
+	Assert(ts->receiver == NULL && !ts->initialized &&
+		   ts->shared == NULL);
+	/*
+	 * Different logic for master process (sender) and worker (receiver):
+	 * Master should initiate underlying scan node. Worker must ignore it at all
+	 */
+	if (!IsParallelWorker())
+	{
+		subplan = (Plan *) linitial(cscan->custom_plans);
+		pstate = ExecInitNode(subplan, estate, eflags);
+		node->custom_ps = lappend(node->custom_ps, (void *) pstate);
+	}
+	else
+	{
+		Assert(list_length(node->custom_ps) == 0);
+	}
 }
 
 static TupleTableSlot *
 ExecTempScan(CustomScanState *node)
 {
-	Assert(list_length(node->custom_ps) == 1);
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
+	TupleTableSlot		   *result = ts->node.ss.ss_ScanTupleSlot;
 
-	return ExecProcNode((PlanState *) linitial(node->custom_ps));
+	/*
+	 * HACK. At this point Custom DSM already initialised and we can switch off
+	 * this parameter.
+	 */
+	ts->node.ss.ps.plan->parallel_aware = false;
+
+	if (!IsParallelWorker())
+	{
+		TupleTableSlot *slot;
+		bool			should_free;
+		MinimalTuple	tuple;
+		int				i;
+
+		Assert(list_length(node->custom_ps) == 1);
+
+		slot = ExecProcNode((PlanState *) linitial(node->custom_ps));
+		if (TupIsNull(slot))
+		{
+			if (ts->ptsi.receiver != NULL)
+			{
+				for (i = 0; i < ts->shared->nworkers; i++)
+				{
+					ts->ptsi.receiver[i]->rDestroy(ts->ptsi.receiver[i]);
+					ts->ptsi.receiver[i] = NULL;
+					ts->ptsi.tqueue[i] = NULL;
+				}
+				pfree(ts->ptsi.receiver);
+				ts->ptsi.receiver = NULL;
+			}
+
+			/* The end of the table is achieved, Return empty tuple to all */
+			return NULL;
+		}
+
+		/* Prepare mimimal tuple to send all workers and upstream locally. */
+		tuple = ExecFetchSlotMinimalTuple(slot, &should_free);
+		ExecStoreMinimalTuple(tuple, result, should_free);
+
+		if (ts->ptsi.receiver != NULL)
+		{
+			for (i = 0; i < ts->shared->nworkers; ++i)
+			{
+				ts->ptsi.receiver[i]->receiveSlot(result, ts->ptsi.receiver[i]);
+			}
+		}
+	}
+	else
+	{
+		MinimalTuple	tup;
+		bool			done;
+
+		/* Parallel worker should receive something from the tqueue */
+		tup = TupleQueueReaderNext(ts->reader, false, &done);
+
+		if (done)
+		{
+			Assert(tup == NULL);
+			return NULL;
+		}
+
+		/* TODO: should free ? */
+		ExecStoreMinimalTuple(tup, result, false);
+		result->tts_ops->copyslot(result, result);
+	}
+
+	return result;
 }
 
 static void
 EndTempScan(CustomScanState *node)
 {
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
+
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
-	ExecEndNode((PlanState *) linitial(node->custom_ps));
+
+	if (!IsParallelWorker())
+	{
+		/* Do it only for the master process */
+		ExecEndNode((PlanState *) linitial(node->custom_ps));
+
+		/* Can happen if not all tuples needed */
+		if (ts->ptsi.receiver != NULL)
+		{
+			int i;
+
+			for (i = 0; i < ts->shared->nworkers; ++i)
+			{
+				ts->ptsi.receiver[i]->rDestroy(ts->ptsi.receiver[i]);
+			}
+		}
+	}
+	else
+	{
+		DestroyTupleQueueReader(ts->reader);
+	}
 }
 
 static void
@@ -191,6 +375,9 @@ ReScanTempScan(CustomScanState *node)
 	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 
 	child = (PlanState *) linitial(node->custom_ps);
+
+	if (!child)
+		return;
 
 	if (node->ss.ps.chgParam != NULL)
 		UpdateChangedParamSet(child, node->ss.ps.chgParam);
@@ -310,16 +497,140 @@ _PG_init(void)
  *
  * Parallel transport stuff
  *
+ * The model is simple enough: utilise tqueue module to establish separate shmem
+ * queue connection between master process and each of workers.
+ * Each tuple has fetched from temporary table we must push into each queue and
+ * return it in locally too.
+ *
+ * This approach has some pro and cons but enough to demonstrate proposed
+ * technique.
+ *
  **************************************************************************** */
 
 /* copy from execParallel.c */
 #define PARALLEL_TUPLE_QUEUE_SIZE		65536
+#define PARALLEL_KEY_TUPLE_QUEUE		UINT64CONST(0xE000000000000005)
 
 static Size
 EstimateDSMTempScan(CustomScanState *node, ParallelContext *pcxt)
 {
-	Size size;
+	Size size = 0;
 
-	size = mul_size(PARALLEL_TUPLE_QUEUE_SIZE, pcxt->nworkers);
+	size = add_size(size, sizeof(SharedTempScanInfo));
 	return size;
+}
+
+/*
+ * It sets up the response queues for backend workers to return tuples
+ * to the main backend and start the workers.
+ */
+static shm_mq_handle **
+ExecParallelSetupTupleQueues(int nworkers, char *tqueuespace, dsm_segment *seg)
+{
+	shm_mq_handle **responseq;
+	int			i;
+
+	/* Skip this if no workers. */
+	if (nworkers == 0)
+		return NULL;
+
+	/* Allocate memory for shared memory queue handles. */
+	responseq = (shm_mq_handle **) palloc(nworkers * sizeof(shm_mq_handle *));
+
+	/* Create the queues. */
+	for (i = 0; i < nworkers; ++i)
+	{
+		shm_mq	   *mq;
+
+		mq = shm_mq_create(tqueuespace +
+						   ((Size) i) * PARALLEL_TUPLE_QUEUE_SIZE,
+						   (Size) PARALLEL_TUPLE_QUEUE_SIZE);
+
+		/* Master process will send tuples to all workers */
+		shm_mq_set_sender(mq, MyProc);
+		responseq[i] = shm_mq_attach(mq, seg, NULL);
+	}
+
+	/* Return array of handles. */
+	return responseq;
+}
+
+/*
+ * Master creates shared memory queues - one separate queue for each worker.
+ * Also, it should create DSM segment underlying this transport.
+ */
+static void
+InitializeDSMTempScan(CustomScanState *node, ParallelContext *pcxt,
+					  void *coordinate)
+{
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
+	dsm_segment			   *seg;
+
+	seg = dsm_create(PARALLEL_TUPLE_QUEUE_SIZE * pcxt->nworkers,
+					 DSM_CREATE_NULL_IF_MAXSEGMENTS);
+	Assert(seg != NULL); /* Don't process this case so far */
+
+	/* Save shared data for common usage in parallel workers */
+	ts->shared = (SharedTempScanInfo *) coordinate;
+	ts->shared->handle = dsm_segment_handle(seg);
+
+	/*
+	 * Save number of workers because we will need it on later stages of the
+	 * execution.
+	 */
+	ts->shared->nworkers = pcxt->nworkers;
+
+		if (ts->shared->nworkers > 0)
+		{
+			int i;
+			dsm_segment *seg = dsm_find_mapping(ts->shared->handle);
+
+			ts->ptsi.tqueue =
+				ExecParallelSetupTupleQueues(ts->shared->nworkers,
+											 (char *) dsm_segment_address(seg),
+											 seg);
+
+			ts->ptsi.receiver = palloc(ts->shared->nworkers * sizeof(DestReceiver *));
+			for (i = 0; i < ts->shared->nworkers; i++)
+			{
+				ts->ptsi.receiver[i] =
+							CreateTupleQueueDestReceiver(ts->ptsi.tqueue[i]);
+			}
+		}
+}
+
+static void
+ReInitializeDSMTempScan(CustomScanState *node, ParallelContext *pcxt,
+						void *coordinate)
+{
+	/* TODO */
+	Assert(0);
+}
+
+static void
+InitializeWorkerTempScan(CustomScanState *node, shm_toc *toc,
+						 void *coordinate)
+{
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
+	shm_mq				   *mq;
+	dsm_segment			   *seg;
+	char				   *ptr;
+
+	ts->shared = (SharedTempScanInfo *) coordinate;
+	seg = dsm_attach(ts->shared->handle);
+	ptr = dsm_segment_address(seg);
+	mq = (shm_mq *) (ptr + ParallelWorkerNumber * PARALLEL_TUPLE_QUEUE_SIZE);
+
+	/* Set myself as a receiver of tuples */
+	shm_mq_set_receiver(mq, MyProc);
+
+	ts->reader = CreateTupleQueueReader(shm_mq_attach(mq, seg, NULL));
+}
+
+static void
+ShutdownTempScan(CustomScanState *node)
+{
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
+
+	dsm_detach(dsm_find_mapping(ts->shared->handle));
 }

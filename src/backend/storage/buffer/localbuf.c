@@ -592,7 +592,7 @@ InitLocalBuffers(void)
 	 * inappropriate.
 	 */
 	if (IsParallelWorker())
-		ereport(ERROR,
+		ereport(PANIC,
 				(errcode(ERRCODE_INVALID_TRANSACTION_STATE),
 				 errmsg("cannot access temporary tables during a parallel operation")));
 

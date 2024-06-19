@@ -113,7 +113,7 @@ shm_toc_allocate(shm_toc *toc, Size nbytes)
 	if (toc_bytes + nbytes > total_bytes || toc_bytes + nbytes < toc_bytes)
 	{
 		SpinLockRelease(&toc->toc_mutex);
-		ereport(ERROR,
+		ereport(PANIC,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of shared memory")));
 	}
@@ -250,7 +250,7 @@ shm_toc_lookup(shm_toc *toc, uint64 key, bool noError)
 
 	/* No matching entry was found. */
 	if (!noError)
-		elog(ERROR, "could not find key " UINT64_FORMAT " in shm TOC at %p",
+		elog(PANIC, "could not find key " UINT64_FORMAT " in shm TOC at %p",
 			 key, toc);
 	return NULL;
 }

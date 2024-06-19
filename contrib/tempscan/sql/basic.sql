@@ -67,6 +67,19 @@ WHERE t2.x < 10;
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test_tmp_2 t1 NATURAL JOIN parallel_test_tmp_2 t2
 WHERE t1.x < 10;
+-- Employ parallel join using CustomScan as an inner
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2
+WHERE t1.x < 10;
+-- Check real execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+SET max_parallel_workers_per_gather = 0;
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+SET max_parallel_workers_per_gather = 3;
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
 
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

@@ -168,5 +168,75 @@ WHERE t1.x < 10;
                      Filter: (y = t1.y)
 (9 rows)
 
+-- Employ parallel join using CustomScan as an inner
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2
+WHERE t1.x < 10;
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Gather
+         Workers Planned: 3
+         ->  Nested Loop
+               ->  Parallel Seq Scan on parallel_test t1
+                     Filter: (x < 10)
+               ->  Custom Scan (nodeCustomTempScan)
+                     ->  Index Scan using parallel_test_tmp_2_x_idx on parallel_test_tmp_2 t2
+                           Index Cond: (x = t1.x)
+                           Filter: (t1.y = y)
+(10 rows)
+
+-- Check real execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Aggregate
+   Output: count(*)
+   ->  Gather
+         Workers Planned: 3
+         ->  Hash Join
+               Hash Cond: ((t1.x = t2.x) AND (t1.y = t2.y))
+               ->  Parallel Seq Scan on public.parallel_test t1
+                     Output: t1.x, t1.y
+               ->  Hash
+                     Output: t2.x, t2.y
+                     ->  Custom Scan (nodeCustomTempScan)
+                           Output: t2.x, t2.y
+                           ->  Seq Scan on pg_temp.parallel_test_tmp_2 t2
+                                 Output: t2.x, t2.y
+(14 rows)
+
+SET max_parallel_workers_per_gather = 0;
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+ count 
+-------
+ 10100
+(1 row)
+
+SET max_parallel_workers_per_gather = 3;
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Gather (actual rows=10100 loops=1)
+         Workers Planned: 3
+         Workers Launched: 3
+         ->  Hash Join (actual rows=2525 loops=4)
+               Hash Cond: ((t1.x = t2.x) AND (t1.y = t2.y))
+               ->  Parallel Seq Scan on parallel_test t1 (actual rows=2525 loops=4)
+               ->  Hash (actual rows=10100 loops=4)
+                     Buckets: 16384  Batches: 1  Memory Usage: 571kB
+                     ->  Custom Scan (nodeCustomTempScan) (actual rows=10100 loops=4)
+                           ->  Seq Scan on parallel_test_tmp_2 t2 (actual rows=10100 loops=1)
+(11 rows)
+
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
+ count 
+-------
+ 10100
+(1 row)
+
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;
