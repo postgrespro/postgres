@@ -121,7 +121,7 @@ create_partial_tempscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->parent = rel;
 	pathnode->pathtarget = rel->reltarget;
 	pathnode->rows = path->rows; /* Don't use rel->rows! Remember semantics of this field in the parallel case */
-	pathnode->param_info = path->param_info;
+	pathnode->param_info = NULL; /* Can't use parameterisation, at least for now */
 
 	pathnode->parallel_safe = true;
 	pathnode->parallel_workers = path->parallel_workers;
@@ -276,6 +276,9 @@ ExecTempScan(CustomScanState *node)
 	 */
 	ts->node.ss.ps.plan->parallel_aware = false;
 
+	/* Forbid rescanning */
+	ts->initialized = true;
+
 	if (!IsParallelWorker())
 	{
 		TupleTableSlot *slot;
@@ -370,19 +373,16 @@ EndTempScan(CustomScanState *node)
 static void
 ReScanTempScan(CustomScanState *node)
 {
-	PlanState *child;
+	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
 
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (ts->initialized)
+		elog(PANIC, "Parallel TempScan feature Doesn't support any sort of rescanning");
 
-	child = (PlanState *) linitial(node->custom_ps);
-
-	if (!child)
+	if (IsParallelWorker())
 		return;
 
-	if (node->ss.ps.chgParam != NULL)
-		UpdateChangedParamSet(child, node->ss.ps.chgParam);
-
-	ExecReScan(child);
+	Assert(list_length(ts->node.custom_ps) == 1);
+	ExecReScan(linitial(ts->node.custom_ps));
 }
 
 /*
@@ -411,7 +411,7 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (set_rel_pathlist_hook_next)
 		(*set_rel_pathlist_hook_next)(root, rel, rti, rte);
 
-	if (!tempscan_enable || rel->consider_parallel)
+	if (!tempscan_enable || rel->consider_parallel || rel->lateral_relids)
 		return;
 
 	if (rte->rtekind != RTE_RELATION ||
@@ -460,11 +460,20 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	foreach(lc, parallel_safe_lst)
 	{
 		Path   *path = lfirst(lc);
+		Path   *cpath;
 
 		if (!path->parallel_safe)
 			continue;
 
-		add_path(rel, (Path *) create_partial_tempscan_path(root, rel, path));
+		cpath = (Path *) create_partial_tempscan_path(root, rel, path);
+
+		/*
+		 * Need materialisation here. Do the absence of internal parameters and
+		 * lateral references guarantees we don't need to change any parameters
+		 * on a ReScan?
+		 */
+		add_path(rel, (Path *)
+						create_material_path(cpath->parent, (Path *) cpath));
 	}
 
 	list_free(parallel_safe_lst);
