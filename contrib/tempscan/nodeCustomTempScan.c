@@ -412,11 +412,13 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (set_rel_pathlist_hook_next)
 		(*set_rel_pathlist_hook_next)(root, rel, rti, rte);
 
-	if (!tempscan_enable || rel->consider_parallel)
+	if (!tempscan_enable || rel->consider_parallel || rte->inh)
 		return;
 
-	if (rte->rtekind != RTE_RELATION || rel->reloptkind != RELOPT_BASEREL ||
-		get_rel_persistence(rte->relid) != RELPERSISTENCE_TEMP)
+	if (rte->rtekind != RTE_RELATION || rte->relkind != RELKIND_RELATION ||
+		rel->reloptkind != RELOPT_BASEREL ||
+		get_rel_persistence(rte->relid) != RELPERSISTENCE_TEMP ||
+		root->query_level > 1)
 		return;
 
 	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo) ||
