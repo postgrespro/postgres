@@ -22,6 +22,7 @@ CREATE TEMP TABLE parallel_test_tmp AS (SELECT * FROM parallel_test);
 VACUUM ANALYZE parallel_test, parallel_test_tmp;
 
 SET tempscan.enable = 'on';
+SET tempscan.force = 'on';
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test;
 
@@ -70,7 +71,12 @@ WHERE t1.x < 10;
 -- Employ parallel join using CustomScan as an inner
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2
+WHERE t1.x < 10 AND t2.x < 10;
+-- Parameterised NestLoop beats HashJoin. No ParallelTempScan possible
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2
 WHERE t1.x < 10;
+
 -- Check real execution
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
@@ -81,5 +87,6 @@ EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
 SELECT count(*) FROM parallel_test t1 NATURAL JOIN parallel_test_tmp_2 t2;
 
+RESET tempscan.force;
 RESET tempscan.enable;
 DROP TABLE parallel_test, parallel_test_tmp;

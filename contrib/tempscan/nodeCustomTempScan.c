@@ -101,6 +101,7 @@ static CustomExecMethods exec_methods =
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_next = NULL;
 
 static bool tempscan_enable = true;
+static bool tempscan_force = false;
 
 void _PG_init(void);
 
@@ -411,7 +412,7 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (set_rel_pathlist_hook_next)
 		(*set_rel_pathlist_hook_next)(root, rel, rti, rte);
 
-	if (!tempscan_enable || rel->consider_parallel || rel->lateral_relids)
+	if (!tempscan_enable || rel->consider_parallel)
 		return;
 
 	if (rte->rtekind != RTE_RELATION || rel->reloptkind != RELOPT_BASEREL ||
@@ -470,10 +471,15 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		Path   *path = lfirst(lc);
 		Path   *cpath;
 
-		if (!path->parallel_safe)
+		if (!path->parallel_safe || path->param_info != NULL)
 			continue;
 
+
+		path->rows = clamp_row_est(path->rows / 3.);
 		cpath = (Path *) create_partial_tempscan_path(root, rel, path);
+
+		if (tempscan_force)
+			path->total_cost = clamp_row_est(path->total_cost / disable_cost);
 
 		/*
 		 * Need materialisation here. Do the absence of internal parameters and
@@ -495,6 +501,18 @@ _PG_init(void)
 							 "Right now no any other purpose except debugging",
 							 &tempscan_enable,
 							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL
+	);
+
+	DefineCustomBoolVariable("tempscan.force",
+							 NULL,
+							 NULL,
+							 &tempscan_force,
+							 false,
 							 PGC_SUSET,
 							 0,
 							 NULL,
