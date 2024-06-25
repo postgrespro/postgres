@@ -100,7 +100,7 @@ static CustomExecMethods exec_methods =
 
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_next = NULL;
 
-static bool tempscan_enable = false;
+static bool tempscan_enable = true;
 
 void _PG_init(void);
 
@@ -414,13 +414,21 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (!tempscan_enable || rel->consider_parallel || rel->lateral_relids)
 		return;
 
-	if (rte->rtekind != RTE_RELATION ||
+	if (rte->rtekind != RTE_RELATION || rel->reloptkind != RELOPT_BASEREL ||
 		get_rel_persistence(rte->relid) != RELPERSISTENCE_TEMP)
 		return;
 
 	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo) ||
 		!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
 		return;
+
+	foreach(lc, rel->reltarget->exprs)
+	{
+		Expr *expr = lfirst(lc);
+
+		if (IsA(expr, Var) && ((Var *)expr)->varno == ROWID_VAR)
+			return;
+	}
 
 	/* Enable parallel safe paths generation for this relation */
 	Assert(rel->partial_pathlist == NIL);
@@ -439,7 +447,7 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	/*
 	 * Build possibly parallel paths other temporary table
 	 */
-	add_path(rel, create_seqscan_path(root, rel, NULL, 0));
+	add_path(rel, create_seqscan_path(root, rel, rel->lateral_relids, 0));
 	create_index_paths(root, rel);
 	create_tidscan_paths(root, rel);
 
@@ -486,7 +494,7 @@ _PG_init(void)
 							 "Enable feature of the parallel temporary table scan.",
 							 "Right now no any other purpose except debugging",
 							 &tempscan_enable,
-							 false,
+							 true,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -641,5 +649,6 @@ ShutdownTempScan(CustomScanState *node)
 {
 	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
 
-	dsm_detach(dsm_find_mapping(ts->shared->handle));
+	if (ts->shared)
+		dsm_detach(dsm_find_mapping(ts->shared->handle));
 }
