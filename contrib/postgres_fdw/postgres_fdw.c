@@ -976,6 +976,7 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 	foreach(lc, useful_eclass_list)
 	{
 		EquivalenceClass *cur_ec = lfirst(lc);
+		EquivalenceMember *em;
 		PathKey    *pathkey;
 
 		/* If redundant with what we did above, skip it. */
@@ -988,14 +989,15 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 			continue;
 
 		/* If no pushable expression for this rel, skip it. */
-		if (find_em_for_rel(root, cur_ec, rel) == NULL)
+		if ((em = find_em_for_rel(root, cur_ec, rel)) == NULL)
 			continue;
 
 		/* Looks like we can generate a pathkey, so let's do it. */
 		pathkey = make_canonical_pathkey(root, cur_ec,
 										 linitial_oid(cur_ec->ec_opfamilies),
 										 BTLessStrategyNumber,
-										 false);
+										 false,
+										 em->em_expr); /* TODO */
 		useful_pathkeys_list = lappend(useful_pathkeys_list,
 									   list_make1(pathkey));
 	}

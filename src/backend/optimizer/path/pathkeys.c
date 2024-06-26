@@ -54,7 +54,7 @@ static bool right_merge_direction(PlannerInfo *root, PathKey *pathkey);
 PathKey *
 make_canonical_pathkey(PlannerInfo *root,
 					   EquivalenceClass *eclass, Oid opfamily,
-					   int strategy, bool nulls_first)
+					   int strategy, bool nulls_first, Expr *src_expr)
 {
 	PathKey    *pk;
 	ListCell   *lc;
@@ -89,6 +89,7 @@ make_canonical_pathkey(PlannerInfo *root,
 	pk->pk_opfamily = opfamily;
 	pk->pk_strategy = strategy;
 	pk->pk_nulls_first = nulls_first;
+	pk->source_expr = src_expr;
 
 	root->canon_pathkeys = lappend(root->canon_pathkeys, pk);
 
@@ -241,7 +242,7 @@ make_pathkey_from_sortinfo(PlannerInfo *root,
 
 	/* And finally we can find or create a PathKey node */
 	return make_canonical_pathkey(root, eclass, opfamily,
-								  strategy, nulls_first);
+								  strategy, nulls_first, expr);
 }
 
 /*
@@ -1117,7 +1118,8 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 											   outer_ec,
 											   sub_pathkey->pk_opfamily,
 											   sub_pathkey->pk_strategy,
-											   sub_pathkey->pk_nulls_first);
+											   sub_pathkey->pk_nulls_first,
+											   (Expr *) outer_var);
 			}
 		}
 		else
@@ -1199,7 +1201,8 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 													  outer_ec,
 													  sub_pathkey->pk_opfamily,
 													  sub_pathkey->pk_strategy,
-													  sub_pathkey->pk_nulls_first);
+													  sub_pathkey->pk_nulls_first,
+													  (Expr *) outer_var);
 					/* score = # of equivalence peers */
 					score = list_length(outer_ec->ec_members) - 1;
 					/* +1 if it matches the proper query_pathkeys item */
@@ -1643,6 +1646,7 @@ select_outer_pathkeys_for_merge(PlannerInfo *root,
 	List	   *pathkeys = NIL;
 	int			nClauses = list_length(mergeclauses);
 	EquivalenceClass **ecs;
+	Expr			 **exprs;
 	int		   *scores;
 	int			necs;
 	ListCell   *lc;
@@ -1657,6 +1661,7 @@ select_outer_pathkeys_for_merge(PlannerInfo *root,
 	 * duplicates) and their "popularity" scores.
 	 */
 	ecs = (EquivalenceClass **) palloc(nClauses * sizeof(EquivalenceClass *));
+	exprs = (Expr **) palloc(nClauses * sizeof(Expr *));
 	scores = (int *) palloc(nClauses * sizeof(int));
 	necs = 0;
 
@@ -1666,14 +1671,21 @@ select_outer_pathkeys_for_merge(PlannerInfo *root,
 		EquivalenceClass *oeclass;
 		int			score;
 		ListCell   *lc2;
+		Expr	   *expr;
 
 		/* get the outer eclass */
 		update_mergeclause_eclasses(root, rinfo);
 
 		if (rinfo->outer_is_left)
+		{
 			oeclass = rinfo->left_ec;
+			expr = (Expr *) linitial(((OpExpr *) rinfo->clause)->args);
+		}
 		else
+		{
 			oeclass = rinfo->right_ec;
+			expr = (Expr *) lsecond(((OpExpr *) rinfo->clause)->args);
+		}
 
 		/* reject duplicates */
 		for (j = 0; j < necs; j++)
@@ -1697,6 +1709,8 @@ select_outer_pathkeys_for_merge(PlannerInfo *root,
 		}
 
 		ecs[necs] = oeclass;
+		exprs[necs] = expr;
+
 		scores[necs] = score;
 		necs++;
 	}
@@ -1798,7 +1812,8 @@ select_outer_pathkeys_for_merge(PlannerInfo *root,
 										 ec,
 										 linitial_oid(ec->ec_opfamilies),
 										 BTLessStrategyNumber,
-										 false);
+										 false,
+										 exprs[best_j]);
 		/* can't be redundant because no duplicate ECs */
 		Assert(!pathkey_is_redundant(pathkey, pathkeys));
 		pathkeys = lappend(pathkeys, pathkey);
@@ -1852,18 +1867,23 @@ make_inner_pathkeys_for_merge(PlannerInfo *root,
 		EquivalenceClass *oeclass;
 		EquivalenceClass *ieclass;
 		PathKey    *pathkey;
+		Expr	   *src_expr;
 
 		update_mergeclause_eclasses(root, rinfo);
+
+		Assert(IsA(rinfo->clause, OpExpr) && rinfo->orclause == NULL);
 
 		if (rinfo->outer_is_left)
 		{
 			oeclass = rinfo->left_ec;
 			ieclass = rinfo->right_ec;
+			src_expr = (Expr *) lsecond(((OpExpr *) rinfo->clause)->args);
 		}
 		else
 		{
 			oeclass = rinfo->right_ec;
 			ieclass = rinfo->left_ec;
+			src_expr = (Expr *) linitial(((OpExpr *) rinfo->clause)->args);
 		}
 
 		/* outer eclass should match current or next pathkeys */
@@ -1891,7 +1911,8 @@ make_inner_pathkeys_for_merge(PlannerInfo *root,
 											 ieclass,
 											 opathkey->pk_opfamily,
 											 opathkey->pk_strategy,
-											 opathkey->pk_nulls_first);
+											 opathkey->pk_nulls_first,
+											 src_expr);
 
 		/*
 		 * Don't generate redundant pathkeys (which can happen if multiple
