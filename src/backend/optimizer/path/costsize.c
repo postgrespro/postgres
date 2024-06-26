@@ -2019,21 +2019,41 @@ cost_incremental_sort(Path *path,
 	foreach(l, pathkeys)
 	{
 		PathKey    *key = (PathKey *) lfirst(l);
-		EquivalenceMember *member = (EquivalenceMember *)
-			linitial(key->pk_eclass->ec_members);
+
+#ifdef USE_ASSERT_CHECKING
+		ListCell *lc;
+
+		/* Be paranoid, but caring about performace don't check on prod */
+		foreach(lc, key->pk_eclass->ec_members)
+		{
+			if (find_ec_member_matching_expr(
+								key->pk_eclass, key->source_expr,
+								pull_varnos(root, (Node *) key->source_expr)))
+				break;
+		}
+		if (!lc)
+			/*
+			 * XXX: Can we build PathKey over derived expression and does it
+			 * trigger this error?
+			 */
+			elog(ERROR, "PathKey source expression must be a part of EQ class");
+#endif
+
+		/* Reassure ourselves no one created pathkeys alternative way */
+		Assert(key->source_expr != NULL);
 
 		/*
 		 * Check if the expression contains Var with "varno 0" so that we
 		 * don't call estimate_num_groups in that case.
 		 */
-		if (bms_is_member(0, pull_varnos(root, (Node *) member->em_expr)))
+		if (bms_is_member(0, pull_varnos(root, (Node *) key->source_expr)))
 		{
 			unknown_varno = true;
 			break;
 		}
 
 		/* expression not containing any Vars with "varno 0" */
-		presortedExprs = lappend(presortedExprs, member->em_expr);
+		presortedExprs = lappend(presortedExprs, key->source_expr);
 
 		if (foreach_current_index(l) + 1 >= presorted_keys)
 			break;

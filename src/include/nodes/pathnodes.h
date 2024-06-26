@@ -1469,6 +1469,8 @@ typedef struct PathKey
 	Oid			pk_opfamily;	/* btree opfamily defining the ordering */
 	int			pk_strategy;	/* sort direction (ASC or DESC) */
 	bool		pk_nulls_first; /* do NULLs come before normal values? */
+
+	Expr	   *source_expr;	/* Expression, which triggered this creation */
 } PathKey;
 
 /*
