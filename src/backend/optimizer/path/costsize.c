@@ -2158,18 +2158,15 @@ cost_sort(Path *path, PlannerInfo *root,
 
 	if (root != NULL && tuples > 1 && n > 1)
 	{
-		PathKey    *key = linitial_node(PathKey, pathkeys);
-		EquivalenceMember *em = (EquivalenceMember *)
-										linitial(key->pk_eclass->ec_members);
-		Node *node = (Node *) em->em_expr;
-		bool isdefault;
-		VariableStatData vardata;
-		double nd = -1;
-		Bitmapset *relids = pull_varnos(root, node);
+		PathKey			    *key = linitial_node(PathKey, pathkeys);
+		bool				isdefault;
+		VariableStatData	vardata;
+		double				nd = -1;
+		Bitmapset *relids = pull_varnos(root, (Node *) key->source_expr);
 
-		if (bms_num_members(relids) == 1 && !bms_is_member(0, relids))
+		if (!bms_is_member(0, relids))
 		{
-			examine_variable(root, node, 0, &vardata);
+			examine_variable(root, (Node *) key->source_expr, 0, &vardata);
 			if (HeapTupleIsValid(vardata.statsTuple))
 			{
 				nd = get_variable_numdistinct(&vardata, &isdefault);
@@ -2177,7 +2174,8 @@ cost_sort(Path *path, PlannerInfo *root,
 				if (!isdefault)
 				{
 					if (tuples >= nd)
-						cmpMultiplier = 2.0 + ((tuples - nd) / (tuples - 1)) * (n - 1);
+						cmpMultiplier =
+								2.0 + ((tuples - nd) / (tuples - 1)) * (n - 1);
 				}
 			}
 			ReleaseVariableStats(vardata);
