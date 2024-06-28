@@ -144,6 +144,11 @@ extern EquivalenceMember *find_computable_ec_member(PlannerInfo *root,
 													List *exprs,
 													Relids relids,
 													bool require_parallel_safe);
+extern EquivalenceMember *choose_computable_ec_member(PlannerInfo *root,
+													  EquivalenceClass *ec,
+													  List *exprs,
+													  Relids relids,
+													  bool require_parallel_safe);
 extern bool relation_can_be_sorted_early(PlannerInfo *root, RelOptInfo *rel,
 										 EquivalenceClass *ec,
 										 bool require_parallel_safe);

@@ -2038,8 +2038,15 @@ cost_incremental_sort(Path *path,
 	foreach(l, pathkeys)
 	{
 		PathKey    *key = (PathKey *) lfirst(l);
-		EquivalenceMember *member = (EquivalenceMember *)
-			linitial(key->pk_eclass->ec_members);
+		EquivalenceMember *member;
+
+		member = choose_computable_ec_member(root, key->pk_eclass,
+											 path->pathtarget->exprs,
+											 path->parent->relids,
+											 path->parallel_safe);
+
+		if (!member)
+			elog(ERROR, "could not find pathkey item to sort");
 
 		/*
 		 * Check if the expression contains Var with "varno 0" so that we

@@ -163,35 +163,30 @@ create_partial_tempscan_plan(PlannerInfo *root, RelOptInfo *rel,
 	cscan->custom_plans = custom_plans;
 	cscan->methods = &plan_methods;
 	cscan->flags = best_path->flags;
-	cscan->custom_private = best_path->custom_private;
+	cscan->custom_private = list_make1(makeInteger(best_path->path.parallel_workers));
 
 	return &cscan->scan.plan;
 }
 
 typedef struct SharedTempScanInfo
 {
-	int			nworkers;
+	int			nworkers_launched;
 	dsm_handle	handle;
 } SharedTempScanInfo;
-
-#define SharedTempScanInfoHeaderSize offsetof(SharedTempScanInfo, data)
-
-typedef struct TempScanInfo
-{
-	shm_mq_handle **tqueue;
-	DestReceiver  **receiver;
-} TempScanInfo;
 
 typedef struct ParallelTempScanState
 {
 	CustomScanState		node;
 
 	bool				initialized;
+	int					nworkers; /* workers planned. Needed to know how much resources to free */
 	DestReceiver	  **receiver; /* Must be NULL for workers */
-	TempScanInfo		ptsi;
+	shm_mq_handle	  **tqueue;
+	ParallelContext	   *pcxt;
 	SharedTempScanInfo *shared;
 
 	TupleQueueReader   *reader;
+	bool				parallelMode;
 } ParallelTempScanState;
 
 static Node *
@@ -199,11 +194,13 @@ create_tempscan_state(CustomScan *cscan)
 {
 	ParallelTempScanState  *ts = palloc0(sizeof(ParallelTempScanState));
 	CustomScanState		   *cstate = (CustomScanState *) ts;
+	int path_workers = linitial_node(Integer, cscan->custom_private)->ival;
 
 	Assert(list_length(cscan->custom_plans) == 1);
 
 	cstate->ss.ps.type = T_CustomScanState;
 	cstate->methods = &exec_methods;
+	ts->parallelMode = (path_workers > 0);
 
 	/*
 	 * Setup slotOps manually. Although we just put incoming tuple to the result
@@ -213,7 +210,9 @@ create_tempscan_state(CustomScan *cscan)
 	cstate->slotOps = &TTSOpsMinimalTuple;
 
 	ts->receiver = NULL;
+	ts->tqueue = NULL;
 	ts->initialized = false;
+
 	ts->shared = NULL;
 
 	if (!IsParallelWorker())
@@ -270,57 +269,19 @@ ExecTempScan(CustomScanState *node)
 {
 	ParallelTempScanState  *ts = (ParallelTempScanState *) node;
 	TupleTableSlot		   *result = ts->node.ss.ss_ScanTupleSlot;
+	TupleTableSlot *slot;
+	bool			should_free;
+	MinimalTuple	tup;
+	int				i;
 
 	/*
 	 * HACK. At this point Custom DSM already initialised and we can switch off
 	 * this parameter.
 	 */
-	ts->node.ss.ps.plan->parallel_aware = false;
+	if (ts->pcxt->nworkers_launched == 0)
+		ts->node.ss.ps.plan->parallel_aware = false;
 
-	/* Forbid rescanning */
-	ts->initialized = true;
-
-	if (!IsParallelWorker())
-	{
-		TupleTableSlot *slot;
-		bool			should_free;
-		MinimalTuple	tuple;
-		int				i;
-
-		Assert(list_length(node->custom_ps) == 1);
-
-		slot = ExecProcNode((PlanState *) linitial(node->custom_ps));
-		if (TupIsNull(slot))
-		{
-			if (ts->ptsi.receiver != NULL)
-			{
-				for (i = 0; i < ts->shared->nworkers; i++)
-				{
-					ts->ptsi.receiver[i]->rDestroy(ts->ptsi.receiver[i]);
-					ts->ptsi.receiver[i] = NULL;
-					ts->ptsi.tqueue[i] = NULL;
-				}
-				pfree(ts->ptsi.receiver);
-				ts->ptsi.receiver = NULL;
-			}
-
-			/* The end of the table is achieved, Return empty tuple to all */
-			return NULL;
-		}
-
-		/* Prepare mimimal tuple to send all workers and upstream locally. */
-		tuple = ExecFetchSlotMinimalTuple(slot, &should_free);
-		ExecStoreMinimalTuple(tuple, result, should_free);
-
-		if (ts->ptsi.receiver != NULL)
-		{
-			for (i = 0; i < ts->shared->nworkers; ++i)
-			{
-				ts->ptsi.receiver[i]->receiveSlot(result, ts->ptsi.receiver[i]);
-			}
-		}
-	}
-	else
+	if (IsParallelWorker())
 	{
 		MinimalTuple	tup;
 		bool			done;
@@ -337,9 +298,86 @@ ExecTempScan(CustomScanState *node)
 		/* TODO: should free ? */
 		ExecStoreMinimalTuple(tup, result, false);
 		result->tts_ops->copyslot(result, result);
+		return result;
 	}
 
-	return result;
+	Assert(list_length(node->custom_ps) == 1);
+
+	if (!ts->initialized)
+	{
+		/*
+		 * Save number of workers because we will need it on later
+		 * stages of the execution.
+		 */
+		ts->shared->nworkers_launched = ts->pcxt->nworkers_launched;
+		ts->initialized = true;
+	}
+
+	slot = ExecProcNode((PlanState *) linitial(node->custom_ps));
+	if (ts->receiver == NULL)
+		return slot;
+
+	if (TupIsNull(slot))
+	{
+		/* Parallel workers case */
+		for (i = 0; i < ts->shared->nworkers_launched; i++)
+		{
+			ts->receiver[i]->rDestroy(ts->receiver[i]);
+			ts->receiver[i] = NULL;
+			ts->tqueue[i] = NULL;
+		}
+		pfree(ts->receiver);
+		ts->receiver = NULL;
+		/* The end of the table is achieved, Return empty tuple to all */
+		return NULL;
+	}
+
+	if (!ts->parallelMode)
+	{
+		/* Prepare mimimal tuple to send all workers and upstream locally. */
+		tup = ExecFetchSlotMinimalTuple(slot, &should_free);
+		ExecStoreMinimalTuple(tup, result, should_free);
+
+		/* Send the same tuple to each of worker. Don't forget myself */
+		for (i = 0; i < ts->shared->nworkers_launched; ++i)
+		{
+			bool ret;
+
+			ret = ts->receiver[i]->receiveSlot(result, ts->receiver[i]);
+			Assert(ret);
+		}
+		return result;
+	}
+	else
+	{
+		int nworkers = ts->pcxt->nworkers_launched;
+		/* Overwise we should tuple only to one of the workers */
+
+		typedef struct TQueueDestReceiver
+		{
+			DestReceiver pub;			/* public fields */
+			shm_mq_handle *queue;		/* shm_mq to send to */
+		} TQueueDestReceiver;
+
+		TQueueDestReceiver *rec;
+
+		while (nworkers > 0)
+		{
+			/* Prepare mimimal tuple */
+			tup = ExecFetchSlotMinimalTuple(slot, &should_free);
+			ExecStoreMinimalTuple(tup, result, should_free);
+
+			for (i = 0; i < nworkers; i++)
+			{
+				rec = (TQueueDestReceiver *) ts->receiver[i];
+				result = shm_mq_send(tqueue->queue, tuple->t_len, tuple, false, false);
+						(void) WaitLatch(MyLatch,
+						 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+						 (nap.tv_sec * 1000L) + (nap.tv_usec / 1000L),
+						 WAIT_EVENT_AUTOVACUUM_MAIN);
+			}
+		}
+	}
 }
 
 static void
@@ -355,13 +393,13 @@ EndTempScan(CustomScanState *node)
 		ExecEndNode((PlanState *) linitial(node->custom_ps));
 
 		/* Can happen if not all tuples needed */
-		if (ts->ptsi.receiver != NULL)
+		if (ts->receiver != NULL)
 		{
 			int i;
 
-			for (i = 0; i < ts->shared->nworkers; ++i)
+			for (i = 0; i < ts->nworkers; ++i)
 			{
-				ts->ptsi.receiver[i]->rDestroy(ts->ptsi.receiver[i]);
+				ts->receiver[i]->rDestroy(ts->receiver[i]);
 			}
 		}
 	}
@@ -454,14 +492,29 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	create_index_paths(root, rel);
 	create_tidscan_paths(root, rel);
 
+	if (rel->consider_parallel && rel->lateral_relids == NULL)
+	{
+		int			parallel_workers;
+
+	parallel_workers = compute_parallel_worker(rel, rel->pages, -1,
+											   max_parallel_workers_per_gather);
+
+	/* If any limit was set to zero, the user doesn't want a parallel scan. */
+	if (parallel_workers <= 0)
+		return;
+
+	/* Add an unordered partial path based on a parallel sequential scan. */
+	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
+	}
+
 	/*
 	 * Dangerous zone. But we assume it is strictly local. What about extension
 	 * which could call ours and may have desire to add some partial paths after
 	 * us?
 	 */
 
-	list_free(rel->partial_pathlist);
-	rel->partial_pathlist = NIL;
+//	list_free(rel->partial_pathlist);
+//	rel->partial_pathlist = NIL;
 
 	/*
 	 * Set guard over each parallel_safe path
@@ -488,8 +541,8 @@ try_partial_tempscan(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * lateral references guarantees we don't need to change any parameters
 		 * on a ReScan?
 		 */
-		add_path(rel, (Path *)
-						create_material_path(cpath->parent, (Path *) cpath));
+		add_path(rel, (Path *) cpath
+						/*create_material_path(cpath->parent, (Path *) cpath)*/);
 	}
 
 	list_free(parallel_safe_lst);
@@ -607,33 +660,44 @@ InitializeDSMTempScan(CustomScanState *node, ParallelContext *pcxt,
 					 DSM_CREATE_NULL_IF_MAXSEGMENTS);
 	Assert(seg != NULL); /* Don't process this case so far */
 
+	ts->pcxt = pcxt;
+
 	/* Save shared data for common usage in parallel workers */
 	ts->shared = (SharedTempScanInfo *) coordinate;
 	ts->shared->handle = dsm_segment_handle(seg);
+	ts->nworkers = pcxt->nworkers;
 
 	/*
-	 * Save number of workers because we will need it on later stages of the
-	 * execution.
+	 * We can't initialise queues to workers here because not sure about real
+	 * number of workers will be launched (depends on the number of free slots
+	 * for background workers - see max_worker_processes).
 	 */
-	ts->shared->nworkers = pcxt->nworkers;
 
-		if (ts->shared->nworkers > 0)
-		{
-			int i;
-			dsm_segment *seg = dsm_find_mapping(ts->shared->handle);
+	/*
+	 * Initialise receivers here.
+	 * We don't do it earlier because real number of launched workers
+	 * will be known only after the Gather node launch them.
+	 * Anyway, in the case of any troubles we can initialise them
+	 * earlier and just not use the tail of them during the execution.
+	 */
+	if (ts->shared && ts->nworkers > 0)
+	{
+		int				i;
+		dsm_segment	   *seg = dsm_find_mapping(ts->shared->handle);
 
-			ts->ptsi.tqueue =
-				ExecParallelSetupTupleQueues(ts->shared->nworkers,
+		ts->tqueue =
+				ExecParallelSetupTupleQueues(ts->nworkers,
 											 (char *) dsm_segment_address(seg),
 											 seg);
 
-			ts->ptsi.receiver = palloc(ts->shared->nworkers * sizeof(DestReceiver *));
-			for (i = 0; i < ts->shared->nworkers; i++)
-			{
-				ts->ptsi.receiver[i] =
-							CreateTupleQueueDestReceiver(ts->ptsi.tqueue[i]);
-			}
+		ts->receiver = palloc(ts->nworkers * sizeof(DestReceiver *));
+		for (i = 0; i < ts->nworkers; i++)
+		{
+			ts->receiver[i] = CreateTupleQueueDestReceiver(ts->tqueue[i]);
 		}
+	}
+	else
+		elog(WARNING, "Workers do not needed");
 }
 
 static void
@@ -662,6 +726,7 @@ InitializeWorkerTempScan(CustomScanState *node, shm_toc *toc,
 	shm_mq_set_receiver(mq, MyProc);
 
 	ts->reader = CreateTupleQueueReader(shm_mq_attach(mq, seg, NULL));
+	ts->initialized = true;
 }
 
 static void

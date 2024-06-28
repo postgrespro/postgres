@@ -879,6 +879,86 @@ find_computable_ec_member(PlannerInfo *root,
 
 	return NULL;
 }
+#include "utils/selfuncs.h"
+EquivalenceMember *
+choose_computable_ec_member(PlannerInfo *root,
+							EquivalenceClass *ec,
+							List *exprs,
+							Relids relids,
+							bool require_parallel_safe)
+{
+	ListCell		   *lc;
+	double				ndistinct = -1;
+	EquivalenceMember  *em_result = linitial_node(EquivalenceMember, ec->ec_members);
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
+		List	   *exprvars;
+		ListCell   *lc2;
+		VariableStatData	vardata;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Ignore child members unless they belong to the requested rel.
+		 */
+		if (em->em_is_child &&
+			!bms_is_subset(em->em_relids, relids))
+			continue;
+
+		if (bms_is_member(0, pull_varnos(root, (Node *) em->em_expr)))
+			continue;
+
+		/*
+		 * Match if all Vars and quasi-Vars are available in "exprs".
+		 */
+		exprvars = pull_var_clause((Node *) em->em_expr,
+								   PVC_INCLUDE_AGGREGATES |
+								   PVC_INCLUDE_WINDOWFUNCS |
+								   PVC_INCLUDE_PLACEHOLDERS);
+		foreach(lc2, exprvars)
+		{
+			if (!is_exprlist_member(lfirst(lc2), exprs))
+				break;
+		}
+		list_free(exprvars);
+		if (lc2)
+			continue;			/* we hit a non-available Var */
+
+		/*
+		 * If requested, reject expressions that are not parallel-safe.  We
+		 * check this last because it's a rather expensive test.
+		 */
+		if (require_parallel_safe &&
+			!is_parallel_safe(root, (Node *) em->em_expr))
+			continue;
+
+		examine_variable(root, (Node *) em->em_expr, 0, &vardata);
+		if (HeapTupleIsValid(vardata.statsTuple))
+		{
+			bool isdefault;
+			double	nd;
+
+			nd = get_variable_numdistinct(&vardata, &isdefault);
+
+			if (ndistinct < 0 || nd < ndistinct)
+			{
+				ndistinct = nd;
+				em_result = em;
+			}
+		}
+
+		ReleaseVariableStats(vardata);				/* found usable expression */
+	}
+
+	return em_result;
+}
 
 /*
  * is_exprlist_member
@@ -898,6 +978,9 @@ is_exprlist_member(Expr *node, List *exprs)
 
 		if (expr && IsA(expr, TargetEntry))
 			expr = ((TargetEntry *) expr)->expr;
+
+		while (IsA(expr, RelabelType))
+			expr = (Expr *) (castNode(RelabelType, expr))->arg;
 
 		if (equal(node, expr))
 			return true;
