@@ -18,6 +18,9 @@
 
 #define STATS_MAX_DIMENSIONS	8	/* max number of attributes */
 
+#define EXTSTAT_METHOD_COMBS	1 /* Default */
+#define EXTSTAT_METHOD_LINEAR	2
+
 /* Multivariate distinct coefficients */
 #define STATS_NDISTINCT_MAGIC		0xA352BFA4	/* struct identifier */
 #define STATS_NDISTINCT_TYPE_BASIC	1	/* struct version */

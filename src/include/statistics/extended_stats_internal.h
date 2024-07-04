@@ -66,6 +66,7 @@ typedef struct StatsBuildData
 	VacAttrStats **stats;
 	Datum	  **values;
 	bool	  **nulls;
+	int			method;
 } StatsBuildData;
 
 

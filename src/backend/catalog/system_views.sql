@@ -283,6 +283,7 @@ CREATE VIEW pg_stats_ext WITH (security_barrier) AS
            ) AS attnames,
            pg_get_statisticsobjdef_expressions(s.oid) as exprs,
            s.stxkind AS kinds,
+		   s.options AS options,
            sd.stxdinherit AS inherited,
            sd.stxdndistinct AS n_distinct,
            sd.stxddependencies AS dependencies,

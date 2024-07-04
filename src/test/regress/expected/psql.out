@@ -6374,9 +6374,9 @@ List of schemas
 (0 rows)
 
 \dX "no.such.extended.statistics"
-                 List of extended statistics
- Schema | Name | Definition | Ndistinct | Dependencies | MCV 
---------+------+------------+-----------+--------------+-----
+                      List of extended statistics
+ Schema | Name | Definition | options | Ndistinct | Dependencies | MCV 
+--------+------+------------+---------+-----------+--------------+-----
 (0 rows)
 
 \dy "no.such.event.trigger"
@@ -6547,9 +6547,9 @@ improper qualified name (too many dotted names): "no.such.schema"."no.such.subsc
 \dx "no.such.schema"."no.such.installed.extension"
 improper qualified name (too many dotted names): "no.such.schema"."no.such.installed.extension"
 \dX "no.such.schema"."no.such.extended.statistics"
-                 List of extended statistics
- Schema | Name | Definition | Ndistinct | Dependencies | MCV 
---------+------+------------+-----------+--------------+-----
+                      List of extended statistics
+ Schema | Name | Definition | options | Ndistinct | Dependencies | MCV 
+--------+------+------------+---------+-----------+--------------+-----
 (0 rows)
 
 \dy "no.such.schema"."no.such.event.trigger"
@@ -6682,9 +6682,9 @@ List of text search templates
 (0 rows)
 
 \dX regression."no.such.schema"."no.such.extended.statistics"
-                 List of extended statistics
- Schema | Name | Definition | Ndistinct | Dependencies | MCV 
---------+------+------------+-----------+--------------+-----
+                      List of extended statistics
+ Schema | Name | Definition | options | Ndistinct | Dependencies | MCV 
+--------+------+------------+---------+-----------+--------------+-----
 (0 rows)
 
 -- again, but with dotted database and dotted schema qualifications.

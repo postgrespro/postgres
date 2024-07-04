@@ -4776,8 +4776,10 @@ listExtendedStats(const char *pattern)
 		appendPQExpBuffer(&buf,
 						  "pg_catalog.format('%%s FROM %%s', \n"
 						  "  pg_catalog.pg_get_statisticsobjdef_columns(es.oid), \n"
-						  "  es.stxrelid::pg_catalog.regclass) AS \"%s\"",
-						  gettext_noop("Definition"));
+						  "  es.stxrelid::pg_catalog.regclass) AS \"%s\", \n"
+						  "  es.options AS \"%s\" \n",
+						  gettext_noop("Definition"),
+						  gettext_noop("options"));
 	else
 		appendPQExpBuffer(&buf,
 						  "pg_catalog.format('%%s FROM %%s', \n"

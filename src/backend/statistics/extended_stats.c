@@ -19,6 +19,7 @@
 #include "access/detoast.h"
 #include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/reloptions.h"
 #include "access/table.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_statistic_ext.h"
@@ -70,6 +71,7 @@ typedef struct StatExtEntry
 	List	   *types;			/* 'char' list of enabled statistics kinds */
 	int			stattarget;		/* statistics target (-1 for default) */
 	List	   *exprs;			/* expressions */
+	int			method;
 } StatExtEntry;
 
 
@@ -509,6 +511,25 @@ fetch_statentries_for_relation(Relation pg_statext, Oid relid)
 		}
 
 		entry->exprs = exprs;
+
+		datum = SysCacheGetAttr(STATEXTOID, htup,
+								Anum_pg_statistic_ext_options, &isnull);
+		if (!isnull)
+		{
+			List *defList = untransformRelOptions(datum);
+
+			foreach_ptr(DefElem, def, defList)
+			{
+				if (strcmp(def->defname, "method") != 0 || def->arg == NULL)
+					elog(ERROR, "unrecognized option or value: %s", def->defname);
+
+				if (strcmp(defGetString(def), "linear") == 0)
+					entry->method = EXTSTAT_METHOD_LINEAR;
+			}
+		}
+
+		if (entry->method == 0)
+			entry->method = EXTSTAT_METHOD_COMBS;
 
 		result = lappend(result, entry);
 	}
@@ -2559,6 +2580,8 @@ make_build_data(Relation rel, StatExtEntry *stat, int numrows, HeapTuple *rows,
 		idx++;
 		k--;
 	}
+
+	result->method = stat->method;
 
 	/* first extract values for all the regular attributes */
 	for (i = 0; i < numrows; i++)

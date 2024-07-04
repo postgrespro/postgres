@@ -4645,7 +4645,7 @@ ExistingIndex:   USING INDEX name					{ $$ = $3; }
 
 CreateStatsStmt:
 			CREATE STATISTICS opt_qualified_name
-			opt_name_list ON stats_params FROM from_list
+			opt_name_list ON stats_params FROM from_list opt_reloptions
 				{
 					CreateStatsStmt *n = makeNode(CreateStatsStmt);
 
@@ -4655,10 +4655,11 @@ CreateStatsStmt:
 					n->relations = $8;
 					n->stxcomment = NULL;
 					n->if_not_exists = false;
+					n->options = $9;
 					$$ = (Node *) n;
 				}
 			| CREATE STATISTICS IF_P NOT EXISTS any_name
-			opt_name_list ON stats_params FROM from_list
+			opt_name_list ON stats_params FROM from_list opt_reloptions
 				{
 					CreateStatsStmt *n = makeNode(CreateStatsStmt);
 
@@ -4668,6 +4669,7 @@ CreateStatsStmt:
 					n->relations = $11;
 					n->stxcomment = NULL;
 					n->if_not_exists = true;
+					n->options = $12;
 					$$ = (Node *) n;
 				}
 			;

@@ -2117,6 +2117,12 @@ generateClonedExtStatsStmt(RangeVar *heapRel, Oid heapRelid,
 		pfree(exprsString);
 	}
 
+	datum = SysCacheGetAttr(STATEXTOID, ht_stats,
+							Anum_pg_statistic_ext_options, &isnull);
+
+	if (isnull)
+		datum = (Datum) 0;
+
 	/* finally, build the output node */
 	stats = makeNode(CreateStatsStmt);
 	stats->defnames = NULL;
@@ -2126,6 +2132,7 @@ generateClonedExtStatsStmt(RangeVar *heapRel, Oid heapRelid,
 	stats->stxcomment = NULL;
 	stats->transformed = true;	/* don't need transformStatsStmt again */
 	stats->if_not_exists = false;
+	stats->options = untransformRelOptions(datum);
 
 	/* Clean up */
 	ReleaseSysCache(ht_stats);

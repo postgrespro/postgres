@@ -56,6 +56,45 @@ compare_int16(const void *a, const void *b)
 }
 
 /*
+ * Check correctness of the options list and prepare the list to be stored
+ * in the statistics relation.
+ */
+static Datum
+transform_extstat_options(List *defList)
+{
+	ArrayBuildState	   *astate = NULL;
+	Datum				result;
+
+	foreach_ptr(DefElem, def, defList)
+	{
+		const char *value;
+		Size		len;
+		text	   *t;
+
+		if (strcmp(def->defname, "method") != 0 || def->arg == NULL)
+			elog(ERROR, "unrecognized option or value: %s", def->defname);
+
+		value = defGetString(def);
+
+		len = VARHDRSZ + strlen(def->defname) + 1 + strlen(value);
+		/* +1 leaves room for sprintf's trailing null */
+		t = (text *) palloc(len + 1);
+		SET_VARSIZE(t, len);
+		sprintf(VARDATA(t), "%s=%s", def->defname, value);
+
+		astate = accumArrayResult(astate, PointerGetDatum(t),
+								  false, TEXTOID,
+								  CurrentMemoryContext);
+	}
+
+	result = (astate != NULL) ?
+								makeArrayResult(astate, CurrentMemoryContext) :
+								(Datum) 0;
+
+	return result;
+}
+
+/*
  *		CREATE STATISTICS
  */
 ObjectAddress
@@ -503,6 +542,10 @@ CreateStatistics(CreateStatsStmt *stmt)
 	values[Anum_pg_statistic_ext_stxexprs - 1] = exprsDatum;
 	if (exprsDatum == (Datum) 0)
 		nulls[Anum_pg_statistic_ext_stxexprs - 1] = true;
+
+	values[Anum_pg_statistic_ext_options-1] = transform_extstat_options(stmt->options);
+	if (stmt->options == NIL)
+		nulls[Anum_pg_statistic_ext_options - 1] = true;
 
 	/* insert it into pg_statistic_ext */
 	htup = heap_form_tuple(statrel->rd_att, values, nulls);

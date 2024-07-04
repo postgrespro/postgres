@@ -65,9 +65,10 @@ typedef struct CombinationGenerator
 	int			current;		/* index of the next combination to return */
 	int			ncombinations;	/* number of combinations (size of array) */
 	int		   *combinations;	/* array of pre-built combinations */
+	int			method;
 } CombinationGenerator;
 
-static CombinationGenerator *generator_init(int n, int k);
+static CombinationGenerator *generator_init(int n, int k, int method);
 static void generator_free(CombinationGenerator *state);
 static int *generator_next(CombinationGenerator *state);
 static void generate_combinations(CombinationGenerator *state);
@@ -91,7 +92,9 @@ statext_ndistinct_build(double totalrows, StatsBuildData *data)
 	int			k;
 	int			itemcnt;
 	int			numattrs = data->nattnums;
-	int			numcombs = num_combinations(numattrs);
+	int			numcombs = (data->method == EXTSTAT_METHOD_COMBS) ?
+													num_combinations(numattrs) :
+													(numattrs - 1);
 
 	result = palloc(offsetof(MVNDistinct, items) +
 					numcombs * sizeof(MVNDistinctItem));
@@ -106,7 +109,7 @@ statext_ndistinct_build(double totalrows, StatsBuildData *data)
 		CombinationGenerator *generator;
 
 		/* generate combinations of K out of N elements */
-		generator = generator_init(numattrs, k);
+		generator = generator_init(numattrs, k, data->method);
 
 		while ((combination = generator_next(generator)))
 		{
@@ -586,7 +589,7 @@ num_combinations(int n)
  * generating them on the fly.
  */
 static CombinationGenerator *
-generator_init(int n, int k)
+generator_init(int n, int k, int method)
 {
 	CombinationGenerator *state;
 
@@ -595,7 +598,10 @@ generator_init(int n, int k)
 	/* allocate the generator state as a single chunk of memory */
 	state = (CombinationGenerator *) palloc(sizeof(CombinationGenerator));
 
-	state->ncombinations = n_choose_k(n, k);
+	if (method == EXTSTAT_METHOD_LINEAR)
+		state->ncombinations = 1;
+	else
+		state->ncombinations = n_choose_k(n, k);
 
 	/* pre-allocate space for all combinations */
 	state->combinations = (int *) palloc(sizeof(int) * k * state->ncombinations);
@@ -605,13 +611,23 @@ generator_init(int n, int k)
 	state->n = n;
 
 	/* now actually pre-generate all the combinations of K elements */
-	generate_combinations(state);
+	if (method == EXTSTAT_METHOD_LINEAR)
+	{
+		int i;
 
-	/* make sure we got the expected number of combinations */
-	Assert(state->current == state->ncombinations);
+		for (i = 0; i < k; i++)
+			state->combinations[i] = i;
+	}
+	else
+	{
+		generate_combinations(state);
 
-	/* reset the number, so we start with the first one */
-	state->current = 0;
+		/* make sure we got the expected number of combinations */
+		Assert(state->current == state->ncombinations);
+
+		/* reset the number, so we start with the first one */
+		state->current = 0;
+	}
 
 	return state;
 }

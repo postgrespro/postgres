@@ -468,7 +468,7 @@ lookup_type_cache(Oid type_id, int flags)
 
 		tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
 		if (!HeapTupleIsValid(tp))
-			ereport(ERROR,
+			ereport(PANIC,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
 					 errmsg("type with OID %u does not exist", type_id)));
 		typtup = (Form_pg_type) GETSTRUCT(tp);
