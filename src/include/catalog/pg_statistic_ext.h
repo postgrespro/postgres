@@ -57,6 +57,7 @@ CATALOG(pg_statistic_ext,3381,StatisticExtRelationId)
 	pg_node_tree stxexprs;		/* A list of expression trees for stats
 								 * attributes that are not simple column
 								 * references. */
+	text		options[1] BKI_DEFAULT(_null_);
 #endif
 
 } FormData_pg_statistic_ext;
