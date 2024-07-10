@@ -244,6 +244,13 @@ typedef struct Expr
 #define    PRS2_OLD_VARNO			1
 #define    PRS2_NEW_VARNO			2
 
+typedef struct AlternativeExpr
+{
+	Expr		xpr;
+
+	List	   *variants;
+} AlternativeExpr;
+
 typedef struct Var
 {
 	Expr		xpr;
