@@ -75,7 +75,6 @@ typedef struct StatExtEntry
 } StatExtEntry;
 
 
-static List *fetch_statentries_for_relation(Relation pg_statext, Oid relid);
 static VacAttrStats **lookup_var_attr_stats(Relation rel, Bitmapset *attrs, List *exprs,
 											int nvacatts, VacAttrStats **vacatts);
 static void statext_store(Oid statOid, bool inh,
@@ -420,7 +419,7 @@ statext_is_kind_built(HeapTuple htup, char type)
 /*
  * Return a list (of StatExtEntry) of statistics objects for the given relation.
  */
-static List *
+List *
 fetch_statentries_for_relation(Relation pg_statext, Oid relid)
 {
 	SysScanDesc scan;
