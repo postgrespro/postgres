@@ -101,6 +101,7 @@ extern MVNDistinct *statext_ndistinct_load(Oid mvoid, bool inh);
 extern MVDependencies *statext_dependencies_load(Oid mvoid, bool inh);
 extern MCVList *statext_mcv_load(Oid mvoid, bool inh);
 
+extern List *fetch_statentries_for_relation(Relation pg_statext, Oid relid);
 extern void BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
 									   int numrows, HeapTuple *rows,
 									   int natts, VacAttrStats **vacattrstats);
