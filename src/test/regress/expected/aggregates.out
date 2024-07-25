@@ -2811,12 +2811,11 @@ SELECT count(*) FROM btg GROUP BY z, y, w, x;
                    QUERY PLAN                    
 -------------------------------------------------
  GroupAggregate
-   Group Key: x, y, z, w
-   ->  Incremental Sort
-         Sort Key: x, y, z, w
-         Presorted Key: x, y
+   Group Key: w, z, y, x
+   ->  Sort
+         Sort Key: w, z, y, x
          ->  Index Scan using btg_x_y_idx on btg
-(6 rows)
+(5 rows)
 
 -- Utilize the ordering of subquery scan to avoid a Sort operation
 EXPLAIN (COSTS OFF) SELECT count(*)
@@ -2918,9 +2917,9 @@ GROUP BY c1.w, c1.z;
                      QUERY PLAN                      
 -----------------------------------------------------
  GroupAggregate
-   Group Key: c1.w, c1.z
+   Group Key: c1.z, c1.w
    ->  Sort
-         Sort Key: c1.w, c1.z, c1.x, c1.y
+         Sort Key: c1.z, c1.w, c1.x, c1.y
          ->  Merge Join
                Merge Cond: (c1.x = c2.x)
                ->  Sort

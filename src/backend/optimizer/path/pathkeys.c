@@ -26,6 +26,7 @@
 #include "optimizer/paths.h"
 #include "partitioning/partbounds.h"
 #include "utils/lsyscache.h"
+#include "utils/selfuncs.h"
 
 /* Consider reordering of GROUP BY keys? */
 bool		enable_group_by_reordering = true;
@@ -472,6 +473,10 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 	List	   *pathkeys = root->group_pathkeys;
 	List	   *clauses = root->processed_groupClause;
 
+	double		nd_max = 0.0;
+	PathKey	   *pk_opt;
+	ListCell   *lc1, *lc2;
+
 	/* always return at least the original pathkeys/clauses */
 	info = makeNode(GroupByOrdering);
 	info->pathkeys = pathkeys;
@@ -503,6 +508,71 @@ get_useful_group_keys_orderings(PlannerInfo *root, Path *path)
 		int			n;
 
 		n = group_keys_reorder_by_pathkeys(path->pathkeys, &pathkeys, &clauses,
+										   root->num_groupby_pathkeys);
+
+		if (n > 0 &&
+			(enable_incremental_sort || n == root->num_groupby_pathkeys) &&
+			compare_pathkeys(pathkeys, root->group_pathkeys) != PATHKEYS_EQUAL)
+		{
+			info = makeNode(GroupByOrdering);
+			info->pathkeys = pathkeys;
+			info->clauses = clauses;
+
+			infos = lappend(infos, info);
+		}
+	}
+
+
+	/*
+	 * Let's try the order with the column having max ndistinct value
+	 */
+
+	forboth(lc1, root->group_pathkeys, lc2, root->processed_groupClause)
+	{
+		PathKey			   *pkey = lfirst_node(PathKey, lc1);
+		SortGroupClause	   *gc = (SortGroupClause *) lfirst(lc2);
+		Node			   *node;
+		Bitmapset		   *relids;
+		VariableStatData	vardata;
+		double				nd = -1;
+		bool				isdefault;
+
+		if (foreach_current_index(lc1) >= root->num_groupby_pathkeys)
+			break;
+
+		node = get_sortgroupclause_expr(gc, root->parse->targetList);
+		relids = pull_varnos(root, node);
+
+		if (bms_num_members(relids) != 1 && bms_is_member(0, relids))
+			/*
+			 *Although functional index can estimate distincts here, the chance
+			 * is too low.
+			 */
+			continue;
+
+		examine_variable(root, node, 0, &vardata);
+		if (!HeapTupleIsValid(vardata.statsTuple))
+			continue;
+		nd = get_variable_numdistinct(&vardata, &isdefault);
+		ReleaseVariableStats(vardata);
+		if (isdefault)
+			continue;
+
+		Assert(nd >= 0);
+		if (nd > nd_max)
+		{
+			nd_max = nd;
+			pk_opt = pkey;
+		}
+	}
+
+	if (pk_opt != NULL)
+	{
+		List   *new_pathkeys = list_make1(pk_opt);
+		int		n;
+
+		new_pathkeys = list_concat_unique_ptr(new_pathkeys, root->group_pathkeys);
+		n = group_keys_reorder_by_pathkeys(new_pathkeys, &pathkeys, &clauses,
 										   root->num_groupby_pathkeys);
 
 		if (n > 0 &&
