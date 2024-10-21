@@ -3001,17 +3001,18 @@ ANALYZE agg_sort_order;
 EXPLAIN (COSTS OFF)
 SELECT array_agg(c1 ORDER BY c2),c2
 FROM agg_sort_order WHERE c2 < 100 GROUP BY c1 ORDER BY 2;
-                                 QUERY PLAN                                 
-----------------------------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Sort
    Sort Key: c2
    ->  GroupAggregate
          Group Key: c1
-         ->  Sort
+         ->  Incremental Sort
                Sort Key: c1, c2
-               ->  Index Scan using agg_sort_order_c2_idx on agg_sort_order
-                     Index Cond: (c2 < 100)
-(8 rows)
+               Presorted Key: c1
+               ->  Index Scan using agg_sort_order_pkey on agg_sort_order
+                     Filter: (c2 < 100)
+(9 rows)
 
 DROP TABLE agg_sort_order CASCADE;
 DROP TABLE btg;
