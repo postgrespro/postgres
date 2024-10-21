@@ -2786,13 +2786,13 @@ SELECT balk(hundred) FROM tenk1;
 ROLLBACK;
 -- GROUP BY optimization by reordering GROUP BY clauses
 CREATE TABLE btg AS SELECT
-  i % 10 AS x,
-  i % 10 AS y,
-  'abc' || i % 10 AS z,
+  i % 231 AS x,
+  i % 49 AS y,
+  'abc' || i % 2 AS z,
   i AS w
-FROM generate_series(1, 100) AS i;
+FROM generate_series(1, 1000) AS i;
 CREATE INDEX btg_x_y_idx ON btg(x, y);
-ANALYZE btg;
+VACUUM ANALYZE btg;
 SET enable_hashagg = off;
 SET enable_seqscan = off;
 -- Utilize the ordering of index scan to avoid a Sort operation
@@ -2839,21 +2839,19 @@ EXPLAIN (COSTS OFF)
 SELECT count(*)
   FROM btg t1 JOIN btg t2 ON t1.z = t2.z AND t1.w = t2.w AND t1.x = t2.x
   GROUP BY t1.x, t1.y, t1.z, t1.w;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                           QUERY PLAN                           
+----------------------------------------------------------------
  GroupAggregate
-   Group Key: t1.x, t1.y, t1.z, t1.w
+   Group Key: t1.w, t1.x, t1.y, t1.z
    ->  Sort
-         Sort Key: t1.x, t1.y, t1.z, t1.w
+         Sort Key: t1.w, t1.x, t1.y, t1.z
          ->  Merge Join
-               Merge Cond: ((t1.w = t2.w) AND (t1.z = t2.z) AND (t1.x = t2.x))
-               ->  Sort
-                     Sort Key: t1.w, t1.z, t1.x
-                     ->  Index Scan using btg_x_y_idx on btg t1
-               ->  Sort
-                     Sort Key: t2.w, t2.z, t2.x
+               Merge Cond: (t1.x = t2.x)
+               Join Filter: ((t2.z = t1.z) AND (t2.w = t1.w))
+               ->  Index Scan using btg_x_y_idx on btg t1
+               ->  Materialize
                      ->  Index Scan using btg_x_y_idx on btg t2
-(12 rows)
+(10 rows)
 
 RESET enable_nestloop;
 RESET enable_hashjoin;
@@ -2877,11 +2875,12 @@ SELECT count(*) FROM btg GROUP BY w, x, y, z ORDER BY x*x, z;
  Sort
    Sort Key: ((x * x)), z
    ->  GroupAggregate
-         Group Key: w, x, y, z
-         ->  Sort
-               Sort Key: w, x, y, z
+         Group Key: x, y, w, z
+         ->  Incremental Sort
+               Sort Key: x, y, w, z
+               Presorted Key: x, y
                ->  Index Scan using btg_x_y_idx on btg
-(7 rows)
+(8 rows)
 
 -- Test the case where the number of incoming subtree path keys is more than
 -- the number of grouping keys.
@@ -2918,9 +2917,9 @@ GROUP BY c1.w, c1.z;
                      QUERY PLAN                      
 -----------------------------------------------------
  GroupAggregate
-   Group Key: c1.w, c1.z
+   Group Key: c1.z, c1.w
    ->  Sort
-         Sort Key: c1.w, c1.z, c1.x, c1.y
+         Sort Key: c1.z, c1.w, c1.x, c1.y
          ->  Merge Join
                Merge Cond: (c1.x = c2.x)
                ->  Sort
