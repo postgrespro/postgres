@@ -194,6 +194,8 @@ static double page_size(double tuples, int width);
 static double get_parallel_divisor(Path *path);
 static EquivalenceMember *identify_sort_ecmember(PlannerInfo *root,
 												 PathKey *key);
+static double sort_comparisons_factor(PlannerInfo *root, List *pathkeys,
+									  double ntuples);
 
 
 /*
@@ -2113,8 +2115,7 @@ cost_sort(Path *path, PlannerInfo *root,
 {
 	Cost		startup_cost;
 	Cost		run_cost;
-	double		cmpMultiplier =
-						(pathkeys == NIL) ? 2.0 : list_length(pathkeys) + 1.0;
+	double		cmpMultiplier = sort_comparisons_factor(root, pathkeys, tuples);
 
 	cost_tuplesort(&startup_cost, &run_cost,
 				   tuples, width, cmpMultiplier,
@@ -6560,4 +6561,32 @@ identify_sort_ecmember(PlannerInfo *root, PathKey *key)
 
 	Assert(candidate != NULL);
 	return candidate;
+}
+
+static double
+sort_comparisons_factor(PlannerInfo *root, List *pathkeys, double ntuples)
+{
+	int		n = list_length(pathkeys);
+	double	cmpMultiplier = (n == 0) ? 2.0 : n + 1;
+
+	if (root != NULL && ntuples > 1 && n > 1)
+	{
+		PathKey			   *key = linitial_node(PathKey, pathkeys);
+		EquivalenceMember  *em =  identify_sort_ecmember(root, key);
+
+		Assert(em->em_ndistinct >= 0);
+
+		if (em->em_ndistinct == 0.)
+			/*
+			 * Optimiser doesn't have an info on ndistinct value, return
+			 * extreme case
+			 */
+			return cmpMultiplier;
+
+		if (ntuples >= em->em_ndistinct)
+			cmpMultiplier =
+				2.0 + ((ntuples - em->em_ndistinct) / (ntuples - 1)) * (n - 1);
+	}
+
+	return cmpMultiplier;
 }
