@@ -292,3 +292,34 @@ create index point_table_a_idx on point_table using gist(a);
 -- Ensure we get an incremental sort plan for both of the following queries
 explain (costs off) select a, b, a <-> point(5, 5) dist from point_table order by dist, b limit 1;
 explain (costs off) select a, b, a <-> point(5, 5) dist from point_table order by dist, b desc limit 1;
+
+-- Check:
+-- commuting of sides in an expression doesn't influence cost estimation
+CREATE TABLE sort_ndist_t1 (x numeric, y numeric);
+CREATE TABLE sort_ndist_t2 (x numeric, y numeric);
+
+INSERT INTO sort_ndist_t1 (x,y)
+  SELECT gs%10, gs%10 FROM generate_series(1,1E4) AS gs;
+INSERT INTO sort_ndist_t2 (x,y)
+  SELECT gs, gs FROM generate_series(1,1E4) AS gs;
+CREATE INDEX t1_idx ON sort_ndist_t1 (x);
+CREATE INDEX t2_idx ON sort_ndist_t2 (x);
+VACUUM ANALYZE sort_ndist_t1, sort_ndist_t2;
+
+SET enable_hashjoin = 'off';
+
+-- Having lots of duplicates after the join it is more effective to use plain
+-- Sort instead of incremental sort: with small number of groups we do the same
+-- stuff like Sort but with extra penalty.
+EXPLAIN (COSTS OFF)
+SELECT t1.x, t1.y FROM sort_ndist_t1 t1, sort_ndist_t2 t2
+WHERE t1.x=t2.x
+ORDER BY t1.x,t1.y;
+
+EXPLAIN (COSTS OFF) -- the plan must be the same as above
+SELECT t1.x, t1.y FROM sort_ndist_t1 t1, sort_ndist_t2 t2
+WHERE t2.x=t1.x
+ORDER BY t1.x,t1.y;
+
+RESET enable_hashjoin;
+DROP TABLE sort_ndist_t1, sort_ndist_t2;

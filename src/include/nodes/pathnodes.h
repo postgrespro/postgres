@@ -1439,6 +1439,8 @@ typedef struct EquivalenceMember
 	JoinDomain *em_jdomain;		/* join domain containing the source clause */
 	/* if em_is_child is true, this links to corresponding EM for top parent */
 	struct EquivalenceMember *em_parent pg_node_attr(read_write_ignore);
+
+	double em_ndistinct; /* cached value of ndistinct: 0- default value or 'unknown'; -1 - not defined yet */
 } EquivalenceMember;
 
 /*

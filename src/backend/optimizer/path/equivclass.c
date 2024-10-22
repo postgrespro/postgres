@@ -526,6 +526,7 @@ add_eq_member(EquivalenceClass *ec, Expr *expr, Relids relids,
 	em->em_datatype = datatype;
 	em->em_jdomain = jdomain;
 	em->em_parent = parent;
+	em->em_ndistinct = -1.0;
 
 	if (bms_is_empty(relids))
 	{
