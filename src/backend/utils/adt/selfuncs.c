@@ -1930,6 +1930,8 @@ scalararraysel(PlannerInfo *root,
 		Datum	   *elem_values;
 		bool	   *elem_nulls;
 		int			i;
+		List	   *args;
+		Const	   *c;
 
 		if (arrayisnull)		/* qual can't succeed if null array */
 			return (Selectivity) 0.0;
@@ -1957,48 +1959,56 @@ scalararraysel(PlannerInfo *root,
 		 */
 		s1 = s1disjoint = (useOr ? 0.0 : 1.0);
 
-		for (i = 0; i < num_elems; i++)
+		set_attstatsslot_cache_mode(true);
+
+		c = makeConst(nominal_element_type, -1, nominal_element_collation,
+					  elmlen, (Datum) 0, true, elmbyval);
+		args = list_make2(leftop, c);
+
+		PG_TRY();
 		{
-			List	   *args;
-			Selectivity s2;
-
-			args = list_make2(leftop,
-							  makeConst(nominal_element_type,
-										-1,
-										nominal_element_collation,
-										elmlen,
-										elem_values[i],
-										elem_nulls[i],
-										elmbyval));
-			if (is_join_clause)
-				s2 = DatumGetFloat8(FunctionCall5Coll(&oprselproc,
-													  clause->inputcollid,
-													  PointerGetDatum(root),
-													  ObjectIdGetDatum(operator),
-													  PointerGetDatum(args),
-													  Int16GetDatum(jointype),
-													  PointerGetDatum(sjinfo)));
-			else
-				s2 = DatumGetFloat8(FunctionCall4Coll(&oprselproc,
-													  clause->inputcollid,
-													  PointerGetDatum(root),
-													  ObjectIdGetDatum(operator),
-													  PointerGetDatum(args),
-													  Int32GetDatum(varRelid)));
-
-			if (useOr)
+			for (i = 0; i < num_elems; i++)
 			{
-				s1 = s1 + s2 - s1 * s2;
-				if (isEquality)
-					s1disjoint += s2;
-			}
-			else
-			{
-				s1 = s1 * s2;
-				if (isInequality)
-					s1disjoint += s2 - 1.0;
+				Selectivity s2;
+
+				c->constvalue = elem_values[i];
+				c->constisnull = elem_nulls[i];
+
+				if (is_join_clause)
+					s2 = DatumGetFloat8(FunctionCall5Coll(&oprselproc,
+														  clause->inputcollid,
+														  PointerGetDatum(root),
+														  ObjectIdGetDatum(operator),
+														  PointerGetDatum(args),
+														  Int16GetDatum(jointype),
+														  PointerGetDatum(sjinfo)));
+				else
+					s2 = DatumGetFloat8(FunctionCall4Coll(&oprselproc,
+														  clause->inputcollid,
+														  PointerGetDatum(root),
+														  ObjectIdGetDatum(operator),
+														  PointerGetDatum(args),
+														  Int32GetDatum(varRelid)));
+
+				if (useOr)
+				{
+					s1 = s1 + s2 - s1 * s2;
+					if (isEquality)
+						s1disjoint += s2;
+				}
+				else
+				{
+					s1 = s1 * s2;
+					if (isInequality)
+						s1disjoint += s2 - 1.0;
+				}
 			}
 		}
+		PG_FINALLY();
+		{
+			set_attstatsslot_cache_mode(false);
+		}
+		PG_END_TRY();
 
 		/* accept disjoint-probability estimate if in range */
 		if ((useOr ? isEquality : isInequality) &&
@@ -2052,6 +2062,8 @@ scalararraysel(PlannerInfo *root,
 													  ObjectIdGetDatum(operator),
 													  PointerGetDatum(args),
 													  Int32GetDatum(varRelid)));
+
+			pfree(args);
 
 			if (useOr)
 			{

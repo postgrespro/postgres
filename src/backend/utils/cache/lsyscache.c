@@ -44,6 +44,7 @@
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/datum.h"
+#include "utils/inval.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -3180,6 +3181,137 @@ get_attavgwidth(Oid relid, AttrNumber attnum)
 	return 0;
 }
 
+typedef struct AttStatSlotHashKey
+{
+	Oid relid;
+	int attnum;
+	int reqkind;
+	Oid reqop;
+	int flags;
+} AttStatSlotHashKey;
+
+typedef struct AttStatSlotHashEntry
+{
+	AttStatSlotHashKey	key;
+	AttStatsSlot	   sslot;
+} AttStatSlotHashEntry;
+
+static bool attstatsslot_needs_cache = false;
+static HTAB *slot_htab = NULL;
+
+void
+set_attstatsslot_cache_mode(bool need_cache)
+{
+	/* It should be a usage error or a bug */
+	Assert(!(need_cache && attstatsslot_needs_cache));
+
+	if (!attstatsslot_needs_cache && !need_cache)
+		/* Nothing to do */
+		return;
+
+	attstatsslot_needs_cache = need_cache;
+
+	if (!need_cache && slot_htab != NULL &&
+		hash_get_num_entries(slot_htab) > 0)
+	{
+		HASH_SEQ_STATUS	hash_seq;
+		AttStatSlotHashEntry *entry;
+
+		/*
+		 * It seems we have only few entries here. So, instead of removing the
+		 * whole table, just remove entries one-by-one.
+		 */
+
+		hash_seq_init(&hash_seq, slot_htab);
+		while ((entry = hash_seq_search(&hash_seq)) != NULL)
+		{
+			bool found;
+
+			free_attstatsslot(&entry->sslot);
+
+			(void) hash_search(slot_htab, &entry->key, HASH_REMOVE, &found);
+
+			if (!found)
+				elog(PANIC, "Hash table is corrupted");
+		}
+	}
+}
+
+static void
+cache_attstatslot(AttStatsSlot *sslot,
+				  Oid relid, int attnum, int reqkind, Oid reqop, int flags)
+{
+	AttStatSlotHashEntry *entry;
+	AttStatSlotHashKey key = {.relid = relid, .attnum = attnum,
+							  .reqkind = reqkind, .reqop = reqop,
+							  .flags = flags};
+	bool found;
+
+	entry = hash_search(slot_htab, &key, HASH_ENTER, &found);
+	Assert(!found);
+
+	memcpy(&entry->sslot, sslot, sizeof(AttStatsSlot));
+}
+
+static void
+AttStatSlotCacheCallback(Datum arg, int cacheid, uint32 hashvalue)
+{
+	HASH_SEQ_STATUS			status;
+	AttStatSlotHashEntry   *entry;
+
+	if (slot_htab == NULL)
+		return;
+
+	/* Currently we just flush all entries; hard to be smarter ... */
+	hash_seq_init(&status, slot_htab);
+
+	while ((entry = (AttStatSlotHashEntry *) hash_seq_search(&status)) != NULL)
+	{
+		free_attstatsslot(&entry->sslot);
+
+		if (hash_search(slot_htab,
+						&entry->key,
+						HASH_REMOVE, NULL) == NULL)
+			elog(ERROR, "hash table corrupted");
+	}
+}
+
+static bool
+get_cached_attstatslot(AttStatsSlot *sslot,
+					   Oid relid, int attnum, int reqkind, Oid reqop, int flags)
+{
+	AttStatSlotHashEntry *entry;
+	AttStatSlotHashKey key = {.relid = relid, .attnum = attnum,
+							  .reqkind = reqkind, .reqop = reqop,
+							  .flags = flags};
+	bool found;
+
+	if (slot_htab == NULL)
+	{
+		HASHCTL		ctl;
+
+		ctl.keysize = sizeof(AttStatSlotHashKey);
+		ctl.entrysize = sizeof(AttStatSlotHashEntry);
+
+		slot_htab = hash_create("AttStatSlot hash", 16, &ctl,
+								HASH_ELEM | HASH_BLOBS);
+
+		/* To stay consistent clear the cache on demand */
+		CacheRegisterSyscacheCallback(STATRELATTINH,
+									  AttStatSlotCacheCallback, (Datum) 0);
+	}
+
+	entry = hash_search(slot_htab, &key, HASH_FIND, &found);
+
+	if (found)
+	{
+		memcpy(sslot, &entry->sslot, sizeof(AttStatsSlot));
+		return true;
+	}
+
+	return false;
+}
+
 /*
  * get_attstatsslot
  *
@@ -3245,6 +3377,12 @@ get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,
 
 	/* initialize *sslot properly */
 	memset(sslot, 0, sizeof(AttStatsSlot));
+
+	/* Try to return cached statistics */
+	if (attstatsslot_needs_cache &&
+		get_cached_attstatslot(sslot, stats->starelid,
+							   stats->staattnum, reqkind, reqop, flags))
+		return true;
 
 	for (i = 0; i < STATISTIC_NUM_SLOTS; i++)
 	{
@@ -3333,6 +3471,10 @@ get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,
 		sslot->numbers_arr = statarray;
 	}
 
+	if (attstatsslot_needs_cache)
+		cache_attstatslot(sslot, stats->starelid,
+						  stats->staattnum, reqkind, reqop, flags);
+
 	return true;
 }
 
@@ -3343,6 +3485,9 @@ get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,
 void
 free_attstatsslot(AttStatsSlot *sslot)
 {
+	if (attstatsslot_needs_cache)
+		return;
+
 	/* The values[] array was separately palloc'd by deconstruct_array */
 	if (sslot->values)
 		pfree(sslot->values);
