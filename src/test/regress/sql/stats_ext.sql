@@ -1683,6 +1683,26 @@ SELECT statistics_name, most_common_vals FROM pg_stats_ext x
 SELECT statistics_name, most_common_vals FROM pg_stats_ext_exprs x
     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
 
+CREATE TABLE ext_linear(x int, y int, z int);
+INSERT INTO ext_linear (x,y,z) SELECT gs%47,gs%71,gs%53
+  FROM generate_series(1,100) AS gs;
+CREATE STATISTICS x_y_linear ON x,y,z FROM ext_linear
+  WITH (method = 'linear');
+VACUUM ANALYZE ext_linear;
+
+-- Statistics built with the 'linear' method don't have x,z combination:
+-- don't complain, but not use this statistic slot.
+SELECT check_estimated_rows('SELECT count(*) FROM ext_linear GROUP BY x,z;');
+-- have statistic combination on (x,y) - get correct estimation.
+SELECT check_estimated_rows('SELECT count(*) FROM ext_linear GROUP BY x,y;');
+CREATE STATISTICS x_y_linear_1 ON x,z,y FROM ext_linear WITH (method = 'linear');
+DROP STATISTICS x_y_linear;
+VACUUM ANALYZE ext_linear;
+-- TODO: Now we have right combination in the second statistic slot and use it
+-- getting correct groups number estimation
+SELECT check_estimated_rows('SELECT count(*) FROM ext_linear GROUP BY x,z;');
+DROP TABLE ext_linear;
+
 -- Tidy up
 DROP OPERATOR <<< (int, int);
 DROP FUNCTION op_leak(int, int);

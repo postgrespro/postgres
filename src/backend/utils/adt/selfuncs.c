@@ -3965,6 +3965,7 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	MVNDistinct *stats;
 	StatisticExtInfo *matched_info = NULL;
 	RangeTblEntry *rte = planner_rt_fetch(rel->relid, root);
+	List	   *statlist;
 
 	/* bail out immediately if the table has no extended statistics */
 	if (!rel->statlist)
@@ -3973,7 +3974,10 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	/* look for the ndistinct statistics object matching the most vars */
 	nmatches_vars = 0;			/* we require at least two matches */
 	nmatches_exprs = 0;
-	foreach(lc, rel->statlist)
+
+attempt:
+	statlist = list_copy(rel->statlist);
+	foreach(lc, statlist)
 	{
 		ListCell   *lc2;
 		StatisticExtInfo *info = (StatisticExtInfo *) lfirst(lc);
@@ -4200,7 +4204,11 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 		 * statistics includes all combinations of attributes.
 		 */
 		if (!item)
-			elog(ERROR, "corrupt MVNDistinct entry");
+		{
+			statOid = InvalidOid;
+			statlist = list_delete_ptr(statlist, matched_info);
+			goto attempt;
+		}
 
 		/* Form the output varinfo list, keeping only unmatched ones */
 		foreach(lc, *varinfos)
