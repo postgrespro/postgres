@@ -1581,3 +1581,67 @@ select * from tuplesest_tab join
 
 drop table tuplesest_parted;
 drop table tuplesest_tab;
+
+--
+-- Test the cases for partition pruning by an expression like:
+-- partkey = ANY($1)
+--
+
+CREATE TABLE array_prune (id int)
+PARTITION BY HASH(id);
+
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES WITH (modulus 2, remainder 1);
+
+CREATE FUNCTION array_prune_fn(oper text, arr text) RETURNS setof text
+LANGUAGE plpgsql AS $$
+DECLARE
+    line text;
+    query text;
+BEGIN
+  query := format('EXPLAIN (COSTS OFF) SELECT * FROM array_prune WHERE id %s (%s)', $1, $2);
+  FOR line IN EXECUTE query
+  LOOP
+    RETURN NEXT line;
+  END LOOP;
+END; $$;
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1]'); -- prune one partition
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2]');  -- prune one partition
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2,3]');  -- no pruning
+SELECT array_prune_fn('= ANY', 'ARRAY[1, NULL]'); -- prune
+SELECT array_prune_fn('= ANY', 'ARRAY[3, NULL]'); -- prune
+SELECT array_prune_fn('= ANY', 'ARRAY[NULL, NULL]'); -- error
+-- Check case of explicit cast
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2]::numeric[]');
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::int]'); -- conversion to bigint
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::numeric]'); -- conversion to numeric
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::text]'); -- Error. XXX: slightly different error in comparison with the static case
+
+SELECT array_prune_fn('<> ANY', 'ARRAY[1]'); -- no pruning
+
+DROP TABLE IF EXISTS array_prune CASCADE;
+CREATE TABLE array_prune (id int)
+PARTITION BY RANGE(id);
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES FROM (1) TO (10);
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES FROM (10) TO (20);
+
+SELECT array_prune_fn('= ANY', 'ARRAY[10]'); -- prune
+SELECT array_prune_fn('>= ANY', 'ARRAY[10]'); -- prune
+SELECT array_prune_fn('>= ANY', 'ARRAY[9, 10]'); -- do not prune
+
+DROP TABLE IF EXISTS array_prune CASCADE;
+CREATE TABLE array_prune (id int)
+PARTITION BY LIST(id);
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES IN ('1');
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES IN ('2');
+SELECT array_prune_fn('= ANY', 'ARRAY[1,1]'); -- prune second
+SELECT array_prune_fn('>= ANY', 'ARRAY[1,2]'); -- do not prune
+SELECT array_prune_fn('<> ANY', 'ARRAY[1]'); -- prune second
+SELECT array_prune_fn('<> ALL', 'ARRAY[1,2]'); -- prune both

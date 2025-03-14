@@ -3823,3 +3823,183 @@ select * from tuplesest_tab join
 
 drop table tuplesest_parted;
 drop table tuplesest_tab;
+--
+-- Test the cases for partition pruning by an expression like:
+-- partkey = ANY($1)
+--
+CREATE TABLE array_prune (id int)
+PARTITION BY HASH(id);
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES WITH (modulus 2, remainder 0);
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES WITH (modulus 2, remainder 1);
+CREATE FUNCTION array_prune_fn(oper text, arr text) RETURNS setof text
+LANGUAGE plpgsql AS $$
+DECLARE
+    line text;
+    query text;
+BEGIN
+  query := format('EXPLAIN (COSTS OFF) SELECT * FROM array_prune WHERE id %s (%s)', $1, $2);
+  FOR line IN EXECUTE query
+  LOOP
+    RETURN NEXT line;
+  END LOOP;
+END; $$;
+SELECT array_prune_fn('= ANY', 'ARRAY[1]'); -- prune one partition
+             array_prune_fn              
+-----------------------------------------
+ Seq Scan on array_prune_t0 array_prune
+   Filter: (id = ANY ('{1}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2]');  -- prune one partition
+              array_prune_fn               
+-------------------------------------------
+ Seq Scan on array_prune_t0 array_prune
+   Filter: (id = ANY ('{1,2}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2,3]');  -- no pruning
+                  array_prune_fn                   
+---------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: (id = ANY ('{1,2,3}'::integer[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: (id = ANY ('{1,2,3}'::integer[]))
+(5 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1, NULL]'); -- prune
+                array_prune_fn                
+----------------------------------------------
+ Seq Scan on array_prune_t0 array_prune
+   Filter: (id = ANY ('{1,NULL}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[3, NULL]'); -- prune
+                array_prune_fn                
+----------------------------------------------
+ Seq Scan on array_prune_t1 array_prune
+   Filter: (id = ANY ('{3,NULL}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[NULL, NULL]'); -- error
+ERROR:  operator does not exist: integer = text
+LINE 1: ...IN (COSTS OFF) SELECT * FROM array_prune WHERE id = ANY (ARR...
+                                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+QUERY:  EXPLAIN (COSTS OFF) SELECT * FROM array_prune WHERE id = ANY (ARRAY[NULL, NULL])
+CONTEXT:  PL/pgSQL function array_prune_fn(text,text) line 7 at FOR over EXECUTE statement
+-- Check case of explicit cast
+SELECT array_prune_fn('= ANY', 'ARRAY[1,2]::numeric[]');
+                       array_prune_fn                       
+------------------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: ((id)::numeric = ANY ('{1,2}'::numeric[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: ((id)::numeric = ANY ('{1,2}'::numeric[]))
+(5 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::int]'); -- conversion to bigint
+              array_prune_fn              
+------------------------------------------
+ Seq Scan on array_prune_t0 array_prune
+   Filter: (id = ANY ('{1,2}'::bigint[]))
+(2 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::numeric]'); -- conversion to numeric
+                       array_prune_fn                       
+------------------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: ((id)::numeric = ANY ('{1,2}'::numeric[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: ((id)::numeric = ANY ('{1,2}'::numeric[]))
+(5 rows)
+
+SELECT array_prune_fn('= ANY', 'ARRAY[1::bigint,2::text]'); -- Error. XXX: slightly different error in comparison with the static case
+ERROR:  ARRAY types bigint and text cannot be matched
+LINE 1: ...* FROM array_prune WHERE id = ANY (ARRAY[1::bigint,2::text])
+                                                              ^
+QUERY:  EXPLAIN (COSTS OFF) SELECT * FROM array_prune WHERE id = ANY (ARRAY[1::bigint,2::text])
+CONTEXT:  PL/pgSQL function array_prune_fn(text,text) line 7 at FOR over EXECUTE statement
+SELECT array_prune_fn('<> ANY', 'ARRAY[1]'); -- no pruning
+                 array_prune_fn                 
+------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: (id <> ANY ('{1}'::integer[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: (id <> ANY ('{1}'::integer[]))
+(5 rows)
+
+DROP TABLE IF EXISTS array_prune CASCADE;
+CREATE TABLE array_prune (id int)
+PARTITION BY RANGE(id);
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES FROM (1) TO (10);
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES FROM (10) TO (20);
+SELECT array_prune_fn('= ANY', 'ARRAY[10]'); -- prune
+              array_prune_fn              
+------------------------------------------
+ Seq Scan on array_prune_t1 array_prune
+   Filter: (id = ANY ('{10}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('>= ANY', 'ARRAY[10]'); -- prune
+              array_prune_fn               
+-------------------------------------------
+ Seq Scan on array_prune_t1 array_prune
+   Filter: (id >= ANY ('{10}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('>= ANY', 'ARRAY[9, 10]'); -- do not prune
+                  array_prune_fn                   
+---------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: (id >= ANY ('{9,10}'::integer[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: (id >= ANY ('{9,10}'::integer[]))
+(5 rows)
+
+DROP TABLE IF EXISTS array_prune CASCADE;
+CREATE TABLE array_prune (id int)
+PARTITION BY LIST(id);
+CREATE TABLE array_prune_t0
+ PARTITION OF array_prune FOR VALUES IN ('1');
+CREATE TABLE array_prune_t1
+ PARTITION OF array_prune FOR VALUES IN ('2');
+SELECT array_prune_fn('= ANY', 'ARRAY[1,1]'); -- prune second
+              array_prune_fn               
+-------------------------------------------
+ Seq Scan on array_prune_t0 array_prune
+   Filter: (id = ANY ('{1,1}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('>= ANY', 'ARRAY[1,2]'); -- do not prune
+                  array_prune_fn                  
+--------------------------------------------------
+ Append
+   ->  Seq Scan on array_prune_t0 array_prune_1
+         Filter: (id >= ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on array_prune_t1 array_prune_2
+         Filter: (id >= ANY ('{1,2}'::integer[]))
+(5 rows)
+
+SELECT array_prune_fn('<> ANY', 'ARRAY[1]'); -- prune second
+              array_prune_fn              
+------------------------------------------
+ Seq Scan on array_prune_t1 array_prune
+   Filter: (id <> ANY ('{1}'::integer[]))
+(2 rows)
+
+SELECT array_prune_fn('<> ALL', 'ARRAY[1,2]'); -- prune both
+      array_prune_fn      
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+

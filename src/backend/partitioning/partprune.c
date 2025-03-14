@@ -2179,6 +2179,9 @@ match_clause_to_partition_key(GeneratePruningStepsContext *context,
 		List	   *elem_exprs,
 				   *elem_clauses;
 		ListCell   *lc1;
+		int			strategy;
+		Oid			lefttype,
+					righttype;
 
 		if (IsA(leftop, RelabelType))
 			leftop = ((RelabelType *) leftop)->arg;
@@ -2206,10 +2209,6 @@ match_clause_to_partition_key(GeneratePruningStepsContext *context,
 			negator = get_negator(saop_op);
 			if (OidIsValid(negator) && op_in_opfamily(negator, partopfamily))
 			{
-				int			strategy;
-				Oid			lefttype,
-							righttype;
-
 				get_op_opfamily_properties(negator, partopfamily,
 										   false, &strategy,
 										   &lefttype, &righttype);
@@ -2218,6 +2217,12 @@ match_clause_to_partition_key(GeneratePruningStepsContext *context,
 			}
 			else
 				return PARTCLAUSE_NOMATCH;	/* no useful negator */
+		}
+		else
+		{
+			get_op_opfamily_properties(saop_op, partopfamily, false,
+									   &strategy, &lefttype,
+									   &righttype);
 		}
 
 		/*
@@ -2364,6 +2369,64 @@ match_clause_to_partition_key(GeneratePruningStepsContext *context,
 			 * Otherwise, we can just use the list of element values.
 			 */
 			elem_exprs = arrexpr->elements;
+		}
+		else if (IsA(rightop, Param))
+		{
+			Oid				cmpfn;
+			PartClauseInfo *partclause;
+
+			if (righttype == part_scheme->partopcintype[partkeyidx])
+				cmpfn = part_scheme->partsupfunc[partkeyidx].fn_oid;
+			else
+			{
+				switch (part_scheme->strategy)
+				{
+					/*
+					 * For range and list partitioning, we need the ordering
+					 * procedure with lefttype being the partition key's type,
+					 * and righttype the clause's operator's right type.
+					 */
+				case PARTITION_STRATEGY_LIST:
+				case PARTITION_STRATEGY_RANGE:
+					cmpfn =
+						get_opfamily_proc(part_scheme->partopfamily[partkeyidx],
+										  part_scheme->partopcintype[partkeyidx],
+										  righttype, BTORDER_PROC);
+					break;
+
+					/*
+					 * For hash partitioning, we need the hashing procedure
+					 * for the clause's type.
+					 */
+				case PARTITION_STRATEGY_HASH:
+					cmpfn =
+						get_opfamily_proc(part_scheme->partopfamily[partkeyidx],
+										  righttype, righttype,
+										  HASHEXTENDED_PROC);
+					break;
+
+				default:
+					elog(ERROR, "invalid partition strategy: %c",
+						 part_scheme->strategy);
+					cmpfn = InvalidOid; /* keep compiler quiet */
+					break;
+				}
+
+				if (!OidIsValid(cmpfn))
+					return PARTCLAUSE_NOMATCH;
+			}
+
+			partclause = (PartClauseInfo *) palloc(sizeof(PartClauseInfo));
+			partclause->keyno = partkeyidx;
+			partclause->opno = saop_op;
+			partclause->op_is_ne = false;
+			partclause->op_strategy = strategy;
+			partclause->expr = rightop;
+			partclause->cmpfn = cmpfn;
+
+			*pc = partclause;
+
+			return PARTCLAUSE_MATCH_CLAUSE;
 		}
 		else
 		{
